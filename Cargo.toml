@@ -1,0 +1,8 @@
+[package]
+name = "rupix"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18.1", features = ["file_watcher"] }
+rand = "0.10.1"
