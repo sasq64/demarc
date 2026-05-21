@@ -8,8 +8,10 @@
 
 const HARD_SCAN: f32 = -8.0;
 const HARD_PIX: f32 = -3.0;
-const WARP_X: f32 = 0.031;
-const WARP_Y: f32 = 0.041;
+const WARP_X: f32 = 0.011;
+const WARP_Y: f32 = 0.011;
+// const WARP_X: f32 = 0.031; 
+// const WARP_Y: f32 = 0.041;
 const MASK_DARK: f32 = 0.5;
 const MASK_LIGHT: f32 = 1.5;
 const SCALE_IN_LINEAR_GAMMA: f32 = 1.0;
