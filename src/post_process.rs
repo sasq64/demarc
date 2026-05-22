@@ -109,7 +109,11 @@ fn update_post_process_uniform(
     }
 }
 
-fn compute_uniform(pp: &PostProcess, camera: &Camera, images: &Assets<Image>) -> PostProcessUniform {
+fn compute_uniform(
+    pp: &PostProcess,
+    camera: &Camera,
+    images: &Assets<Image>,
+) -> PostProcessUniform {
     let identity = PostProcessUniform {
         uv_scale: Vec2::ONE,
         uv_offset: Vec2::ZERO,

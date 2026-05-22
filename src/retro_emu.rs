@@ -2,20 +2,22 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
+use std::mem;
 use std::path::Path;
 
 use libloading::Library;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use crate::libretro::{
     RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_VARIABLE,
-    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
-    RETRO_PIXEL_FORMAT_XRGB8888, retro_game_info, retro_pixel_format, retro_system_av_info,
+    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
+    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_VARIABLES,
+    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
+    retro_game_info, retro_keyboard_callback, retro_pixel_format, retro_system_av_info,
     retro_variable,
 };
 
@@ -42,6 +44,7 @@ pub struct RetroEmu {
     retro_run_fn: unsafe extern "C" fn(),
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
     retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info),
+    retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
     state: RetroState,
     vars: HashMap<String, CString>,
     audio_buf: Vec<i16>,
@@ -65,8 +68,27 @@ impl RetroEmu {
         f(&self.audio_buf);
         self.audio_buf.clear();
     }
-    unsafe extern "C" fn input_poll_cb() {}
-    unsafe extern "C" fn input_state_cb(_: c_uint, _: c_uint, _: c_uint, _: c_uint) -> i16 {
+    unsafe extern "C" fn input_poll_cb() {
+        println!("POLL");
+        CURRENT_EMU.with(|p| {
+            let ptr = p.get();
+            if !ptr.is_null() {
+                let ctx = unsafe { &mut *ptr };
+                if let Some(kfn) = ctx.retro_set_keyboard {
+                    println!("CALLING");
+                    // down, keycode, character, mods
+                    unsafe { kfn(true, 0, 0, 0) }
+                }
+            }
+        });
+    }
+    unsafe extern "C" fn input_state_cb(
+        port: c_uint,
+        device: c_uint,
+        index: c_uint,
+        id: c_uint,
+    ) -> i16 {
+        println!("{port} {device} {index:08x} {id}");
         0
     }
     unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
@@ -170,6 +192,11 @@ impl RetroEmu {
         trace!("## ENV {cmd}");
         unsafe {
             match cmd {
+                RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
+                    let callback = data as *mut retro_keyboard_callback;
+                    self.retro_set_keyboard = (*callback).callback;
+                    true
+                }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();
                     true
@@ -291,6 +318,7 @@ impl RetroEmu {
                 retro_run_fn,
                 retro_load_game_fn,
                 retro_get_avinfo_fn,
+                retro_set_keyboard: None,
                 state: Default::default(),
                 vars: Default::default(),
                 audio_buf: Vec::new(),
@@ -364,6 +392,12 @@ impl RetroEmu {
             .ok_or("failed to build image buffer")?;
         buf.save(path)?;
         Ok(())
+    }
+
+    pub(crate) fn press_key(&self, code: u32, arg: bool) {
+        if let Some(cb) = self.retro_set_keyboard {
+            unsafe { cb(arg, code, 0, 0) }
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -88,9 +89,144 @@ struct Emulator {
     producer: HeapProd<f32>,
     _stream: cpal::Stream,
     next_frame: f64,
+    key_map: HashMap<KeyCode, libretro::retro_key>,
 }
 
 impl Emulator {
+    fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
+        use KeyCode::*;
+        use libretro::*;
+
+        HashMap::from([
+            (Backspace, RETROK_BACKSPACE),
+            (Tab, RETROK_TAB),
+            (Enter, RETROK_RETURN),
+            (Pause, RETROK_PAUSE),
+            (Escape, RETROK_ESCAPE),
+            (Space, RETROK_SPACE),
+            (Quote, RETROK_QUOTE),
+            (Comma, RETROK_COMMA),
+            (Minus, RETROK_MINUS),
+            (Period, RETROK_PERIOD),
+            (Slash, RETROK_SLASH),
+            (Digit0, RETROK_0),
+            (Digit1, RETROK_1),
+            (Digit2, RETROK_2),
+            (Digit3, RETROK_3),
+            (Digit4, RETROK_4),
+            (Digit5, RETROK_5),
+            (Digit6, RETROK_6),
+            (Digit7, RETROK_7),
+            (Digit8, RETROK_8),
+            (Digit9, RETROK_9),
+            (Semicolon, RETROK_SEMICOLON),
+            (Equal, RETROK_EQUALS),
+            (BracketLeft, RETROK_LEFTBRACKET),
+            (Backslash, RETROK_BACKSLASH),
+            (BracketRight, RETROK_RIGHTBRACKET),
+            (Backquote, RETROK_BACKQUOTE),
+            (KeyA, RETROK_a),
+            (KeyB, RETROK_b),
+            (KeyC, RETROK_c),
+            (KeyD, RETROK_d),
+            (KeyE, RETROK_e),
+            (KeyF, RETROK_f),
+            (KeyG, RETROK_g),
+            (KeyH, RETROK_h),
+            (KeyI, RETROK_i),
+            (KeyJ, RETROK_j),
+            (KeyK, RETROK_k),
+            (KeyL, RETROK_l),
+            (KeyM, RETROK_m),
+            (KeyN, RETROK_n),
+            (KeyO, RETROK_o),
+            (KeyP, RETROK_p),
+            (KeyQ, RETROK_q),
+            (KeyR, RETROK_r),
+            (KeyS, RETROK_s),
+            (KeyT, RETROK_t),
+            (KeyU, RETROK_u),
+            (KeyV, RETROK_v),
+            (KeyW, RETROK_w),
+            (KeyX, RETROK_x),
+            (KeyY, RETROK_y),
+            (KeyZ, RETROK_z),
+            (Delete, RETROK_DELETE),
+            (Numpad0, RETROK_KP0),
+            (Numpad1, RETROK_KP1),
+            (Numpad2, RETROK_KP2),
+            (Numpad3, RETROK_KP3),
+            (Numpad4, RETROK_KP4),
+            (Numpad5, RETROK_KP5),
+            (Numpad6, RETROK_KP6),
+            (Numpad7, RETROK_KP7),
+            (Numpad8, RETROK_KP8),
+            (Numpad9, RETROK_KP9),
+            (NumpadDecimal, RETROK_KP_PERIOD),
+            (NumpadDivide, RETROK_KP_DIVIDE),
+            (NumpadMultiply, RETROK_KP_MULTIPLY),
+            (NumpadSubtract, RETROK_KP_MINUS),
+            (NumpadAdd, RETROK_KP_PLUS),
+            (NumpadEnter, RETROK_KP_ENTER),
+            (NumpadEqual, RETROK_KP_EQUALS),
+            (ArrowUp, RETROK_UP),
+            (ArrowDown, RETROK_DOWN),
+            (ArrowRight, RETROK_RIGHT),
+            (ArrowLeft, RETROK_LEFT),
+            (Insert, RETROK_INSERT),
+            (Home, RETROK_HOME),
+            (End, RETROK_END),
+            (PageUp, RETROK_PAGEUP),
+            (PageDown, RETROK_PAGEDOWN),
+            (F1, RETROK_F1),
+            (F2, RETROK_F2),
+            (F3, RETROK_F3),
+            (F4, RETROK_F4),
+            (F5, RETROK_F5),
+            (F6, RETROK_F6),
+            (F7, RETROK_F7),
+            (F8, RETROK_F8),
+            (F9, RETROK_F9),
+            (F10, RETROK_F10),
+            (F11, RETROK_F11),
+            (F12, RETROK_F12),
+            (F13, RETROK_F13),
+            (F14, RETROK_F14),
+            (F15, RETROK_F15),
+            (NumLock, RETROK_NUMLOCK),
+            (CapsLock, RETROK_CAPSLOCK),
+            (ScrollLock, RETROK_SCROLLOCK),
+            (ShiftRight, RETROK_RSHIFT),
+            (ShiftLeft, RETROK_LSHIFT),
+            (ControlRight, RETROK_RCTRL),
+            (ControlLeft, RETROK_LCTRL),
+            (AltRight, RETROK_RALT),
+            (AltLeft, RETROK_LALT),
+            (SuperLeft, RETROK_LSUPER),
+            (SuperRight, RETROK_RSUPER),
+            (Help, RETROK_HELP),
+            (PrintScreen, RETROK_PRINT),
+            (ContextMenu, RETROK_MENU),
+            (Power, RETROK_POWER),
+            (Undo, RETROK_UNDO),
+            (BrowserBack, RETROK_BROWSER_BACK),
+            (BrowserForward, RETROK_BROWSER_FORWARD),
+            (BrowserRefresh, RETROK_BROWSER_REFRESH),
+            (BrowserStop, RETROK_BROWSER_STOP),
+            (BrowserSearch, RETROK_BROWSER_SEARCH),
+            (BrowserFavorites, RETROK_BROWSER_FAVORITES),
+            (BrowserHome, RETROK_BROWSER_HOME),
+            (AudioVolumeMute, RETROK_VOLUME_MUTE),
+            (AudioVolumeDown, RETROK_VOLUME_DOWN),
+            (AudioVolumeUp, RETROK_VOLUME_UP),
+            (MediaTrackNext, RETROK_MEDIA_NEXT),
+            (MediaTrackPrevious, RETROK_MEDIA_PREV),
+            (MediaStop, RETROK_MEDIA_STOP),
+            (MediaPlayPause, RETROK_MEDIA_PLAY_PAUSE),
+            (LaunchMail, RETROK_LAUNCH_MAIL),
+        ])
+    }
+
     pub fn update(&mut self) {
         self.emu.with_audio(|samples| {
             //println!("{}", self.producer.occupied_len());
@@ -205,11 +341,13 @@ fn setup_retro(world: &mut World) {
         producer,
         _stream: stream,
         next_frame: time.elapsed_secs_f64() + SECONDS_PER_FRAME,
+        key_map: Emulator::build_keycode_map(),
     });
 }
 
 fn run_retro(
     mut core: NonSendMut<Emulator>,
+    input: Res<ButtonInput<KeyCode>>,
     bg: Res<Background>,
     time: Res<Time>,
     mut images: ResMut<Assets<Image>>,
@@ -227,6 +365,17 @@ fn run_retro(
     //     time.delta_secs_f64(),
     //     core.next_frame
     // );
+    for e in input.get_just_pressed() {
+        if let Some(code) = core.key_map.get(e) {
+            core.emu.press_key(*code, true);
+        }
+    }
+    for e in input.get_just_released() {
+        if let Some(code) = core.key_map.get(e) {
+            core.emu.press_key(*code, false);
+        }
+    }
+
     if time.elapsed_secs_f64() > core.next_frame {
         core.next_frame += SECONDS_PER_FRAME;
         core.emu.run();
