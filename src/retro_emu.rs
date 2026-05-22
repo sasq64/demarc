@@ -14,11 +14,12 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_VARIABLE,
-    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
+    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_VARIABLES,
     RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    retro_game_info, retro_keyboard_callback, retro_pixel_format, retro_system_av_info,
-    retro_variable,
+    retro_disk_control_callback, retro_disk_control_ext_callback, retro_game_info,
+    retro_keyboard_callback, retro_pixel_format, retro_system_av_info, retro_variable,
 };
 
 type EnvironmentCb = unsafe extern "C" fn(cmd: c_uint, data: *mut c_void) -> bool;
@@ -45,11 +46,14 @@ pub struct RetroEmu {
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
     retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info),
     retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
+    disk_ext_callback: Option<retro_disk_control_ext_callback>,
+    disk_callback: Option<retro_disk_control_callback>,
     state: RetroState,
     vars: HashMap<String, CString>,
     audio_buf: Vec<i16>,
     core_path: CString,
     system_path: CString,
+    image_index: usize,
 }
 
 thread_local! {
@@ -57,6 +61,27 @@ thread_local! {
 }
 
 impl RetroEmu {
+    pub fn next_disk(&mut self) {
+        println!("NEXT");
+        if let Some(cb) = self.disk_ext_callback {
+            unsafe {
+                (cb.set_eject_state.unwrap())(true);
+                self.image_index += 1;
+                println!("INDEX {}", self.image_index);
+                (cb.set_image_index.unwrap())(self.image_index as u32);
+                (cb.set_eject_state.unwrap())(false);
+            }
+        } else if let Some(cb) = self.disk_callback {
+            unsafe {
+                (cb.set_eject_state.unwrap())(true);
+                self.image_index += 1;
+                println!("INDEX {}", self.image_index);
+                (cb.set_image_index.unwrap())(self.image_index as u32);
+                (cb.set_eject_state.unwrap())(false);
+            }
+        }
+    }
+
     pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u8])) {
         f(
             self.state.frame_width,
@@ -69,15 +94,13 @@ impl RetroEmu {
         self.audio_buf.clear();
     }
     unsafe extern "C" fn input_poll_cb() {
-        println!("POLL");
         CURRENT_EMU.with(|p| {
             let ptr = p.get();
             if !ptr.is_null() {
                 let ctx = unsafe { &mut *ptr };
                 if let Some(kfn) = ctx.retro_set_keyboard {
-                    println!("CALLING");
                     // down, keycode, character, mods
-                    unsafe { kfn(true, 0, 0, 0) }
+                    //unsafe { kfn(true, 0, 0, 0) }
                 }
             }
         });
@@ -88,7 +111,7 @@ impl RetroEmu {
         index: c_uint,
         id: c_uint,
     ) -> i16 {
-        println!("{port} {device} {index:08x} {id}");
+        //println!("{port} {device} {index:08x} {id}");
         0
     }
     unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
@@ -195,6 +218,18 @@ impl RetroEmu {
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
                     let callback = data as *mut retro_keyboard_callback;
                     self.retro_set_keyboard = (*callback).callback;
+                    true
+                }
+                RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
+                    println!("DISK EXT");
+                    let callback = data as *mut retro_disk_control_ext_callback;
+                    self.disk_ext_callback = Some(*callback);
+                    true
+                }
+                RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
+                    println!("DISK");
+                    let callback = data as *mut retro_disk_control_callback;
+                    self.disk_callback = Some(*callback);
                     true
                 }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
@@ -319,11 +354,14 @@ impl RetroEmu {
                 retro_load_game_fn,
                 retro_get_avinfo_fn,
                 retro_set_keyboard: None,
+                disk_ext_callback: None,
+                disk_callback: None,
                 state: Default::default(),
                 vars: Default::default(),
                 audio_buf: Vec::new(),
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
                 core_path: CString::new(core_path.to_string_lossy().as_bytes()).unwrap(),
+                image_index: 0,
             };
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
@@ -333,7 +371,7 @@ impl RetroEmu {
             retro_set_input_poll(Self::input_poll_cb);
             retro_set_input_state(Self::input_state_cb);
 
-            retro_emu.set_var("vice_sid_extra", "0xd420");
+            retro_emu.set_var("vice_sid_extra", "none");
             retro_emu.set_var("vice_sid_model", "8580");
             //retro_emu.set_var("vice_autoloadwarp", "warp");
             //retro_emu.set_var("vice_autostart", "warp");

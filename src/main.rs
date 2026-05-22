@@ -263,6 +263,35 @@ fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal
     Ok(stream)
 }
 
+fn parse_m3u(path: &Path) -> Result<HashMap<String, String>> {
+    let contents = std::fs::read_to_string(path)?;
+    let mut tags = HashMap::new();
+    for line in contents.lines() {
+        let Some(rest) = line.strip_prefix("#EXTINF:") else {
+            continue;
+        };
+        let mut remaining = rest;
+        while let Some(eq) = remaining.find("=\"") {
+            let key_start = remaining[..eq]
+                .rfind(|c: char| c.is_whitespace() || c == ',')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let key = remaining[key_start..eq].trim();
+            let after_quote = &remaining[eq + 2..];
+            let Some(end) = after_quote.find('"') else {
+                break;
+            };
+            let value = &after_quote[..end];
+            if !key.is_empty() {
+                tags.insert(key.to_string(), value.to_string());
+            }
+            remaining = &after_quote[end + 1..];
+        }
+        break;
+    }
+    Ok(tags)
+}
+
 fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args: Res<Args>) {
     let image = Image::new_target_texture(
         LOW_RES_WIDTH,
@@ -279,6 +308,7 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args
             ..default()
         },
         RenderTarget::Image(low_res.clone().into()),
+        RenderLayers::layer(0),
     ));
 
     commands.spawn((
@@ -290,8 +320,59 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args
         PostProcess {
             source: low_res,
             scale_mode: args.scale.into(),
+            aspect_tweak: 0.9375, // C64 non square pixels
         },
         RenderLayers::layer(1),
+    ));
+
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 2,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        RenderLayers::layer(2),
+    ));
+
+    let mut title: String = "".into();
+    let mut group: String = "".into();
+    let mut year: String = "".into();
+    let game_path = args.game.clone();
+    if let Some(ext) = game_path.extension() {
+        let ext = ext.to_str().unwrap();
+        if ext == "m3u" {
+            let map = parse_m3u(&game_path).unwrap();
+            if let Some(t) = map.get("title") {
+                title = format!("\"{t}\"");
+            }
+            if let Some(t) = map.get("group") {
+                group = t.clone();
+            }
+            if let Some(t) = map.get("year") {
+                year = t.clone();
+            }
+        }
+    }
+    commands.spawn((
+        Node {
+            //width: Val::Px(400.0),
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+            right: Val::Px(0.0),
+            margin: UiRect::all(Val::Px(60.0)),
+            ..default()
+        },
+        Text::new(format!("{title}\n{group}\n{year}")),
+        TextFont {
+            font_size: 52.0,
+            ..default()
+        },
+        TextColor(Color::linear_rgb(1.0, 1.0, 1.0)),
+        TextLayout {
+            justify: Justify::Right,
+            linebreak: LineBreak::WordBoundary,
+        },
     ));
 }
 
@@ -328,6 +409,7 @@ fn setup_retro(world: &mut World) {
     world.spawn((
         Sprite::from_image(handle.clone()),
         Transform::from_xyz(0.0, 0.0, -1.0),
+        RenderLayers::layer(0),
     ));
 
     world.insert_resource(Background {
@@ -376,6 +458,10 @@ fn run_retro(
         }
     }
 
+    if input.just_pressed(KeyCode::F12) {
+        core.emu.next_disk();
+    }
+
     if time.elapsed_secs_f64() > core.next_frame {
         core.next_frame += SECONDS_PER_FRAME;
         core.emu.run();
@@ -413,6 +499,7 @@ fn spawn_sprites(asset_server: Res<AssetServer>, mut commands: Commands) {
             Transform::from_xyz(0.0, 0.0, 0.0),
             Sprite::from_image(image.clone()),
             Velocity(v),
+            RenderLayers::layer(2),
         ));
     }
 }

@@ -80,6 +80,7 @@ pub enum ScaleMode {
 pub struct PostProcess {
     pub source: Handle<Image>,
     pub scale_mode: ScaleMode,
+    pub aspect_tweak: f32,
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
@@ -131,7 +132,7 @@ fn compute_uniform(
     if target.x == 0 || target.y == 0 || src.x == 0 || src.y == 0 {
         return identity;
     }
-    let target_aspect = target.x as f32 / target.y as f32;
+    let target_aspect = (target.x as f32) / pp.aspect_tweak / target.y as f32;
     let source_aspect = src.x as f32 / src.y as f32;
     let target_wider = target_aspect > source_aspect;
     let scale = match (pp.scale_mode, target_wider) {
