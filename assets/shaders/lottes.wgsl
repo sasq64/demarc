@@ -6,6 +6,12 @@
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var texture_sampler: sampler;
 
+struct PostProcessUniform {
+    uv_scale: vec2<f32>,
+    uv_offset: vec2<f32>,
+}
+@group(0) @binding(2) var<uniform> settings: PostProcessUniform;
+
 const HARD_SCAN: f32 = -8.0;
 const HARD_PIX: f32 = -3.0;
 const WARP_X: f32 = 0.011;
@@ -199,8 +205,13 @@ fn mask(pos_in: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+    let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
+    if any(mapped_uv < vec2<f32>(0.0)) || any(mapped_uv > vec2<f32>(1.0)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+
     let source_size = vec2<f32>(textureDimensions(screen_texture));
-    let pos = warp(in.uv);
+    let pos = warp(mapped_uv);
     var out_color = tri(pos, source_size);
 
     out_color = out_color + bloom(pos, source_size) * BLOOM_AMOUNT;

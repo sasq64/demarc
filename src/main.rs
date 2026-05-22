@@ -24,7 +24,7 @@ mod libretro;
 mod post_process;
 mod retro_emu;
 
-use post_process::{PostProcess, PostProcessPlugin};
+use post_process::{PostProcess, PostProcessPlugin, ScaleMode};
 use ringbuf::{
     HeapCons, HeapProd,
     traits::{Observer, Split, *},
@@ -50,6 +50,30 @@ struct Args {
     /// Path to the program/ROM to load
     #[arg(default_value = DEFAULT_GAME_PATH)]
     game: PathBuf,
+
+    /// How to map the low-res render target onto the window.
+    #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
+    scale: ScaleModeArg,
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum ScaleModeArg {
+    /// Fill the window, distorting the aspect ratio.
+    Stretch,
+    /// Preserve aspect ratio, adding letterbox/pillarbox bars.
+    Fit,
+    /// Preserve aspect ratio, cropping top/bottom or left/right to fill.
+    Zoom,
+}
+
+impl From<ScaleModeArg> for ScaleMode {
+    fn from(s: ScaleModeArg) -> Self {
+        match s {
+            ScaleModeArg::Stretch => ScaleMode::Stretch,
+            ScaleModeArg::Fit => ScaleMode::Fit,
+            ScaleModeArg::Zoom => ScaleMode::Zoom,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -69,7 +93,7 @@ struct Emulator {
 impl Emulator {
     pub fn update(&mut self) {
         self.emu.with_audio(|samples| {
-            println!("{}", self.producer.occupied_len());
+            //println!("{}", self.producer.occupied_len());
             self.producer
                 .push_iter(samples.iter().map(|&i| (i as f32) / 32767.0));
         });
@@ -88,7 +112,6 @@ fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal
         .with_sample_rate(SampleRate(core_sample_rate as u32));
 
     let mut config: StreamConfig = config.into();
-    config.sample_rate = SampleRate(core_sample_rate as u32);
     config.channels = 2;
 
     let stream = device.build_output_stream(
@@ -104,7 +127,7 @@ fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal
     Ok(stream)
 }
 
-fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args: Res<Args>) {
     let image = Image::new_target_texture(
         LOW_RES_WIDTH,
         LOW_RES_HEIGHT,
@@ -128,7 +151,10 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             order: 1,
             ..default()
         },
-        PostProcess { source: low_res },
+        PostProcess {
+            source: low_res,
+            scale_mode: args.scale.into(),
+        },
         RenderLayers::layer(1),
     ));
 }
@@ -195,12 +221,12 @@ fn run_retro(
         return;
     };
 
-    info!(
-        "time {} delta {} next_frame {}",
-        time.elapsed_secs_f64(),
-        time.delta_secs_f64(),
-        core.next_frame
-    );
+    // info!(
+    //     "time {} delta {} next_frame {}",
+    //     time.elapsed_secs_f64(),
+    //     time.delta_secs_f64(),
+    //     core.next_frame
+    // );
     if time.elapsed_secs_f64() > core.next_frame {
         core.next_frame += SECONDS_PER_FRAME;
         core.emu.run();
