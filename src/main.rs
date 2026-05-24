@@ -12,7 +12,6 @@ use bevy::{
     window::WindowMode,
 };
 use clap::Parser;
-use rand::RngExt;
 
 use cpal::{
     SampleFormat, SampleRate, StreamConfig,
@@ -31,30 +30,32 @@ use ringbuf::{
     traits::{Observer, Split, *},
 };
 
-use crate::retro_emu::RetroEmu;
+use crate::retro_emu::RetroCore;
 
-pub struct GamePlugin {}
+pub struct RetroPlugin {}
 
 #[derive(Component)]
-pub struct Velocity(Vec2);
+pub struct InfoText;
 
 const LOW_RES_WIDTH: u32 = 384;
 const LOW_RES_HEIGHT: u32 = 272;
 
 const CORE_PATH: &str = "vice-libretro/vice_x64_libretro.so";
 const SYSTEM_DIR: &str = "system";
-const DEFAULT_GAME_PATH: &str = "to_norah.prg";
 
 #[derive(Parser, Debug, Resource, Clone)]
 #[command(name = "rupix", about = "Bevy + libretro front-end")]
 struct Args {
     /// Path to the program/ROM to load
-    #[arg(default_value = DEFAULT_GAME_PATH)]
-    game: PathBuf,
+    games: Vec<PathBuf>,
 
     /// How to map the low-res render target onto the window.
     #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
     scale: ScaleModeArg,
+
+    /// Shuffle the list of games into a random order.
+    #[arg(long)]
+    shuffle: bool,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -85,7 +86,10 @@ struct Background {
 }
 
 struct Emulator {
-    emu: RetroEmu,
+    core: RetroCore,
+    games: Vec<PathBuf>,
+    current_game: usize,
+    run_next: bool,
     producer: HeapProd<f32>,
     _stream: cpal::Stream,
     next_frame: f64,
@@ -228,7 +232,7 @@ impl Emulator {
     }
 
     pub fn update(&mut self) {
-        self.emu.with_audio(|samples| {
+        self.core.with_audio(|samples| {
             //println!("{}", self.producer.occupied_len());
             self.producer
                 .push_iter(samples.iter().map(|&i| (i as f32) / 32767.0));
@@ -335,25 +339,6 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args
         RenderLayers::layer(2),
     ));
 
-    let mut title: String = "".into();
-    let mut group: String = "".into();
-    let mut year: String = "".into();
-    let game_path = args.game.clone();
-    if let Some(ext) = game_path.extension() {
-        let ext = ext.to_str().unwrap();
-        if ext == "m3u" {
-            let map = parse_m3u(&game_path).unwrap();
-            if let Some(t) = map.get("title") {
-                title = format!("\"{t}\"");
-            }
-            if let Some(t) = map.get("group") {
-                group = t.clone();
-            }
-            if let Some(t) = map.get("year") {
-                year = t.clone();
-            }
-        }
-    }
     commands.spawn((
         Node {
             //width: Val::Px(400.0),
@@ -363,9 +348,10 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args
             margin: UiRect::all(Val::Px(60.0)),
             ..default()
         },
-        Text::new(format!("{title}\n{group}\n{year}")),
+        Text::new(""),
+        InfoText,
         TextFont {
-            font_size: 52.0,
+            font_size: 48.0,
             ..default()
         },
         TextColor(Color::linear_rgb(1.0, 1.0, 1.0)),
@@ -381,14 +367,9 @@ const CLOCK_HZ: f64 = 985248.0;
 const SECONDS_PER_FRAME: f64 = CYCLES_PER_FRAME / CLOCK_HZ;
 
 fn setup_retro(world: &mut World) {
-    let mut core = RetroEmu::new(Path::new(CORE_PATH), Path::new(SYSTEM_DIR))
-        .expect("Failed to load libretro core");
-
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
     let stream = init_audio_stream(48000.0, consumer).unwrap();
 
-    let game_path = world.resource::<Args>().game.clone();
-    core.load_game(&game_path).unwrap();
     let width = 384;
     let height = 272;
 
@@ -417,21 +398,32 @@ fn setup_retro(world: &mut World) {
         width,
         height,
     });
+
+    let settings: HashMap<String, String> =
+        [("vice_cartridge".into(), "rr38ppal.crt".into())].into();
+
     let time = world.resource::<Time>();
+    let games = &world.resource::<Args>().games;
+    let core = RetroCore::new(Path::new(CORE_PATH), Path::new(SYSTEM_DIR), None, settings)
+        .expect("Failed to load libretro core");
     world.insert_non_send_resource(Emulator {
-        emu: core,
+        core,
         producer,
         _stream: stream,
+        current_game: 0,
+        run_next: !games.is_empty(),
+        games: games.clone(),
         next_frame: time.elapsed_secs_f64() + SECONDS_PER_FRAME,
         key_map: Emulator::build_keycode_map(),
     });
 }
 
 fn run_retro(
-    mut core: NonSendMut<Emulator>,
+    mut emu: NonSendMut<Emulator>,
     input: Res<ButtonInput<KeyCode>>,
     bg: Res<Background>,
     time: Res<Time>,
+    mut text: Single<&mut Text, With<InfoText>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(image) = images.get_mut(&bg.handle) else {
@@ -440,6 +432,48 @@ fn run_retro(
     let Some(dst) = image.data.as_mut() else {
         return;
     };
+    if input.just_pressed(KeyCode::F11) {
+        emu.run_next = true;
+    }
+    if emu.run_next {
+        emu.core.unload();
+        let game = emu.games[emu.current_game].clone();
+        let mut title: String = "".into();
+        let mut group: String = "".into();
+        let mut year: String = "".into();
+        let mut settings = HashMap::new();
+        if let Some(ext) = game.extension()
+            && ext == "m3u"
+        {
+            let map = parse_m3u(&game).unwrap();
+            if let Some(t) = map.get("title") {
+                title = format!("\"{t}\"");
+            }
+            if let Some(t) = map.get("group") {
+                group = t.clone();
+            }
+            if let Some(t) = map.get("year") {
+                year = t.clone();
+            }
+            for (key, val) in map {
+                if key.starts_with("vice_") {
+                    settings.insert(key, val);
+                }
+            }
+        } else {
+            title = game.file_name().unwrap().to_string_lossy().to_string();
+        }
+        text.0 = format!("{title}\n{group}\n{year}");
+        emu.core = RetroCore::new(
+            Path::new(CORE_PATH),
+            Path::new(SYSTEM_DIR),
+            Some(&game),
+            settings,
+        )
+        .expect("Failed to load libretro core");
+        emu.run_next = false;
+        emu.current_game += 1;
+    }
 
     // info!(
     //     "time {} delta {} next_frame {}",
@@ -447,36 +481,61 @@ fn run_retro(
     //     time.delta_secs_f64(),
     //     core.next_frame
     // );
+    //
+
+    let mut mods: u16 = libretro::RETROKMOD_NONE as u16;
+    if input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight) {
+        mods |= libretro::RETROKMOD_SHIFT as u16;
+    }
+    if input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight) {
+        mods |= libretro::RETROKMOD_CTRL as u16;
+    }
+    if input.pressed(KeyCode::AltLeft) || input.pressed(KeyCode::AltRight) {
+        mods |= libretro::RETROKMOD_ALT as u16;
+    }
+    if input.pressed(KeyCode::SuperLeft) || input.pressed(KeyCode::SuperRight) {
+        mods |= libretro::RETROKMOD_META as u16;
+    }
+    if input.pressed(KeyCode::NumLock) {
+        mods |= libretro::RETROKMOD_NUMLOCK as u16;
+    }
+    if input.pressed(KeyCode::CapsLock) {
+        mods |= libretro::RETROKMOD_CAPSLOCK as u16;
+    }
+    if input.pressed(KeyCode::ScrollLock) {
+        mods |= libretro::RETROKMOD_SCROLLOCK as u16;
+    }
+
     for e in input.get_just_pressed() {
-        if let Some(code) = core.key_map.get(e) {
-            core.emu.press_key(*code, true);
+        if let Some(code) = emu.key_map.get(e) {
+            emu.core.press_key(*code, true, mods);
         }
     }
     for e in input.get_just_released() {
-        if let Some(code) = core.key_map.get(e) {
-            core.emu.press_key(*code, false);
+        if let Some(code) = emu.key_map.get(e) {
+            emu.core.press_key(*code, false, mods);
         }
     }
 
     if input.just_pressed(KeyCode::F12) {
-        core.emu.next_disk();
+        emu.core.next_disk();
     }
 
-    if time.elapsed_secs_f64() > core.next_frame {
-        core.next_frame += SECONDS_PER_FRAME;
-        core.emu.run();
-        core.update();
+    if time.elapsed_secs_f64() > emu.next_frame {
+        emu.next_frame += SECONDS_PER_FRAME;
+        emu.core.run();
+        emu.update();
     }
 
-    if core.producer.occupied_len() < 4000 {
-        core.emu.run();
-        core.update();
+    if emu.producer.occupied_len() < 4000 {
+        emu.core.run();
+        emu.update();
     }
 
     let bg_w = bg.width as usize;
     let bg_h = bg.height as usize;
 
-    core.emu.with_frame(|w, h, frame| {
+    emu.core.with_frame(|w, h, frame| {
         let copy_w = w.min(bg_w);
         let copy_h = h.min(bg_h);
         for y in 0..copy_h {
@@ -488,49 +547,26 @@ fn run_retro(
     });
 }
 
-fn spawn_sprites(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let image: Handle<Image> = asset_server.load("face.png");
-    let mut rng = rand::rng();
-
-    for _ in 0..1 {
-        let v = Vec2::new(rng.random_range(-5.0..5.0), rng.random_range(-5.0..5.0));
-
-        let mut _entity = commands.spawn((
-            Transform::from_xyz(0.0, 0.0, 0.0),
-            Sprite::from_image(image.clone()),
-            Velocity(v),
-            RenderLayers::layer(2),
-        ));
-    }
-}
-
-fn update_sprites(mut sprites: Query<(&mut Transform, &Velocity)>) {
-    for (mut tx, vel) in sprites.iter_mut() {
-        tx.translation += vel.0.extend(0.0);
-        if tx.translation.x > 640.0 {
-            tx.translation.x -= 1280.0;
-        }
-        if tx.translation.y > 3600.0 {
-            tx.translation.y -= 720.0;
-        }
-    }
-}
-
-impl Plugin for GamePlugin {
+impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_cameras, setup_retro));
-        app.add_systems(Update, (run_retro, update_sprites));
+        app.add_systems(Update, run_retro);
     }
 }
 
 fn main() {
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    if args.shuffle {
+        use rand::seq::SliceRandom;
+        args.games.shuffle(&mut rand::rng());
+    }
 
     tracing_subscriber::fmt().with_target(true).compact().init();
     let primary_window = Some(Window {
         title: "Rupix".into(),
         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-        //resolution: (384 * 4, 272 * 4).into(),
+        //resolution: (384 * 3, 288 * 3).into(),
         resizable: false,
         ..Default::default()
     });
@@ -542,7 +578,7 @@ fn main() {
                 primary_window,
                 ..Default::default()
             }),
-            GamePlugin {},
+            RetroPlugin {},
             PostProcessPlugin,
         ))
         .run();

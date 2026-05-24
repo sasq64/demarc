@@ -206,9 +206,9 @@ fn mask(pos_in: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
-    if any(mapped_uv < vec2<f32>(0.0)) || any(mapped_uv > vec2<f32>(1.0)) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
+    // if any(mapped_uv < vec2<f32>(0.0)) || any(mapped_uv > vec2<f32>(1.0)) {
+    //     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    // }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));
     let pos = warp(mapped_uv);

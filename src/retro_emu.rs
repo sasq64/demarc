@@ -3,7 +3,6 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
-use std::mem;
 use std::path::Path;
 
 use libloading::Library;
@@ -18,18 +17,28 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_VARIABLES,
     RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    retro_disk_control_callback, retro_disk_control_ext_callback, retro_game_info,
-    retro_keyboard_callback, retro_pixel_format, retro_system_av_info, retro_variable,
+    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
+    retro_disk_control_ext_callback, retro_environment_t, retro_game_info, retro_input_poll_t,
+    retro_input_state_t, retro_keyboard_callback, retro_pixel_format, retro_system_av_info,
+    retro_variable, retro_video_refresh_t,
 };
 
-type EnvironmentCb = unsafe extern "C" fn(cmd: c_uint, data: *mut c_void) -> bool;
-type VideoRefreshCb =
-    unsafe extern "C" fn(data: *const c_void, width: c_uint, height: c_uint, pitch: usize);
-type InputPollCb = unsafe extern "C" fn();
-type InputStateCb =
-    unsafe extern "C" fn(port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16;
-type AudioSampleCb = unsafe extern "C" fn(left: i16, right: i16);
-type AudioSampleBatchCb = unsafe extern "C" fn(data: *const i16, frames: usize) -> usize;
+trait OptionInner {
+    type Inner;
+}
+
+impl<T> OptionInner for Option<T> {
+    type Inner = T;
+}
+
+macro_rules! load_sym {
+    ($lib:expr, $ft:ident, $name:expr) => {{
+        type T = <$ft as OptionInner>::Inner;
+        let raw: ::libloading::Symbol<T> = unsafe { $lib.get($name) }?;
+        let f: T = *raw;
+        f
+    }};
+}
 
 #[derive(Default)]
 pub struct RetroState {
@@ -40,11 +49,12 @@ pub struct RetroState {
     pixel_format: c_int,
 }
 
-pub struct RetroEmu {
+pub struct RetroCore {
     lib: Option<Library>,
     retro_run_fn: unsafe extern "C" fn(),
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
     retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info),
+    retro_deinit_fn: unsafe extern "C" fn(),
     retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
     disk_ext_callback: Option<retro_disk_control_ext_callback>,
     disk_callback: Option<retro_disk_control_callback>,
@@ -55,31 +65,39 @@ pub struct RetroEmu {
     system_path: CString,
     image_index: usize,
 }
-
-thread_local! {
-    static CURRENT_EMU: Cell<*mut RetroEmu> = const { Cell::new(std::ptr::null_mut()) }
+impl Drop for RetroCore {
+    fn drop(&mut self) {
+        if self.lib.is_some() {
+            unsafe { (self.retro_deinit_fn)() }
+        }
+    }
 }
 
-impl RetroEmu {
+thread_local! {
+    static CURRENT_EMU: Cell<*mut RetroCore> = const { Cell::new(std::ptr::null_mut()) }
+}
+
+impl RetroCore {
+    pub fn unload(&mut self) {
+        unsafe { (self.retro_deinit_fn)() }
+        self.lib = None;
+    }
     pub fn next_disk(&mut self) {
-        println!("NEXT");
+        self.image_index += 1;
         if let Some(cb) = self.disk_ext_callback {
             unsafe {
                 (cb.set_eject_state.unwrap())(true);
-                self.image_index += 1;
-                println!("INDEX {}", self.image_index);
                 (cb.set_image_index.unwrap())(self.image_index as u32);
                 (cb.set_eject_state.unwrap())(false);
             }
         } else if let Some(cb) = self.disk_callback {
             unsafe {
                 (cb.set_eject_state.unwrap())(true);
-                self.image_index += 1;
-                println!("INDEX {}", self.image_index);
                 (cb.set_image_index.unwrap())(self.image_index as u32);
                 (cb.set_eject_state.unwrap())(false);
             }
         }
+        println!("INDEX {}", self.image_index);
     }
 
     pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u8])) {
@@ -98,7 +116,7 @@ impl RetroEmu {
             let ptr = p.get();
             if !ptr.is_null() {
                 let ctx = unsafe { &mut *ptr };
-                if let Some(kfn) = ctx.retro_set_keyboard {
+                if let Some(_kfn) = ctx.retro_set_keyboard {
                     // down, keycode, character, mods
                     //unsafe { kfn(true, 0, 0, 0) }
                 }
@@ -106,10 +124,10 @@ impl RetroEmu {
         });
     }
     unsafe extern "C" fn input_state_cb(
-        port: c_uint,
-        device: c_uint,
-        index: c_uint,
-        id: c_uint,
+        _port: c_uint,
+        _device: c_uint,
+        _index: c_uint,
+        _id: c_uint,
     ) -> i16 {
         //println!("{port} {device} {index:08x} {id}");
         0
@@ -308,23 +326,32 @@ impl RetroEmu {
         self.vars.insert(name.into(), v);
     }
 
-    pub fn new(core_path: &Path, system_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        core_path: &Path,
+        system_dir: &Path,
+        game: Option<&Path>,
+        settings: HashMap<String, String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let lib = unsafe { Library::new(core_path)? };
         unsafe {
-            let lib = Library::new(core_path)?;
-
-            let retro_set_environment: libloading::Symbol<unsafe extern "C" fn(EnvironmentCb)> =
-                lib.get(b"retro_set_environment")?;
-            let retro_set_video_refresh: libloading::Symbol<unsafe extern "C" fn(VideoRefreshCb)> =
-                lib.get(b"retro_set_video_refresh")?;
-            let retro_set_audio_sample: libloading::Symbol<unsafe extern "C" fn(AudioSampleCb)> =
-                lib.get(b"retro_set_audio_sample")?;
+            let retro_set_environment: libloading::Symbol<
+                unsafe extern "C" fn(<retro_environment_t as OptionInner>::Inner),
+            > = lib.get(b"retro_set_environment")?;
+            let retro_set_video_refresh: libloading::Symbol<
+                unsafe extern "C" fn(<retro_video_refresh_t as OptionInner>::Inner),
+            > = lib.get(b"retro_set_video_refresh")?;
+            let retro_set_audio_sample: libloading::Symbol<
+                unsafe extern "C" fn(<retro_audio_sample_t as OptionInner>::Inner),
+            > = lib.get(b"retro_set_audio_sample")?;
             let retro_set_audio_sample_batch: libloading::Symbol<
-                unsafe extern "C" fn(AudioSampleBatchCb),
+                unsafe extern "C" fn(<retro_audio_sample_batch_t as OptionInner>::Inner),
             > = lib.get(b"retro_set_audio_sample_batch")?;
-            let retro_set_input_poll: libloading::Symbol<unsafe extern "C" fn(InputPollCb)> =
-                lib.get(b"retro_set_input_poll")?;
-            let retro_set_input_state: libloading::Symbol<unsafe extern "C" fn(InputStateCb)> =
-                lib.get(b"retro_set_input_state")?;
+            let retro_set_input_poll: libloading::Symbol<
+                unsafe extern "C" fn(<retro_input_poll_t as OptionInner>::Inner),
+            > = lib.get(b"retro_set_input_poll")?;
+            let retro_set_input_state: libloading::Symbol<
+                unsafe extern "C" fn(<retro_input_state_t as OptionInner>::Inner),
+            > = lib.get(b"retro_set_input_state")?;
             let retro_init: libloading::Symbol<unsafe extern "C" fn()> = lib.get(b"retro_init")?;
             let retro_load_game: libloading::Symbol<
                 unsafe extern "C" fn(*const retro_game_info) -> bool,
@@ -335,24 +362,25 @@ impl RetroEmu {
 
             let retro_run_sym: libloading::Symbol<unsafe extern "C" fn()> =
                 lib.get(b"retro_run")?;
-            // let retro_deinit_sym: libloading::Symbol<unsafe extern "C" fn()> =
-            //     lib.get(b"retro_deinit")?;
+            let retro_deinit_sym: libloading::Symbol<unsafe extern "C" fn()> =
+                lib.get(b"retro_deinit")?;
             // let retro_unload_game_sym: libloading::Symbol<unsafe extern "C" fn()> =
             //     lib.get(b"retro_unload_game")?;
 
             let retro_run_fn: unsafe extern "C" fn() = *retro_run_sym;
-            //let retro_deinit_fn: unsafe extern "C" fn() = *retro_deinit_sym;
+            let retro_deinit_fn: unsafe extern "C" fn() = *retro_deinit_sym;
             let retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info) =
                 *retro_get_system_av_info;
             //let retro_unload_game_fn: unsafe extern "C" fn() = *retro_unload_game_sym;
             let retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool =
                 *retro_load_game;
 
-            let mut retro_emu = RetroEmu {
+            let mut retro_emu = RetroCore {
                 lib: None,
                 retro_run_fn,
                 retro_load_game_fn,
                 retro_get_avinfo_fn,
+                retro_deinit_fn,
                 retro_set_keyboard: None,
                 disk_ext_callback: None,
                 disk_callback: None,
@@ -378,9 +406,21 @@ impl RetroEmu {
             //retro_emu.set_var("vice_cartridge", "rr38ppal.crt");
             retro_emu.set_var("vice_jiffydos", "enabled");
 
+            for (key, val) in settings.iter() {
+                retro_emu.set_var(key, val);
+            }
+
             println!("## INIT");
             retro_init();
             println!("## INIT DONE");
+
+            if let Some(game) = game {
+                retro_emu.load_game(game)?;
+            } else {
+                if !(retro_emu.retro_load_game_fn)(std::ptr::null_mut()) {
+                    return Err("retro_load_game failed".into());
+                }
+            }
 
             let mut av_info = retro_system_av_info::default();
             retro_get_avinfo_fn(&mut av_info);
@@ -391,7 +431,7 @@ impl RetroEmu {
         }
     }
 
-    pub fn load_game(&mut self, game_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fn load_game(&mut self, game_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let game_data = std::fs::read(game_path)?;
         let game_path_c = CString::new(game_path.to_string_lossy().as_bytes())?;
         let game_info = retro_game_info {
@@ -400,17 +440,10 @@ impl RetroEmu {
             size: game_data.len(),
             meta: std::ptr::null(),
         };
-        CURRENT_EMU.with(|p| p.set(self as *mut _));
+        info!("Loading {:?}", game_path);
         if !unsafe { (self.retro_load_game_fn)(&game_info) } {
-            CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
             return Err(format!("retro_load_game({}) failed", game_path.display()).into());
         }
-        let mut av_info = retro_system_av_info::default();
-        unsafe { (self.retro_get_avinfo_fn)(&mut av_info) }
-        CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
-        println!("{:?}", av_info);
-        //let audio_stream = init_audio_stream(av_info.timing.sample_rate);
-
         Ok(())
     }
     pub fn run(&mut self) {
@@ -432,9 +465,9 @@ impl RetroEmu {
         Ok(())
     }
 
-    pub(crate) fn press_key(&self, code: u32, arg: bool) {
+    pub(crate) fn press_key(&self, code: u32, down: bool, mods: u16) {
         if let Some(cb) = self.retro_set_keyboard {
-            unsafe { cb(arg, code, 0, 0) }
+            unsafe { cb(down, code, 0, mods) }
         }
     }
 }
@@ -449,7 +482,7 @@ mod tests {
         let system_dir = Path::new("system");
         let game_path = Path::new("ne.d64");
 
-        let mut retro_emu = RetroEmu::new(core_path, system_dir).unwrap();
+        let mut retro_emu = RetroCore::new(core_path, system_dir).unwrap();
         retro_emu.load_game(game_path).unwrap();
         println!("## RUN");
         for _ in 0..6000 {
