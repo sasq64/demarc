@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -11,6 +12,8 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::WindowMode,
 };
+use bevy_tweening::lens::TextColorLens;
+use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim, TweeningPlugin};
 use clap::Parser;
 
 use cpal::{
@@ -338,28 +341,84 @@ fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args
         },
         RenderLayers::layer(2),
     ));
+}
 
-    commands.spawn((
-        Node {
-            //width: Val::Px(400.0),
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(0.0),
-            right: Val::Px(0.0),
-            margin: UiRect::all(Val::Px(60.0)),
-            ..default()
-        },
-        Text::new(""),
-        InfoText,
-        TextFont {
-            font_size: 48.0,
-            ..default()
-        },
-        TextColor(Color::linear_rgb(1.0, 1.0, 1.0)),
-        TextLayout {
-            justify: Justify::Right,
-            linebreak: LineBreak::WordBoundary,
-        },
-    ));
+#[derive(Message)]
+struct SpawnToast {
+    text: String,
+    delay: Duration,
+    duration: Duration,
+}
+
+fn spawn_toast(mut commands: Commands, mut reader: MessageReader<SpawnToast>) {
+    for msg in reader.read() {
+        let tween0 = Tween::new(
+            EaseFunction::QuadraticInOut,
+            Duration::from_secs(1),
+            TextColorLens {
+                start: Color::srgba(0., 0., 0., 0.),
+                end: Color::WHITE,
+            },
+        );
+        let tween = Tween::new(
+            EaseFunction::QuadraticInOut,
+            Duration::from_secs(1),
+            TextColorLens {
+                start: Color::WHITE,
+                end: Color::srgba(0., 0., 0., 0.),
+            },
+        )
+        .with_cycle_completed_event(true);
+
+        let delayed = Delay::new(msg.delay)
+            .then(tween0)
+            .then(Delay::new(msg.duration))
+            .then(tween);
+
+        commands.spawn((
+            Node {
+                //width: Val::Px(400.0),
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(0.0),
+                right: Val::Px(0.0),
+                margin: UiRect::all(Val::Px(60.0)),
+                ..default()
+            },
+            Text::new(&msg.text),
+            InfoText,
+            TextFont {
+                font_size: 48.0,
+                ..default()
+            },
+            TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+            TextLayout {
+                justify: Justify::Right,
+                linebreak: LineBreak::WordBoundary,
+            },
+            TweenAnim::new(delayed),
+        ));
+    }
+}
+
+fn handle_tween_done(mut commands: Commands, mut reader: MessageReader<CycleCompletedEvent>) {
+    for msg in reader.read() {
+        info!("DESPAWN");
+        commands.entity(msg.anim_entity).despawn();
+    }
+}
+
+struct HudPlugin;
+
+impl Plugin for HudPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<SpawnToast>().add_systems(
+            Update,
+            (
+                spawn_toast.run_if(on_message::<SpawnToast>),
+                handle_tween_done.run_if(on_message::<CycleCompletedEvent>),
+            ),
+        );
+    }
 }
 
 const CYCLES_PER_FRAME: f64 = 19656.0;
@@ -423,7 +482,7 @@ fn run_retro(
     input: Res<ButtonInput<KeyCode>>,
     bg: Res<Background>,
     time: Res<Time>,
-    mut text: Single<&mut Text, With<InfoText>>,
+    mut writer: MessageWriter<SpawnToast>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(image) = images.get_mut(&bg.handle) else {
@@ -463,7 +522,13 @@ fn run_retro(
         } else {
             title = game.file_name().unwrap().to_string_lossy().to_string();
         }
-        text.0 = format!("{title}\n{group}\n{year}");
+
+        writer.write(SpawnToast {
+            text: format!("{title}\n{group}\n{year}"),
+            delay: Duration::from_secs(5),
+            duration: Duration::from_secs(15),
+        });
+
         emu.core = RetroCore::new(
             Path::new(CORE_PATH),
             Path::new(SYSTEM_DIR),
@@ -580,6 +645,8 @@ fn main() {
             }),
             RetroPlugin {},
             PostProcessPlugin,
+            TweeningPlugin,
+            HudPlugin,
         ))
         .run();
 }

@@ -6,21 +6,41 @@ use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
 use std::path::Path;
 
 use libloading::Library;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace, warn};
+
+unsafe extern "C" {
+    fn rupix_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rupix_retro_log_rust(level: c_int, msg: *const c_char) {
+    if msg.is_null() {
+        return;
+    }
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    let s = s.trim_end_matches(['\r', '\n']);
+    match level as u32 {
+        0 => debug!(target: "retro", "{s}"),
+        1 => debug!(target: "retro", "{s}"),
+        2 => warn!(target: "retro", "{s}"),
+        _ => warn!(target: "retro", "{s}"),
+    }
+}
 
 use crate::libretro::{
     RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
-    RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
-    RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_VARIABLE,
-    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
-    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_VARIABLES,
-    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
-    retro_disk_control_ext_callback, retro_environment_t, retro_game_info, retro_input_poll_t,
-    retro_input_state_t, retro_keyboard_callback, retro_pixel_format, retro_system_av_info,
-    retro_variable, retro_video_refresh_t,
+    RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
+    RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
+    RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
+    RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
+    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
+    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
+    retro_game_info, retro_input_poll_t, retro_input_state_t, retro_keyboard_callback,
+    retro_log_callback, retro_log_level, retro_log_printf_t, retro_pixel_format,
+    retro_system_av_info, retro_variable, retro_video_refresh_t,
 };
 
 trait OptionInner {
@@ -228,7 +248,6 @@ impl RetroCore {
         });
         ret
     }
-
     fn environment(&mut self, cmd: u32, data: *mut c_void) -> bool {
         trace!("## ENV {cmd}");
         unsafe {
@@ -242,6 +261,10 @@ impl RetroCore {
                     println!("DISK EXT");
                     let callback = data as *mut retro_disk_control_ext_callback;
                     self.disk_ext_callback = Some(*callback);
+                    true
+                }
+                RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
+                    (*(data as *mut retro_log_callback)).log = Some(rupix_retro_log_shim);
                     true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
