@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use bevy::{
     asset::RenderAssetUsages,
-    camera::{RenderTarget, visibility::RenderLayers},
+    camera::visibility::RenderLayers,
     image::Image,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
@@ -40,10 +40,9 @@ pub struct RetroPlugin {}
 #[derive(Component)]
 pub struct InfoText;
 
-const LOW_RES_WIDTH: u32 = 384;
-const LOW_RES_HEIGHT: u32 = 272;
-
-const CORE_PATH: &str = "vice-libretro/vice_x64_libretro.so";
+const CORE_PATH_VICE: &str = "vice-libretro/vice_x64_libretro.so";
+const CORE_PATH_UAE: &str = "libretro-uae/puae_libretro.so";
+const CORE_PATH: &str = "libretro-uae/puae_libretro.so";
 const SYSTEM_DIR: &str = "system";
 
 #[derive(Parser, Debug, Resource, Clone)]
@@ -236,7 +235,6 @@ impl Emulator {
 
     pub fn update(&mut self) {
         self.core.with_audio(|samples| {
-            //println!("{}", self.producer.occupied_len());
             self.producer
                 .push_iter(samples.iter().map(|&i| (i as f32) / 32767.0));
         });
@@ -255,6 +253,10 @@ fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal
         .with_sample_rate(SampleRate(core_sample_rate as u32));
 
     let mut config: StreamConfig = config.into();
+    info!(
+        "cpal cfg: rate={} channels={}",
+        config.sample_rate.0, config.channels
+    );
     config.channels = 2;
 
     let stream = device.build_output_stream(
@@ -270,72 +272,63 @@ fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal
     Ok(stream)
 }
 
-fn parse_m3u(path: &Path) -> Result<HashMap<String, String>> {
-    let contents = std::fs::read_to_string(path)?;
-    let mut tags = HashMap::new();
-    for line in contents.lines() {
-        let Some(rest) = line.strip_prefix("#EXTINF:") else {
-            continue;
-        };
-        let mut remaining = rest;
-        while let Some(eq) = remaining.find("=\"") {
-            let key_start = remaining[..eq]
-                .rfind(|c: char| c.is_whitespace() || c == ',')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let key = remaining[key_start..eq].trim();
-            let after_quote = &remaining[eq + 2..];
-            let Some(end) = after_quote.find('"') else {
-                break;
-            };
-            let value = &after_quote[..end];
-            if !key.is_empty() {
-                tags.insert(key.to_string(), value.to_string());
-            }
-            remaining = &after_quote[end + 1..];
-        }
-        break;
-    }
-    Ok(tags)
+struct M3u {
+    tags: HashMap<String, String>,
+    files: Vec<PathBuf>,
 }
 
-fn setup_cameras(mut commands: Commands, mut images: ResMut<Assets<Image>>, args: Res<Args>) {
-    let image = Image::new_target_texture(
-        LOW_RES_WIDTH,
-        LOW_RES_HEIGHT,
-        TextureFormat::bevy_default(),
-        None,
-    );
-    let low_res = images.add(image);
+fn parse_m3u(path: &Path) -> Result<M3u> {
+    let contents = std::fs::read_to_string(path)?;
+    let mut tags = HashMap::new();
+    let mut files: Vec<PathBuf> = vec![];
+    for line in contents.lines() {
+        if let Some(rest) = line.strip_prefix("#EXTINF:") {
+            let mut remaining = rest;
+            while let Some(eq) = remaining.find("=\"") {
+                let key_start = remaining[..eq]
+                    .rfind(|c: char| c.is_whitespace() || c == ',')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let key = remaining[key_start..eq].trim();
+                let after_quote = &remaining[eq + 2..];
+                let Some(end) = after_quote.find('"') else {
+                    break;
+                };
+                let value = &after_quote[..end];
+                if !key.is_empty() {
+                    tags.insert(key.to_string(), value.to_string());
+                }
+                remaining = &after_quote[end + 1..];
+            }
+        } else if !line.starts_with('#') {
+            files.push(line.into());
+        }
+    }
+    Ok(M3u { tags, files })
+}
 
+fn setup_cameras(mut commands: Commands, args: Res<Args>, background: Res<Background>) {
+    // Samples the emulator texture directly and renders it to the screen,
+    // letting the post-process shader handle scaling to the window.
     commands.spawn((
         Camera2d,
         Camera {
             order: 0,
             ..default()
         },
-        RenderTarget::Image(low_res.clone().into()),
-        RenderLayers::layer(0),
-    ));
-
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: 1,
-            ..default()
-        },
         PostProcess {
-            source: low_res,
+            source: background.handle.clone(),
             scale_mode: args.scale.into(),
             aspect_tweak: 0.9375, // C64 non square pixels
         },
         RenderLayers::layer(1),
     ));
 
+    // Camera for full res UI on top of screen
     commands.spawn((
         Camera2d,
         Camera {
-            order: 2,
+            order: 1,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -427,10 +420,10 @@ const SECONDS_PER_FRAME: f64 = CYCLES_PER_FRAME / CLOCK_HZ;
 
 fn setup_retro(world: &mut World) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-    let stream = init_audio_stream(48000.0, consumer).unwrap();
+    let stream = init_audio_stream(44100.0, consumer).unwrap();
 
-    let width = 384;
-    let height = 272;
+    let width = 720;
+    let height = 574;
 
     let pixels = vec![0u8; (width * height * 4) as usize];
     let image = Image::new(
@@ -445,12 +438,6 @@ fn setup_retro(world: &mut World) {
         RenderAssetUsages::all(),
     );
     let handle = world.resource_mut::<Assets<Image>>().add(image);
-
-    world.spawn((
-        Sprite::from_image(handle.clone()),
-        Transform::from_xyz(0.0, 0.0, -1.0),
-        RenderLayers::layer(0),
-    ));
 
     world.insert_resource(Background {
         handle,
@@ -477,10 +464,36 @@ fn setup_retro(world: &mut World) {
     });
 }
 
+enum SystemType {
+    C64,
+    Amiga,
+    Unknown,
+}
+
+fn get_sytem_type(path: &Path) -> SystemType {
+    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+        match ext {
+            "adf" => SystemType::Amiga,
+            "prg" | "d64" => SystemType::C64,
+            _ => SystemType::Unknown,
+        }
+    } else {
+        SystemType::Unknown
+    }
+}
+
+fn get_core(sytem_type: SystemType) -> PathBuf {
+    match sytem_type {
+        SystemType::C64 => CORE_PATH_VICE.into(),
+        SystemType::Amiga => CORE_PATH_UAE.into(),
+        _ => CORE_PATH.into(),
+    }
+}
+
 fn run_retro(
     mut emu: NonSendMut<Emulator>,
     input: Res<ButtonInput<KeyCode>>,
-    bg: Res<Background>,
+    mut bg: ResMut<Background>,
     time: Res<Time>,
     mut writer: MessageWriter<SpawnToast>,
     mut images: ResMut<Assets<Image>>,
@@ -501,25 +514,30 @@ fn run_retro(
         let mut group: String = "".into();
         let mut year: String = "".into();
         let mut settings = HashMap::new();
+        let mut system_type = SystemType::Unknown;
         if let Some(ext) = game.extension()
             && ext == "m3u"
         {
-            let map = parse_m3u(&game).unwrap();
-            if let Some(t) = map.get("title") {
+            let m3u = parse_m3u(&game).unwrap();
+            if let Some(t) = m3u.tags.get("title") {
                 title = format!("\"{t}\"");
             }
-            if let Some(t) = map.get("group") {
+            if let Some(t) = m3u.tags.get("group") {
                 group = t.clone();
             }
-            if let Some(t) = map.get("year") {
+            if let Some(t) = m3u.tags.get("year") {
                 year = t.clone();
             }
-            for (key, val) in map {
+            for (key, val) in m3u.tags {
                 if key.starts_with("vice_") {
                     settings.insert(key, val);
                 }
             }
+            if let Some(path) = m3u.files.first() {
+                system_type = get_sytem_type(path);
+            }
         } else {
+            system_type = get_sytem_type(&game);
             title = game.file_name().unwrap().to_string_lossy().to_string();
         }
 
@@ -530,7 +548,7 @@ fn run_retro(
         });
 
         emu.core = RetroCore::new(
-            Path::new(CORE_PATH),
+            Path::new(&get_core(system_type)),
             Path::new(SYSTEM_DIR),
             Some(&game),
             settings,
@@ -586,7 +604,13 @@ fn run_retro(
         emu.core.next_disk();
     }
 
+    // info!(
+    //     "FRAME {} {}",
+    //     time.delta_secs(),
+    //     emu.producer.occupied_len()
+    // );
     if time.elapsed_secs_f64() > emu.next_frame {
+        //info!("EMULATE");
         emu.next_frame += SECONDS_PER_FRAME;
         emu.core.run();
         emu.update();
@@ -610,11 +634,32 @@ fn run_retro(
                 .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
         }
     });
+    let (w, h) = emu.core.get_frame_size();
+    if w != bg_w || h != bg_h {
+        warn!("SIZE CHANGE TO {w} {h}");
+        bg.width = w as u32;
+        bg.height = h as u32;
+        if let Some(image) = images.get_mut(&bg.handle) {
+            // Recreate with new dimensions
+            info!("RECREATE");
+            *image = Image::new(
+                Extent3d {
+                    width: w as u32,
+                    height: h as u32,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                vec![0u8; w * h * 4], // RGBA zeros
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::default(),
+            );
+        }
+    }
 }
 
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_cameras, setup_retro));
+        app.add_systems(Startup, (setup_retro, setup_cameras).chain());
         app.add_systems(Update, run_retro);
     }
 }
@@ -630,8 +675,8 @@ fn main() {
     tracing_subscriber::fmt().with_target(true).compact().init();
     let primary_window = Some(Window {
         title: "Rupix".into(),
-        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-        //resolution: (384 * 3, 288 * 3).into(),
+        //mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+        resolution: (384 * 3, 288 * 3).into(),
         resizable: false,
         ..Default::default()
     });

@@ -35,12 +35,13 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
     RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
     RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
-    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
-    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
-    retro_game_info, retro_input_poll_t, retro_input_state_t, retro_keyboard_callback,
-    retro_log_callback, retro_log_level, retro_log_printf_t, retro_pixel_format,
-    retro_system_av_info, retro_variable, retro_video_refresh_t,
+    RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
+    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
+    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
+    retro_disk_control_ext_callback, retro_environment_t, retro_game_info, retro_input_poll_t,
+    retro_input_state_t, retro_keyboard_callback, retro_log_callback, retro_log_level,
+    retro_log_printf_t, retro_pixel_format, retro_system_av_info, retro_variable,
+    retro_video_refresh_t,
 };
 
 trait OptionInner {
@@ -169,9 +170,10 @@ impl RetroCore {
                 let ptr = p.get();
                 if !ptr.is_null() {
                     let ctx = unsafe { &mut *ptr };
-                    const MAX_SAMPLES: usize = 48000 * 4 / 10;
-                    let space = MAX_SAMPLES.saturating_sub(ctx.audio_buf.len());
-                    let take = samples.len().min(space);
+                    //const MAX_SAMPLES: usize = 48000 * 4 / 10;
+                    //let space = MAX_SAMPLES.saturating_sub(ctx.audio_buf.len());
+                    let take = samples.len();
+                    //eprintln!("Got {take} samples");
                     ctx.audio_buf.extend(&samples[..take]);
                 }
             });
@@ -185,6 +187,9 @@ impl RetroCore {
         height: c_uint,
         pitch: usize,
     ) {
+        if data.is_null() {
+            return;
+        }
         CURRENT_EMU.with(|p| {
             let ptr = p.get();
             if !ptr.is_null() {
@@ -199,7 +204,6 @@ impl RetroCore {
 
     fn video_refresh(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
         let state = &mut self.state;
-        debug!("{width}x{height} {pitch} {}", state.pixel_format);
         state.frame_width = width;
         state.frame_height = height;
         let needed = width * height * 4;
@@ -209,7 +213,19 @@ impl RetroCore {
         let pixel_format = state.pixel_format as retro_pixel_format;
         match pixel_format {
             RETRO_PIXEL_FORMAT_XRGB8888 => {
-                todo!("")
+                for y in 0..height {
+                    let src_row = &data[y * pitch..];
+                    let dst_row = &mut state.frame[y * width * 4..(y + 1) * width * 4];
+                    for x in 0..width {
+                        let b = src_row[x * 4];
+                        let g = src_row[x * 4 + 1];
+                        let r = src_row[x * 4 + 2];
+                        dst_row[x * 4] = r;
+                        dst_row[x * 4 + 1] = g;
+                        dst_row[x * 4 + 2] = b;
+                        dst_row[x * 4 + 3] = 255;
+                    }
+                }
             }
             RETRO_PIXEL_FORMAT_RGB565 => {
                 for y in 0..height {
@@ -228,7 +244,20 @@ impl RetroCore {
                 }
             }
             RETRO_PIXEL_FORMAT_0RGB1555 => {
-                todo!("")
+                for y in 0..height {
+                    let src_row = &data[y * pitch..];
+                    let dst_row = &mut state.frame[y * width * 4..(y + 1) * width * 4];
+                    for x in 0..width {
+                        let p: u16 = src_row[x * 2] as u16 | ((src_row[x * 2 + 1] as u16) << 8);
+                        let r5 = ((p >> 10) & 0x1f) as u8;
+                        let g5 = ((p >> 5) & 0x1f) as u8;
+                        let b5 = (p & 0x1f) as u8;
+                        dst_row[x * 4] = (r5 << 3) | (r5 >> 2);
+                        dst_row[x * 4 + 1] = (g5 << 3) | (g5 >> 2);
+                        dst_row[x * 4 + 2] = (b5 << 3) | (b5 >> 2);
+                        dst_row[x * 4 + 3] = 255;
+                    }
+                }
             }
             _ => {}
         }
@@ -252,6 +281,14 @@ impl RetroCore {
         trace!("## ENV {cmd}");
         unsafe {
             match cmd {
+                RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
+                    let avinfo = &(*(data as *mut retro_system_av_info));
+                    info!(
+                        "AV SWITCH FPS {} RATE {}",
+                        avinfo.timing.fps, avinfo.timing.sample_rate
+                    );
+                    true
+                }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
                     let callback = data as *mut retro_keyboard_callback;
                     self.retro_set_keyboard = (*callback).callback;
@@ -428,6 +465,9 @@ impl RetroCore {
             //retro_emu.set_var("vice_autostart", "warp");
             //retro_emu.set_var("vice_cartridge", "rr38ppal.crt");
             retro_emu.set_var("vice_jiffydos", "enabled");
+            retro_emu.set_var("puae_model", "A500OG");
+            retro_emu.set_var("puae_kickstart", "Kickstart1.3.rom");
+            retro_emu.set_var("puae_chipmem_size", "4");
 
             for (key, val) in settings.iter() {
                 retro_emu.set_var(key, val);
@@ -493,6 +533,10 @@ impl RetroCore {
             unsafe { cb(down, code, 0, mods) }
         }
     }
+
+    pub(crate) fn get_frame_size(&self) -> (usize, usize) {
+        (self.state.frame_width, self.state.frame_height)
+    }
 }
 
 #[cfg(test)]
@@ -500,15 +544,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retro_emu_works() {
+    fn retro_amiga_works() {
+        let core_path = Path::new("libretro-uae/puae_libretro.so");
+        let system_dir = Path::new("system");
+        let game_path = Path::new("rebels.adf");
+
+        let mut settings = HashMap::new();
+        settings.insert("puae_model".into(), "A500OG".into());
+        settings.insert("puae_kickstart".into(), "Kickstart1.3.rom".into());
+        settings.insert("puae_chipmem_size".into(), "4".into());
+
+        let mut retro_emu =
+            RetroCore::new(core_path, system_dir, Some(game_path), settings).unwrap();
+        println!("## RUN");
+        for _ in 0..400 {
+            retro_emu.run();
+        }
+        retro_emu.save_png(Path::new("test_amiga.png")).unwrap();
+    }
+    #[test]
+    fn retro_vice_works() {
         let core_path = Path::new("vice-libretro/vice_x64_libretro.so");
         let system_dir = Path::new("system");
-        let game_path = Path::new("ne.d64");
+        let game_path = Path::new("triad-plasmatica.prg");
 
-        let mut retro_emu = RetroCore::new(core_path, system_dir).unwrap();
-        retro_emu.load_game(game_path).unwrap();
+        let mut retro_emu =
+            RetroCore::new(core_path, system_dir, Some(game_path), HashMap::new()).unwrap();
         println!("## RUN");
-        for _ in 0..6000 {
+        for _ in 0..600 {
             retro_emu.run();
         }
         retro_emu.save_png(Path::new("test_d64.png")).unwrap();
