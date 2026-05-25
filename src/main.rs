@@ -1,3 +1,4 @@
+#![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -8,9 +9,9 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
     image::Image,
+    input::mouse::AccumulatedMouseMotion,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
-    window::WindowMode,
 };
 use bevy_tweening::lens::TextColorLens;
 use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim, TweeningPlugin};
@@ -27,7 +28,7 @@ mod libretro;
 mod post_process;
 mod retro_emu;
 
-use post_process::{PostProcess, PostProcessPlugin, ScaleMode};
+use post_process::{BorderMode, PostProcess, PostProcessPlugin, ScaleMode};
 use ringbuf::{
     HeapCons, HeapProd,
     traits::{Observer, Split, *},
@@ -55,6 +56,10 @@ struct Args {
     #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
     scale: ScaleModeArg,
 
+    /// How to fill the border outside the image (letterbox/pillarbox bars).
+    #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
+    border: BorderModeArg,
+
     /// Shuffle the list of games into a random order.
     #[arg(long)]
     shuffle: bool,
@@ -80,6 +85,23 @@ impl From<ScaleModeArg> for ScaleMode {
     }
 }
 
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum BorderModeArg {
+    /// Stretch the edge pixels outward into the border.
+    Stretch,
+    /// Fill the border with black.
+    Black,
+}
+
+impl From<BorderModeArg> for BorderMode {
+    fn from(b: BorderModeArg) -> Self {
+        match b {
+            BorderModeArg::Stretch => BorderMode::Stretch,
+            BorderModeArg::Black => BorderMode::Black,
+        }
+    }
+}
+
 #[derive(Resource)]
 struct Background {
     handle: Handle<Image>,
@@ -94,7 +116,6 @@ struct Emulator {
     run_next: bool,
     producer: HeapProd<f32>,
     _stream: cpal::Stream,
-    next_frame: f64,
     key_map: HashMap<KeyCode, libretro::retro_key>,
 }
 
@@ -319,7 +340,9 @@ fn setup_cameras(mut commands: Commands, args: Res<Args>, background: Res<Backgr
         PostProcess {
             source: background.handle.clone(),
             scale_mode: args.scale.into(),
-            aspect_tweak: 0.9375, // C64 non square pixels
+            aspect: 0.0, // updated each frame from the core's reported aspect
+            aspect_tweak: 1.0,
+            border_mode: args.border.into(),
         },
         RenderLayers::layer(1),
     ));
@@ -414,10 +437,6 @@ impl Plugin for HudPlugin {
     }
 }
 
-const CYCLES_PER_FRAME: f64 = 19656.0;
-const CLOCK_HZ: f64 = 985248.0;
-const SECONDS_PER_FRAME: f64 = CYCLES_PER_FRAME / CLOCK_HZ;
-
 fn setup_retro(world: &mut World) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
     let stream = init_audio_stream(44100.0, consumer).unwrap();
@@ -448,7 +467,6 @@ fn setup_retro(world: &mut World) {
     let settings: HashMap<String, String> =
         [("vice_cartridge".into(), "rr38ppal.crt".into())].into();
 
-    let time = world.resource::<Time>();
     let games = &world.resource::<Args>().games;
     let core = RetroCore::new(Path::new(CORE_PATH), Path::new(SYSTEM_DIR), None, settings)
         .expect("Failed to load libretro core");
@@ -459,11 +477,11 @@ fn setup_retro(world: &mut World) {
         current_game: 0,
         run_next: !games.is_empty(),
         games: games.clone(),
-        next_frame: time.elapsed_secs_f64() + SECONDS_PER_FRAME,
         key_map: Emulator::build_keycode_map(),
     });
 }
 
+#[derive(Clone, Copy, PartialEq)]
 enum SystemType {
     C64,
     Amiga,
@@ -489,14 +507,46 @@ fn get_core(sytem_type: SystemType) -> PathBuf {
         _ => CORE_PATH.into(),
     }
 }
+fn create_core(
+    system_type: SystemType,
+    game: &Path,
+    mut settings: HashMap<String, String>,
+) -> RetroCore {
+    let mut set_var = |name: &str, val: &str| {
+        if !settings.contains_key(name) {
+            settings.insert(name.into(), val.into());
+        }
+    };
+    if system_type == SystemType::Amiga {
+        set_var("puae_model", "A500");
+        //set_var("puae_crop_mode", "4:3");
+        set_var("puae_crop", "smaller");
+        set_var("puae_horizontal_pos", "-5");
+    } else if system_type == SystemType::C64 {
+        set_var("vice_jiffydos", "enabled");
+        set_var("vice_sid_extra", "none");
+        set_var("vice_sid_model", "8580");
+        set_var("vice_sound_sample_rate", "44100");
+    }
+    RetroCore::new(
+        Path::new(&get_core(system_type)),
+        Path::new(SYSTEM_DIR),
+        Some(game),
+        settings,
+    )
+    .expect("Failed to create retro core")
+}
 
 fn run_retro(
     mut emu: NonSendMut<Emulator>,
     input: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
     mut bg: ResMut<Background>,
-    time: Res<Time>,
+    _time: Res<Time>,
     mut writer: MessageWriter<SpawnToast>,
     mut images: ResMut<Assets<Image>>,
+    mut post_process: Query<&mut PostProcess>,
 ) {
     let Some(image) = images.get_mut(&bg.handle) else {
         return;
@@ -529,7 +579,8 @@ fn run_retro(
                 year = t.clone();
             }
             for (key, val) in m3u.tags {
-                if key.starts_with("vice_") {
+                if key.starts_with("vice_") || key.starts_with("puae_") {
+                    warn!("Insert {key} {val}");
                     settings.insert(key, val);
                 }
             }
@@ -546,23 +597,15 @@ fn run_retro(
             delay: Duration::from_secs(5),
             duration: Duration::from_secs(15),
         });
-
-        emu.core = RetroCore::new(
-            Path::new(&get_core(system_type)),
-            Path::new(SYSTEM_DIR),
-            Some(&game),
-            settings,
-        )
-        .expect("Failed to load libretro core");
+        emu.core = create_core(system_type, &game, settings);
         emu.run_next = false;
         emu.current_game += 1;
     }
 
     // info!(
-    //     "time {} delta {} next_frame {}",
+    //     "time {} delta {}",
     //     time.elapsed_secs_f64(),
     //     time.delta_secs_f64(),
-    //     core.next_frame
     // );
     //
 
@@ -600,6 +643,16 @@ fn run_retro(
         }
     }
 
+    let motion = mouse_motion.delta;
+    if motion != Vec2::ZERO {
+        emu.core.add_mouse_motion(motion.x, motion.y);
+    }
+    emu.core.set_mouse_buttons(
+        mouse_buttons.pressed(MouseButton::Left),
+        mouse_buttons.pressed(MouseButton::Right),
+        mouse_buttons.pressed(MouseButton::Middle),
+    );
+
     if input.just_pressed(KeyCode::F12) {
         emu.core.next_disk();
     }
@@ -609,14 +662,14 @@ fn run_retro(
     //     time.delta_secs(),
     //     emu.producer.occupied_len()
     // );
-    if time.elapsed_secs_f64() > emu.next_frame {
-        //info!("EMULATE");
-        emu.next_frame += SECONDS_PER_FRAME;
+    //info!("EMULATE");
+    if emu.producer.occupied_len() < 8000 {
         emu.core.run();
         emu.update();
     }
+    //}
 
-    if emu.producer.occupied_len() < 4000 {
+    if emu.producer.occupied_len() < 1500 {
         emu.core.run();
         emu.update();
     }
@@ -634,6 +687,11 @@ fn run_retro(
                 .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
         }
     });
+    let aspect = emu.core.aspect_ratio();
+    for mut pp in &mut post_process {
+        pp.aspect = aspect;
+    }
+
     let (w, h) = emu.core.get_frame_size();
     if w != bg_w || h != bg_h {
         warn!("SIZE CHANGE TO {w} {h}");
@@ -676,7 +734,7 @@ fn main() {
     let primary_window = Some(Window {
         title: "Rupix".into(),
         //mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-        resolution: (384 * 3, 288 * 3).into(),
+        resolution: (366 * 3, 280 * 3).into(),
         resizable: false,
         ..Default::default()
     });

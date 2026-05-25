@@ -14,8 +14,8 @@ struct PostProcessUniform {
 
 const HARD_SCAN: f32 = -8.0;
 const HARD_PIX: f32 = -3.0;
-const WARP_X: f32 = 0.011;
-const WARP_Y: f32 = 0.011;
+const WARP_X: f32 = 0.0;
+const WARP_Y: f32 = 0.0;
 // const WARP_X: f32 = 0.031; 
 // const WARP_Y: f32 = 0.041;
 const MASK_DARK: f32 = 0.5;
@@ -25,7 +25,7 @@ const SHADOW_MASK: f32 = 3.0;
 const BRIGHT_BOOST: f32 = 1.0;
 const HARD_BLOOM_PIX: f32 = -1.5;
 const HARD_BLOOM_SCAN: f32 = -2.0;
-const BLOOM_AMOUNT: f32 = 0.15;
+const BLOOM_AMOUNT: f32 = 0.25;
 const SHAPE: f32 = 2.0;
 
 fn to_linear1(c: f32) -> f32 {
@@ -206,13 +206,11 @@ fn mask(pos_in: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
-    // if any(mapped_uv < vec2<f32>(0.0)) || any(mapped_uv > vec2<f32>(1.0)) {
-    //     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    // }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));
     let pos = warp(mapped_uv);
     var out_color = tri(pos, source_size);
+    // var out_color = textureSampleLevel(screen_texture, texture_sampler, pos, 0.0).rgb;
 
     out_color = out_color + bloom(pos, source_size) * BLOOM_AMOUNT;
 

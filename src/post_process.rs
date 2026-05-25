@@ -18,17 +18,20 @@ use bevy::{
             NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
-            BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+            AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, PipelineCache,
             RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
             SamplerDescriptor, ShaderStages, ShaderType, TextureFormat, TextureSampleType,
             binding_types::{sampler, texture_2d, uniform_buffer},
         },
         renderer::{RenderContext, RenderDevice},
+        settings::WgpuFeatures,
         texture::GpuImage,
         view::ViewTarget,
     },
 };
+// `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
+use wgpu::SamplerBorderColor;
 
 const LOTTES_SHADER_PATH: &str = "shaders/lottes.wgsl";
 
@@ -76,11 +79,30 @@ pub enum ScaleMode {
     Zoom,
 }
 
+/// How the shader samples outside the source image (in the letterbox/pillarbox
+/// bars, or anywhere `warp` pushes a fetch off the edge).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BorderMode {
+    /// `ClampToEdge`: replicate the nearest edge texel, so edge pixels stretch
+    /// outward into the border.
+    Stretch,
+    /// `ClampToBorder` with a black border color: sample black outside the
+    /// image, giving a clean black border.
+    #[default]
+    Black,
+}
+
 #[derive(Component, Clone, ExtractComponent)]
 pub struct PostProcess {
     pub source: Handle<Image>,
     pub scale_mode: ScaleMode,
+    /// Display aspect ratio (width / height) the core wants the frame shown at.
+    /// When `<= 0`, the source texture's pixel dimensions are used instead.
+    pub aspect: f32,
+    /// Manual multiplier applied on top of `aspect` for fine correction (1.0 = none).
     pub aspect_tweak: f32,
+    /// How the border (outside the source image) is sampled.
+    pub border_mode: BorderMode,
 }
 
 #[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
@@ -132,8 +154,15 @@ fn compute_uniform(
     if target.x == 0 || target.y == 0 || src.x == 0 || src.y == 0 {
         return identity;
     }
-    let target_aspect = (target.x as f32) / pp.aspect_tweak / target.y as f32;
-    let source_aspect = src.x as f32 / src.y as f32;
+    let target_aspect = target.x as f32 / target.y as f32;
+    // Use the display aspect ratio the core reports; fall back to the texture's
+    // pixel dimensions when the core doesn't supply one.
+    let base_aspect = if pp.aspect > 0.0 {
+        pp.aspect
+    } else {
+        src.x as f32 / src.y as f32
+    };
+    let source_aspect = base_aspect * pp.aspect_tweak;
     let target_wider = target_aspect > source_aspect;
     let scale = match (pp.scale_mode, target_wider) {
         (ScaleMode::Stretch, _) => Vec2::ONE,
@@ -186,12 +215,17 @@ impl ViewNode for PostProcessNode {
             return Ok(());
         };
 
+        let sampler = match post_process.border_mode {
+            BorderMode::Stretch => &pipeline_resource.sampler_stretch,
+            BorderMode::Black => &pipeline_resource.sampler_black,
+        };
+
         let bind_group = render_context.render_device().create_bind_group(
             "lottes_bind_group",
             &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
             &BindGroupEntries::sequential((
                 &source_image.texture_view,
-                &pipeline_resource.sampler,
+                sampler,
                 uniform_binding.clone(),
             )),
         );
@@ -215,7 +249,11 @@ impl ViewNode for PostProcessNode {
 #[derive(Resource)]
 struct PostProcessPipeline {
     layout: BindGroupLayoutDescriptor,
-    sampler: Sampler,
+    /// `ClampToEdge` sampler — used by [`BorderMode::Stretch`].
+    sampler_stretch: Sampler,
+    /// `ClampToBorder` (black) sampler — used by [`BorderMode::Black`]. Falls
+    /// back to a `ClampToEdge` sampler if the adapter lacks the border feature.
+    sampler_black: Sampler,
     pipeline_id: CachedRenderPipelineId,
 }
 
@@ -237,7 +275,28 @@ fn init_lottes_pipeline(
             ),
         ),
     );
-    let sampler = render_device.create_sampler(&SamplerDescriptor::default());
+    let sampler_stretch = render_device.create_sampler(&SamplerDescriptor::default());
+    // A black border requires `ClampToBorder`, which is a native-only wgpu
+    // feature. Bevy's default `Functionality` priority enables every feature the
+    // adapter supports, so this is available on desktop backends — but guard it
+    // so an adapter without it falls back to edge-clamping instead of panicking.
+    let sampler_black = if render_device
+        .features()
+        .contains(WgpuFeatures::ADDRESS_MODE_CLAMP_TO_BORDER)
+    {
+        render_device.create_sampler(&SamplerDescriptor {
+            address_mode_u: AddressMode::ClampToBorder,
+            address_mode_v: AddressMode::ClampToBorder,
+            address_mode_w: AddressMode::ClampToBorder,
+            border_color: Some(SamplerBorderColor::OpaqueBlack),
+            ..default()
+        })
+    } else {
+        warn!(
+            "ADDRESS_MODE_CLAMP_TO_BORDER unsupported; BorderMode::Black will behave like Stretch"
+        );
+        render_device.create_sampler(&SamplerDescriptor::default())
+    };
     let shader = asset_server.load(LOTTES_SHADER_PATH);
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("lottes_pipeline".into()),
@@ -256,7 +315,8 @@ fn init_lottes_pipeline(
     });
     commands.insert_resource(PostProcessPipeline {
         layout,
-        sampler,
+        sampler_stretch,
+        sampler_black,
         pipeline_id,
     });
 }

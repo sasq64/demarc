@@ -6,7 +6,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
 use std::path::Path;
 
 use libloading::Library;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{info, trace, warn};
 
 unsafe extern "C" {
     fn rupix_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
@@ -20,29 +20,55 @@ pub unsafe extern "C" fn rupix_retro_log_rust(level: c_int, msg: *const c_char) 
     let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
     let s = s.trim_end_matches(['\r', '\n']);
     match level as u32 {
-        0 => debug!(target: "retro", "{s}"),
-        1 => debug!(target: "retro", "{s}"),
+        0 => warn!(target: "retro", "{s}"),
+        1 => warn!(target: "retro", "{s}"),
         2 => warn!(target: "retro", "{s}"),
         _ => warn!(target: "retro", "{s}"),
     }
 }
 
 use crate::libretro::{
+    RETRO_DEVICE_ID_MOUSE_LEFT, RETRO_DEVICE_ID_MOUSE_MIDDLE, RETRO_DEVICE_ID_MOUSE_RIGHT,
+    RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y, RETRO_DEVICE_MASK, RETRO_DEVICE_MOUSE,
     RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
     RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
     RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
-    RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
-    RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
-    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
-    retro_disk_control_ext_callback, retro_environment_t, retro_game_info, retro_input_poll_t,
-    retro_input_state_t, retro_keyboard_callback, retro_log_callback, retro_log_level,
-    retro_log_printf_t, retro_pixel_format, retro_system_av_info, retro_variable,
-    retro_video_refresh_t,
+    RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
+    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
+    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
+    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
+    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
+    retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
+    retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
+    retro_system_av_info, retro_variable, retro_video_refresh_t,
 };
+
+/// Relative mouse movement accumulated since the last frame, plus button state.
+/// `dx`/`dy` accumulate as i32 to avoid overflow, then clamp to i16 when the core
+/// polls them, and reset to zero after each `retro_run`.
+#[derive(Default)]
+struct MouseState {
+    dx: i32,
+    dy: i32,
+    left: bool,
+    right: bool,
+    middle: bool,
+}
+
+/// Display aspect ratio (width / height) the core wants the frame presented at.
+/// Per libretro, a non-positive `aspect_ratio` means use `base_width / base_height`.
+fn geometry_aspect(geom: &retro_game_geometry) -> f32 {
+    if geom.aspect_ratio > 0.0 {
+        geom.aspect_ratio
+    } else if geom.base_height > 0 {
+        geom.base_width as f32 / geom.base_height as f32
+    } else {
+        0.0
+    }
+}
 
 trait OptionInner {
     type Inner;
@@ -52,21 +78,14 @@ impl<T> OptionInner for Option<T> {
     type Inner = T;
 }
 
-macro_rules! load_sym {
-    ($lib:expr, $ft:ident, $name:expr) => {{
-        type T = <$ft as OptionInner>::Inner;
-        let raw: ::libloading::Symbol<T> = unsafe { $lib.get($name) }?;
-        let f: T = *raw;
-        f
-    }};
-}
-
 #[derive(Default)]
 pub struct RetroState {
     pub frame: Vec<u8>,
     pub frame_width: usize,
     pub frame_height: usize,
     pub frame_dirty: bool,
+    /// Display aspect ratio reported by the core (0.0 if unknown).
+    pub aspect_ratio: f32,
     pixel_format: c_int,
 }
 
@@ -80,6 +99,7 @@ pub struct RetroCore {
     disk_ext_callback: Option<retro_disk_control_ext_callback>,
     disk_callback: Option<retro_disk_control_callback>,
     state: RetroState,
+    mouse: MouseState,
     vars: HashMap<String, CString>,
     audio_buf: Vec<i16>,
     core_path: CString,
@@ -145,13 +165,41 @@ impl RetroCore {
         });
     }
     unsafe extern "C" fn input_state_cb(
-        _port: c_uint,
-        _device: c_uint,
-        _index: c_uint,
-        _id: c_uint,
+        port: c_uint,
+        device: c_uint,
+        index: c_uint,
+        id: c_uint,
     ) -> i16 {
-        //println!("{port} {device} {index:08x} {id}");
-        0
+        let mut val: i16 = 0;
+        CURRENT_EMU.with(|p| {
+            let ptr = p.get();
+            if !ptr.is_null() {
+                let ctx = unsafe { &mut *ptr };
+                val = ctx.input_state(port, device, index, id);
+            }
+        });
+        val
+    }
+
+    fn input_state(&self, port: c_uint, device: c_uint, _index: c_uint, id: c_uint) -> i16 {
+        if port != 0 {
+            return 0;
+        }
+        match device & RETRO_DEVICE_MASK {
+            RETRO_DEVICE_MOUSE => match id {
+                RETRO_DEVICE_ID_MOUSE_X => {
+                    self.mouse.dx.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                }
+                RETRO_DEVICE_ID_MOUSE_Y => {
+                    self.mouse.dy.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+                }
+                RETRO_DEVICE_ID_MOUSE_LEFT => self.mouse.left as i16,
+                RETRO_DEVICE_ID_MOUSE_RIGHT => self.mouse.right as i16,
+                RETRO_DEVICE_ID_MOUSE_MIDDLE => self.mouse.middle as i16,
+                _ => 0,
+            },
+            _ => 0,
+        }
     }
     unsafe extern "C" fn audio_sample_cb(left: i16, right: i16) {
         CURRENT_EMU.with(|p| {
@@ -283,10 +331,17 @@ impl RetroCore {
             match cmd {
                 RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
                     let avinfo = &(*(data as *mut retro_system_av_info));
+                    self.state.aspect_ratio = geometry_aspect(&avinfo.geometry);
                     info!(
-                        "AV SWITCH FPS {} RATE {}",
-                        avinfo.timing.fps, avinfo.timing.sample_rate
+                        "AV SWITCH FPS {} RATE {} ASPECT {}",
+                        avinfo.timing.fps, avinfo.timing.sample_rate, self.state.aspect_ratio
                     );
+                    true
+                }
+                RETRO_ENVIRONMENT_SET_GEOMETRY => {
+                    let geom = &(*(data as *mut retro_game_geometry));
+                    self.state.aspect_ratio = geometry_aspect(geom);
+                    info!("GEOMETRY ASPECT {}", self.state.aspect_ratio);
                     true
                 }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
@@ -381,7 +436,7 @@ impl RetroCore {
         }
     }
 
-    pub fn set_var(&mut self, name: &str, val: impl Into<String>) {
+    fn set_var(&mut self, name: &str, val: impl Into<String>) {
         let v = CString::new(val.into()).unwrap();
         self.vars.insert(name.into(), v);
     }
@@ -445,6 +500,7 @@ impl RetroCore {
                 disk_ext_callback: None,
                 disk_callback: None,
                 state: Default::default(),
+                mouse: Default::default(),
                 vars: Default::default(),
                 audio_buf: Vec::new(),
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
@@ -458,16 +514,6 @@ impl RetroCore {
             retro_set_audio_sample_batch(Self::audio_sample_batch_cb);
             retro_set_input_poll(Self::input_poll_cb);
             retro_set_input_state(Self::input_state_cb);
-
-            retro_emu.set_var("vice_sid_extra", "none");
-            retro_emu.set_var("vice_sid_model", "8580");
-            //retro_emu.set_var("vice_autoloadwarp", "warp");
-            //retro_emu.set_var("vice_autostart", "warp");
-            //retro_emu.set_var("vice_cartridge", "rr38ppal.crt");
-            retro_emu.set_var("vice_jiffydos", "enabled");
-            retro_emu.set_var("puae_model", "A500OG");
-            retro_emu.set_var("puae_kickstart", "Kickstart1.3.rom");
-            retro_emu.set_var("puae_chipmem_size", "4");
 
             for (key, val) in settings.iter() {
                 retro_emu.set_var(key, val);
@@ -487,6 +533,7 @@ impl RetroCore {
 
             let mut av_info = retro_system_av_info::default();
             retro_get_avinfo_fn(&mut av_info);
+            retro_emu.state.aspect_ratio = geometry_aspect(&av_info.geometry);
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
             println!("{:?}", av_info);
             retro_emu.lib = Some(lib);
@@ -496,7 +543,11 @@ impl RetroCore {
 
     fn load_game(&mut self, game_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let game_data = std::fs::read(game_path)?;
-        let game_path_c = CString::new(game_path.to_string_lossy().as_bytes())?;
+        // Pass an absolute path: cores like puae resolve m3u playlist entries
+        // relative to the playlist file's own directory, so a bare relative
+        // filename leaves them with no base dir and they insert zero disks.
+        let abs_path = std::fs::canonicalize(game_path).unwrap_or_else(|_| game_path.to_path_buf());
+        let game_path_c = CString::new(abs_path.to_string_lossy().as_bytes())?;
         let game_info = retro_game_info {
             path: game_path_c.as_ptr(),
             data: game_data.as_ptr() as *const c_void,
@@ -512,7 +563,19 @@ impl RetroCore {
     pub fn run(&mut self) {
         CURRENT_EMU.with(|p| p.set(self as *mut _));
         unsafe { (self.retro_run_fn)() }
+        // Relative motion has been consumed by the core this frame.
+        self.mouse.dx = 0;
+        self.mouse.dy = 0;
         CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
+        CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
+        let mut av_info = retro_system_av_info::default();
+        unsafe { (self.retro_get_avinfo_fn)(&mut av_info) }
+        self.state.aspect_ratio = geometry_aspect(&av_info.geometry);
+    }
+
+    /// Display aspect ratio (width / height) the core wants, or 0.0 if unknown.
+    pub fn aspect_ratio(&self) -> f32 {
+        self.state.aspect_ratio
     }
 
     pub fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -534,6 +597,19 @@ impl RetroCore {
         }
     }
 
+    /// Accumulate relative mouse motion (in pixels) to be polled by the core
+    /// on the next `run`. Deltas are summed until consumed.
+    pub(crate) fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
+        self.mouse.dx = self.mouse.dx.saturating_add(dx.round() as i32);
+        self.mouse.dy = self.mouse.dy.saturating_add(dy.round() as i32);
+    }
+
+    pub(crate) fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
+        self.mouse.left = left;
+        self.mouse.right = right;
+        self.mouse.middle = middle;
+    }
+
     pub(crate) fn get_frame_size(&self) -> (usize, usize) {
         (self.state.frame_width, self.state.frame_height)
     }
@@ -550,9 +626,9 @@ mod tests {
         let game_path = Path::new("rebels.adf");
 
         let mut settings = HashMap::new();
-        settings.insert("puae_model".into(), "A500OG".into());
-        settings.insert("puae_kickstart".into(), "Kickstart1.3.rom".into());
-        settings.insert("puae_chipmem_size".into(), "4".into());
+        settings.insert("puae_model".into(), "A500PLUS".into());
+        settings.insert("puae_kickstart".into(), "Kickstart2.0.rom".into());
+        //settings.insert("puae_chipmem_size".into(), "4".into());
 
         let mut retro_emu =
             RetroCore::new(core_path, system_dir, Some(game_path), settings).unwrap();
