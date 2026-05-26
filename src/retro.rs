@@ -34,10 +34,15 @@ use crate::{AppSettings, Args};
 
 pub struct RetroPlugin {}
 
-//const CORE_PATH_VICE: &str = "vice-libretro/vice_x64_libretro.so";
-const CORE_PATH_VICE: &str = "vice_x64sc_libretro.so";
-const CORE_PATH_UAE: &str = "puae_libretro.so";
-const CORE_PATH: &str = "vice_x64sc_libretro.so";
+#[cfg(target_os = "windows")]
+const LIB_EXT: &str = "dll";
+#[cfg(target_os = "macos")]
+const LIB_EXT: &str = "dylib";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const LIB_EXT: &str = "so";
+
+const CORE_NAME_VICE: &str = "vice_x64sc_libretro";
+const CORE_NAME_UAE: &str = "puae_libretro";
 
 /// The `system` directory (BIOS/firmware files) bundled into the binary at
 /// build time. Extracted to the user's cache dir on first run.
@@ -526,13 +531,14 @@ fn get_sytem_type(path: &Path) -> SystemType {
 
 fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
     let search_path: Vec<PathBuf> = vec![".".into(), "/usr/lib/libretro".into()];
-    let lib_name = match sytem_type {
-        SystemType::C64 => CORE_PATH_VICE,
-        SystemType::Amiga => CORE_PATH_UAE,
-        _ => CORE_PATH,
+    let core_name = match sytem_type {
+        SystemType::C64 => CORE_NAME_VICE,
+        SystemType::Amiga => CORE_NAME_UAE,
+        _ => CORE_NAME_VICE,
     };
+    let lib_file = format!("{core_name}.{LIB_EXT}");
     for path in search_path.iter() {
-        let check = path.join(lib_name);
+        let check = path.join(&lib_file);
         if check.exists() {
             return Some(check);
         }
