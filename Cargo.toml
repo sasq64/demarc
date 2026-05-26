@@ -11,6 +11,7 @@ bevy = { version = "0.18.1", features = ["file_watcher"] }
 rand = "0.10.1"
 libloading = "0.8"
 cpal = "0.15.3"
+rubato = "0.16"
 tracing = "0.1.44"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing-subscriber = "0.3.23"

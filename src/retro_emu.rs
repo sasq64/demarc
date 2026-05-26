@@ -86,6 +86,8 @@ pub struct RetroState {
     pub frame_dirty: bool,
     /// Display aspect ratio reported by the core (0.0 if unknown).
     pub aspect_ratio: f32,
+    /// Audio sample rate reported by the core, in Hz (0.0 if unknown).
+    pub sample_rate: f64,
     pixel_format: c_int,
 }
 
@@ -332,6 +334,7 @@ impl RetroCore {
                 RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
                     let avinfo = &(*(data as *mut retro_system_av_info));
                     self.state.aspect_ratio = geometry_aspect(&avinfo.geometry);
+                    self.state.sample_rate = avinfo.timing.sample_rate;
                     info!(
                         "AV SWITCH FPS {} RATE {} ASPECT {}",
                         avinfo.timing.fps, avinfo.timing.sample_rate, self.state.aspect_ratio
@@ -534,6 +537,7 @@ impl RetroCore {
             let mut av_info = retro_system_av_info::default();
             retro_get_avinfo_fn(&mut av_info);
             retro_emu.state.aspect_ratio = geometry_aspect(&av_info.geometry);
+            retro_emu.state.sample_rate = av_info.timing.sample_rate;
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
             println!("{:?}", av_info);
             retro_emu.lib = Some(lib);
@@ -571,11 +575,17 @@ impl RetroCore {
         let mut av_info = retro_system_av_info::default();
         unsafe { (self.retro_get_avinfo_fn)(&mut av_info) }
         self.state.aspect_ratio = geometry_aspect(&av_info.geometry);
+        self.state.sample_rate = av_info.timing.sample_rate;
     }
 
     /// Display aspect ratio (width / height) the core wants, or 0.0 if unknown.
     pub fn aspect_ratio(&self) -> f32 {
         self.state.aspect_ratio
+    }
+
+    /// Audio sample rate the core wants, in Hz, or 0.0 if unknown.
+    pub fn sample_rate(&self) -> f64 {
+        self.state.sample_rate
     }
 
     pub fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
