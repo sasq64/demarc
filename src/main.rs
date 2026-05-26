@@ -1,8 +1,9 @@
 #![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 use std::path::PathBuf;
 
-use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
+use bevy::window::WindowMode;
+use bevy::{prelude::*, window::PresentMode};
 use bevy_tweening::TweeningPlugin;
 use clap::Parser;
 
@@ -92,8 +93,9 @@ fn main() {
     tracing_subscriber::fmt().with_target(true).compact().init();
     let primary_window = Some(Window {
         title: "Rupix".into(),
-        //mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-        resolution: (366 * 3, 280 * 3).into(),
+        present_mode: PresentMode::Fifo,
+        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+        resolution: (366 * 2, 280 * 2).into(),
         resizable: false,
         ..Default::default()
     });
