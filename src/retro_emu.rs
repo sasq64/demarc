@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+use anyhow::{Result, anyhow};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
 use std::path::Path;
 
 use libloading::Library;
-use tracing::{info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 unsafe extern "C" {
     fn rupix_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
@@ -20,8 +21,8 @@ pub unsafe extern "C" fn rupix_retro_log_rust(level: c_int, msg: *const c_char) 
     let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
     let s = s.trim_end_matches(['\r', '\n']);
     match level as u32 {
-        0 => warn!(target: "retro", "{s}"),
-        1 => warn!(target: "retro", "{s}"),
+        0 => debug!(target: "retro", "{s}"),
+        1 => debug!(target: "retro", "{s}"),
         2 => warn!(target: "retro", "{s}"),
         _ => warn!(target: "retro", "{s}"),
     }
@@ -89,6 +90,7 @@ pub struct RetroState {
     /// Audio sample rate reported by the core, in Hz (0.0 if unknown).
     pub sample_rate: f64,
     pixel_format: c_int,
+    fps: f64,
 }
 
 pub struct RetroCore {
@@ -106,7 +108,7 @@ pub struct RetroCore {
     audio_buf: Vec<i16>,
     core_path: CString,
     system_path: CString,
-    image_index: usize,
+    image_index: u32,
 }
 impl Drop for RetroCore {
     fn drop(&mut self) {
@@ -125,22 +127,27 @@ impl RetroCore {
         unsafe { (self.retro_deinit_fn)() }
         self.lib = None;
     }
-    pub fn next_disk(&mut self) {
+    pub fn next_disk(&mut self) -> u32 {
         self.image_index += 1;
         if let Some(cb) = self.disk_ext_callback {
             unsafe {
+                let count = (cb.get_num_images.unwrap())();
+                self.image_index %= count;
                 (cb.set_eject_state.unwrap())(true);
-                (cb.set_image_index.unwrap())(self.image_index as u32);
+                (cb.set_image_index.unwrap())(self.image_index);
                 (cb.set_eject_state.unwrap())(false);
             }
         } else if let Some(cb) = self.disk_callback {
             unsafe {
+                let count = (cb.get_num_images.unwrap())();
+                self.image_index %= count;
                 (cb.set_eject_state.unwrap())(true);
-                (cb.set_image_index.unwrap())(self.image_index as u32);
+                (cb.set_image_index.unwrap())(self.image_index);
                 (cb.set_eject_state.unwrap())(false);
             }
         }
-        println!("INDEX {}", self.image_index);
+        debug!("Inserted image {}", self.image_index);
+        self.image_index
     }
 
     pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u8])) {
@@ -322,7 +329,7 @@ impl RetroCore {
                 let ctx = unsafe { &mut *ptr };
                 ret = ctx.environment(cmd, data);
             } else {
-                println!("!! FAILED ENV {cmd}");
+                error!("!! FAILED ENV {cmd}");
             }
         });
         ret
@@ -335,8 +342,9 @@ impl RetroCore {
                     let avinfo = &(*(data as *mut retro_system_av_info));
                     self.state.aspect_ratio = geometry_aspect(&avinfo.geometry);
                     self.state.sample_rate = avinfo.timing.sample_rate;
+                    self.state.fps = avinfo.timing.fps;
                     info!(
-                        "AV SWITCH FPS {} RATE {} ASPECT {}",
+                        "Got AV_INFO FPS {} RATE {} ASPECT {}",
                         avinfo.timing.fps, avinfo.timing.sample_rate, self.state.aspect_ratio
                     );
                     true
@@ -344,7 +352,7 @@ impl RetroCore {
                 RETRO_ENVIRONMENT_SET_GEOMETRY => {
                     let geom = &(*(data as *mut retro_game_geometry));
                     self.state.aspect_ratio = geometry_aspect(geom);
-                    info!("GEOMETRY ASPECT {}", self.state.aspect_ratio);
+                    info!("Got GEOMETRY ASPECT {}", self.state.aspect_ratio);
                     true
                 }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
@@ -353,17 +361,18 @@ impl RetroCore {
                     true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
-                    println!("DISK EXT");
+                    info!("Got DISK_CONTROL_EXT");
                     let callback = data as *mut retro_disk_control_ext_callback;
                     self.disk_ext_callback = Some(*callback);
                     true
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
+                    info!("Logger registered");
                     (*(data as *mut retro_log_callback)).log = Some(rupix_retro_log_shim);
                     true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
-                    println!("DISK");
+                    info!("Got DISK_CONTROL");
                     let callback = data as *mut retro_disk_control_callback;
                     self.disk_callback = Some(*callback);
                     true
@@ -390,7 +399,6 @@ impl RetroCore {
                     true
                 }
                 RETRO_ENVIRONMENT_SET_VARIABLES => {
-                    println!("### SET");
                     if !data.is_null() {
                         let mut p = data as *const retro_variable;
                         while !(*p).key.is_null() {
@@ -406,16 +414,14 @@ impl RetroCore {
                             p = p.add(1);
                         }
                     }
-                    println!("{:?}", self.vars);
+                    debug!("{:?}", self.vars);
                     true
                 }
                 RETRO_ENVIRONMENT_GET_VARIABLE => {
                     let var = &mut *(data as *mut retro_variable);
                     if !var.key.is_null() {
                         let key = CStr::from_ptr(var.key).to_string_lossy();
-                        println!("## GET {:?}", key);
                         if let Some(value) = self.vars.get(key.as_ref()) {
-                            println!("## GET {:?} {:?}", key, value);
                             // Safe: the CString lives in the static OPTIONS map
                             // and is never mutated after SET_VARIABLES.
                             var.value = value.as_ptr();
@@ -449,7 +455,7 @@ impl RetroCore {
         system_dir: &Path,
         game: Option<&Path>,
         settings: HashMap<String, String>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self> {
         let lib = unsafe { Library::new(core_path)? };
         unsafe {
             let retro_set_environment: libloading::Symbol<
@@ -522,15 +528,15 @@ impl RetroCore {
                 retro_emu.set_var(key, val);
             }
 
-            println!("## INIT");
+            info!("retro_init()");
             retro_init();
-            println!("## INIT DONE");
 
             if let Some(game) = game {
+                info!("retro_load_game({})", game.to_string_lossy());
                 retro_emu.load_game(game)?;
             } else {
                 if !(retro_emu.retro_load_game_fn)(std::ptr::null_mut()) {
-                    return Err("retro_load_game failed".into());
+                    return Err(anyhow!("retro_load_game failed"));
                 }
             }
 
@@ -538,15 +544,24 @@ impl RetroCore {
             retro_get_avinfo_fn(&mut av_info);
             retro_emu.state.aspect_ratio = geometry_aspect(&av_info.geometry);
             retro_emu.state.sample_rate = av_info.timing.sample_rate;
+            retro_emu.state.fps = av_info.timing.fps;
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
-            println!("{:?}", av_info);
+            info!("avinfo: {:?}", av_info);
             retro_emu.lib = Some(lib);
             Ok(retro_emu)
         }
     }
 
-    fn load_game(&mut self, game_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let game_data = std::fs::read(game_path)?;
+    fn load_game(&mut self, game_path: &Path) -> Result<()> {
+        // puae mounts a directory as a virtual hard drive, and for any
+        // need_fullpath content it loads from the path itself. In those cases
+        // there are no bytes to hand over (and reading a directory errors with
+        // IsADirectory), so pass data=null/size=0 and let the core use `path`.
+        let game_data = if game_path.is_dir() {
+            None
+        } else {
+            Some(std::fs::read(game_path)?)
+        };
         // Pass an absolute path: cores like puae resolve m3u playlist entries
         // relative to the playlist file's own directory, so a bare relative
         // filename leaves them with no base dir and they insert zero disks.
@@ -554,13 +569,15 @@ impl RetroCore {
         let game_path_c = CString::new(abs_path.to_string_lossy().as_bytes())?;
         let game_info = retro_game_info {
             path: game_path_c.as_ptr(),
-            data: game_data.as_ptr() as *const c_void,
-            size: game_data.len(),
+            data: game_data
+                .as_ref()
+                .map_or(std::ptr::null(), |d| d.as_ptr() as *const c_void),
+            size: game_data.as_ref().map_or(0, |d| d.len()),
             meta: std::ptr::null(),
         };
         info!("Loading {:?}", game_path);
         if !unsafe { (self.retro_load_game_fn)(&game_info) } {
-            return Err(format!("retro_load_game({}) failed", game_path.display()).into());
+            return Err(anyhow!("retro_load_game({}) failed", game_path.display()).into());
         }
         Ok(())
     }
@@ -576,6 +593,7 @@ impl RetroCore {
         unsafe { (self.retro_get_avinfo_fn)(&mut av_info) }
         self.state.aspect_ratio = geometry_aspect(&av_info.geometry);
         self.state.sample_rate = av_info.timing.sample_rate;
+        self.state.fps = av_info.timing.fps;
     }
 
     /// Display aspect ratio (width / height) the core wants, or 0.0 if unknown.
@@ -623,6 +641,10 @@ impl RetroCore {
     pub(crate) fn get_frame_size(&self) -> (usize, usize) {
         (self.state.frame_width, self.state.frame_height)
     }
+
+    pub(crate) fn fps(&self) -> f64 {
+        self.state.fps
+    }
 }
 
 #[cfg(test)]
@@ -636,7 +658,7 @@ mod tests {
         let game_path = Path::new("assets/rebels.adf");
 
         let mut settings = HashMap::new();
-        settings.insert("puae_model".into(), "A500PLUS".into());
+        settings.insert("puae_model".into(), "A1200".into());
         settings.insert("puae_kickstart".into(), "Kickstart2.0.rom".into());
         //settings.insert("puae_chipmem_size".into(), "4".into());
 
@@ -647,6 +669,27 @@ mod tests {
             retro_emu.run();
         }
         retro_emu.save_png(Path::new("test_amiga.png")).unwrap();
+    }
+
+    /// Boot a self-booting directory under Kickstart 1.3 (A500). The WHDLoad
+    /// helper must be disabled, otherwise its Startup-Sequence runs `FAILAT`,
+    /// a command that doesn't exist under 1.3, and the boot fails.
+    #[test]
+    fn retro_amiga_dir_works() {
+        let core_path = Path::new("libretro-uae/puae_libretro.so");
+        let system_dir = Path::new("system");
+        let game_path = Path::new("test");
+
+        let mut settings = HashMap::new();
+        settings.insert("puae_model".into(), "A500".into());
+        settings.insert("puae_use_whdload".into(), "disabled".into());
+
+        let mut retro_emu =
+            RetroCore::new(core_path, system_dir, Some(game_path), settings).unwrap();
+        for _ in 0..600 {
+            retro_emu.run();
+        }
+        retro_emu.save_png(Path::new("test_amiga_dir.png")).unwrap();
     }
 
     #[test]

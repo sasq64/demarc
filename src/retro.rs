@@ -14,22 +14,17 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use cpal::{
-    SampleFormat, SampleRate, StreamConfig,
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-};
-
 use ringbuf::{
-    HeapCons, HeapProd,
+    HeapProd,
     traits::{Observer, Split, *},
 };
 
-use rubato::{FftFixedIn, Resampler};
-
+use crate::audio::{AudioResampler, init_audio_stream};
 use crate::hud::SpawnToast;
 use crate::libretro;
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::RetroCore;
+use crate::utils::{SystemType, WorkingFile, get_sytem_type, handle_file};
 use crate::{AppSettings, Args};
 
 pub struct RetroPlugin {}
@@ -85,9 +80,14 @@ struct Background {
 
 struct Emulator {
     core: RetroCore,
+    work_file: WorkingFile,
     games: Vec<PathBuf>,
     current_game: usize,
     run_next: bool,
+    next_frame: f64,
+    display_fps: f64,
+    match_fps: bool,
+    tags: HashMap<String, String>,
     producer: HeapProd<f32>,
     resampler: AudioResampler,
     _stream: cpal::Stream,
@@ -247,152 +247,6 @@ impl Emulator {
     }
 }
 
-/// Resamples interleaved stereo audio from the core's native rate to the
-/// output device rate, converting the core's `i16` samples to `f32` along the
-/// way.
-///
-/// The core hands us a variable number of frames each call, while the
-/// underlying [`FftFixedIn`] resampler wants a fixed input chunk, so incoming
-/// samples are deinterleaved into per-channel buffers and consumed one full
-/// chunk at a time.
-struct AudioResampler {
-    inner: FftFixedIn<f32>,
-    /// Deinterleaved input awaiting a full chunk, one buffer per channel.
-    in_buf: [Vec<f32>; 2],
-    /// Scratch output buffers, one per channel.
-    out: [Vec<f32>; 2],
-    chunk_size: usize,
-    /// Current input (core) sample rate, tracked so [`set_from_hz`] can skip
-    /// rebuilding when the rate is unchanged.
-    from: u32,
-    /// Output (device) sample rate, needed to rebuild `inner` on a rate change.
-    to: u32,
-}
-
-impl AudioResampler {
-    fn new(from: u32, to: u32) -> Result<Self> {
-        let chunk_size = 1024;
-        let inner = FftFixedIn::<f32>::new(from as usize, to as usize, chunk_size, 2, 2)?;
-        let out_max = inner.output_frames_max();
-        Ok(Self {
-            inner,
-            in_buf: [Vec::new(), Vec::new()],
-            out: [vec![0.0; out_max], vec![0.0; out_max]],
-            chunk_size,
-            from,
-            to,
-        })
-    }
-
-    /// Feeds interleaved stereo `i16` samples captured at `from` Hz, invoking
-    /// `sink` with each resampled `(left, right)` `f32` frame.
-    ///
-    /// If `from` differs from the rate the resampler was last built for, the
-    /// resampler is rebuilt for the new ratio. Before that, whatever the old
-    /// resampler still holds — the trailing partial chunk plus its internal
-    /// delay — is flushed through `sink`, so the rate change neither drops nor
-    /// mis-pitches already-captured audio. Calls keeping the same `from` skip
-    /// the rebuild, so this is cheap to invoke every frame.
-    fn process(
-        &mut self,
-        from: u32,
-        samples: &[i16],
-        mut sink: impl FnMut(f32, f32),
-    ) -> Result<()> {
-        // `from == 0` means the core hasn't reported a rate yet; keep the
-        // current resampler rather than rebuilding with a bogus ratio.
-        if from != 0 && from != self.from {
-            // `process` always drains down to a sub-chunk remainder, so the
-            // buffer holds fewer than `chunk_size` frames here. Zero-pad that
-            // remainder to a full chunk and push it through the old resampler:
-            // the captured frames (and the previous chunk's delayed tail) come
-            // out, while the padding zeros land in the discarded next block.
-            let remainder = self.in_buf[0].len();
-            if remainder > 0 {
-                self.in_buf[0].resize(self.chunk_size, 0.0);
-                self.in_buf[1].resize(self.chunk_size, 0.0);
-                let [o0, o1] = &mut self.out;
-                let (_, written) = self.inner.process_into_buffer(
-                    &[&self.in_buf[0][..], &self.in_buf[1][..]],
-                    &mut [&mut o0[..], &mut o1[..]],
-                    None,
-                )?;
-                for i in 0..written {
-                    sink(o0[i], o1[i]);
-                }
-            }
-            self.in_buf[0].clear();
-            self.in_buf[1].clear();
-
-            // Rebuild for the new ratio and resize the scratch output buffers.
-            self.inner =
-                FftFixedIn::<f32>::new(from as usize, self.to as usize, self.chunk_size, 2, 2)?;
-            let out_max = self.inner.output_frames_max();
-            self.out = [vec![0.0; out_max], vec![0.0; out_max]];
-            self.from = from;
-        }
-
-        for frame in samples.chunks_exact(2) {
-            self.in_buf[0].push(frame[0] as f32 / 32767.0);
-            self.in_buf[1].push(frame[1] as f32 / 32767.0);
-        }
-
-        let mut consumed = 0;
-        while self.in_buf[0].len() - consumed >= self.chunk_size {
-            let range = consumed..consumed + self.chunk_size;
-            let [o0, o1] = &mut self.out;
-            let (_, written) = self.inner.process_into_buffer(
-                &[&self.in_buf[0][range.clone()], &self.in_buf[1][range]],
-                &mut [&mut o0[..], &mut o1[..]],
-                None,
-            )?;
-            for i in 0..written {
-                sink(o0[i], o1[i]);
-            }
-            consumed += self.chunk_size;
-        }
-
-        if consumed > 0 {
-            self.in_buf[0].drain(..consumed);
-            self.in_buf[1].drain(..consumed);
-        }
-        Ok(())
-    }
-}
-
-fn init_audio_stream(core_sample_rate: f64, mut c: HeapCons<f32>) -> Result<cpal::Stream> {
-    let host = cpal::default_host();
-    let device = host.default_output_device().unwrap();
-
-    let config = device
-        .supported_output_configs()?
-        .find(|c| c.sample_format() == SampleFormat::F32)
-        .or_else(|| device.supported_output_configs().ok()?.next())
-        .expect("no supported config")
-        .with_sample_rate(SampleRate(core_sample_rate as u32));
-
-    let mut config: StreamConfig = config.into();
-    info!(
-        "cpal cfg: rate={} channels={}",
-        config.sample_rate.0, config.channels
-    );
-    config.channels = 2;
-    config.buffer_size = cpal::BufferSize::Fixed(2048);
-
-    let stream = device.build_output_stream(
-        &config,
-        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            //warn!("{}", output.len());
-            c.pop_slice(output);
-        },
-        |err| eprintln!("audio stream error: {err}"),
-        None,
-    )?;
-
-    stream.play()?;
-    Ok(stream)
-}
-
 struct M3u {
     tags: HashMap<String, String>,
     files: Vec<PathBuf>,
@@ -439,10 +293,8 @@ fn setup_cameras(mut commands: Commands, background: Res<Background>) {
         },
         PostProcess {
             source: background.handle.clone(),
-            // scale_mode: args.scale.into(),
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
-            // border_mode: args.border.into(),
         },
         RenderLayers::layer(1),
     ));
@@ -465,8 +317,9 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 
 fn setup_retro(world: &mut World) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-    let stream = init_audio_stream(48000.0, consumer).unwrap();
-    let resampler = AudioResampler::new(44100, 48000).expect("Failed to create audio resampler");
+    let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
+    let resampler =
+        AudioResampler::new(44100, sample_rate as u32).expect("Failed to create audio resampler");
 
     let width = 720;
     let height = 574;
@@ -495,38 +348,40 @@ fn setup_retro(world: &mut World) {
         [("vice_cartridge".into(), "rr38ppal.crt".into())].into();
 
     let core_path = get_core(SystemType::C64).unwrap();
-    let games = &world.resource::<Args>().games;
+    let args = world.resource::<Args>();
+    let games = &args.games;
     let core = RetroCore::new(Path::new(&core_path), system_dir(), None, settings)
         .expect("Failed to load libretro core");
+
+    let mut tags = HashMap::new();
+    let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
+    if args.aga {
+        set_var("puae_model", "A1200");
+    }
+
+    if args.high {
+        set_var("puae_z3mem_size", "128");
+        set_var("puae_fpu_model", "68881");
+        set_var("puae_cpu_model", "68030");
+        // set_var("puae_cpu_throttle", "10000");
+        //set_var("puae_cpu_compatibility", "exact");
+    }
+
     world.insert_non_send_resource(Emulator {
         core,
+        work_file: WorkingFile::default(),
         producer,
         resampler,
         _stream: stream,
         current_game: 0,
+        tags,
+        match_fps: false,
+        display_fps: 0.0,
+        next_frame: 0.0,
         run_next: !games.is_empty(),
         games: games.clone(),
         key_map: Emulator::build_keycode_map(),
     });
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum SystemType {
-    C64,
-    Amiga,
-    Unknown,
-}
-
-fn get_sytem_type(path: &Path) -> SystemType {
-    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
-        match ext {
-            "adf" => SystemType::Amiga,
-            "prg" | "d64" => SystemType::C64,
-            _ => SystemType::Unknown,
-        }
-    } else {
-        SystemType::Unknown
-    }
 }
 
 fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
@@ -534,7 +389,7 @@ fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
     let core_name = match sytem_type {
         SystemType::C64 => CORE_NAME_VICE,
         SystemType::Amiga => CORE_NAME_UAE,
-        _ => CORE_NAME_VICE,
+        _ => CORE_NAME_UAE,
     };
     let lib_file = format!("{core_name}.{LIB_EXT}");
     for path in search_path.iter() {
@@ -545,11 +400,32 @@ fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
     }
     None
 }
+/// Find a direct child of `dir` whose name matches `name` case-insensitively.
+/// Amiga volumes are case-insensitive, so a host directory meant to act as one
+/// may use any casing (e.g. `S/Startup-Sequence`).
+fn find_child_ci(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
+        let path = e.path();
+        let matches = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(name));
+        matches.then_some(path)
+    })
+}
+
+/// True if `game` is a directory containing an `s/startup-sequence` boot script,
+/// i.e. it can boot on its own as a hard drive without the WHDLoad helper.
+fn is_self_booting_dir(game: &Path) -> bool {
+    find_child_ci(game, "s")
+        .is_some_and(|s_dir| find_child_ci(&s_dir, "startup-sequence").is_some())
+}
+
 fn create_core(
     system_type: SystemType,
     game: &Path,
     mut settings: HashMap<String, String>,
-) -> RetroCore {
+) -> Result<RetroCore> {
     let mut set_var = |name: &str, val: &str| {
         if !settings.contains_key(name) {
             settings.insert(name.into(), val.into());
@@ -567,8 +443,57 @@ fn create_core(
         set_var("vice_sound_sample_rate", "44100");
     }
     let core = get_core(system_type).unwrap();
-    RetroCore::new(Path::new(&core), system_dir(), Some(game), settings)
-        .expect("Failed to create retro core")
+    let retro_core = RetroCore::new(Path::new(&core), system_dir(), Some(game), settings)?;
+    Ok(retro_core)
+}
+
+struct GameInfo {
+    title: String,
+    group: String,
+    year: String,
+    system_type: SystemType,
+    tags: HashMap<String, String>,
+}
+
+fn get_info(game: &Path) -> GameInfo {
+    let mut title: String = "".into();
+    let mut group: String = "".into();
+    let mut year: String = "".into();
+    let mut tags = HashMap::new();
+    let mut system_type = SystemType::Unknown;
+    if let Some(ext) = game.extension()
+        && ext == "m3u"
+    {
+        let m3u = parse_m3u(game).unwrap();
+        if let Some(t) = m3u.tags.get("title") {
+            title = format!("\"{t}\"");
+        }
+        if let Some(t) = m3u.tags.get("group") {
+            group = t.clone();
+        }
+        if let Some(t) = m3u.tags.get("year") {
+            year = t.clone();
+        }
+        for (key, val) in m3u.tags {
+            if key.starts_with("vice_") || key.starts_with("puae_") {
+                warn!("Insert {key} {val}");
+                tags.insert(key, val);
+            }
+        }
+        if let Some(path) = m3u.files.first() {
+            system_type = get_sytem_type(path);
+        }
+    } else {
+        system_type = get_sytem_type(game);
+        title = game.file_name().unwrap().to_string_lossy().to_string();
+    }
+    GameInfo {
+        title,
+        group,
+        year,
+        system_type,
+        tags,
+    }
 }
 
 fn run_retro(
@@ -669,78 +594,95 @@ fn run_retro(
             mouse_buttons.pressed(MouseButton::Middle),
         );
     }
-
-    if emu.run_next {
-        window.mode = WindowMode::Windowed;
+    if emu.run_next && emu.current_game < emu.games.len() {
         emu.core.unload();
         let game = emu.games[emu.current_game].clone();
-        let mut title: String = "".into();
-        let mut group: String = "".into();
-        let mut year: String = "".into();
-        let mut settings = HashMap::new();
-        let mut system_type = SystemType::Unknown;
-        if let Some(ext) = game.extension()
-            && ext == "m3u"
-        {
-            let m3u = parse_m3u(&game).unwrap();
-            if let Some(t) = m3u.tags.get("title") {
-                title = format!("\"{t}\"");
-            }
-            if let Some(t) = m3u.tags.get("group") {
-                group = t.clone();
-            }
-            if let Some(t) = m3u.tags.get("year") {
-                year = t.clone();
-            }
-            for (key, val) in m3u.tags {
-                if key.starts_with("vice_") || key.starts_with("puae_") {
-                    warn!("Insert {key} {val}");
-                    settings.insert(key, val);
-                }
-            }
-            if let Some(path) = m3u.files.first() {
-                system_type = get_sytem_type(path);
-            }
-        } else {
-            system_type = get_sytem_type(&game);
-            title = game.file_name().unwrap().to_string_lossy().to_string();
+        let GameInfo {
+            title,
+            group,
+            year,
+            system_type,
+            mut tags,
+        } = get_info(&game);
+
+        if settings.show_info {
+            writer.write(SpawnToast {
+                text: format!("{title}\n{group}\n{year}"),
+                delay: Duration::from_secs(5),
+                duration: Duration::from_secs(15),
+            });
+        }
+        for (key, val) in &emu.tags {
+            tags.insert(key.clone(), val.clone());
         }
 
-        writer.write(SpawnToast {
-            text: format!("{title}\n{group}\n{year}"),
-            delay: Duration::from_secs(5),
-            duration: Duration::from_secs(15),
-        });
-        emu.core = create_core(system_type, &game, settings);
-        emu.run_next = false;
-        emu.current_game += 1;
+        if let Ok(work_file) = handle_file(&game, &tags) {
+            let core = match create_core(
+                work_file.system_type,
+                &work_file.path,
+                work_file.settings.clone(),
+            ) {
+                Ok(core) => core,
+                Err(e) => {
+                    error!("Could not load core for {system_type:?}: {e:#}");
+                    return;
+                }
+            };
+            emu.core = core;
+            emu.work_file = work_file;
+            emu.run_next = false;
+            emu.current_game += 1;
+            emu.next_frame = time.elapsed_secs_f64();
+        }
     }
 
-    // info!(
-    //     "time {} delta {}",
-    //     time.elapsed_secs_f64(),
-    //     time.delta_secs_f64(),
-    // );
-    //
+    let delta = time.delta_secs_f64();
+    let mut fps = 60.0;
+    if delta > 0.0 {
+        fps = 1.0 / delta;
+        if emu.display_fps == 0.0 {
+            if fps > 40.0 || fps < 500.0 {
+                emu.display_fps = fps;
+            }
+        } else {
+            emu.display_fps = emu.display_fps * 0.95 + fps * 0.05;
+        }
+    }
 
+    let frame_time = 1.0 / emu.core.fps();
     // info!(
-    //     "FRAME {} {}",
+    //     "FRAME FPS {}/{} t={} AUDIO {}",
+    //     fps,
+    //     emu.display_fps,
     //     time.delta_secs(),
     //     emu.producer.occupied_len()
     // );
-    if emu.producer.occupied_len() < 12000 {
-        emu.core.run();
-        emu.update();
-    } else {
-        info!("DROP FRAME");
+    if emu.producer.occupied_len() > 12000 {
+        warn!("Dropping frame");
+        emu.next_frame += frame_time;
+        return;
     }
+
+    emu.match_fps = false; //(1.0 - emu.display_fps / emu.core.fps()).abs() < 0.02;
+
+    if emu.match_fps {
+        //let diff = 7000 - emu.producer.occupied_len();
+        emu.core.run();
+    } else {
+        let t = time.elapsed_secs_f64();
+        while t >= emu.next_frame {
+            emu.core.run();
+            emu.next_frame += frame_time;
+        }
+    }
+    emu.update();
 
     // For safety
     if emu.producer.occupied_len() < 2000 {
         emu.core.run();
         emu.core.run();
         emu.update();
-        info!("DUP FRAME");
+        warn!("Duplicating frame");
     }
     //}
 

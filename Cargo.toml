@@ -23,3 +23,4 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # Matches the wgpu version Bevy 0.18 uses; only needed to name `SamplerBorderColor`,
 # which Bevy doesn't re-export.
 wgpu = "27"
+tempfile = "3.27.0"
