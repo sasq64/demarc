@@ -22,7 +22,7 @@ use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::RetroPlugin;
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "rupix", about = "Bevy + libretro front-end")]
+#[command(name = "demarc", about = "Bevy + libretro front-end")]
 struct Args {
     /// Path to the program/ROM to load
     games: Vec<PathBuf>,
@@ -156,7 +156,7 @@ fn main() {
 
     tracing_subscriber::fmt().with_target(true).compact().init();
     let primary_window = Some(Window {
-        title: "Rupix".into(),
+        title: "Demarc".into(),
         present_mode: PresentMode::Fifo,
         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
         resolution: (366 * 2, 280 * 2).into(),

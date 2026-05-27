@@ -46,7 +46,7 @@ const SYSTEM_ZIP: &[u8] = include_bytes!("../system.zip");
 /// Path to the extracted `system` directory.
 ///
 /// On first call, the embedded [`SYSTEM_ZIP`] is unpacked into
-/// `~/.cache/rupix` (creating `~/.cache/rupix/system`) unless it already
+/// `~/.cache/demarc` (creating `~/.cache/demarc/system`) unless it already
 /// exists. The result is cached so extraction happens at most once per run.
 fn system_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -56,10 +56,10 @@ fn system_dir() -> &'static Path {
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").expect("HOME is not set")).join(".cache")
             })
-            .join("rupix");
+            .join("demarc");
         let system = cache.join("system");
         if !system.exists() {
-            std::fs::create_dir_all(&cache).expect("Failed to create rupix cache directory");
+            std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
                 .expect("Failed to read embedded system.zip");
             archive
@@ -637,15 +637,15 @@ fn run_retro(
     }
 
     let delta = time.delta_secs_f64();
-    let mut fps = 60.0;
+    let mut _fps = 60.0;
     if delta > 0.0 {
-        fps = 1.0 / delta;
+        _fps = 1.0 / delta;
         if emu.display_fps == 0.0 {
-            if fps > 40.0 || fps < 500.0 {
-                emu.display_fps = fps;
+            if _fps > 40.0 || _fps < 500.0 {
+                emu.display_fps = _fps;
             }
         } else {
-            emu.display_fps = emu.display_fps * 0.95 + fps * 0.05;
+            emu.display_fps = emu.display_fps * 0.95 + _fps * 0.05;
         }
     }
 

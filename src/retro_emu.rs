@@ -10,11 +10,11 @@ use libloading::Library;
 use tracing::{debug, error, info, trace, warn};
 
 unsafe extern "C" {
-    fn rupix_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
+    fn demarc_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rupix_retro_log_rust(level: c_int, msg: *const c_char) {
+pub unsafe extern "C" fn demarc_retro_log_rust(level: c_int, msg: *const c_char) {
     if msg.is_null() {
         return;
     }
@@ -368,7 +368,7 @@ impl RetroCore {
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
-                    (*(data as *mut retro_log_callback)).log = Some(rupix_retro_log_shim);
+                    (*(data as *mut retro_log_callback)).log = Some(demarc_retro_log_shim);
                     true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
