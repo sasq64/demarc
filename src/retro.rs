@@ -539,7 +539,7 @@ fn run_retro(
         mods |= libretro::RETROKMOD_SCROLLOCK as u16;
     }
 
-    if input.pressed(KeyCode::ControlRight) {
+    if input.pressed(KeyCode::AltRight) {
         if input.just_pressed(KeyCode::KeyB) {
             settings.border_mode = if settings.border_mode == BorderMode::Stretch {
                 BorderMode::Black
