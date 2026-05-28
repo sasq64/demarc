@@ -24,3 +24,13 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 # which Bevy doesn't re-export.
 wgpu = "27"
 tempfile = "3.27.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Inhibit the freedesktop screen saver over D-Bus while running fullscreen.
+zbus = "5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 2

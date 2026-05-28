@@ -15,11 +15,13 @@ mod hud;
 mod post_process;
 mod retro;
 mod retro_emu;
+mod screensaver;
 mod utils;
 
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::RetroPlugin;
+use screensaver::ScreenSaverPlugin;
 
 #[derive(Parser, Debug, Resource, Clone)]
 #[command(name = "demarc", about = "Bevy + libretro front-end")]
@@ -184,6 +186,7 @@ fn main() {
             PostProcessPlugin,
             TweeningPlugin,
             HudPlugin,
+            ScreenSaverPlugin,
         ))
         .run();
 }
