@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, WindowResized};
 use bevy_tweening::lens::TextColorLens;
 use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim};
 
@@ -27,13 +28,32 @@ struct HudState {
     current_toast: Option<Entity>,
 }
 
+#[derive(Component)]
+struct RelativeTextSize {
+    /// Font size as a fraction of window height (e.g. 0.05 = 5% of height)
+    fraction: f32,
+}
+
+fn update_relative_text_size(
+    mut resize_events: MessageReader<WindowResized>,
+    mut query: Query<(&RelativeTextSize, &mut TextFont)>,
+) {
+    for event in resize_events.read() {
+        for (rel, mut text_font) in &mut query {
+            text_font.font_size = event.height * rel.fraction;
+        }
+    }
+}
 fn spawn_toast(
     mut commands: Commands,
     mut state: ResMut<HudState>,
     mut reader: MessageReader<SpawnToast>,
     asset_server: Res<AssetServer>,
+    window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
     let font = asset_server.load("font.ttf");
+    warn!("SIZE {} {}", window.physical_width(), window.width());
+    let font_size = window.physical_width() as f32 / 50.0;
     for msg in reader.read() {
         let show_tween = Tween::new(
             EaseFunction::QuadraticInOut,
@@ -80,9 +100,10 @@ fn spawn_toast(
                     InfoText,
                     TextFont {
                         font: font.clone(),
-                        font_size: 48.0,
+                        font_size,
                         ..default()
                     },
+                    RelativeTextSize { fraction: 0.05 },
                     TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
                     TextLayout {
                         justify: Justify::Right,
@@ -141,6 +162,7 @@ impl Plugin for HudPlugin {
                 Update,
                 (
                     spawn_toast.run_if(on_message::<SpawnToast>),
+                    update_relative_text_size.run_if(on_message::<WindowResized>),
                     handle_tween_done.run_if(on_message::<CycleCompletedEvent>),
                 ),
             );

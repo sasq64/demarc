@@ -49,6 +49,10 @@ struct Args {
     #[arg(long)]
     aga: bool,
 
+    /// Open windowed
+    #[arg(long)]
+    window: bool,
+
     /// Force high specs (68030 + FPU + 128MB Z3 RAM)
     #[arg(long)]
     high: bool,
@@ -160,7 +164,11 @@ fn main() {
     let primary_window = Some(Window {
         title: "Demarc".into(),
         present_mode: PresentMode::Fifo,
-        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+        mode: if args.window {
+            WindowMode::Windowed
+        } else {
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        },
         resolution: (366 * 2, 280 * 2).into(),
         resizable: false,
         ..Default::default()

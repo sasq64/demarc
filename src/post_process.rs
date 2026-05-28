@@ -186,8 +186,15 @@ fn compute_uniform(
         src.x as f32 / src.y as f32
     };
     let source_aspect = base_aspect * pp.aspect_tweak;
+
+    let mut sm = settings.scale_mode;
+
+    if (target_aspect - source_aspect).abs() < 0.02 {
+        sm = ScaleMode::Zoom;
+    }
+
     let target_wider = target_aspect > source_aspect;
-    let scale = match (settings.scale_mode, target_wider) {
+    let scale = match (sm, target_wider) {
         (ScaleMode::Stretch, _) => Vec2::ONE,
         // Fit: shrink the source uv range on the constrained axis, leaving bars.
         (ScaleMode::Fit, true) => Vec2::new(source_aspect / target_aspect, 1.0),

@@ -344,6 +344,7 @@ impl RetroCore {
     }
     fn environment(&mut self, cmd: u32, data: *mut c_void) -> bool {
         trace!("## ENV {cmd}");
+        let mut handled = true;
         unsafe {
             match cmd {
                 RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
@@ -355,56 +356,45 @@ impl RetroCore {
                         "Got AV_INFO FPS {} RATE {} ASPECT {}",
                         avinfo.timing.fps, avinfo.timing.sample_rate, self.state.aspect_ratio
                     );
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_GEOMETRY => {
                     let geom = &(*(data as *mut retro_game_geometry));
                     self.state.aspect_ratio = geometry_aspect(geom);
                     info!("Got GEOMETRY ASPECT {}", self.state.aspect_ratio);
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
                     let callback = data as *mut retro_keyboard_callback;
                     self.retro_set_keyboard = (*callback).callback;
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
                     info!("Got DISK_CONTROL_EXT");
                     let callback = data as *mut retro_disk_control_ext_callback;
                     self.disk_ext_callback = Some(*callback);
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
                     (*(data as *mut retro_log_callback)).log = Some(demarc_retro_log_shim);
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
                     info!("Got DISK_CONTROL");
                     let callback = data as *mut retro_disk_control_callback;
                     self.disk_callback = Some(*callback);
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_LIBRETRO_PATH => {
                     *(data as *mut *const c_char) = self.core_path.as_ptr();
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
                     let fmt = *(data as *const c_int);
                     self.state.pixel_format = fmt;
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_CAN_DUPE => {
                     *(data as *mut bool) = true;
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
                     *(data as *mut bool) = false;
-                    true
                 }
                 RETRO_ENVIRONMENT_SET_VARIABLES => {
                     if !data.is_null() {
@@ -423,7 +413,6 @@ impl RetroCore {
                         }
                     }
                     debug!("{:?}", self.vars);
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_VARIABLE => {
                     let var = &mut *(data as *mut retro_variable);
@@ -433,24 +422,23 @@ impl RetroCore {
                             // Safe: the CString lives in the static OPTIONS map
                             // and is never mutated after SET_VARIABLES.
                             var.value = value.as_ptr();
-                            return true;
                         }
+                    } else {
+                        var.value = std::ptr::null();
+                        handled = false;
                     }
-                    var.value = std::ptr::null();
-                    false
                 }
                 RETRO_ENVIRONMENT_GET_LANGUAGE => {
                     *(data as *mut c_uint) = 0;
-                    true
                 }
                 RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
                     *(data as *mut c_uint) = 0;
-                    true
                 }
-                RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => true,
-                _ => false,
+                RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => {}
+                _ => handled = false,
             }
         }
+        handled
     }
 
     fn set_var(&mut self, name: &str, val: impl Into<String>) {
@@ -593,7 +581,7 @@ impl RetroCore {
         };
         info!("Loading {:?}", game_path);
         if !unsafe { (self.retro_load_game_fn)(&game_info) } {
-            return Err(anyhow!("retro_load_game({}) failed", game_path.display()).into());
+            return Err(anyhow!("retro_load_game({}) failed", game_path.display()));
         }
         Ok(())
     }
