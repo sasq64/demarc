@@ -13,6 +13,7 @@ pub enum SystemType {
     C64,
     Amiga,
     Amstrad,
+    AtariST,
     #[default]
     Unknown,
     UnknownM3U,
@@ -22,9 +23,10 @@ pub fn get_system_type(path: &Path) -> SystemType {
     if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();
         match ext.as_str() {
-            "adf" | "dms" | "hdf" => SystemType::Amiga,
-            "prg" | "d64" | "d81" => SystemType::C64,
+            "adf" | "dms" | "ipf" | "hdf" | "lha" | "slave" => SystemType::Amiga,
+            "d64" | "d81" | "zip" => SystemType::C64,
             "dsk" => SystemType::Amstrad,
+            "msa" | "st" => SystemType::AtariST,
             _ => SystemType::Unknown,
         }
     } else {
@@ -44,7 +46,14 @@ pub struct WorkingFile {
 impl Drop for WorkingFile {
     fn drop(&mut self) {
         if self.is_temp {
-            _ = fs::remove_dir_all(&self.path);
+            // `path` may be the temp dir itself (Amiga) or a file inside it
+            // (Atari disk image); either way remove the whole temp dir.
+            let dir = if self.path.is_file() {
+                self.path.parent().unwrap_or(&self.path)
+            } else {
+                &self.path
+            };
+            _ = fs::remove_dir_all(dir);
         }
     }
 }
@@ -152,6 +161,59 @@ fn is_self_booting_dir(game: &Path) -> bool {
     find_child_ci(game, "s")
         .is_some_and(|s_dir| find_child_ci(&s_dir, "startup-sequence").is_some())
 }
+/// Build a bootable Atari ST FAT12 floppy image containing an `AUTO` directory
+/// with `data` (a GEMDOS executable from `src`) copied into it, so it runs
+/// automatically when the disk boots. Returns the path to the `.st` image,
+/// which lives inside a fresh temp directory.
+fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
+    use std::io::Write;
+
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let img_path = target_dir.join("disk.st");
+
+    // Standard 720K double-sided/double-density Atari ST floppy. fatfs needs
+    // read access too (it reads back the boot sector while formatting/mounting),
+    // so open read+write rather than `File::create` (which is write-only).
+    let img = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&img_path)?;
+    img.set_len(720 * 1024)?;
+    // Atari TOS is picky about the BIOS Parameter Block: it expects the
+    // canonical 720K floppy geometry. fatfs' PC defaults (media 0xF8, 64 heads,
+    // 32 sectors/track, 512 root entries) produce a disk TOS won't mount. These
+    // values match a known-good Atari image (and yield 3 sectors/FAT for FAT12).
+    fatfs::format_volume(
+        &img,
+        fatfs::FormatVolumeOptions::new()
+            .fat_type(fatfs::FatType::Fat12)
+            .bytes_per_sector(512)
+            .total_sectors(1440) // 720K = 1440 * 512
+            .bytes_per_cluster(1024) // 2 sectors per cluster
+            .max_root_dir_entries(112)
+            .fats(2)
+            .media(0xF9)
+            .sectors_per_track(9)
+            .heads(2)
+            .volume_id(rand::random()),
+    )?;
+
+    let prog_name = "STARTME.PRG";
+
+    let fs = fatfs::FileSystem::new(&img, fatfs::FsOptions::new())?;
+    {
+        let auto = fs.root_dir().create_dir("AUTO")?;
+        let mut prog = auto.create_file(prog_name)?;
+        prog.write_all(data)?;
+        prog.flush()?;
+    }
+    fs.unmount()?;
+
+    Ok(img_path)
+}
+
 pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
     let mut path = in_path.to_owned();
     let mut settings = tags.clone();
@@ -177,7 +239,13 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
         } else {
             println!("READ");
             let data = fs::read(&path)?;
-            if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
+            if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
+                // GEMDOS executable: wrap it in a bootable Atari ST floppy image
+                // with the program in the AUTO folder so it runs on boot.
+                path = build_atari_auto_disk(&data)?;
+                is_temp = true;
+                system_type = SystemType::AtariST;
+            } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
                 system_type = SystemType::C64;
             } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                 let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();

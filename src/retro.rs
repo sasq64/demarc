@@ -40,6 +40,7 @@ const LIB_EXT: &str = "so";
 const CORE_NAME_VICE: &str = "vice_x64sc_libretro";
 const CORE_NAME_UAE: &str = "puae_libretro";
 const CORE_NAME_AMSTRAD: &str = "cap32_libretro";
+const CORE_NAME_ATARI: &str = "hatari_libretro";
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
 /// hold. Sits between the duplicate (2000) and frame-drop (12000) thresholds,
@@ -337,7 +338,7 @@ fn setup_retro(world: &mut World) {
 
     let core_path = get_core(SystemType::C64).unwrap();
     let args = world.resource::<Args>();
-    let games = &args.games;
+    let games = &args.programs;
     let core = RetroCore::new(Path::new(&core_path), system_dir(), None, settings)
         .expect("Failed to load libretro core");
 
@@ -345,6 +346,10 @@ fn setup_retro(world: &mut World) {
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
     if args.aga {
         set_var("puae_model", "A1200");
+    }
+    if args.ste {
+        set_var("hatari_machinetype", "ste");
+        set_var("hatari_ramsize", "2");
     }
 
     if args.high {
@@ -379,6 +384,7 @@ fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
         SystemType::C64 => CORE_NAME_VICE,
         SystemType::Amiga => CORE_NAME_UAE,
         SystemType::Amstrad => CORE_NAME_AMSTRAD,
+        SystemType::AtariST => CORE_NAME_ATARI,
         _ => CORE_NAME_UAE,
     };
     let lib_file = format!("{core_name}.{LIB_EXT}");
@@ -413,6 +419,10 @@ fn create_core(
         set_var("vice_sound_sample_rate", "44100");
     } else if system_type == SystemType::Amstrad {
         set_var("cap32_statusbar", "disabled");
+    } else if system_type == SystemType::AtariST {
+        set_var("hatari_forcerefresh", "2");
+        set_var("hatari_start_in_mouse_mode", "false");
+        set_var("hatari_fastboot", "true");
     }
     let core = get_core(system_type).unwrap();
     let retro_core = RetroCore::new(Path::new(&core), system_dir(), Some(game), settings)?;
@@ -600,14 +610,14 @@ fn run_retro(
     // }
 
     let frame_time = 1.0 / emu.core.fps();
-    // info!(
-    //     "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-    //     _fps,
-    //     emu.display_fps,
-    //     ratio,
-    //     time.delta_secs(),
-    //     emu.producer.occupied_len()
-    // );
+    trace!(
+        "FRAME FPS {}/{} = {} : t={} AUDIO {}",
+        _fps,
+        emu.display_fps,
+        ratio,
+        time.delta_secs(),
+        emu.producer.occupied_len()
+    );
     if emu.producer.occupied_len() > 12000 {
         trace!("Dropping frame");
         emu.next_frame += frame_time;

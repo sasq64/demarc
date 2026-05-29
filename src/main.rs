@@ -5,7 +5,9 @@ use bevy::render::extract_resource::ExtractResource;
 use bevy::window::WindowMode;
 use bevy::{prelude::*, window::PresentMode};
 use bevy_tweening::TweeningPlugin;
-use clap::Parser;
+use clap::builder::styling::{AnsiColor, Style};
+use clap::builder::{Styles, styling};
+use clap::{ColorChoice, Parser};
 
 #[allow(warnings)]
 mod libretro;
@@ -23,11 +25,25 @@ use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
 
+const STYLES: Styles = Styles::styled()
+    .header(
+        Style::new()
+            .bold()
+            .fg_color(Some(styling::Color::Ansi(AnsiColor::Yellow))),
+    )
+    .usage(
+        Style::new()
+            .bold()
+            .fg_color(Some(styling::Color::Ansi(AnsiColor::Yellow))),
+    )
+    .literal(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::BrightRed))))
+    .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
+
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", about = "Bevy + libretro front-end")]
+#[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, about = "Bevy + libretro front-end")]
 struct Args {
-    /// Path to the program/ROM to load
-    games: Vec<PathBuf>,
+    /// Path to the programs/disks to load
+    programs: Vec<PathBuf>,
 
     /// How to map the low-res render target onto the window.
     #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
@@ -37,7 +53,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
-    /// Shuffle the list of games into a random order.
+    /// Shuffle the list of programs into a random order.
     #[arg(long)]
     shuffle: bool,
 
@@ -45,22 +61,26 @@ struct Args {
     #[arg(long, value_enum, default_value_t = InfoDisplay::OnMulti)]
     info: InfoDisplay,
 
-    /// Force AGA (A1200 with 8MB Fast RAM)
+    /// Amiga: Force AGA (A1200 with 8MB Fast RAM)
     #[arg(long)]
     aga: bool,
+
+    /// Atari: Force STE
+    #[arg(long)]
+    ste: bool,
+
+    /// Amiga: Force high specs (68030 + FPU + 128MB Z3 RAM)
+    #[arg(long)]
+    high: bool,
 
     /// Open windowed
     #[arg(long)]
     window: bool,
-
-    /// Force high specs (68030 + FPU + 128MB Z3 RAM)
-    #[arg(long)]
-    high: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum InfoDisplay {
-    /// Always show demo info on static
+    /// Always show demo info on start
     Always,
     /// Dont show demo info on start
     Never,
@@ -139,8 +159,8 @@ fn main() {
     let mut args = Args::parse();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
-    let mut games = Vec::with_capacity(args.games.len());
-    for game in std::mem::take(&mut args.games) {
+    let mut games = Vec::with_capacity(args.programs.len());
+    for game in std::mem::take(&mut args.programs) {
         if game.is_dir() {
             let len = games.len();
             collect_m3u_files(&game, &mut games);
@@ -151,14 +171,14 @@ fn main() {
             games.push(game);
         }
     }
-    args.games = games;
+    args.programs = games;
 
     if args.shuffle {
         use rand::seq::SliceRandom;
-        args.games.shuffle(&mut rand::rng());
+        args.programs.shuffle(&mut rand::rng());
     }
 
-    let multiple = args.games.len() > 1;
+    let multiple = args.programs.len() > 1;
 
     tracing_subscriber::fmt().with_target(true).compact().init();
     let primary_window = Some(Window {
