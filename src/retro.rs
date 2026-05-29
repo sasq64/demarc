@@ -381,8 +381,17 @@ fn setup_retro(world: &mut World) {
     });
 }
 
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok()
+    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+}
+
 fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
-    let search_path: Vec<PathBuf> = vec!["libretro".into(), ".".into(), "/usr/lib/libretro".into()];
+    let search_path: Vec<PathBuf> = vec!["libretro".into(), exe_dir().unwrap_or(".".into()), "/usr/lib/libretro".into(),
+    
+    
+    ];
+
     let core_name = match sytem_type {
         SystemType::C64 => CORE_NAME_VICE,
         SystemType::Amiga => CORE_NAME_UAE,

@@ -570,7 +570,11 @@ impl RetroCore {
         // relative to the playlist file's own directory, so a bare relative
         // filename leaves them with no base dir and they insert zero disks.
         let abs_path = std::fs::canonicalize(game_path).unwrap_or_else(|_| game_path.to_path_buf());
-        let game_path_c = CString::new(abs_path.to_string_lossy().as_bytes())?;
+        let path_str = abs_path.to_string_lossy();
+        // Windows canonicalize() adds \\?\ (extended-length path prefix) which most
+        // C libraries including libretro cores don't understand — strip it.
+        let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(path_str.as_ref());
+        let game_path_c = CString::new(path_str.as_bytes())?;
         let game_info = retro_game_info {
             path: game_path_c.as_ptr(),
             data: game_data
