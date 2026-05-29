@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -94,7 +95,7 @@ struct Background {
 }
 
 struct Emulator {
-    core: RetroCore,
+    core: Option<RetroCore>,
     work_file: WorkingFile,
     games: Vec<PathBuf>,
     current_game: usize,
@@ -102,6 +103,8 @@ struct Emulator {
     next_frame: f64,
     display_fps: f64,
     match_fps: bool,
+    show_info: bool,
+    match_frames: usize,
     tags: HashMap<String, String>,
     producer: HeapProd<f32>,
     resampler: AudioResampler,
@@ -253,6 +256,9 @@ impl Emulator {
             resampler,
             ..
         } = self;
+        let Some(core) = core else {
+            return;
+        };
         let from = (core.sample_rate() * 1.0) as u32;
         core.with_audio(|samples| {
             if let Err(e) = resampler.process(from, samples, |l, r| {
@@ -298,10 +304,10 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 }
 
 /// Capture the actual rendered window content and write it to `screenshot.png`.
-fn screenshot(commands: &mut Commands) {
+fn screenshot(commands: &mut Commands, name: impl Into<String>) {
     commands
         .spawn(Screenshot::primary_window())
-        .observe(save_to_disk("screenshot.png"));
+        .observe(save_to_disk(name.into()));
 }
 
 fn setup_retro(world: &mut World) {
@@ -333,14 +339,8 @@ fn setup_retro(world: &mut World) {
         height,
     });
 
-    let settings: HashMap<String, String> =
-        [("vice_cartridge".into(), "rr38ppal.crt".into())].into();
-
-    let core_path = get_core(SystemType::C64).unwrap();
     let args = world.resource::<Args>();
     let games = &args.programs;
-    let core = RetroCore::new(Path::new(&core_path), system_dir(), None, settings)
-        .expect("Failed to load libretro core");
 
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
@@ -353,6 +353,7 @@ fn setup_retro(world: &mut World) {
     }
 
     if args.high {
+        set_var("hatari_ramsize", "8");
         set_var("puae_z3mem_size", "128");
         set_var("puae_fpu_model", "68882");
         set_var("puae_cpu_model", "68030");
@@ -361,7 +362,7 @@ fn setup_retro(world: &mut World) {
     }
 
     world.insert_non_send_resource(Emulator {
-        core,
+        core: None,
         work_file: WorkingFile::default(),
         producer,
         resampler,
@@ -369,6 +370,8 @@ fn setup_retro(world: &mut World) {
         current_game: 0,
         tags,
         match_fps: false,
+        show_info: false,
+        match_frames: 0,
         display_fps: 0.0,
         next_frame: 0.0,
         run_next: !games.is_empty(),
@@ -378,23 +381,23 @@ fn setup_retro(world: &mut World) {
     });
 }
 
-fn get_core(sytem_type: SystemType) -> Option<PathBuf> {
-    let search_path: Vec<PathBuf> = vec![".".into(), "/usr/lib/libretro".into()];
+fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
+    let search_path: Vec<PathBuf> = vec!["libretro".into(), ".".into(), "/usr/lib/libretro".into()];
     let core_name = match sytem_type {
         SystemType::C64 => CORE_NAME_VICE,
         SystemType::Amiga => CORE_NAME_UAE,
         SystemType::Amstrad => CORE_NAME_AMSTRAD,
         SystemType::AtariST => CORE_NAME_ATARI,
-        _ => CORE_NAME_UAE,
+        _ => return Err(""),
     };
     let lib_file = format!("{core_name}.{LIB_EXT}");
     for path in search_path.iter() {
         let check = path.join(&lib_file);
         if check.exists() {
-            return Some(check);
+            return Ok(check);
         }
     }
-    None
+    Err(core_name)
 }
 
 fn create_core(
@@ -424,9 +427,13 @@ fn create_core(
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
     }
-    let core = get_core(system_type).unwrap();
-    let retro_core = RetroCore::new(Path::new(&core), system_dir(), Some(game), settings)?;
-    Ok(retro_core)
+    match get_core(system_type) {
+        Ok(core) => RetroCore::new(Path::new(&core), system_dir(), Some(game), settings),
+        Err(name) => {
+            println!("Can not find '{name}'.\nExpected in current directory or /usr/lib/libretro");
+            exit(0);
+        }
+    }
 }
 
 fn run_retro(
@@ -447,6 +454,46 @@ fn run_retro(
         return;
     };
     let Some(dst) = image.data.as_mut() else {
+        return;
+    };
+
+    if emu.run_next && emu.current_game < emu.games.len() {
+        emu.core = None;
+        //core.unload();
+        let game = emu.games[emu.current_game].clone();
+
+        if let Ok(work_file) = handle_file(&game, &emu.tags) {
+            if settings.show_info {
+                let GameInfo { title, group, year } = &work_file.game_info;
+                writer.write(SpawnToast {
+                    text: format!("\"{title}\"\n{group}\n{year}"),
+                    delay: Duration::from_secs(5),
+                    duration: Duration::from_secs(15),
+                    toast_type: ToastType::InfoText,
+                });
+            }
+            let core = match create_core(
+                work_file.system_type,
+                &work_file.path,
+                work_file.settings.clone(),
+            ) {
+                Ok(core) => core,
+                Err(e) => {
+                    error!("Could not load core for {:?}: {e:#}", work_file.system_type);
+                    return;
+                }
+            };
+            emu.core = Some(core);
+            emu.work_file = work_file;
+            emu.run_next = false;
+            emu.current_game += 1;
+            emu.next_frame = time.elapsed_secs_f64();
+            info!("FRAME START");
+        }
+        return;
+    }
+
+    let Some(mut core) = emu.core.take() else {
         return;
     };
 
@@ -495,13 +542,13 @@ fn run_retro(
             };
         }
         if input.just_pressed(KeyCode::KeyM) {
-            emu.core.set_mouse_buttons(true, false, false);
+            core.set_mouse_buttons(true, false, false);
         }
         if input.just_pressed(KeyCode::KeyC) {
             settings.crt_effect = !settings.crt_effect;
         }
         if input.just_pressed(KeyCode::KeyD) {
-            let d = emu.core.next_disk() + 1;
+            let d = core.next_disk() + 1;
             let floppy = emu.work_file.system_type == SystemType::C64;
 
             writer.write(SpawnToast {
@@ -516,76 +563,68 @@ fn run_retro(
             });
         }
         if input.just_pressed(KeyCode::KeyR) {
-            emu.core.reset();
+            core.reset();
+        }
+        if input.just_pressed(KeyCode::KeyI) {
+            let GameInfo { title, group, year } = &emu.work_file.game_info;
+            if emu.show_info {
+                writer.write(SpawnToast {
+                    text: "".into(),
+                    delay: Duration::from_secs(0),
+                    duration: Duration::from_secs(5000),
+                    toast_type: ToastType::InfoText,
+                });
+            } else {
+                writer.write(SpawnToast {
+                    text: format!("\"{title}\"\n{group}\n{year}"),
+                    delay: Duration::from_secs(0),
+                    duration: Duration::from_secs(5000),
+                    toast_type: ToastType::InfoText,
+                });
+            }
+            emu.show_info = !emu.show_info;
         }
         if input.just_pressed(KeyCode::KeyN) {
             emu.run_next = true;
         }
         if input.just_pressed(KeyCode::KeyW) {
             for _ in 0..500 {
-                emu.core.run();
-                emu.core.with_audio(|_| {});
+                core.run();
+                core.with_audio(|_| {});
             }
         }
         if input.just_pressed(KeyCode::KeyP) {
-            screenshot(&mut commands);
+            screenshot(
+                &mut commands,
+                format!(
+                    "{}-{}.png",
+                    emu.work_file.game_info.title,
+                    time.elapsed_secs() as i32
+                ),
+            );
         }
     } else {
         for e in input.get_just_pressed() {
             if let Some(code) = emu.key_map.get(e) {
-                emu.core.press_key(*code, true, mods);
+                core.press_key(*code, true, mods);
             }
         }
         for e in input.get_just_released() {
             if let Some(code) = emu.key_map.get(e) {
-                emu.core.press_key(*code, false, mods);
+                core.press_key(*code, false, mods);
             }
         }
 
         let motion = mouse_motion.delta;
         if motion != Vec2::ZERO {
-            emu.core.add_mouse_motion(motion.x, motion.y);
+            core.add_mouse_motion(motion.x, motion.y);
         }
-        emu.core.set_mouse_buttons(
+        core.set_mouse_buttons(
             mouse_buttons.pressed(MouseButton::Left),
             mouse_buttons.pressed(MouseButton::Right),
             mouse_buttons.pressed(MouseButton::Middle),
         );
     }
-    if emu.run_next && emu.current_game < emu.games.len() {
-        emu.core.unload();
-        let game = emu.games[emu.current_game].clone();
-
-        if let Ok(work_file) = handle_file(&game, &emu.tags) {
-            if settings.show_info {
-                let GameInfo { title, group, year } = &work_file.game_info;
-                writer.write(SpawnToast {
-                    text: format!("{title}\n{group}\n{year}"),
-                    delay: Duration::from_secs(5),
-                    duration: Duration::from_secs(15),
-                    toast_type: ToastType::InfoText,
-                });
-            }
-            let core = match create_core(
-                work_file.system_type,
-                &work_file.path,
-                work_file.settings.clone(),
-            ) {
-                Ok(core) => core,
-                Err(e) => {
-                    error!("Could not load core for {:?}: {e:#}", work_file.system_type);
-                    return;
-                }
-            };
-            emu.core = core;
-            emu.work_file = work_file;
-            emu.run_next = false;
-            emu.current_game += 1;
-            emu.next_frame = time.elapsed_secs_f64();
-            info!("FRAME START");
-        }
-    }
-
     let delta = time.delta_secs_f64();
     let mut _fps = 60.0;
     if delta > 0.0 {
@@ -599,29 +638,32 @@ fn run_retro(
         }
     }
 
-    let ratio = (1.0 - emu.display_fps / emu.core.fps()).abs();
+    let ratio = (1.0 - emu.display_fps / core.fps()).abs();
     if ratio < 0.01 && !emu.match_fps {
-        emu.match_fps = true;
-        info!("Switching to match fps");
+        emu.match_frames += 1;
+        if emu.match_frames >= 8 {
+            emu.match_fps = true;
+            info!("Switching to match fps");
+        }
     }
     // if ratio > 0.1 && emu.match_fps {
     //     emu.match_fps = false;
     //     info!("Switching to timing");
     // }
 
-    let frame_time = 1.0 / emu.core.fps();
-    trace!(
-        "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-        _fps,
-        emu.display_fps,
-        ratio,
-        time.delta_secs(),
-        emu.producer.occupied_len()
-    );
+    let frame_time = 1.0 / core.fps();
+    // info!(
+    //     "FRAME FPS {}/{} = {} : t={} AUDIO {}",
+    //     _fps,
+    //     emu.display_fps,
+    //     ratio,
+    //     time.delta_secs(),
+    //     emu.producer.occupied_len()
+    // );
     if emu.producer.occupied_len() > 12000 {
         trace!("Dropping frame");
         emu.next_frame += frame_time;
-        return;
+        //return;
     }
 
     if emu.match_fps {
@@ -638,25 +680,23 @@ fn run_retro(
         //let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * emu.audio_buf_integral)
         //    .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
         //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
-        emu.core.run();
+        core.run();
     } else {
         let t = time.elapsed_secs_f64();
         while t >= emu.next_frame {
-            emu.core.run();
+            core.run();
             emu.next_frame += frame_time;
         }
     }
-    emu.update();
 
     // For safety
     if emu.producer.occupied_len() < 2000 {
-        emu.core.run();
-        emu.core.run();
-        emu.update();
-        warn!("Duplicating frame");
+        core.run();
+        core.run();
+        trace!("Duplicating frame");
+        //emu.core = Some(core);
+        //return;
     }
-    //}
-
     //if emu.producer.occupied_len() < 1500 {
     //    emu.core.run();
     //    emu.update();
@@ -665,7 +705,7 @@ fn run_retro(
     let bg_w = bg.width as usize;
     let bg_h = bg.height as usize;
 
-    emu.core.with_frame(|w, h, frame| {
+    core.with_frame(|w, h, frame| {
         let copy_w = w.min(bg_w);
         let copy_h = h.min(bg_h);
         for y in 0..copy_h {
@@ -675,14 +715,18 @@ fn run_retro(
                 .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
         }
     });
-    let aspect = emu.core.aspect_ratio();
+    let aspect = core.aspect_ratio();
     for mut pp in &mut post_process {
         pp.aspect = aspect;
     }
 
-    let (w, h) = emu.core.get_frame_size();
+    let (w, h) = core.get_frame_size();
+
+    emu.core = Some(core);
+    emu.update();
+
     if w != bg_w || h != bg_h {
-        warn!("SIZE CHANGE TO {w} {h}");
+        debug!("SIZE CHANGE TO {w} {h}");
         bg.width = w as u32;
         bg.height = h as u32;
         if let Some(image) = images.get_mut(&bg.handle) {

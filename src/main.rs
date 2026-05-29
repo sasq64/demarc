@@ -24,6 +24,7 @@ use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
+use tracing::Level;
 
 const STYLES: Styles = Styles::styled()
     .header(
@@ -76,6 +77,10 @@ struct Args {
     /// Open windowed
     #[arg(long)]
     window: bool,
+
+    /// Enable logging
+    #[arg(long)]
+    log: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -180,7 +185,11 @@ fn main() {
 
     let multiple = args.programs.len() > 1;
 
-    tracing_subscriber::fmt().with_target(true).compact().init();
+    tracing_subscriber::fmt()
+        .with_max_level(if args.log { Level::DEBUG } else { Level::ERROR })
+        .with_target(true)
+        .compact()
+        .init();
     let primary_window = Some(Window {
         title: "Demarc".into(),
         present_mode: PresentMode::Fifo,
@@ -189,7 +198,7 @@ fn main() {
         } else {
             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
         },
-        resolution: (366 * 2, 280 * 2).into(),
+        resolution: (720, 540).into(),
         resizable: false,
         ..Default::default()
     });
@@ -207,6 +216,8 @@ fn main() {
         .insert_resource(settings)
         .add_plugins((
             DefaultPlugins
+                .build()
+                .disable::<bevy::log::LogPlugin>()
                 .set(WindowPlugin {
                     primary_window,
                     ..Default::default()

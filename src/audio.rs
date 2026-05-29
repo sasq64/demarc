@@ -152,7 +152,6 @@ pub fn init_audio_stream(mut c: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let stream = device.build_output_stream(
         &config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            //warn!("{}", output.len());
             c.pop_slice(output);
         },
         |err| eprintln!("audio stream error: {err}"),

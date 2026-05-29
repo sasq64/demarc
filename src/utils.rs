@@ -115,7 +115,7 @@ fn get_info(game: &Path, tags: &mut HashMap<String, String>) -> (GameInfo, Syste
         let m3u = parse_m3u(game).unwrap();
         info!("{:?}", m3u.tags);
         if let Some(t) = m3u.tags.get("title") {
-            title = format!("\"{t}\"");
+            title = t.clone();
         }
         if let Some(t) = m3u.tags.get("group") {
             group = t.clone();
@@ -237,7 +237,6 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
                 settings.insert("puae_use_whdload".into(), "esabled".into());
             }
         } else {
-            println!("READ");
             let data = fs::read(&path)?;
             if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
                 // GEMDOS executable: wrap it in a bootable Atari ST floppy image
