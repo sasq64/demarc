@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 
 use libloading::Library;
@@ -797,7 +797,11 @@ struct RetroUpdate {
 /// snapshot of the latest frame/audio (refreshed in [`run`](RetroEmuThreaded::run)).
 pub struct RetroCoreThreaded {
     cmd_tx: mpsc::Sender<RetroCmd>,
-    update_rx: mpsc::Receiver<RetroUpdate>,
+    // Wrapped in a `Mutex` purely so the type is `Sync`: `mpsc::Receiver` is
+    // `Send` but not `Sync`, and Bevy requires components to be `Sync`. All
+    // access is through `&mut self` (`run`/`Drop`), so `get_mut` is used and
+    // the lock is never actually contended.
+    update_rx: Mutex<mpsc::Receiver<RetroUpdate>>,
     handle: Option<thread::JoinHandle<()>>,
     frame: Vec<u8>,
     frame_width: usize,
@@ -869,7 +873,7 @@ impl RetroCoreThreaded {
                 disks,
             })) => Ok(Self {
                 cmd_tx,
-                update_rx,
+                update_rx: Mutex::new(update_rx),
                 handle: Some(handle),
                 frame: Vec::new(),
                 frame_width: width,
@@ -961,7 +965,7 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
 
 impl RetroEmu for RetroCoreThreaded {
     fn run(&mut self) {
-        if let Ok(update) = self.update_rx.recv() {
+        if let Ok(update) = self.update_rx.get_mut().unwrap().recv() {
             self.frame = update.frame;
             self.frame_width = update.width;
             self.frame_height = update.height;
@@ -1036,18 +1040,22 @@ impl Drop for RetroCoreThreaded {
         // return — otherwise the join below would deadlock. `recv` returns Err
         // once the worker has returned and dropped its SyncSender.
         let _ = self.cmd_tx.send(RetroCmd::Unload);
-        while self.update_rx.recv().is_ok() {}
+        while self.update_rx.get_mut().unwrap().recv().is_ok() {}
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
     }
 }
 
-/// Compile-time guarantee that the core can be moved onto the worker thread.
+/// Compile-time guarantee that the direct core can be moved onto the worker
+/// thread, and that the threaded handle is `Send + Sync` so it can live inside
+/// a Bevy component (the `Emulator`).
 const _: () = {
     fn _assert_send<T: Send>() {}
+    fn _assert_send_sync<T: Send + Sync>() {}
     fn _check() {
         _assert_send::<RetroCoreDirect>();
+        _assert_send_sync::<RetroCoreThreaded>();
     }
 };
 

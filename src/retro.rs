@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -88,13 +89,19 @@ pub fn system_dir() -> &'static Path {
     .as_path()
 }
 
-#[derive(Resource)]
-struct Background {
-    handle: Handle<Image>,
-    width: u32,
-    height: u32,
-}
+/// Keeps the per-emulator `cpal` output streams alive. A stream stops playing
+/// as soon as it is dropped, and `cpal::Stream` is neither `Send` nor `Sync`
+/// (so it can't live in an [`Emulator`] component), so the streams are parked
+/// here in a `NonSend` resource for the lifetime of the app. We never touch
+/// them again after creation — audio flows through the per-emulator ring buffer.
+#[derive(Default)]
+struct AudioStreams(Vec<cpal::Stream>);
 
+/// One libretro emulator instance, rendered into its own [`Self::image`]
+/// texture. Stored as a component so several can coexist as separate entities,
+/// each driven independently by [`run_retro`] and presented by its own
+/// [`PostProcess`] camera (matched via [`Self::image`]).
+#[derive(Component)]
 struct Emulator {
     core: Option<RetroCoreThreaded>,
     work_file: WorkingFile,
@@ -109,9 +116,11 @@ struct Emulator {
     show_info: bool,
     match_frames: usize,
     tags: HashMap<String, String>,
-    producer: HeapProd<f32>,
+    /// Audio output ring-buffer producer. Wrapped in a `Mutex` only so the
+    /// component is `Sync`: `HeapProd` caches indices in a `Cell` and is thus
+    /// `!Sync`. Accessed solely from `run_retro`, so the lock is uncontended.
+    producer: Mutex<HeapProd<f32>>,
     resampler: AudioResampler,
-    _stream: cpal::Stream,
     key_map: HashMap<KeyCode, libretro::retro_key>,
     /// Integral accumulator for the audio-buffer PI controller.
     audio_buf_integral: f64,
@@ -119,6 +128,12 @@ struct Emulator {
     /// applied to the resampler input rate in [`Emulator::update`].
     audio_rate_adjust: f64,
     disk_no: u32,
+    /// RGBA render target this emulator's frames are copied into; the matching
+    /// [`PostProcess`] camera samples it (`PostProcess::source == image`).
+    image: Handle<Image>,
+    /// Current dimensions of [`Self::image`], tracked to detect size changes.
+    width: u32,
+    height: u32,
 }
 
 impl Emulator {
@@ -267,6 +282,7 @@ impl Emulator {
         let Some(core) = core else {
             return;
         };
+        let producer = producer.get_mut().expect("audio producer mutex poisoned");
         // Apply the PI controller's drift correction to the resampler ratio.
         // Done as a relative-ratio nudge (not by changing `from`) so it does
         // not force the resampler to rebuild every frame. A positive adjust
@@ -287,23 +303,7 @@ impl Emulator {
     }
 }
 
-fn setup_cameras(mut commands: Commands, background: Res<Background>) {
-    // Samples the emulator texture directly and renders it to the screen,
-    // letting the post-process shader handle scaling to the window.
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: 0,
-            ..default()
-        },
-        PostProcess {
-            source: background.handle.clone(),
-            aspect: 0.0, // updated each frame from the core's reported aspect
-            aspect_tweak: 1.0,
-        },
-        RenderLayers::layer(1),
-    ));
-
+fn setup_ui_camera(mut commands: Commands) {
     // Camera for full res UI on top of screen
     commands.spawn((
         Camera2d,
@@ -328,36 +328,10 @@ fn screenshot(commands: &mut Commands, name: impl Into<String>) {
 }
 
 fn setup_retro(world: &mut World) {
-    let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-    let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
-    let resampler =
-        AudioResampler::new(44100, sample_rate as u32).expect("Failed to create audio resampler");
-
-    let width = 720;
-    let height = 574;
-
-    let pixels = vec![0u8; (width * height * 4) as usize];
-    let image = Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        pixels,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::all(),
-    );
-    let handle = world.resource_mut::<Assets<Image>>().add(image);
-
-    world.insert_resource(Background {
-        handle,
-        width,
-        height,
-    });
+    world.insert_non_send_resource(AudioStreams::default());
 
     let args = world.resource::<Args>();
-    let games = &args.files;
+    let games = args.files.clone();
 
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
@@ -385,28 +359,88 @@ fn setup_retro(world: &mut World) {
         }
     }
 
-    world.insert_non_send_resource(Emulator {
+    let match_fps = args.force_vsync;
+    let max_time = args.max_time;
+
+    spawn_emulator(world, games, tags, match_fps, max_time);
+}
+
+/// Create a single emulator entity: its own audio stream + ring buffer, its own
+/// render-target texture, and a [`PostProcess`] camera that samples that
+/// texture. Call this once per emulator you want on screen.
+fn spawn_emulator(
+    world: &mut World,
+    games: Vec<PathBuf>,
+    tags: HashMap<String, String>,
+    match_fps: bool,
+    max_time: Option<usize>,
+) {
+    let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
+    let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
+    let resampler =
+        AudioResampler::new(44100, sample_rate as u32).expect("Failed to create audio resampler");
+    // Park the stream so it keeps playing; see [`AudioStreams`].
+    world.non_send_resource_mut::<AudioStreams>().0.push(stream);
+
+    let width = 720;
+    let height = 574;
+
+    let pixels = vec![0u8; (width * height * 4) as usize];
+    let image = Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
+    );
+    let handle = world.resource_mut::<Assets<Image>>().add(image);
+
+    world.spawn(Emulator {
         core: None,
         work_file: WorkingFile::default(),
-        producer,
         resampler,
-        _stream: stream,
         current_game: 0,
         tags,
-        match_fps: args.force_vsync,
+        match_fps,
         show_info: false,
         match_frames: 0,
         display_fps: 0.0,
         next_frame: 0.0,
         start_time: 0.0,
-        max_time: args.max_time,
+        max_time,
         run_next: !games.is_empty(),
-        games: games.clone(),
+        games,
+        producer: Mutex::new(producer),
         key_map: Emulator::build_keycode_map(),
         audio_buf_integral: 0.0,
         audio_rate_adjust: 0.0,
         disk_no: 0,
+        image: handle.clone(),
+        width,
+        height,
     });
+
+    // Samples this emulator's texture directly and renders it to the screen,
+    // letting the post-process shader handle scaling to the window. When
+    // showing several emulators at once, give each camera a distinct `order`
+    // and a `viewport` so they don't overdraw each other.
+    world.spawn((
+        Camera2d,
+        Camera {
+            order: 0,
+            ..default()
+        },
+        PostProcess {
+            source: handle,
+            aspect: 0.0, // updated each frame from the core's reported aspect
+            aspect_tweak: 1.0,
+        },
+        RenderLayers::layer(1),
+    ));
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -478,337 +512,345 @@ fn create_core(
 
 fn run_retro(
     mut commands: Commands,
-    mut emu: NonSendMut<Emulator>,
+    mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
-    mut bg: ResMut<Background>,
     time: Res<Time>,
     mut writer: MessageWriter<SpawnToast>,
     mut images: ResMut<Assets<Image>>,
     mut post_process: Query<&mut PostProcess>,
 ) {
-    let Some(image) = images.get_mut(&bg.handle) else {
-        return;
-    };
-    let Some(dst) = image.data.as_mut() else {
-        return;
-    };
+    for mut emu in &mut emus {
+        let Some(image) = images.get_mut(&emu.image) else {
+            continue;
+        };
+        let Some(dst) = image.data.as_mut() else {
+            continue;
+        };
 
-    if emu.run_next && emu.current_game < emu.games.len() {
-        emu.core = None;
-        //core.unload();
-        let game = emu.games[emu.current_game].clone();
+        if emu.run_next && emu.current_game < emu.games.len() {
+            emu.core = None;
+            //core.unload();
+            let game = emu.games[emu.current_game].clone();
 
-        if let Ok(work_file) = handle_file(&game, &emu.tags) {
-            if settings.show_info {
-                let GameInfo { title, group, year } = &work_file.game_info;
-                writer.write(SpawnToast {
-                    text: format!("\"{title}\"\n{group}\n{year}"),
-                    delay: Duration::from_secs(5),
-                    duration: Duration::from_secs(15),
-                    toast_type: ToastType::InfoText,
-                });
-            }
-            let core = match create_core(
-                work_file.system_type,
-                &work_file.path,
-                work_file.settings.clone(),
-            ) {
-                Ok(core) => core,
-                Err(e) => {
-                    error!("Could not load core for {:?}: {e:#}", work_file.system_type);
-                    return;
+            if let Ok(work_file) = handle_file(&game, &emu.tags) {
+                if settings.show_info {
+                    let GameInfo { title, group, year } = &work_file.game_info;
+                    writer.write(SpawnToast {
+                        text: format!("\"{title}\"\n{group}\n{year}"),
+                        delay: Duration::from_secs(5),
+                        duration: Duration::from_secs(15),
+                        toast_type: ToastType::InfoText,
+                    });
                 }
-            };
-            emu.core = Some(core);
-            emu.work_file = work_file;
-            emu.run_next = false;
-            emu.current_game += 1;
-            emu.next_frame = time.elapsed_secs_f64();
-            emu.start_time = time.elapsed_secs_f64();
-            trace!("FRAME START");
-        }
-        return;
-    }
-    if let Some(mt) = emu.max_time
-        && time.elapsed_secs_f64() > emu.start_time + (mt as f64)
-    {
-        emu.run_next = true;
-    };
-
-    let Some(mut core) = emu.core.take() else {
-        return;
-    };
-
-    let mut mods: u16 = libretro::RETROKMOD_NONE as u16;
-    if input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight) {
-        mods |= libretro::RETROKMOD_SHIFT as u16;
-    }
-    if input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight) {
-        mods |= libretro::RETROKMOD_CTRL as u16;
-    }
-    if input.pressed(KeyCode::AltLeft) || input.pressed(KeyCode::AltRight) {
-        mods |= libretro::RETROKMOD_ALT as u16;
-    }
-    if input.pressed(KeyCode::SuperLeft) || input.pressed(KeyCode::SuperRight) {
-        mods |= libretro::RETROKMOD_META as u16;
-    }
-    if input.pressed(KeyCode::NumLock) {
-        mods |= libretro::RETROKMOD_NUMLOCK as u16;
-    }
-    if input.pressed(KeyCode::CapsLock) {
-        mods |= libretro::RETROKMOD_CAPSLOCK as u16;
-    }
-    if input.pressed(KeyCode::ScrollLock) {
-        mods |= libretro::RETROKMOD_SCROLLOCK as u16;
-    }
-
-    if input.pressed(KeyCode::AltRight) {
-        if input.just_pressed(KeyCode::KeyB) {
-            settings.border_mode = if settings.border_mode == BorderMode::Stretch {
-                BorderMode::Black
-            } else {
-                BorderMode::Stretch
-            };
-        }
-        if input.just_pressed(KeyCode::KeyS) {
-            settings.scale_mode = match settings.scale_mode {
-                ScaleMode::Stretch => ScaleMode::Fit,
-                ScaleMode::Fit => ScaleMode::Zoom,
-                ScaleMode::Zoom => ScaleMode::Stretch,
+                let core = match create_core(
+                    work_file.system_type,
+                    &work_file.path,
+                    work_file.settings.clone(),
+                ) {
+                    Ok(core) => core,
+                    Err(e) => {
+                        error!("Could not load core for {:?}: {e:#}", work_file.system_type);
+                        continue;
+                    }
+                };
+                emu.core = Some(core);
+                emu.work_file = work_file;
+                emu.run_next = false;
+                emu.current_game += 1;
+                emu.next_frame = time.elapsed_secs_f64();
+                emu.start_time = time.elapsed_secs_f64();
+                trace!("FRAME START");
             }
+            continue;
         }
-        if input.just_pressed(KeyCode::KeyF) {
-            window.mode = match window.mode {
-                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                _ => WindowMode::Windowed,
-            };
-        }
-        if input.just_pressed(KeyCode::KeyM) {
-            core.set_mouse_buttons(true, false, false);
-        }
-        if input.just_pressed(KeyCode::KeyC) {
-            settings.crt_effect = !settings.crt_effect;
-        }
-        if input.just_pressed(KeyCode::KeyD) {
-            emu.disk_no = (emu.disk_no + 1) % core.get_number_of_disks();
-            core.set_disk(emu.disk_no);
-            let floppy = emu.work_file.system_type == SystemType::C64;
-            let d = emu.disk_no + 1;
-
-            writer.write(SpawnToast {
-                toast_type: ToastType::BottomLeft,
-                duration: Duration::from_millis(1500),
-                text: if floppy {
-                    format!("\u{f09ef} #{d}")
-                } else {
-                    format!("\u{f0249} #{d}")
-                },
-                ..Default::default()
-            });
-        }
-        if input.just_pressed(KeyCode::KeyR) {
-            core.reset();
-        }
-        if input.just_pressed(KeyCode::KeyI) {
-            let GameInfo { title, group, year } = &emu.work_file.game_info;
-            if emu.show_info {
-                writer.write(SpawnToast {
-                    text: "".into(),
-                    delay: Duration::from_secs(0),
-                    duration: Duration::from_secs(5000),
-                    toast_type: ToastType::InfoText,
-                });
-            } else {
-                writer.write(SpawnToast {
-                    text: format!("\"{title}\"\n{group}\n{year}"),
-                    delay: Duration::from_secs(0),
-                    duration: Duration::from_secs(5000),
-                    toast_type: ToastType::InfoText,
-                });
-            }
-            emu.show_info = !emu.show_info;
-        }
-        if input.just_pressed(KeyCode::KeyN) {
+        if let Some(mt) = emu.max_time
+            && time.elapsed_secs_f64() > emu.start_time + (mt as f64)
+        {
             emu.run_next = true;
+        };
+
+        let Some(mut core) = emu.core.take() else {
+            continue;
+        };
+
+        let mut mods: u16 = libretro::RETROKMOD_NONE as u16;
+        if input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight) {
+            mods |= libretro::RETROKMOD_SHIFT as u16;
         }
-        if input.just_pressed(KeyCode::KeyW) {
-            for _ in 0..500 {
-                core.run();
-                core.with_audio(&mut |_| {});
-            }
+        if input.pressed(KeyCode::ControlLeft) || input.pressed(KeyCode::ControlRight) {
+            mods |= libretro::RETROKMOD_CTRL as u16;
         }
-        if input.just_pressed(KeyCode::KeyP) {
-            screenshot(
-                &mut commands,
-                format!(
-                    "{}-{}.png",
-                    emu.work_file.game_info.title,
-                    time.elapsed_secs() as i32
-                ),
-            );
+        if input.pressed(KeyCode::AltLeft) || input.pressed(KeyCode::AltRight) {
+            mods |= libretro::RETROKMOD_ALT as u16;
         }
-    } else {
-        for e in input.get_just_pressed() {
-            if let Some(code) = emu.key_map.get(e) {
-                core.press_key(*code, true, mods);
-            }
+        if input.pressed(KeyCode::SuperLeft) || input.pressed(KeyCode::SuperRight) {
+            mods |= libretro::RETROKMOD_META as u16;
         }
-        for e in input.get_just_released() {
-            if let Some(code) = emu.key_map.get(e) {
-                core.press_key(*code, false, mods);
-            }
+        if input.pressed(KeyCode::NumLock) {
+            mods |= libretro::RETROKMOD_NUMLOCK as u16;
+        }
+        if input.pressed(KeyCode::CapsLock) {
+            mods |= libretro::RETROKMOD_CAPSLOCK as u16;
+        }
+        if input.pressed(KeyCode::ScrollLock) {
+            mods |= libretro::RETROKMOD_SCROLLOCK as u16;
         }
 
-        let motion = mouse_motion.delta;
-        if motion != Vec2::ZERO {
-            core.add_mouse_motion(motion.x, motion.y);
-        }
-        core.set_mouse_buttons(
-            mouse_buttons.pressed(MouseButton::Left),
-            mouse_buttons.pressed(MouseButton::Right),
-            mouse_buttons.pressed(MouseButton::Middle),
-        );
-    }
-    let delta = time.delta_secs_f64();
-    let mut _fps = 60.0;
-    if delta > 0.0 {
-        _fps = 1.0 / delta;
-        if emu.display_fps == 0.0 {
-            if _fps > 40.0 || _fps < 500.0 {
-                emu.display_fps = _fps;
+        if input.pressed(KeyCode::AltRight) {
+            if input.just_pressed(KeyCode::KeyB) {
+                settings.border_mode = if settings.border_mode == BorderMode::Stretch {
+                    BorderMode::Black
+                } else {
+                    BorderMode::Stretch
+                };
+            }
+            if input.just_pressed(KeyCode::KeyS) {
+                settings.scale_mode = match settings.scale_mode {
+                    ScaleMode::Stretch => ScaleMode::Fit,
+                    ScaleMode::Fit => ScaleMode::Zoom,
+                    ScaleMode::Zoom => ScaleMode::Stretch,
+                }
+            }
+            if input.just_pressed(KeyCode::KeyF) {
+                window.mode = match window.mode {
+                    WindowMode::Windowed => {
+                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                    }
+                    _ => WindowMode::Windowed,
+                };
+            }
+            if input.just_pressed(KeyCode::KeyM) {
+                core.set_mouse_buttons(true, false, false);
+            }
+            if input.just_pressed(KeyCode::KeyC) {
+                settings.crt_effect = !settings.crt_effect;
+            }
+            if input.just_pressed(KeyCode::KeyD) {
+                emu.disk_no = (emu.disk_no + 1) % core.get_number_of_disks();
+                core.set_disk(emu.disk_no);
+                let floppy = emu.work_file.system_type == SystemType::C64;
+                let d = emu.disk_no + 1;
+
+                writer.write(SpawnToast {
+                    toast_type: ToastType::BottomLeft,
+                    duration: Duration::from_millis(1500),
+                    text: if floppy {
+                        format!("\u{f09ef} #{d}")
+                    } else {
+                        format!("\u{f0249} #{d}")
+                    },
+                    ..Default::default()
+                });
+            }
+            if input.just_pressed(KeyCode::KeyR) {
+                core.reset();
+            }
+            if input.just_pressed(KeyCode::KeyI) {
+                let GameInfo { title, group, year } = &emu.work_file.game_info;
+                if emu.show_info {
+                    writer.write(SpawnToast {
+                        text: "".into(),
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(5000),
+                        toast_type: ToastType::InfoText,
+                    });
+                } else {
+                    writer.write(SpawnToast {
+                        text: format!("\"{title}\"\n{group}\n{year}"),
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(5000),
+                        toast_type: ToastType::InfoText,
+                    });
+                }
+                emu.show_info = !emu.show_info;
+            }
+            if input.just_pressed(KeyCode::KeyN) {
+                emu.run_next = true;
+            }
+            if input.just_pressed(KeyCode::KeyW) {
+                for _ in 0..500 {
+                    core.run();
+                    core.with_audio(&mut |_| {});
+                }
+            }
+            if input.just_pressed(KeyCode::KeyP) {
+                screenshot(
+                    &mut commands,
+                    format!(
+                        "{}-{}.png",
+                        emu.work_file.game_info.title,
+                        time.elapsed_secs() as i32
+                    ),
+                );
             }
         } else {
-            emu.display_fps = emu.display_fps * 0.95 + _fps * 0.05;
+            for e in input.get_just_pressed() {
+                if let Some(code) = emu.key_map.get(e) {
+                    core.press_key(*code, true, mods);
+                }
+            }
+            for e in input.get_just_released() {
+                if let Some(code) = emu.key_map.get(e) {
+                    core.press_key(*code, false, mods);
+                }
+            }
+
+            let motion = mouse_motion.delta;
+            if motion != Vec2::ZERO {
+                core.add_mouse_motion(motion.x, motion.y);
+            }
+            core.set_mouse_buttons(
+                mouse_buttons.pressed(MouseButton::Left),
+                mouse_buttons.pressed(MouseButton::Right),
+                mouse_buttons.pressed(MouseButton::Middle),
+            );
         }
-    }
-
-    let ratio = (1.0 - emu.display_fps / core.fps()).abs();
-    if ratio < 0.01 && !emu.match_fps {
-        emu.match_frames += 1;
-        if emu.match_frames >= 8 {
-            emu.match_fps = true;
-            warn!("Switching to match fps");
+        let delta = time.delta_secs_f64();
+        let mut _fps = 60.0;
+        if delta > 0.0 {
+            _fps = 1.0 / delta;
+            if emu.display_fps == 0.0 {
+                if _fps > 40.0 || _fps < 500.0 {
+                    emu.display_fps = _fps;
+                }
+            } else {
+                emu.display_fps = emu.display_fps * 0.95 + _fps * 0.05;
+            }
         }
-    }
 
-    let fps = core.fps();
-    let frame_time = if fps > 0.0 {
-        1.0 / core.fps()
-    } else {
-        1.0 / 60.0
-    };
-    trace!(
-        "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-        _fps,
-        emu.display_fps,
-        ratio,
-        time.delta_secs(),
-        emu.producer.occupied_len()
-    );
-    if emu.producer.occupied_len() > AUDIO_BUF_MAX {
-        warn!("Dropping frame");
-        emu.next_frame += frame_time;
-        emu.core = Some(core);
-        return;
-    }
+        let ratio = (1.0 - emu.display_fps / core.fps()).abs();
+        if ratio < 0.01 && !emu.match_fps {
+            emu.match_frames += 1;
+            if emu.match_frames >= 8 {
+                emu.match_fps = true;
+                warn!("Switching to match fps");
+            }
+        }
 
-    // PI controller on audio-buffer fill. Output is a fractional
-    // sample-rate correction (positive => buffer too full => speed input
-    // up so the resampler emits fewer samples and the buffer drains;
-    // negative => buffer draining too quickly => slow input down so the
-    // resampler emits more samples and the buffer refills). Applied to the
-    // resampler input rate in `Emulator::update`.
-    let fill = emu.producer.occupied_len() as f64;
-    let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
-    emu.audio_buf_integral += error * delta;
-    // Anti-windup: keep the integral term within the output clamp.
-    let i_max = AUDIO_RATE_MAX_ADJUST / AUDIO_PI_KI;
-    emu.audio_buf_integral = emu.audio_buf_integral.clamp(-i_max, i_max);
-    let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * emu.audio_buf_integral)
-        .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
-    emu.audio_rate_adjust = adjust;
-    //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
-
-    if emu.match_fps {
-        core.run();
-    } else {
-        let t = time.elapsed_secs_f64();
-        while t >= emu.next_frame {
-            core.run();
+        let fps = core.fps();
+        let frame_time = if fps > 0.0 {
+            1.0 / core.fps()
+        } else {
+            1.0 / 60.0
+        };
+        trace!(
+            "FRAME FPS {}/{} = {} : t={} AUDIO {}",
+            _fps,
+            emu.display_fps,
+            ratio,
+            time.delta_secs(),
+            emu.producer.lock().unwrap().occupied_len()
+        );
+        if emu.producer.lock().unwrap().occupied_len() > AUDIO_BUF_MAX {
+            warn!("Dropping frame");
             emu.next_frame += frame_time;
+            emu.core = Some(core);
+            continue;
         }
-    }
 
-    // For safety
-    if emu.producer.occupied_len() < AUDIO_BUF_MIN {
-        core.run();
-        warn!("Duplicating frame");
-        //emu.core = Some(core);
-        //return;
-    }
+        // PI controller on audio-buffer fill. Output is a fractional
+        // sample-rate correction (positive => buffer too full => speed input
+        // up so the resampler emits fewer samples and the buffer drains;
+        // negative => buffer draining too quickly => slow input down so the
+        // resampler emits more samples and the buffer refills). Applied to the
+        // resampler input rate in `Emulator::update`.
+        let fill = emu.producer.lock().unwrap().occupied_len() as f64;
+        let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
+        emu.audio_buf_integral += error * delta;
+        // Anti-windup: keep the integral term within the output clamp.
+        let i_max = AUDIO_RATE_MAX_ADJUST / AUDIO_PI_KI;
+        emu.audio_buf_integral = emu.audio_buf_integral.clamp(-i_max, i_max);
+        let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * emu.audio_buf_integral)
+            .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
+        emu.audio_rate_adjust = adjust;
+        //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
 
-    let bg_w = bg.width as usize;
-    let bg_h = bg.height as usize;
-
-    core.with_frame(&mut |w, h, frame| {
-        let copy_w = w.min(bg_w);
-        let copy_h = h.min(bg_h);
-        for y in 0..copy_h {
-            let src_off = y * w * 4;
-            let dst_off = y * bg_w * 4;
-            dst[dst_off..dst_off + copy_w * 4]
-                .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
+        if emu.match_fps {
+            core.run();
+        } else {
+            let t = time.elapsed_secs_f64();
+            while t >= emu.next_frame {
+                core.run();
+                emu.next_frame += frame_time;
+            }
         }
-    });
-    // For some reason we need to compensate the hatari aspect
-    let aspect = if emu.work_file.system_type == SystemType::AtariST {
-        let (w, h) = core.get_frame_size();
-        if h > 0 {
-            w as f32 / h as f32
+
+        // For safety
+        if emu.producer.lock().unwrap().occupied_len() < AUDIO_BUF_MIN {
+            core.run();
+            warn!("Duplicating frame");
+            //emu.core = Some(core);
+            //return;
+        }
+
+        let bg_w = emu.width as usize;
+        let bg_h = emu.height as usize;
+
+        core.with_frame(&mut |w, h, frame| {
+            let copy_w = w.min(bg_w);
+            let copy_h = h.min(bg_h);
+            for y in 0..copy_h {
+                let src_off = y * w * 4;
+                let dst_off = y * bg_w * 4;
+                dst[dst_off..dst_off + copy_w * 4]
+                    .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
+            }
+        });
+        // For some reason we need to compensate the hatari aspect
+        let aspect = if emu.work_file.system_type == SystemType::AtariST {
+            let (w, h) = core.get_frame_size();
+            if h > 0 {
+                w as f32 / h as f32
+            } else {
+                core.aspect_ratio()
+            }
         } else {
             core.aspect_ratio()
+        };
+        // Update only this emulator's own post-process camera (the one
+        // sampling its texture), so multiple emulators don't clobber each
+        // other's aspect ratio.
+        for mut pp in &mut post_process {
+            if pp.source == emu.image {
+                pp.aspect = aspect;
+            }
         }
-    } else {
-        core.aspect_ratio()
-    };
-    for mut pp in &mut post_process {
-        pp.aspect = aspect;
-    }
 
-    let (w, h) = core.get_frame_size();
+        let (w, h) = core.get_frame_size();
 
-    emu.core = Some(core);
-    emu.update();
+        emu.core = Some(core);
+        emu.update();
 
-    if w != bg_w || h != bg_h {
-        debug!("SIZE CHANGE TO {w} {h}");
-        bg.width = w as u32;
-        bg.height = h as u32;
-        if let Some(image) = images.get_mut(&bg.handle) {
-            // Recreate with new dimensions
-            info!("RECREATE");
-            *image = Image::new(
-                Extent3d {
-                    width: w as u32,
-                    height: h as u32,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                vec![0u8; w * h * 4], // RGBA zeros
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::default(),
-            );
+        if w != bg_w || h != bg_h {
+            debug!("SIZE CHANGE TO {w} {h}");
+            emu.width = w as u32;
+            emu.height = h as u32;
+            if let Some(image) = images.get_mut(&emu.image) {
+                // Recreate with new dimensions
+                info!("RECREATE");
+                *image = Image::new(
+                    Extent3d {
+                        width: w as u32,
+                        height: h as u32,
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    vec![0u8; w * h * 4], // RGBA zeros
+                    TextureFormat::Rgba8UnormSrgb,
+                    RenderAssetUsages::default(),
+                );
+            }
         }
     }
 }
 
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_retro, setup_cameras, fix_window).chain());
+        app.add_systems(Startup, (setup_retro, setup_ui_camera, fix_window));
         app.add_systems(Update, run_retro);
     }
 }

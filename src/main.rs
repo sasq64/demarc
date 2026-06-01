@@ -91,6 +91,10 @@ struct Args {
     /// Extra options to add to libretro
     #[arg(long, value_delimiter = ',')]
     extra_options: Vec<String>,
+
+    /// Grid rendering
+    #[arg(long)]
+    grid: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
