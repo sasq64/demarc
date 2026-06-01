@@ -9,24 +9,35 @@ use cpal::{
 
 use ringbuf::{HeapCons, traits::*};
 
-use rubato::{FftFixedIn, Resampler};
+use rubato::{FastFixedIn, PolynomialDegree, Resampler};
+
+/// Largest fractional drift correction [`AudioResampler::set_adjust`] will
+/// honour. The async resampler is built with this much relative-ratio headroom
+/// so corrections can be applied on the fly without rebuilding. Kept well above
+/// the controller's own clamp so it never saturates here.
+const MAX_RATIO_ADJUST: f64 = 0.05;
 
 /// Resamples interleaved stereo audio from the core's native rate to the
 /// output device rate, converting the core's `i16` samples to `f32` along the
 /// way.
 ///
 /// The core hands us a variable number of frames each call, while the
-/// underlying [`FftFixedIn`] resampler wants a fixed input chunk, so incoming
+/// underlying [`FastFixedIn`] resampler wants a fixed input chunk, so incoming
 /// samples are deinterleaved into per-channel buffers and consumed one full
 /// chunk at a time.
+///
+/// [`FastFixedIn`] is an *asynchronous* resampler whose ratio can be nudged via
+/// [`set_resample_ratio_relative`](Resampler::set_resample_ratio_relative)
+/// without rebuilding. That is what makes per-frame drift correction cheap:
+/// only a genuine change of the core's *nominal* sample rate triggers a rebuild.
 pub struct AudioResampler {
-    inner: FftFixedIn<f32>,
+    inner: FastFixedIn<f32>,
     /// Deinterleaved input awaiting a full chunk, one buffer per channel.
     in_buf: [Vec<f32>; 2],
     /// Scratch output buffers, one per channel.
     out: [Vec<f32>; 2],
     chunk_size: usize,
-    /// Current input (core) sample rate, tracked so [`set_from_hz`] can skip
+    /// Current nominal input (core) sample rate, tracked so [`process`] can skip
     /// rebuilding when the rate is unchanged.
     from: u32,
     /// Output (device) sample rate, needed to rebuild `inner` on a rate change.
@@ -36,7 +47,13 @@ pub struct AudioResampler {
 impl AudioResampler {
     pub fn new(from: u32, to: u32) -> Result<Self> {
         let chunk_size = 1024;
-        let inner = FftFixedIn::<f32>::new(from as usize, to as usize, chunk_size, 2, 2)?;
+        let inner = FastFixedIn::<f32>::new(
+            to as f64 / from as f64,
+            1.0 + MAX_RATIO_ADJUST,
+            PolynomialDegree::Cubic,
+            chunk_size,
+            2,
+        )?;
         let out_max = inner.output_frames_max();
         Ok(Self {
             inner,
@@ -46,6 +63,24 @@ impl AudioResampler {
             from,
             to,
         })
+    }
+
+    /// Nudge the output/input ratio by `adjust` (a small signed fraction, e.g.
+    /// `+0.002` for +0.2%) to compensate for clock drift between the emulator
+    /// and the audio device, without rebuilding the resampler.
+    ///
+    /// A positive `adjust` raises the effective input rate, so the resampler
+    /// emits *fewer* output frames per input frame and the downstream ring
+    /// buffer drains; a negative `adjust` does the reverse and lets it fill.
+    /// The change is ramped over the next chunk to avoid zipper noise, and
+    /// clamped to the headroom the resampler was built with.
+    pub fn set_adjust(&mut self, adjust: f64) {
+        let adjust = adjust.clamp(-MAX_RATIO_ADJUST, MAX_RATIO_ADJUST);
+        // rel < 1 when adjust > 0: faster input -> fewer output frames.
+        let rel = 1.0 / (1.0 + adjust);
+        if let Err(e) = self.inner.set_resample_ratio_relative(rel, true) {
+            warn!("audio ratio adjust failed: {e}");
+        }
     }
 
     /// Feeds interleaved stereo `i16` samples captured at `from` Hz, invoking
@@ -89,8 +124,13 @@ impl AudioResampler {
             self.in_buf[1].clear();
 
             // Rebuild for the new ratio and resize the scratch output buffers.
-            self.inner =
-                FftFixedIn::<f32>::new(from as usize, self.to as usize, self.chunk_size, 2, 2)?;
+            self.inner = FastFixedIn::<f32>::new(
+                self.to as f64 / from as f64,
+                1.0 + MAX_RATIO_ADJUST,
+                PolynomialDegree::Cubic,
+                self.chunk_size,
+                2,
+            )?;
             let out_max = self.inner.output_frames_max();
             self.out = [vec![0.0; out_max], vec![0.0; out_max]];
             self.from = from;

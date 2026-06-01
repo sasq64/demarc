@@ -20,18 +20,41 @@ pub enum SystemType {
 }
 
 pub fn get_system_type(path: &Path) -> SystemType {
-    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+    let mut system_type = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();
         match ext.as_str() {
             "adf" | "dms" | "ipf" | "hdf" | "lha" | "slave" => SystemType::Amiga,
-            "d64" | "d81" | "zip" => SystemType::C64,
+            "d64" | "d81" => SystemType::C64,
             "dsk" => SystemType::Amstrad,
             "msa" | "st" => SystemType::AtariST,
             _ => SystemType::Unknown,
         }
     } else {
         SystemType::Unknown
+    };
+    if system_type == SystemType::Unknown {
+        info!("Checking {:?}", path);
+        if path.is_dir() {
+            // if is_self_booting_dir(path) {
+            //     system_type = SystemType::Amiga;
+            // } else {
+            //     //if find_file(&path, ".slave") {
+            //     system_type = SystemType::Amiga;
+            // }
+        } else {
+            let Ok(data) = fs::read(path) else {
+                return SystemType::Unknown;
+            };
+            if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
+                system_type = SystemType::AtariST;
+            } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
+                system_type = SystemType::C64;
+            } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
+                system_type = SystemType::Amiga;
+            }
+        }
     }
+    system_type
 }
 
 #[derive(Debug, Default)]
@@ -103,15 +126,24 @@ pub struct GameInfo {
     pub year: String,
 }
 
-fn get_info(game: &Path, tags: &mut HashMap<String, String>) -> (GameInfo, SystemType) {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum FileType {
+    M3U,
+    Image,
+    Unknown,
+}
+
+fn get_info(game: &Path, tags: &mut HashMap<String, String>) -> (GameInfo, SystemType, FileType) {
     let mut title: String = "".into();
     let mut group: String = "".into();
     let mut year: String = "".into();
     //  let mut tags = HashMap::new();
     let mut system_type = SystemType::Unknown;
+    let mut file_type = FileType::Unknown;
     if let Some(ext) = game.extension()
         && ext == "m3u"
     {
+        file_type = FileType::M3U;
         let m3u = parse_m3u(game).unwrap();
         info!("{:?}", m3u.tags);
         if let Some(t) = m3u.tags.get("title") {
@@ -130,17 +162,22 @@ fn get_info(game: &Path, tags: &mut HashMap<String, String>) -> (GameInfo, Syste
             }
         }
         if let Some(path) = m3u.files.first() {
-            system_type = get_system_type(path);
+            let real_path = game.parent().unwrap().join(path);
+            system_type = get_system_type(&real_path);
         }
         if system_type == SystemType::Unknown {
             system_type = SystemType::UnknownM3U;
         }
     } else {
         system_type = get_system_type(game);
+        if system_type != SystemType::Unknown {
+            file_type = FileType::Image;
+        }
         title = game.file_name().unwrap().to_string_lossy().to_string();
     }
-    (GameInfo { title, group, year }, system_type)
+    (GameInfo { title, group, year }, system_type, file_type)
 }
+
 /// Find a direct child of `dir` whose name matches `name` case-insensitively.
 /// Amiga volumes are case-insensitive, so a host directory meant to act as one
 /// may use any casing (e.g. `S/Startup-Sequence`).
@@ -161,6 +198,7 @@ fn is_self_booting_dir(game: &Path) -> bool {
     find_child_ci(game, "s")
         .is_some_and(|s_dir| find_child_ci(&s_dir, "startup-sequence").is_some())
 }
+
 /// Build a bootable Atari ST FAT12 floppy image containing an `AUTO` directory
 /// with `data` (a GEMDOS executable from `src`) copied into it, so it runs
 /// automatically when the disk boots. Returns the path to the `.st` image,
@@ -213,7 +251,10 @@ fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
 
     Ok(img_path)
 }
-
+/// Options
+/// - Vaild M3u (for System) with tags
+/// - Metadata only M3U (Unknown system) with tags-> Redirect to parent
+/// - Direct file, no meta data, with tags
 pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
     let mut path = in_path.to_owned();
     let mut settings = tags.clone();
@@ -221,12 +262,13 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
     if !path.exists() {
         bail!("No such file");
     }
-    let (game_info, mut system_type) = get_info(in_path, &mut settings);
+    info!("HANDLE {in_path:?}");
+    let (game_info, mut system_type, file_type) = get_info(in_path, &mut settings);
 
     if system_type == SystemType::UnknownM3U {
         path = path.parent().unwrap().to_owned();
     }
-    if system_type == SystemType::Unknown || system_type == SystemType::UnknownM3U {
+    if file_type != FileType::M3U || system_type == SystemType::UnknownM3U {
         if path.is_dir() {
             if is_self_booting_dir(&path) {
                 system_type = SystemType::Amiga;
@@ -234,6 +276,7 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
             } else {
                 //if find_file(&path, ".slave") {
                 system_type = SystemType::Amiga;
+                settings.insert("puae_model".into(), "A1200".into());
                 settings.insert("puae_use_whdload".into(), "esabled".into());
             }
         } else {

@@ -1,4 +1,5 @@
 #![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
@@ -25,6 +26,7 @@ use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
 use tracing::Level;
+use tracing_subscriber::EnvFilter;
 
 const STYLES: Styles = Styles::styled()
     .header(
@@ -44,7 +46,7 @@ const STYLES: Styles = Styles::styled()
 #[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, about = "Bevy + libretro front-end")]
 struct Args {
     /// Path to the programs/disks to load
-    programs: Vec<PathBuf>,
+    files: Vec<PathBuf>,
 
     /// How to map the low-res render target onto the window.
     #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
@@ -78,9 +80,17 @@ struct Args {
     #[arg(long)]
     window: bool,
 
-    /// Enable logging
+    /// Max number of seconds to play a file before skipping
     #[arg(long)]
-    log: bool,
+    max_time: Option<usize>,
+
+    /// Force vsync, slowing down or speeding up emulation to fit
+    #[arg(long)]
+    force_vsync: bool,
+
+    /// Extra options to add to libretro
+    #[arg(long, value_delimiter = ',')]
+    extra_options: Vec<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -164,8 +174,8 @@ fn main() {
     let mut args = Args::parse();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
-    let mut games = Vec::with_capacity(args.programs.len());
-    for game in std::mem::take(&mut args.programs) {
+    let mut games = Vec::with_capacity(args.files.len());
+    for game in std::mem::take(&mut args.files) {
         if game.is_dir() {
             let len = games.len();
             collect_m3u_files(&game, &mut games);
@@ -176,17 +186,24 @@ fn main() {
             games.push(game);
         }
     }
-    args.programs = games;
+    args.files = games;
 
     if args.shuffle {
         use rand::seq::SliceRandom;
-        args.programs.shuffle(&mut rand::rng());
+        args.files.shuffle(&mut rand::rng());
     }
 
-    let multiple = args.programs.len() > 1;
+    let multiple = args.files.len() > 1;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(if cfg!(debug_assertions) {
+            "demarc=info,warn"
+        } else {
+            "error"
+        })
+    });
 
     tracing_subscriber::fmt()
-        .with_max_level(if args.log { Level::DEBUG } else { Level::ERROR })
+        .with_env_filter(filter)
         .with_target(true)
         .compact()
         .init();

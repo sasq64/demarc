@@ -25,7 +25,7 @@ use crate::audio::{AudioResampler, init_audio_stream};
 use crate::hud::{SpawnToast, ToastType};
 use crate::libretro;
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
-use crate::retro_emu::RetroCore;
+use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::{GameInfo, SystemType, WorkingFile, handle_file};
 use crate::{AppSettings, Args};
 
@@ -46,11 +46,13 @@ const CORE_NAME_ATARI: &str = "hatari_libretro";
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
 /// hold. Sits between the duplicate (2000) and frame-drop (12000) thresholds,
 /// leaving headroom on both sides.
-const AUDIO_BUF_TARGET: f64 = 6000.0;
+const AUDIO_BUF_MIN: usize = 3000;
+const AUDIO_BUF_TARGET: f64 = 8000.0;
+const AUDIO_BUF_MAX: usize = 15000;
 /// Proportional / integral gains for the audio-buffer controller. Error is
 /// normalized by [`AUDIO_BUF_TARGET`], so these are dimensionless.
-const AUDIO_PI_KP: f64 = 0.002;
-const AUDIO_PI_KI: f64 = 0.0005;
+const AUDIO_PI_KP: f64 = 0.002 * 2.0;
+const AUDIO_PI_KI: f64 = 0.0005 * 2.0;
 /// Largest fractional sample-rate correction the controller may request
 /// (±0.5%), enough to absorb display/audio clock drift without audible pitch.
 const AUDIO_RATE_MAX_ADJUST: f64 = 0.005;
@@ -94,12 +96,14 @@ struct Background {
 }
 
 struct Emulator {
-    core: Option<RetroCore>,
+    core: Option<RetroCoreThreaded>,
     work_file: WorkingFile,
     games: Vec<PathBuf>,
     current_game: usize,
     run_next: bool,
     next_frame: f64,
+    start_time: f64,
+    max_time: Option<usize>,
     display_fps: f64,
     match_fps: bool,
     show_info: bool,
@@ -111,6 +115,10 @@ struct Emulator {
     key_map: HashMap<KeyCode, libretro::retro_key>,
     /// Integral accumulator for the audio-buffer PI controller.
     audio_buf_integral: f64,
+    /// Latest fractional sample-rate correction from the PI controller,
+    /// applied to the resampler input rate in [`Emulator::update`].
+    audio_rate_adjust: f64,
+    disk_no: u32,
 }
 
 impl Emulator {
@@ -253,13 +261,23 @@ impl Emulator {
             core,
             producer,
             resampler,
+            audio_rate_adjust,
             ..
         } = self;
         let Some(core) = core else {
             return;
         };
-        let from = (core.sample_rate() * 1.0) as u32;
-        core.with_audio(|samples| {
+        // Apply the PI controller's drift correction to the resampler ratio.
+        // Done as a relative-ratio nudge (not by changing `from`) so it does
+        // not force the resampler to rebuild every frame. A positive adjust
+        // makes the resampler emit fewer samples so the ring buffer drains; a
+        // negative adjust lets it fill. See `AudioResampler::set_adjust`.
+        resampler.set_adjust(*audio_rate_adjust);
+        let from = core.sample_rate() as u32;
+        core.with_audio(&mut |samples| {
+            if samples.is_empty() {
+                return;
+            }
             if let Err(e) = resampler.process(from, samples, |l, r| {
                 producer.push_iter([l, r].into_iter());
             }) {
@@ -339,10 +357,11 @@ fn setup_retro(world: &mut World) {
     });
 
     let args = world.resource::<Args>();
-    let games = &args.programs;
+    let games = &args.files;
 
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
+
     if args.aga {
         set_var("puae_model", "A1200");
     }
@@ -360,6 +379,12 @@ fn setup_retro(world: &mut World) {
         set_var("puae_cpu_compatibility", "exact");
     }
 
+    for opt in &args.extra_options {
+        if let Some((key, val)) = opt.split_once("=") {
+            set_var(key.trim(), val.trim());
+        }
+    }
+
     world.insert_non_send_resource(Emulator {
         core: None,
         work_file: WorkingFile::default(),
@@ -368,15 +393,19 @@ fn setup_retro(world: &mut World) {
         _stream: stream,
         current_game: 0,
         tags,
-        match_fps: false,
+        match_fps: args.force_vsync,
         show_info: false,
         match_frames: 0,
         display_fps: 0.0,
         next_frame: 0.0,
+        start_time: 0.0,
+        max_time: args.max_time,
         run_next: !games.is_empty(),
         games: games.clone(),
         key_map: Emulator::build_keycode_map(),
         audio_buf_integral: 0.0,
+        audio_rate_adjust: 0.0,
+        disk_no: 0,
     });
 }
 
@@ -414,7 +443,7 @@ fn create_core(
     system_type: SystemType,
     game: &Path,
     mut settings: HashMap<String, String>,
-) -> Result<RetroCore> {
+) -> Result<RetroCoreThreaded> {
     let mut set_var = |name: &str, val: &str| {
         if !settings.contains_key(name) {
             settings.insert(name.into(), val.into());
@@ -436,9 +465,10 @@ fn create_core(
         set_var("hatari_forcerefresh", "2");
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
+        //set_var("hatari_video_crop_overscan", "false");
     }
     match get_core(system_type) {
-        Ok(core) => RetroCore::new(Path::new(&core), system_dir(), Some(game), settings),
+        Ok(core) => RetroCoreThreaded::new(Path::new(&core), system_dir(), Some(game), settings),
         Err(name) => {
             println!("Can not find '{name}'.\nExpected in current directory or /usr/lib/libretro");
             exit(0);
@@ -498,10 +528,16 @@ fn run_retro(
             emu.run_next = false;
             emu.current_game += 1;
             emu.next_frame = time.elapsed_secs_f64();
-            info!("FRAME START");
+            emu.start_time = time.elapsed_secs_f64();
+            trace!("FRAME START");
         }
         return;
     }
+    if let Some(mt) = emu.max_time
+        && time.elapsed_secs_f64() > emu.start_time + (mt as f64)
+    {
+        emu.run_next = true;
+    };
 
     let Some(mut core) = emu.core.take() else {
         return;
@@ -558,8 +594,10 @@ fn run_retro(
             settings.crt_effect = !settings.crt_effect;
         }
         if input.just_pressed(KeyCode::KeyD) {
-            let d = core.next_disk() + 1;
+            emu.disk_no = (emu.disk_no + 1) % core.get_number_of_disks();
+            core.set_disk(emu.disk_no);
             let floppy = emu.work_file.system_type == SystemType::C64;
+            let d = emu.disk_no + 1;
 
             writer.write(SpawnToast {
                 toast_type: ToastType::BottomLeft,
@@ -600,7 +638,7 @@ fn run_retro(
         if input.just_pressed(KeyCode::KeyW) {
             for _ in 0..500 {
                 core.run();
-                core.with_audio(|_| {});
+                core.with_audio(&mut |_| {});
             }
         }
         if input.just_pressed(KeyCode::KeyP) {
@@ -653,43 +691,49 @@ fn run_retro(
         emu.match_frames += 1;
         if emu.match_frames >= 8 {
             emu.match_fps = true;
-            info!("Switching to match fps");
+            warn!("Switching to match fps");
         }
     }
-    // if ratio > 0.1 && emu.match_fps {
-    //     emu.match_fps = false;
-    //     info!("Switching to timing");
-    // }
 
-    let frame_time = 1.0 / core.fps();
-    // info!(
-    //     "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-    //     _fps,
-    //     emu.display_fps,
-    //     ratio,
-    //     time.delta_secs(),
-    //     emu.producer.occupied_len()
-    // );
-    if emu.producer.occupied_len() > 12000 {
-        trace!("Dropping frame");
+    let fps = core.fps();
+    let frame_time = if fps > 0.0 {
+        1.0 / core.fps()
+    } else {
+        1.0 / 60.0
+    };
+    trace!(
+        "FRAME FPS {}/{} = {} : t={} AUDIO {}",
+        _fps,
+        emu.display_fps,
+        ratio,
+        time.delta_secs(),
+        emu.producer.occupied_len()
+    );
+    if emu.producer.occupied_len() > AUDIO_BUF_MAX {
+        warn!("Dropping frame");
         emu.next_frame += frame_time;
-        //return;
+        emu.core = Some(core);
+        return;
     }
 
+    // PI controller on audio-buffer fill. Output is a fractional
+    // sample-rate correction (positive => buffer too full => speed input
+    // up so the resampler emits fewer samples and the buffer drains;
+    // negative => buffer draining too quickly => slow input down so the
+    // resampler emits more samples and the buffer refills). Applied to the
+    // resampler input rate in `Emulator::update`.
+    let fill = emu.producer.occupied_len() as f64;
+    let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
+    emu.audio_buf_integral += error * delta;
+    // Anti-windup: keep the integral term within the output clamp.
+    let i_max = AUDIO_RATE_MAX_ADJUST / AUDIO_PI_KI;
+    emu.audio_buf_integral = emu.audio_buf_integral.clamp(-i_max, i_max);
+    let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * emu.audio_buf_integral)
+        .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
+    emu.audio_rate_adjust = adjust;
+    //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
+
     if emu.match_fps {
-        // PI controller on audio-buffer fill. Output is a fractional
-        // sample-rate correction (positive => buffer too full => speed input
-        // up so the resampler emits fewer samples and the buffer drains).
-        // Not applied yet — just computed and logged for tuning.
-        let fill = emu.producer.occupied_len() as f64;
-        let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
-        emu.audio_buf_integral += error * delta;
-        // Anti-windup: keep the integral term within the output clamp.
-        let i_max = AUDIO_RATE_MAX_ADJUST / AUDIO_PI_KI;
-        emu.audio_buf_integral = emu.audio_buf_integral.clamp(-i_max, i_max);
-        //let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * emu.audio_buf_integral)
-        //    .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
-        //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
         core.run();
     } else {
         let t = time.elapsed_secs_f64();
@@ -700,22 +744,17 @@ fn run_retro(
     }
 
     // For safety
-    if emu.producer.occupied_len() < 2000 {
+    if emu.producer.occupied_len() < AUDIO_BUF_MIN {
         core.run();
-        core.run();
-        trace!("Duplicating frame");
+        warn!("Duplicating frame");
         //emu.core = Some(core);
         //return;
     }
-    //if emu.producer.occupied_len() < 1500 {
-    //    emu.core.run();
-    //    emu.update();
-    //}
 
     let bg_w = bg.width as usize;
     let bg_h = bg.height as usize;
 
-    core.with_frame(|w, h, frame| {
+    core.with_frame(&mut |w, h, frame| {
         let copy_w = w.min(bg_w);
         let copy_h = h.min(bg_h);
         for y in 0..copy_h {
@@ -725,7 +764,17 @@ fn run_retro(
                 .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
         }
     });
-    let aspect = core.aspect_ratio();
+    // For some reason we need to compensate the hatari aspect
+    let aspect = if emu.work_file.system_type == SystemType::AtariST {
+        let (w, h) = core.get_frame_size();
+        if h > 0 {
+            w as f32 / h as f32
+        } else {
+            core.aspect_ratio()
+        }
+    } else {
+        core.aspect_ratio()
+    };
     for mut pp in &mut post_process {
         pp.aspect = aspect;
     }

@@ -4,7 +4,9 @@ use anyhow::{Result, anyhow};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 
 use libloading::Library;
 use tracing::{debug, error, info, trace, warn};
@@ -79,6 +81,35 @@ impl<T> OptionInner for Option<T> {
     type Inner = T;
 }
 
+/// Abstract interface over a libretro emulator core. Implemented by the
+/// synchronous [`RetroCore`] and by the worker-thread-backed
+/// [`RetroEmuThreaded`]. Kept object-safe so callers can hold a
+/// `Box<dyn RetroEmu>` and swap implementations at runtime — the frame/audio
+/// accessors therefore take `&mut dyn FnMut` rather than `impl FnOnce`.
+pub trait RetroEmu {
+    fn set_disk(&mut self, no: u32);
+    fn get_number_of_disks(&self) -> u32;
+    /// Step the emulator by one presented frame (or, for the threaded variant,
+    /// pull the latest frame/audio the worker has produced).
+    fn run(&mut self);
+    fn reset(&mut self);
+    /// Cycle to the next disk image, returning the new image index.
+    // fn next_disk(&mut self) -> u32;
+    fn press_key(&self, code: u32, down: bool, mods: u16);
+    fn add_mouse_motion(&mut self, dx: f32, dy: f32);
+    fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
+    /// Invoke `f` with the most recent frame as `(width, height, rgba)`.
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8]));
+    /// Invoke `f` with the audio accumulated since the last call, then clear it.
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
+    fn get_frame_size(&self) -> (usize, usize);
+    fn aspect_ratio(&self) -> f32;
+    fn sample_rate(&self) -> f64;
+    fn fps(&self) -> f64;
+    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
+    fn unload(&mut self);
+}
+
 #[derive(Default)]
 pub struct RetroState {
     pub frame: Vec<u8>,
@@ -93,7 +124,7 @@ pub struct RetroState {
     fps: f64,
 }
 
-pub struct RetroCore {
+pub struct RetroCoreDirect {
     lib: Option<Library>,
     retro_run_fn: unsafe extern "C" fn(),
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
@@ -101,8 +132,7 @@ pub struct RetroCore {
     retro_deinit_fn: unsafe extern "C" fn(),
     retro_reset_fn: unsafe extern "C" fn(),
     retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
-    disk_ext_callback: Option<retro_disk_control_ext_callback>,
-    disk_callback: Option<retro_disk_control_callback>,
+    disk_callback: retro_disk_control_callback,
     state: RetroState,
     mouse: MouseState,
     vars: HashMap<String, CString>,
@@ -111,7 +141,7 @@ pub struct RetroCore {
     system_path: CString,
     image_index: u32,
 }
-impl Drop for RetroCore {
+impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
         if self.lib.is_some() {
             unsafe { (self.retro_deinit_fn)() }
@@ -120,42 +150,42 @@ impl Drop for RetroCore {
 }
 
 thread_local! {
-    static CURRENT_EMU: Cell<*mut RetroCore> = const { Cell::new(std::ptr::null_mut()) }
+    static CURRENT_EMU: Cell<*mut RetroCoreDirect> = const { Cell::new(std::ptr::null_mut()) }
 }
 
-impl RetroCore {
+impl RetroCoreDirect {
     pub fn unload(&mut self) {
         unsafe { (self.retro_deinit_fn)() }
         self.lib = None;
     }
     pub fn next_disk(&mut self) -> u32 {
-        if let Some(cb) = self.disk_ext_callback {
-            unsafe {
-                let count = (cb.get_num_images.unwrap())();
-                if count < 2 {
-                    return 0;
-                }
-                self.image_index += 1;
-                self.image_index %= count;
-                (cb.set_eject_state.unwrap())(true);
-                (cb.set_image_index.unwrap())(self.image_index);
-                (cb.set_eject_state.unwrap())(false);
+        let cb = &self.disk_callback;
+        unsafe {
+            let count = (cb.get_num_images.unwrap())();
+            if count < 2 {
+                return 0;
             }
-        } else if let Some(cb) = self.disk_callback {
-            unsafe {
-                let count = (cb.get_num_images.unwrap())();
-                if count < 2 {
-                    return 0;
-                }
-                self.image_index += 1;
-                self.image_index %= count;
-                (cb.set_eject_state.unwrap())(true);
-                (cb.set_image_index.unwrap())(self.image_index);
-                (cb.set_eject_state.unwrap())(false);
-            }
+            self.image_index += 1;
+            self.image_index %= count;
+            (cb.set_eject_state.unwrap())(true);
+            (cb.set_image_index.unwrap())(self.image_index);
+            (cb.set_eject_state.unwrap())(false);
         }
         debug!("Inserted image {}", self.image_index);
         self.image_index
+    }
+
+    pub fn get_number_of_disks(&self) -> u32 {
+        unsafe { self.disk_callback.get_num_images.map_or(0, |f| f()) }
+    }
+
+    pub fn set_disk(&self, no: u32) {
+        let cb = &self.disk_callback;
+        unsafe {
+            cb.set_eject_state.map(|f| f(true));
+            cb.set_image_index.map(|f| f(no));
+            cb.set_eject_state.map(|f| f(false));
+        };
     }
 
     pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u8])) {
@@ -235,10 +265,7 @@ impl RetroCore {
                 let ptr = p.get();
                 if !ptr.is_null() {
                     let ctx = unsafe { &mut *ptr };
-                    //const MAX_SAMPLES: usize = 48000 * 4 / 10;
-                    //let space = MAX_SAMPLES.saturating_sub(ctx.audio_buf.len());
                     let take = samples.len();
-                    //eprintln!("Got {take} samples");
                     ctx.audio_buf.extend(&samples[..take]);
                 }
             });
@@ -369,7 +396,25 @@ impl RetroCore {
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
                     info!("Got DISK_CONTROL_EXT");
                     let callback = data as *mut retro_disk_control_ext_callback;
-                    self.disk_ext_callback = Some(*callback);
+                    let retro_disk_control_ext_callback {
+                        set_eject_state,
+                        get_eject_state,
+                        get_image_index,
+                        set_image_index,
+                        get_num_images,
+                        replace_image_index,
+                        add_image_index,
+                        ..
+                    } = *callback;
+                    self.disk_callback = retro_disk_control_callback {
+                        set_eject_state,
+                        get_eject_state,
+                        get_image_index,
+                        set_image_index,
+                        get_num_images,
+                        replace_image_index,
+                        add_image_index,
+                    };
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
@@ -378,7 +423,7 @@ impl RetroCore {
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
                     info!("Got DISK_CONTROL");
                     let callback = data as *mut retro_disk_control_callback;
-                    self.disk_callback = Some(*callback);
+                    self.disk_callback = *callback;
                 }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();
@@ -498,7 +543,7 @@ impl RetroCore {
             let retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool =
                 *retro_load_game;
 
-            let mut retro_emu = RetroCore {
+            let mut retro_emu = RetroCoreDirect {
                 lib: None,
                 retro_run_fn,
                 retro_load_game_fn,
@@ -506,8 +551,7 @@ impl RetroCore {
                 retro_deinit_fn,
                 retro_reset_fn,
                 retro_set_keyboard: None,
-                disk_ext_callback: None,
-                disk_callback: None,
+                disk_callback: retro_disk_control_callback::default(),
                 state: Default::default(),
                 mouse: Default::default(),
                 vars: Default::default(),
@@ -655,6 +699,358 @@ impl RetroCore {
     }
 }
 
+/// Thin delegation to [`RetroCore`]'s inherent methods. Fully-qualified calls
+/// (`RetroCore::method(self, ..)`) are used so the inherent method is selected
+/// rather than recursing into the trait method of the same name.
+impl RetroEmu for RetroCoreDirect {
+    fn run(&mut self) {
+        RetroCoreDirect::run(self)
+    }
+    fn reset(&mut self) {
+        RetroCoreDirect::reset(self)
+    }
+    fn set_disk(&mut self, no: u32) {
+        RetroCoreDirect::set_disk(self, no);
+    }
+    fn get_number_of_disks(&self) -> u32 {
+        RetroCoreDirect::get_number_of_disks(&self)
+    }
+
+    fn press_key(&self, code: u32, down: bool, mods: u16) {
+        RetroCoreDirect::press_key(self, code, down, mods)
+    }
+    fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
+        RetroCoreDirect::add_mouse_motion(self, dx, dy)
+    }
+    fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
+        RetroCoreDirect::set_mouse_buttons(self, left, right, middle)
+    }
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+        RetroCoreDirect::with_frame(self, |w, h, fr| f(w, h, fr))
+    }
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+        RetroCoreDirect::with_audio(self, |s| f(s))
+    }
+    fn get_frame_size(&self) -> (usize, usize) {
+        RetroCoreDirect::get_frame_size(self)
+    }
+    fn aspect_ratio(&self) -> f32 {
+        RetroCoreDirect::aspect_ratio(self)
+    }
+    fn sample_rate(&self) -> f64 {
+        RetroCoreDirect::sample_rate(self)
+    }
+    fn fps(&self) -> f64 {
+        RetroCoreDirect::fps(self)
+    }
+    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        RetroCoreDirect::save_png(self, path)
+    }
+    fn unload(&mut self) {
+        RetroCoreDirect::unload(self)
+    }
+}
+
+/// Commands the main thread sends to the worker that owns the `RetroCore`.
+enum RetroCmd {
+    Reset,
+    PressKey {
+        code: u32,
+        down: bool,
+        mods: u16,
+    },
+    AddMouseMotion {
+        dx: f32,
+        dy: f32,
+    },
+    SetMouseButtons {
+        left: bool,
+        right: bool,
+        middle: bool,
+    },
+    SetDisk {
+        no: u32,
+    },
+    SavePng {
+        path: PathBuf,
+    },
+    Unload,
+}
+
+/// A single stepped frame's worth of data, pushed from the worker to the main
+/// thread. `frame` is an RGBA copy; `audio` is the audio produced for this step
+/// (accumulated on the main side, never dropped).
+struct RetroUpdate {
+    width: usize,
+    height: usize,
+    frame: Vec<u8>,
+    audio: Vec<i16>,
+    aspect_ratio: f32,
+    sample_rate: f64,
+    fps: f64,
+}
+
+/// A [`RetroEmu`] that owns its [`RetroCore`] on a dedicated worker thread. The
+/// worker is free-running: it steps the core continuously at the core's
+/// reported FPS and pushes each frame's data over a channel. The main thread
+/// sends input/control commands over a second channel and reads a cached
+/// snapshot of the latest frame/audio (refreshed in [`run`](RetroEmuThreaded::run)).
+pub struct RetroCoreThreaded {
+    cmd_tx: mpsc::Sender<RetroCmd>,
+    update_rx: mpsc::Receiver<RetroUpdate>,
+    handle: Option<thread::JoinHandle<()>>,
+    frame: Vec<u8>,
+    frame_width: usize,
+    frame_height: usize,
+    audio: Vec<i16>,
+    aspect_ratio: f32,
+    sample_rate: f64,
+    fps: f64,
+    disk_count: u32,
+}
+
+struct SetupResult {
+    fps: f64,
+    width: usize,
+    height: usize,
+    disks: u32,
+}
+
+impl RetroCoreThreaded {
+    pub fn new(
+        core_path: &Path,
+        system_dir: &Path,
+        game: Option<&Path>,
+        settings: HashMap<String, String>,
+    ) -> Result<Self> {
+        // Own the args so they can move into the worker thread, which is where
+        // the RetroCore must be both constructed and run (the CURRENT_EMU
+        // thread_local set during init must match the thread retro_run uses).
+        let core_path = core_path.to_path_buf();
+        let system_dir = system_dir.to_path_buf();
+        let game = game.map(|g| g.to_path_buf());
+
+        let (cmd_tx, cmd_rx) = mpsc::channel::<RetroCmd>();
+        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(1);
+        let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
+
+        let handle = thread::Builder::new()
+            .name("retro-emu".into())
+            .spawn(move || {
+                let mut core = match RetroCoreDirect::new(
+                    &core_path,
+                    &system_dir,
+                    game.as_deref(),
+                    settings,
+                ) {
+                    Ok(core) => {
+                        let _ = setup_tx.send(Ok(SetupResult {
+                            fps: core.fps(),
+                            width: core.get_frame_size().0,
+                            height: core.get_frame_size().1,
+                            disks: core.get_number_of_disks(),
+                        }));
+                        core
+                    }
+                    Err(e) => {
+                        let _ = setup_tx.send(Err(e.to_string()));
+                        return;
+                    }
+                };
+                worker_loop(&mut core, &cmd_rx, &update_tx);
+                // `core` is dropped here, running retro_deinit on this thread.
+            })?;
+
+        match setup_rx.recv() {
+            Ok(Ok(SetupResult {
+                fps,
+                width,
+                height,
+                disks,
+            })) => Ok(Self {
+                cmd_tx,
+                update_rx,
+                handle: Some(handle),
+                frame: Vec::new(),
+                frame_width: width,
+                frame_height: height,
+                audio: Vec::new(),
+                aspect_ratio: 0.0,
+                sample_rate: 0.0,
+                fps,
+                disk_count: disks,
+            }),
+            Ok(Err(e)) => {
+                let _ = handle.join();
+                Err(anyhow!("failed to create core: {e}"))
+            }
+            Err(_) => {
+                let _ = handle.join();
+                Err(anyhow!("retro worker thread exited before setup"))
+            }
+        }
+    }
+}
+
+/// Worker-thread main loop: apply pending commands, step the core, push the
+/// resulting frame/audio. Exits when the command channel is Disconnected
+/// (the `RetroEmuThreaded` was dropped) or `Unload` is received.
+fn worker_loop(
+    core: &mut RetroCoreDirect,
+    cmd_rx: &mpsc::Receiver<RetroCmd>,
+    update_tx: &mpsc::SyncSender<RetroUpdate>,
+) {
+    loop {
+        // Drain all pending commands without blocking.
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(cmd) => {
+                    if apply_cmd(core, cmd) {
+                        return; // Unload
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+
+        core.run();
+
+        let (width, height) = core.get_frame_size();
+        let mut frame = Vec::new();
+        core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
+        let mut audio = Vec::new();
+        core.with_audio(|s| audio.extend_from_slice(s));
+
+        let update = RetroUpdate {
+            width,
+            height,
+            frame,
+            audio,
+            aspect_ratio: core.aspect_ratio(),
+            sample_rate: core.sample_rate(),
+            fps: core.fps(),
+        };
+        if update_tx.send(update).is_err() {
+            return; // main side gone
+        }
+    }
+}
+
+/// Apply one command to the core. Returns `true` if the worker should stop.
+fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
+    match cmd {
+        RetroCmd::Reset => core.reset(),
+        RetroCmd::PressKey { code, down, mods } => core.press_key(code, down, mods),
+        RetroCmd::AddMouseMotion { dx, dy } => core.add_mouse_motion(dx, dy),
+        RetroCmd::SetMouseButtons {
+            left,
+            right,
+            middle,
+        } => core.set_mouse_buttons(left, right, middle),
+        RetroCmd::SetDisk { no } => {
+            core.set_disk(no);
+        }
+        RetroCmd::SavePng { path } => {
+            let _res = core.save_png(&path).map_err(|e| e.to_string());
+        }
+        RetroCmd::Unload => return true,
+    }
+    false
+}
+
+impl RetroEmu for RetroCoreThreaded {
+    fn run(&mut self) {
+        if let Ok(update) = self.update_rx.recv() {
+            self.frame = update.frame;
+            self.frame_width = update.width;
+            self.frame_height = update.height;
+            self.audio.extend_from_slice(&update.audio);
+            self.aspect_ratio = update.aspect_ratio;
+            self.sample_rate = update.sample_rate;
+            self.fps = update.fps;
+        } else {
+            panic!("No frame");
+        }
+    }
+    fn get_number_of_disks(&self) -> u32 {
+        self.disk_count
+    }
+    fn reset(&mut self) {
+        let _ = self.cmd_tx.send(RetroCmd::Reset);
+    }
+    fn set_disk(&mut self, no: u32) {
+        if self.cmd_tx.send(RetroCmd::SetDisk { no }).is_err() {}
+    }
+    fn press_key(&self, code: u32, down: bool, mods: u16) {
+        let _ = self.cmd_tx.send(RetroCmd::PressKey { code, down, mods });
+    }
+    fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
+        let _ = self.cmd_tx.send(RetroCmd::AddMouseMotion { dx, dy });
+    }
+    fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
+        let _ = self.cmd_tx.send(RetroCmd::SetMouseButtons {
+            left,
+            right,
+            middle,
+        });
+    }
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+        f(self.frame_width, self.frame_height, &self.frame);
+    }
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+        f(&self.audio);
+        self.audio.clear();
+    }
+    fn get_frame_size(&self) -> (usize, usize) {
+        (self.frame_width, self.frame_height)
+    }
+    fn aspect_ratio(&self) -> f32 {
+        self.aspect_ratio
+    }
+    fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+    fn fps(&self) -> f64 {
+        self.fps
+    }
+    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        self.cmd_tx
+            .send(RetroCmd::SavePng {
+                path: path.to_path_buf(),
+            })
+            .map_err(|_| "retro worker thread is gone")?;
+        Ok(())
+    }
+    fn unload(&mut self) {
+        let _ = self.cmd_tx.send(RetroCmd::Unload);
+    }
+}
+
+impl Drop for RetroCoreThreaded {
+    fn drop(&mut self) {
+        // Ask the worker to stop. It only checks for Unload at the top of its
+        // loop, but with a bounded update channel it may currently be parked in
+        // a full `update_tx.send()`. Keep draining the channel so that send
+        // completes and the worker can loop back, observe the Unload, and
+        // return — otherwise the join below would deadlock. `recv` returns Err
+        // once the worker has returned and dropped its SyncSender.
+        let _ = self.cmd_tx.send(RetroCmd::Unload);
+        while self.update_rx.recv().is_ok() {}
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Compile-time guarantee that the core can be moved onto the worker thread.
+const _: () = {
+    fn _assert_send<T: Send>() {}
+    fn _check() {
+        _assert_send::<RetroCoreDirect>();
+    }
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,15 +1059,12 @@ mod tests {
     fn retro_amiga_works() {
         let core_path = Path::new("libretro-uae/puae_libretro.so");
         let system_dir = Path::new("system");
-        let game_path = Path::new("assets/rebels.adf");
+        let game_path = Path::new("demos/rebels.adf");
 
-        let mut settings = HashMap::new();
-        settings.insert("puae_model".into(), "A1200".into());
-        settings.insert("puae_kickstart".into(), "Kickstart2.0.rom".into());
-        //settings.insert("puae_chipmem_size".into(), "4".into());
+        let settings = HashMap::new();
 
         let mut retro_emu =
-            RetroCore::new(core_path, system_dir, Some(game_path), settings).unwrap();
+            RetroCoreDirect::new(core_path, system_dir, Some(game_path), settings).unwrap();
         println!("## RUN");
         for _ in 0..400 {
             retro_emu.run();
@@ -693,7 +1086,7 @@ mod tests {
         settings.insert("puae_use_whdload".into(), "disabled".into());
 
         let mut retro_emu =
-            RetroCore::new(core_path, system_dir, Some(game_path), settings).unwrap();
+            RetroCoreDirect::new(core_path, system_dir, Some(game_path), settings).unwrap();
         for _ in 0..600 {
             retro_emu.run();
         }
@@ -701,13 +1094,131 @@ mod tests {
     }
 
     #[test]
+    fn retro_threaded_works() {
+        let core_path = Path::new("libretro-uae/puae_libretro.so");
+        let system_dir = Path::new("system");
+        let game_path = Path::new("demos/rebels.adf");
+
+        let mut settings = HashMap::new();
+        settings.insert("puae_model".into(), "A500".into());
+
+        let mut emu =
+            RetroCoreThreaded::new(core_path, system_dir, Some(game_path), settings).unwrap();
+        // Object-safety / interchangeability check.
+        let emu: &mut dyn RetroEmu = &mut emu;
+
+        for i in 0..400 {
+            emu.run();
+        }
+        let (w, h) = emu.get_frame_size();
+        assert!(w > 0 && h > 0, "no frame produced by worker");
+        emu.save_png(Path::new("test_amiga_threaded.png")).unwrap();
+    }
+
+    /// Run two threaded UAE cores and two threaded VICE cores concurrently for
+    /// 400 frames each, then screenshot every instance. Each `RetroCoreThreaded`
+    /// owns its own worker thread and core, so this exercises whether several
+    /// threaded emulators can step in parallel without trampling each other's
+    /// state. The four PNGs let us eyeball that each instance booted and
+    /// produced a distinct, sensible frame.
+    ///
+    /// `dlopen` returns the same mapping (and the same C globals) for a core
+    /// loaded twice from the same path, so two instances of one core would
+    /// otherwise stomp each other and crash. We copy each core to a uniquely
+    /// named file first — the trick libretro frontends use for "core duping" —
+    /// so every instance gets its own mapping with independent global state.
+    #[test]
+    fn retro_threaded_multi_works() {
+        let uae_core = Path::new("libretro-uae/puae_libretro.so");
+        let vice_core = Path::new("vice-libretro/vice_x64_libretro.so");
+        let system_dir = Path::new("system");
+        let uae_game = Path::new("demos/rebels.adf");
+        let vice_game = Path::new("demos/quantum_icc2026_v1p.prg");
+
+        // Copy `src` to a uniquely-named .so in a kept temp dir and return its
+        // path, so dlopen maps it as a separate object with its own globals.
+        let dupe = |src: &Path, tag: &str| -> PathBuf {
+            let dir = tempfile::Builder::new()
+                .prefix("demarc-core-")
+                .tempdir()
+                .unwrap()
+                .keep();
+            let dst = dir.join(format!("{tag}.so"));
+            std::fs::copy(src, &dst).unwrap();
+            dst
+        };
+
+        let uae_settings = || {
+            let mut s = HashMap::new();
+            s.insert("puae_model".to_string(), "A500".to_string());
+            s
+        };
+
+        // Distinct on-disk copy per instance.
+        let cores = [
+            (
+                dupe(uae_core, "uae0"),
+                uae_game,
+                uae_settings(),
+                "test_threaded_uae_0.png",
+            ),
+            (
+                dupe(uae_core, "uae1"),
+                uae_game,
+                uae_settings(),
+                "test_threaded_uae_1.png",
+            ),
+            (
+                dupe(vice_core, "vice0"),
+                vice_game,
+                HashMap::new(),
+                "test_threaded_vice_0.png",
+            ),
+            (
+                dupe(vice_core, "vice1"),
+                vice_game,
+                HashMap::new(),
+                "test_threaded_vice_1.png",
+            ),
+        ];
+
+        // Spin up all four instances; each immediately starts a free-running
+        // worker thread, so by the time construction returns they are already
+        // stepping concurrently.
+        let mut emus: Vec<(&str, RetroCoreThreaded)> = cores
+            .iter()
+            .map(|(core, game, settings, png)| {
+                let emu =
+                    RetroCoreThreaded::new(core, system_dir, Some(game), settings.clone()).unwrap();
+                (*png, emu)
+            })
+            .collect();
+
+        // Pull 400 frames from each, interleaved so they all make progress
+        // together rather than one draining fully before the next starts.
+        for i in 0..400 {
+            println!("RUN {i}");
+            for (_, emu) in emus.iter_mut() {
+                let emu: &mut dyn RetroEmu = emu;
+                emu.run();
+            }
+        }
+
+        for (path, emu) in emus.iter_mut() {
+            let (w, h) = emu.get_frame_size();
+            assert!(w > 0 && h > 0, "no frame produced by worker for {path}");
+            emu.save_png(Path::new(path)).unwrap();
+        }
+    }
+
+    #[test]
     fn retro_vice_works() {
         let core_path = Path::new("vice-libretro/vice_x64_libretro.so");
         let system_dir = Path::new("system");
-        let game_path = Path::new("assets/quantum_icc2026_v1p.prg");
+        let game_path = Path::new("demos/quantum_icc2026_v1p.prg");
 
         let mut retro_emu =
-            RetroCore::new(core_path, system_dir, Some(game_path), HashMap::new()).unwrap();
+            RetroCoreDirect::new(core_path, system_dir, Some(game_path), HashMap::new()).unwrap();
         println!("## RUN");
         for _ in 0..600 {
             retro_emu.run();

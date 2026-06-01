@@ -31,7 +31,6 @@ fatfs = "0.3.6"
 zbus = "5"
 
 [profile.release]
-lto = true
 codegen-units = 1
 strip = true
 opt-level = 2
