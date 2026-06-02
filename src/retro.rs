@@ -9,6 +9,7 @@ use anyhow::Result;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
+    camera::Viewport,
     camera::visibility::RenderLayers,
     image::Image,
     input::mouse::AccumulatedMouseMotion,
@@ -96,6 +97,13 @@ pub fn system_dir() -> &'static Path {
 /// them again after creation — audio flows through the per-emulator ring buffer.
 #[derive(Default)]
 struct AudioStreams(Vec<cpal::Stream>);
+
+/// Marks a [`PostProcess`] camera as occupying one quadrant of a 2x2 grid.
+/// The index is `0`=top-left, `1`=top-right, `2`=bottom-left, `3`=bottom-right.
+/// [`update_grid_viewports`] keeps the camera's viewport sized to its quadrant
+/// as the window changes.
+#[derive(Component, Clone, Copy)]
+struct GridQuadrant(u8);
 
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
@@ -304,11 +312,13 @@ impl Emulator {
 }
 
 fn setup_ui_camera(mut commands: Commands) {
-    // Camera for full res UI on top of screen
+    // Camera for full res UI on top of screen. Its order must stay above every
+    // emulator camera (grid mode uses orders 0..=3) so the HUD draws on top of
+    // all quadrants rather than being overdrawn by a later one.
     commands.spawn((
         Camera2d,
         Camera {
-            order: 1,
+            order: 10,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -361,19 +371,57 @@ fn setup_retro(world: &mut World) {
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
+    let grid = args.grid;
 
-    spawn_emulator(world, games, tags, match_fps, max_time);
+    if grid && games.len() >= 4 {
+        // Split the game list into 4 contiguous parts (the remainder is spread
+        // over the first parts so they differ in length by at most one) and run
+        // one emulator per quadrant.
+        for (quadrant, part) in split_into_parts(games, 4).into_iter().enumerate() {
+            spawn_emulator(
+                world,
+                part,
+                tags.clone(),
+                match_fps,
+                max_time,
+                Some(quadrant as u8),
+            );
+        }
+    } else {
+        spawn_emulator(world, games, tags, match_fps, max_time, None);
+    }
+}
+
+/// Split `items` into `n` contiguous parts of as-equal-as-possible length. The
+/// first `len % n` parts get one extra element so every item is placed and the
+/// original order is preserved.
+fn split_into_parts<T>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
+    let len = items.len();
+    let base = len / n;
+    let rem = len % n;
+    let mut iter = items.into_iter();
+    (0..n)
+        .map(|i| {
+            let take = base + if i < rem { 1 } else { 0 };
+            iter.by_ref().take(take).collect()
+        })
+        .collect()
 }
 
 /// Create a single emulator entity: its own audio stream + ring buffer, its own
 /// render-target texture, and a [`PostProcess`] camera that samples that
 /// texture. Call this once per emulator you want on screen.
+///
+/// `quadrant`, when `Some`, places this emulator in one cell of a 2x2 grid: the
+/// camera gets a distinct render order and a [`GridQuadrant`] marker so
+/// [`update_grid_viewports`] keeps its viewport sized to that cell.
 fn spawn_emulator(
     world: &mut World,
     games: Vec<PathBuf>,
     tags: HashMap<String, String>,
     match_fps: bool,
     max_time: Option<usize>,
+    quadrant: Option<u8>,
 ) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
     let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
@@ -428,10 +476,12 @@ fn spawn_emulator(
     // letting the post-process shader handle scaling to the window. When
     // showing several emulators at once, give each camera a distinct `order`
     // and a `viewport` so they don't overdraw each other.
-    world.spawn((
+    let mut camera = world.spawn((
         Camera2d,
         Camera {
-            order: 0,
+            // Distinct order per grid cell so the cameras share one window
+            // target cleanly (the lowest-order one clears it once per frame).
+            order: quadrant.map_or(0, |q| q as isize),
             ..default()
         },
         PostProcess {
@@ -441,6 +491,48 @@ fn spawn_emulator(
         },
         RenderLayers::layer(1),
     ));
+    if let Some(q) = quadrant {
+        // The actual viewport rectangle is set from the live window size by
+        // `update_grid_viewports`; this just tags which quadrant to fill.
+        camera.insert(GridQuadrant(q));
+    }
+}
+
+/// Keep each [`GridQuadrant`] camera's viewport sized to its cell of the 2x2
+/// grid as the window resizes. The right/bottom cells absorb any odd remainder
+/// so the quadrants always tile the full window with no gap.
+fn update_grid_viewports(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(&GridQuadrant, &mut Camera)>,
+) {
+    let size = window.physical_size();
+    if size.x == 0 || size.y == 0 {
+        return;
+    }
+    let half = size / 2;
+    for (quadrant, mut camera) in &mut cameras {
+        let q = quadrant.0;
+        let left = q % 2 == 0;
+        let top = q < 2;
+        let position = UVec2::new(if left { 0 } else { half.x }, if top { 0 } else { half.y });
+        let vp_size = UVec2::new(
+            if left { half.x } else { size.x - half.x },
+            if top { half.y } else { size.y - half.y },
+        );
+        // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
+        // avoid retriggering change detection (and a render-graph rebuild)
+        // every frame when nothing moved.
+        let unchanged = camera.viewport.as_ref().is_some_and(|v| {
+            v.physical_position == position && v.physical_size == vp_size
+        });
+        if !unchanged {
+            camera.viewport = Some(Viewport {
+                physical_position: position,
+                physical_size: vp_size,
+                ..default()
+            });
+        }
+    }
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -851,6 +943,6 @@ fn run_retro(
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_retro, setup_ui_camera, fix_window));
-        app.add_systems(Update, run_retro);
+        app.add_systems(Update, (run_retro, update_grid_viewports));
     }
 }

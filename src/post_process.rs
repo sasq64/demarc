@@ -9,6 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         RenderApp, RenderStartup,
+        camera::ExtractedCamera,
         extract_component::{
             ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
             UniformComponentPlugin,
@@ -219,13 +220,14 @@ impl ViewNode for PostProcessNode {
         &'static ViewTarget,
         &'static PostProcess,
         &'static DynamicUniformIndex<PostProcessUniform>,
+        &'static ExtractedCamera,
     );
 
     fn run(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
-        (view_target, post_process, uniform_index): QueryItem<Self::ViewQuery>,
+        (view_target, post_process, uniform_index, camera): QueryItem<Self::ViewQuery>,
         world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline_resource = world.resource::<PostProcessPipeline>();
@@ -270,6 +272,14 @@ impl ViewNode for PostProcessNode {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+
+        // Restrict the fullscreen blit to this camera's viewport so grid-mode
+        // emulators each draw into their own quadrant instead of overdrawing
+        // the whole window. Without a viewport (single-emulator case) this is a
+        // no-op and the triangle covers the full target.
+        if let Some(viewport) = &camera.viewport {
+            render_pass.set_camera_viewport(viewport);
+        }
 
         render_pass.set_render_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[uniform_index.index()]);
