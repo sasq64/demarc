@@ -140,6 +140,9 @@ pub struct RetroCoreDirect {
     core_path: CString,
     system_path: CString,
     image_index: u32,
+    /// Temp dir holding this instance's private copy of the core .so. Held so
+    /// the copy lives as long as the loaded library and is removed on drop.
+    _core_tempdir: tempfile::TempDir,
 }
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
@@ -497,6 +500,21 @@ impl RetroCoreDirect {
         game: Option<&Path>,
         settings: HashMap<String, String>,
     ) -> Result<Self> {
+        // `dlopen` returns the same mapping (and the same C globals) for a core
+        // loaded twice from the same path, so two instances of one core would
+        // otherwise stomp each other's global state and crash. Copy the core to
+        // a uniquely-named file in a private temp dir first — the trick libretro
+        // frontends use for "core duping" — so every instance gets its own
+        // mapping with independent globals. The temp dir is held in the struct
+        // and removed when the core is dropped.
+        let core_tempdir = tempfile::Builder::new().prefix("demarc-core-").tempdir()?;
+        let file_name = core_path
+            .file_name()
+            .ok_or_else(|| anyhow!("core path has no file name: {}", core_path.display()))?;
+        let loaded_core_path = core_tempdir.path().join(file_name);
+        std::fs::copy(core_path, &loaded_core_path)?;
+        let core_path = loaded_core_path.as_path();
+
         let lib = unsafe { Library::new(core_path)? };
         unsafe {
             let retro_set_environment: libloading::Symbol<
@@ -559,6 +577,7 @@ impl RetroCoreDirect {
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
                 core_path: CString::new(core_path.to_string_lossy().as_bytes()).unwrap(),
                 image_index: 0,
+                _core_tempdir: core_tempdir,
             };
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
@@ -1132,9 +1151,10 @@ mod tests {
     ///
     /// `dlopen` returns the same mapping (and the same C globals) for a core
     /// loaded twice from the same path, so two instances of one core would
-    /// otherwise stomp each other and crash. We copy each core to a uniquely
-    /// named file first — the trick libretro frontends use for "core duping" —
-    /// so every instance gets its own mapping with independent global state.
+    /// otherwise stomp each other and crash. `RetroCoreDirect::new` copies the
+    /// core to a uniquely-named file before loading it, so every instance gets
+    /// its own mapping with independent global state — that's what lets the two
+    /// UAE (and two VICE) instances below run from the same path concurrently.
     #[test]
     fn retro_threaded_multi_works() {
         let uae_core = Path::new("libretro-uae/puae_libretro.so");
@@ -1143,47 +1163,35 @@ mod tests {
         let uae_game = Path::new("demos/rebels.adf");
         let vice_game = Path::new("demos/quantum_icc2026_v1p.prg");
 
-        // Copy `src` to a uniquely-named .so in a kept temp dir and return its
-        // path, so dlopen maps it as a separate object with its own globals.
-        let dupe = |src: &Path, tag: &str| -> PathBuf {
-            let dir = tempfile::Builder::new()
-                .prefix("demarc-core-")
-                .tempdir()
-                .unwrap()
-                .keep();
-            let dst = dir.join(format!("{tag}.so"));
-            std::fs::copy(src, &dst).unwrap();
-            dst
-        };
-
         let uae_settings = || {
             let mut s = HashMap::new();
             s.insert("puae_model".to_string(), "A500".to_string());
             s
         };
 
-        // Distinct on-disk copy per instance.
+        // Two instances of each core, all loaded from the same path; the
+        // per-instance copy happens inside `RetroCoreDirect::new`.
         let cores = [
             (
-                dupe(uae_core, "uae0"),
+                uae_core,
                 uae_game,
                 uae_settings(),
                 "test_threaded_uae_0.png",
             ),
             (
-                dupe(uae_core, "uae1"),
+                uae_core,
                 uae_game,
                 uae_settings(),
                 "test_threaded_uae_1.png",
             ),
             (
-                dupe(vice_core, "vice0"),
+                vice_core,
                 vice_game,
                 HashMap::new(),
                 "test_threaded_vice_0.png",
             ),
             (
-                dupe(vice_core, "vice1"),
+                vice_core,
                 vice_game,
                 HashMap::new(),
                 "test_threaded_vice_1.png",
