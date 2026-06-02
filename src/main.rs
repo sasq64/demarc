@@ -14,6 +14,7 @@ use clap::{ColorChoice, Parser};
 mod libretro;
 
 mod audio;
+mod emulator;
 mod hud;
 mod post_process;
 mod retro;
@@ -150,6 +151,9 @@ struct AppSettings {
     scale_mode: ScaleMode,
     crt_effect: bool,
     show_info: bool,
+    games: Vec<PathBuf>,
+    current_game: usize,
+    max_time: Option<usize>,
 }
 
 /// Recursively collect all `.m3u` files under `dir` into `out`.
@@ -190,7 +194,7 @@ fn main() {
             games.push(game);
         }
     }
-    args.files = games;
+    args.files = games.clone();
 
     if args.shuffle {
         use rand::seq::SliceRandom;
@@ -230,6 +234,9 @@ fn main() {
         crt_effect: true,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
+        games: games.clone(),
+        current_game: 0,
+        max_time: args.max_time,
     };
 
     App::new()
