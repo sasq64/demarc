@@ -841,7 +841,7 @@ impl RetroCoreThreaded {
         let game = game.map(|g| g.to_path_buf());
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<RetroCmd>();
-        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(1);
+        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(3);
         let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
 
         let handle = thread::Builder::new()
@@ -969,7 +969,7 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
 
 impl RetroEmu for RetroCoreThreaded {
     fn run(&mut self) {
-        if let Ok(update) = self.update_rx.get_mut().unwrap().recv() {
+        if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
             self.frame = update.frame;
             self.frame_width = update.width;
             self.frame_height = update.height;
@@ -977,9 +977,9 @@ impl RetroEmu for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
-        } else {
-            panic!("No frame");
-        }
+        } //else //dev/{
+        //panic!("No frame");
+        //}
     }
     fn get_number_of_disks(&self) -> u32 {
         self.disk_count

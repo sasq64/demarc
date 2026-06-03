@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{
@@ -241,7 +241,7 @@ fn spawn_emulator(
         Camera {
             // Distinct order per grid cell so the cameras share one window
             // target cleanly (the lowest-order one clears it once per frame).
-            //order: cell.map_or(0, |(i, _)| i as isize),
+            order: cell.map_or(0, |(i, _)| i as isize),
             ..default()
         },
         PostProcess {
@@ -353,8 +353,9 @@ pub fn create_core(
     match get_core(system_type) {
         Ok(core) => RetroCoreThreaded::new(Path::new(&core), system_dir(), Some(game), settings),
         Err(name) => {
-            println!("Can not find '{name}'.\nExpected in current directory or /usr/lib/libretro");
-            exit(0);
+            bail!(
+                "Can not find core '{name}' for '{game:?}'.\nExpected in current directory or /usr/lib/libretro"
+            );
         }
     }
 }
@@ -532,7 +533,7 @@ fn run_retro(
 
         let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
 
-        if w != bg_w || h != bg_h {
+        if (w != bg_w || h != bg_h) && w > 0 && h > 0 {
             debug!("SIZE CHANGE TO {w} {h}");
             emu.width = w as u32;
             emu.height = h as u32;
