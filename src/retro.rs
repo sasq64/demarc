@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -20,12 +19,12 @@ use bevy::{
 
 use ringbuf::traits::Split;
 
-use crate::audio::{AudioResampler, init_audio_stream};
+use crate::audio::init_audio_stream;
 use crate::emulator::Emulator;
 use crate::hud::{SpawnToast, ToastType};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
-use crate::utils::{GameInfo, SystemType, WorkingFile};
+use crate::utils::{GameInfo, SystemType};
 use crate::{AppSettings, Args};
 
 pub struct RetroPlugin {}
@@ -65,13 +64,22 @@ pub fn system_dir() -> &'static Path {
                 return local;
             }
         }
-        let path = ["XDG_CACHE_HOME", "HOME", "HOMEPATH"]
-            .iter()
-            .find_map(|var| std::env::var_os(var).map(PathBuf::from))
-            .unwrap_or("".into());
-        let cache = path.join(".cache").join("demarc");
+        // `XDG_CACHE_HOME` already points at the cache root; `HOME`/`HOMEPATH`
+        // are home dirs, so for those we still need to descend into `.cache`.
+        let cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                ["HOME", "HOMEPATH"]
+                    .iter()
+                    .find_map(|var| std::env::var_os(var).map(PathBuf::from))
+                    .map(|home| home.join(".cache"))
+            })
+            .unwrap_or_default()
+            .join("demarc");
+        info!("CACHE {cache:?}");
         let system = cache.join("system");
         if !system.exists() {
+            info!("CREATE DIR");
             std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
                 .expect("Failed to read embedded system.zip");
@@ -175,22 +183,6 @@ fn setup_retro(world: &mut World) {
     }
 }
 
-/// Split `items` into `n` contiguous parts of as-equal-as-possible length. The
-/// first `len % n` parts get one extra element so every item is placed and the
-/// original order is preserved.
-fn split_into_parts<T>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
-    let len = items.len();
-    let base = len / n;
-    let rem = len % n;
-    let mut iter = items.into_iter();
-    (0..n)
-        .map(|i| {
-            let take = base + if i < rem { 1 } else { 0 };
-            iter.by_ref().take(take).collect()
-        })
-        .collect()
-}
-
 /// Create a single emulator entity: its own audio stream + ring buffer, its own
 /// render-target texture, and a [`PostProcess`] camera that samples that
 /// texture. Call this once per emulator you want on screen.
@@ -201,7 +193,7 @@ fn split_into_parts<T>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
 fn spawn_emulator(
     world: &mut World,
     tags: HashMap<String, String>,
-    match_fps: bool,
+    _match_fps: bool,
     max_time: Option<usize>,
     quadrant: Option<u8>,
 ) {
@@ -338,7 +330,7 @@ pub fn create_core(
         set_var("hatari_forcerefresh", "2");
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
-        //set_var("hatari_video_crop_overscan", "false");
+        set_var("hatari_video_crop_overscan", "false");
     }
     match get_core(system_type) {
         Ok(core) => RetroCoreThreaded::new(Path::new(&core), system_dir(), Some(game), settings),
@@ -466,12 +458,11 @@ fn run_retro(
             if input.just_pressed(KeyCode::KeyN) {
                 emu.run_next = true;
             }
-            // if input.just_pressed(KeyCode::KeyW) {
-            //     for _ in 0..500 {
-            //         core.run();
-            //         core.with_audio(&mut |_| {});
-            //     }
-            // }
+            if input.just_pressed(KeyCode::KeyW) {
+                for _ in 0..500 {
+                    emu.skip();
+                }
+            }
             if input.just_pressed(KeyCode::KeyP) {
                 screenshot(
                     &mut commands,

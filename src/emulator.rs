@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use bevy::asset::RenderAssetUsages;
@@ -312,12 +312,12 @@ impl Emulator {
         }
         for e in input.get_just_pressed() {
             if let Some(code) = self.key_map.get(e) {
-                self.core.as_ref().unwrap().press_key(*code, true, mods);
+                self.core.as_mut().unwrap().press_key(*code, true, mods);
             }
         }
         for e in input.get_just_released() {
             if let Some(code) = self.key_map.get(e) {
-                self.core.as_ref().unwrap().press_key(*code, false, mods);
+                self.core.as_mut().unwrap().press_key(*code, false, mods);
             }
         }
 
@@ -375,11 +375,16 @@ impl Emulator {
             self.core = Some(core);
             self.work_file = work_file;
             self.run_next = false;
-            //self.current_game += 1;
             self.next_frame = time.elapsed_secs_f64();
             self.start_time = time.elapsed_secs_f64();
             trace!("FRAME START");
         }
+    }
+    pub fn skip(&mut self) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        core.run();
     }
 
     pub fn run(&mut self, time: &Time) {

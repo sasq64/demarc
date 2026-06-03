@@ -32,8 +32,8 @@ pub unsafe extern "C" fn demarc_retro_log_rust(level: c_int, msg: *const c_char)
 
 use crate::libretro::{
     RETRO_DEVICE_ID_MOUSE_LEFT, RETRO_DEVICE_ID_MOUSE_MIDDLE, RETRO_DEVICE_ID_MOUSE_RIGHT,
-    RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y, RETRO_DEVICE_MASK, RETRO_DEVICE_MOUSE,
-    RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
+    RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_MASK,
+    RETRO_DEVICE_MOUSE, RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
@@ -81,26 +81,17 @@ impl<T> OptionInner for Option<T> {
     type Inner = T;
 }
 
-/// Abstract interface over a libretro emulator core. Implemented by the
-/// synchronous [`RetroCore`] and by the worker-thread-backed
-/// [`RetroEmuThreaded`]. Kept object-safe so callers can hold a
-/// `Box<dyn RetroEmu>` and swap implementations at runtime — the frame/audio
-/// accessors therefore take `&mut dyn FnMut` rather than `impl FnOnce`.
+/// Abstract interface over a libretro emulator core.
 pub trait RetroEmu {
     fn set_disk(&mut self, no: u32);
     fn get_number_of_disks(&self) -> u32;
-    /// Step the emulator by one presented frame (or, for the threaded variant,
-    /// pull the latest frame/audio the worker has produced).
+    /// Step the emulator by one presented frame
     fn run(&mut self);
     fn reset(&mut self);
-    /// Cycle to the next disk image, returning the new image index.
-    // fn next_disk(&mut self) -> u32;
-    fn press_key(&self, code: u32, down: bool, mods: u16);
+    fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
-    /// Invoke `f` with the most recent frame as `(width, height, rgba)`.
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8]));
-    /// Invoke `f` with the audio accumulated since the last call, then clear it.
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
     fn get_frame_size(&self) -> (usize, usize);
     fn aspect_ratio(&self) -> f32;
@@ -122,6 +113,7 @@ pub struct RetroState {
     pub sample_rate: f64,
     pixel_format: c_int,
     fps: f64,
+    keys: Vec<u8>,
 }
 
 pub struct RetroCoreDirect {
@@ -248,6 +240,9 @@ impl RetroCoreDirect {
                 RETRO_DEVICE_ID_MOUSE_MIDDLE => self.mouse.middle as i16,
                 _ => 0,
             },
+            RETRO_DEVICE_KEYBOARD if self.state.keys.len() > id as usize => {
+                self.state.keys[id as usize] as i16
+            }
             _ => 0,
         }
     }
@@ -394,6 +389,7 @@ impl RetroCoreDirect {
                 }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
                     let callback = data as *mut retro_keyboard_callback;
+                    info!("SET KEYBOARD");
                     self.retro_set_keyboard = (*callback).callback;
                 }
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE => {
@@ -549,15 +545,12 @@ impl RetroCoreDirect {
                 lib.get(b"retro_deinit")?;
             let retro_reset_sym: libloading::Symbol<unsafe extern "C" fn()> =
                 lib.get(b"retro_reset")?;
-            // let retro_unload_game_sym: libloading::Symbol<unsafe extern "C" fn()> =
-            //     lib.get(b"retro_unload_game")?;
 
             let retro_run_fn: unsafe extern "C" fn() = *retro_run_sym;
             let retro_deinit_fn: unsafe extern "C" fn() = *retro_deinit_sym;
             let retro_reset_fn: unsafe extern "C" fn() = *retro_reset_sym;
             let retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info) =
                 *retro_get_system_av_info;
-            //let retro_unload_game_fn: unsafe extern "C" fn() = *retro_unload_game_sym;
             let retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool =
                 *retro_load_game;
 
@@ -690,7 +683,11 @@ impl RetroCoreDirect {
         Ok(())
     }
 
-    pub(crate) fn press_key(&self, code: u32, down: bool, mods: u16) {
+    pub(crate) fn press_key(&mut self, code: u32, down: bool, mods: u16) {
+        if self.state.keys.len() <= code as usize {
+            self.state.keys.resize(code as usize + 1, 0);
+        }
+        self.state.keys[(code & 0x1ff) as usize] = down as u8;
         if let Some(cb) = self.retro_set_keyboard {
             unsafe { cb(down, code, 0, mods) }
         }
@@ -735,7 +732,7 @@ impl RetroEmu for RetroCoreDirect {
         RetroCoreDirect::get_number_of_disks(&self)
     }
 
-    fn press_key(&self, code: u32, down: bool, mods: u16) {
+    fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         RetroCoreDirect::press_key(self, code, down, mods)
     }
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
@@ -796,9 +793,7 @@ enum RetroCmd {
     Unload,
 }
 
-/// A single stepped frame's worth of data, pushed from the worker to the main
-/// thread. `frame` is an RGBA copy; `audio` is the audio produced for this step
-/// (accumulated on the main side, never dropped).
+/// A single stepped frame's worth of data, pushed from the worker to main thread
 struct RetroUpdate {
     width: usize,
     height: usize,
@@ -809,11 +804,6 @@ struct RetroUpdate {
     fps: f64,
 }
 
-/// A [`RetroEmu`] that owns its [`RetroCore`] on a dedicated worker thread. The
-/// worker is free-running: it steps the core continuously at the core's
-/// reported FPS and pushes each frame's data over a channel. The main thread
-/// sends input/control commands over a second channel and reads a cached
-/// snapshot of the latest frame/audio (refreshed in [`run`](RetroEmuThreaded::run)).
 pub struct RetroCoreThreaded {
     cmd_tx: mpsc::Sender<RetroCmd>,
     // Wrapped in a `Mutex` purely so the type is `Sync`: `mpsc::Receiver` is
@@ -846,9 +836,6 @@ impl RetroCoreThreaded {
         game: Option<&Path>,
         settings: HashMap<String, String>,
     ) -> Result<Self> {
-        // Own the args so they can move into the worker thread, which is where
-        // the RetroCore must be both constructed and run (the CURRENT_EMU
-        // thread_local set during init must match the thread retro_run uses).
         let core_path = core_path.to_path_buf();
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
@@ -915,9 +902,7 @@ impl RetroCoreThreaded {
     }
 }
 
-/// Worker-thread main loop: apply pending commands, step the core, push the
-/// resulting frame/audio. Exits when the command channel is Disconnected
-/// (the `RetroEmuThreaded` was dropped) or `Unload` is received.
+/// Worker-thread main loop
 fn worker_loop(
     core: &mut RetroCoreDirect,
     cmd_rx: &mpsc::Receiver<RetroCmd>,
@@ -1005,7 +990,7 @@ impl RetroEmu for RetroCoreThreaded {
     fn set_disk(&mut self, no: u32) {
         if self.cmd_tx.send(RetroCmd::SetDisk { no }).is_err() {}
     }
-    fn press_key(&self, code: u32, down: bool, mods: u16) {
+    fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         let _ = self.cmd_tx.send(RetroCmd::PressKey { code, down, mods });
     }
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
@@ -1106,7 +1091,7 @@ mod tests {
     fn retro_amiga_dir_works() {
         let core_path = Path::new("libretro-uae/puae_libretro.so");
         let system_dir = Path::new("system");
-        let game_path = Path::new("test");
+        let game_path = Path::new("demos/o2-intro");
 
         let mut settings = HashMap::new();
         settings.insert("puae_model".into(), "A500".into());
@@ -1134,7 +1119,7 @@ mod tests {
         // Object-safety / interchangeability check.
         let emu: &mut dyn RetroEmu = &mut emu;
 
-        for i in 0..400 {
+        for _ in 0..400 {
             emu.run();
         }
         let (w, h) = emu.get_frame_size();
@@ -1142,19 +1127,6 @@ mod tests {
         emu.save_png(Path::new("test_amiga_threaded.png")).unwrap();
     }
 
-    /// Run two threaded UAE cores and two threaded VICE cores concurrently for
-    /// 400 frames each, then screenshot every instance. Each `RetroCoreThreaded`
-    /// owns its own worker thread and core, so this exercises whether several
-    /// threaded emulators can step in parallel without trampling each other's
-    /// state. The four PNGs let us eyeball that each instance booted and
-    /// produced a distinct, sensible frame.
-    ///
-    /// `dlopen` returns the same mapping (and the same C globals) for a core
-    /// loaded twice from the same path, so two instances of one core would
-    /// otherwise stomp each other and crash. `RetroCoreDirect::new` copies the
-    /// core to a uniquely-named file before loading it, so every instance gets
-    /// its own mapping with independent global state — that's what lets the two
-    /// UAE (and two VICE) instances below run from the same path concurrently.
     #[test]
     fn retro_threaded_multi_works() {
         let uae_core = Path::new("libretro-uae/puae_libretro.so");
@@ -1169,8 +1141,6 @@ mod tests {
             s
         };
 
-        // Two instances of each core, all loaded from the same path; the
-        // per-instance copy happens inside `RetroCoreDirect::new`.
         let cores = [
             (
                 uae_core,
@@ -1198,9 +1168,6 @@ mod tests {
             ),
         ];
 
-        // Spin up all four instances; each immediately starts a free-running
-        // worker thread, so by the time construction returns they are already
-        // stepping concurrently.
         let mut emus: Vec<(&str, RetroCoreThreaded)> = cores
             .iter()
             .map(|(core, game, settings, png)| {
@@ -1210,8 +1177,6 @@ mod tests {
             })
             .collect();
 
-        // Pull 400 frames from each, interleaved so they all make progress
-        // together rather than one draining fully before the next starts.
         for i in 0..400 {
             println!("RUN {i}");
             for (_, emu) in emus.iter_mut() {
