@@ -44,7 +44,7 @@ const STYLES: Styles = Styles::styled()
 #[derive(Parser, Debug, Resource, Clone)]
 #[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, about = "Bevy + libretro front-end")]
 struct Args {
-    /// Path to the programs/disks to load
+    /// Path to the files to load
     files: Vec<PathBuf>,
 
     /// How to map the low-res render target onto the window.
@@ -55,7 +55,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
-    /// Shuffle the list of programs into a random order.
+    /// Shuffle the list of files into a random order.
     #[arg(long)]
     shuffle: bool,
 
@@ -91,9 +91,13 @@ struct Args {
     #[arg(long, value_delimiter = ',')]
     extra_options: Vec<String>,
 
-    /// Grid rendering
+    /// Grid rendering with a 2x2 grid of emulators
     #[arg(long)]
-    grid: bool,
+    grid2x2: bool,
+
+    /// Grid rendering with a 3x3 grid of emulators
+    #[arg(long)]
+    grid3x3: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -197,7 +201,7 @@ fn main() {
         games.shuffle(&mut rand::rng());
     }
 
-    let multiple = args.files.len() > 1;
+    let multiple = games.len() > 1;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
             "demarc=debug,warn"

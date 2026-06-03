@@ -100,17 +100,38 @@ pub fn system_dir() -> &'static Path {
 #[derive(Default)]
 struct AudioStreams(Vec<cpal::Stream>);
 
-/// Marks a [`PostProcess`] camera as occupying one quadrant of a 2x2 grid.
-/// The index is `0`=top-left, `1`=top-right, `2`=bottom-left, `3`=bottom-right.
-/// [`update_grid_viewports`] keeps the camera's viewport sized to its quadrant
-/// as the window changes.
+/// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
+/// expressed in normalized `[0, 1]` coordinates. Storing the rect directly
+/// (rather than a fixed quadrant index) lets us tile any NxM grid of emulators,
+/// not just 2x2. [`update_grid_viewports`] keeps the camera's viewport sized to
+/// this cell as the window changes.
 #[derive(Component, Clone, Copy)]
-struct GridQuadrant(u8);
+struct GridCell {
+    /// Top-left corner as a fraction of the window size.
+    offset: Vec2,
+    /// Size as a fraction of the window size.
+    size: Vec2,
+}
+
+/// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
+/// top-to-bottom so cell index `i` maps cleanly to a distinct camera order.
+fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
+    let mut cells = Vec::with_capacity((cols * rows) as usize);
+    for row in 0..rows {
+        for col in 0..cols {
+            cells.push(GridCell {
+                offset: Vec2::new(col as f32 / cols as f32, row as f32 / rows as f32),
+                size: Vec2::new(1.0 / cols as f32, 1.0 / rows as f32),
+            });
+        }
+    }
+    cells
+}
 
 fn setup_ui_camera(mut commands: Commands) {
     // Camera for full res UI on top of screen. Its order must stay above every
-    // emulator camera (grid mode uses orders 0..=3) so the HUD draws on top of
-    // all quadrants rather than being overdrawn by a later one.
+    // emulator camera (grid mode gives each cell a distinct order) so the HUD
+    // draws on top of all cells rather than being overdrawn by a later one.
     commands.spawn((
         Camera2d,
         Camera {
@@ -166,20 +187,21 @@ fn setup_retro(world: &mut World) {
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
-    let grid = args.grid;
 
-    if grid {
-        for quadrant in 0..4 {
-            spawn_emulator(
-                world,
-                tags.clone(),
-                match_fps,
-                max_time,
-                Some(quadrant as u8),
-            );
-        }
+    let cells = if args.grid3x3 {
+        grid_cells(3, 3)
+    } else if args.grid2x2 {
+        grid_cells(2, 2)
     } else {
+        Vec::new()
+    };
+
+    if cells.is_empty() {
         spawn_emulator(world, tags, match_fps, max_time, None);
+    } else {
+        for (i, cell) in cells.into_iter().enumerate() {
+            spawn_emulator(world, tags.clone(), match_fps, max_time, Some((i, cell)));
+        }
     }
 }
 
@@ -187,15 +209,15 @@ fn setup_retro(world: &mut World) {
 /// render-target texture, and a [`PostProcess`] camera that samples that
 /// texture. Call this once per emulator you want on screen.
 ///
-/// `quadrant`, when `Some`, places this emulator in one cell of a 2x2 grid: the
-/// camera gets a distinct render order and a [`GridQuadrant`] marker so
-/// [`update_grid_viewports`] keeps its viewport sized to that cell.
+/// `cell`, when `Some`, places this emulator in one cell of a grid: the camera
+/// gets a distinct render order (from the cell index) and a [`GridCell`] marker
+/// so [`update_grid_viewports`] keeps its viewport sized to that cell.
 fn spawn_emulator(
     world: &mut World,
     tags: HashMap<String, String>,
     _match_fps: bool,
     max_time: Option<usize>,
-    quadrant: Option<u8>,
+    cell: Option<(usize, GridCell)>,
 ) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
     let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
@@ -219,7 +241,7 @@ fn spawn_emulator(
         Camera {
             // Distinct order per grid cell so the cameras share one window
             // target cleanly (the lowest-order one clears it once per frame).
-            order: quadrant.map_or(0, |q| q as isize),
+            //order: cell.map_or(0, |(i, _)| i as isize),
             ..default()
         },
         PostProcess {
@@ -229,34 +251,30 @@ fn spawn_emulator(
         },
         RenderLayers::layer(1),
     ));
-    if let Some(q) = quadrant {
+    if let Some((_, cell)) = cell {
         // The actual viewport rectangle is set from the live window size by
-        // `update_grid_viewports`; this just tags which quadrant to fill.
-        camera.insert(GridQuadrant(q));
+        // `update_grid_viewports`; this just tags which cell to fill.
+        camera.insert(cell);
     }
 }
 
-/// Keep each [`GridQuadrant`] camera's viewport sized to its cell of the 2x2
-/// grid as the window resizes. The right/bottom cells absorb any odd remainder
-/// so the quadrants always tile the full window with no gap.
+/// Keep each [`GridCell`] camera's viewport sized to its cell as the window
+/// resizes. Each edge is rounded to a whole pixel; because adjacent cells share
+/// an edge fraction they round to the same pixel, so the cells always tile the
+/// full window with no gap or overlap.
 fn update_grid_viewports(
     window: Single<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&GridQuadrant, &mut Camera)>,
+    mut cameras: Query<(&GridCell, &mut Camera)>,
 ) {
     let size = window.physical_size();
     if size.x == 0 || size.y == 0 {
         return;
     }
-    let half = size / 2;
-    for (quadrant, mut camera) in &mut cameras {
-        let q = quadrant.0;
-        let left = q % 2 == 0;
-        let top = q < 2;
-        let position = UVec2::new(if left { 0 } else { half.x }, if top { 0 } else { half.y });
-        let vp_size = UVec2::new(
-            if left { half.x } else { size.x - half.x },
-            if top { half.y } else { size.y - half.y },
-        );
+    let fsize = size.as_vec2();
+    for (cell, mut camera) in &mut cameras {
+        let position = (cell.offset * fsize).round().as_uvec2();
+        let far = ((cell.offset + cell.size) * fsize).round().as_uvec2();
+        let vp_size = far - position;
         // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
         // avoid retriggering change detection (and a render-graph rebuild)
         // every frame when nothing moved.
@@ -394,8 +412,8 @@ fn run_retro(
                 let GameInfo { title, group, year } = &emu.work_file.game_info;
                 writer.write(SpawnToast {
                     text: format!("\"{title}\"\n{group}\n{year}"),
-                    delay: Duration::from_secs(0),
-                    duration: Duration::from_secs(5000),
+                    delay: Duration::from_secs(8),
+                    duration: Duration::from_secs(15),
                     toast_type: ToastType::InfoText,
                 });
             }
@@ -457,6 +475,7 @@ fn run_retro(
             }
             if input.just_pressed(KeyCode::KeyN) {
                 emu.run_next = true;
+                info!("{} vs {}", settings.current_game, settings.games.len());
             }
             if input.just_pressed(KeyCode::KeyW) {
                 for _ in 0..500 {
