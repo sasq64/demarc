@@ -218,6 +218,7 @@ fn spawn_emulator(
     _match_fps: bool,
     max_time: Option<usize>,
     cell: Option<(usize, GridCell)>,
+    sound: bool, 
 ) {
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
     let (sample_rate, stream) = init_audio_stream(consumer).unwrap();

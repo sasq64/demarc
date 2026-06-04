@@ -164,7 +164,7 @@ impl AudioResampler {
     }
 }
 
-pub fn init_audio_stream(mut c: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
+pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
@@ -192,7 +192,7 @@ pub fn init_audio_stream(mut c: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let stream = device.build_output_stream(
         &config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            c.pop_slice(output);
+            consumer.pop_slice(output);
         },
         |err| eprintln!("audio stream error: {err}"),
         None,

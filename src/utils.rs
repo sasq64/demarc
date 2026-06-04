@@ -36,12 +36,15 @@ pub fn get_system_type(path: &Path) -> SystemType {
             let Ok(data) = fs::read(path) else {
                 return SystemType::Unknown;
             };
-            if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
-                system_type = SystemType::AtariST;
-            } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
-                system_type = SystemType::C64;
-            } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
-                system_type = SystemType::Amiga;
+            if data.len() >= 4 {
+                let start = u16::from_le_bytes(data[..2].try_into().unwrap());
+                if data[0..2] == [0x60, 0x1a] {
+                    system_type = SystemType::AtariST;
+                } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
+                    system_type = SystemType::Amiga;
+                } else if (0x0400..=0x0801).contains(&start) {
+                    system_type = SystemType::C64;
+                }
             }
         }
     }
