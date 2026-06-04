@@ -157,7 +157,11 @@ fn compute_uniform(
     if matches!(settings.scale_mode, ScaleMode::Stretch) {
         return identity;
     }
-    let Some(target) = camera.physical_target_size() else {
+    // Use the viewport size, not the full render target: in grid mode each
+    // camera renders into its own sub-rect, so aspect must be computed against
+    // that quadrant. `physical_viewport_size` falls back to the full target
+    // when no viewport is set (single-emulator case).
+    let Some(target) = camera.physical_viewport_size() else {
         return identity;
     };
     let Some(source) = images.get(&pp.source) else {
