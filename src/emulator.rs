@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::{image::Image, prelude::*};
 
-use ringbuf::traits::Observer;
-use ringbuf::{HeapProd, traits::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::audio::AudioResampler;
+use crate::audio::AudioSink;
 use crate::libretro;
 use crate::retro::create_core;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
@@ -24,8 +21,6 @@ use crate::utils::{WorkingFile, handle_file};
 pub(crate) struct Emulator {
     pub(crate) core: Option<RetroCoreThreaded>,
     pub(crate) work_file: WorkingFile,
-    //pub(crate) games: Vec<PathBuf>,
-    //pub(crate) current_game: usize,
     pub(crate) run_next: bool,
     pub(crate) next_frame: f64,
     pub(crate) start_time: f64,
@@ -35,11 +30,7 @@ pub(crate) struct Emulator {
     pub(crate) show_info: bool,
     pub(crate) match_frames: usize,
     pub(crate) tags: HashMap<String, String>,
-    /// Audio output ring-buffer producer. Wrapped in a `Mutex` only so the
-    /// component is `Sync`: `HeapProd` caches indices in a `Cell` and is thus
-    /// `!Sync`. Accessed solely from `run_retro`, so the lock is uncontended.
-    pub(crate) producer: Mutex<HeapProd<f32>>,
-    pub(crate) resampler: AudioResampler,
+    pub(crate) sink: AudioSink,
     pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
     /// Integral accumulator for the audio-buffer PI controller.
     pub(crate) audio_buf_integral: f64,
@@ -208,8 +199,6 @@ impl Emulator {
         images: &mut Assets<Image>,
         tags: HashMap<String, String>,
         max_time: Option<usize>,
-        sample_rate: f32,
-        producer: HeapProd<f32>,
     ) -> Self {
         let width = 720;
         let height = 574;
@@ -224,13 +213,13 @@ impl Emulator {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::all(),
         );
-        let resampler = AudioResampler::new(44100, sample_rate as u32)
-            .expect("Failed to create audio resampler");
+
+        let mut sink = AudioSink::default();
+        sink.activate();
         let handle = images.add(image);
         Emulator {
             core: None,
             work_file: WorkingFile::default(),
-            resampler,
             tags,
             match_fps: false,
             show_info: false,
@@ -240,7 +229,7 @@ impl Emulator {
             start_time: 0.0,
             max_time,
             run_next: true,
-            producer: Mutex::new(producer),
+            sink,
             key_map: Self::build_keycode_map(),
             audio_buf_integral: 0.0,
             audio_rate_adjust: 0.0,
@@ -254,31 +243,22 @@ impl Emulator {
     pub fn update(&mut self) {
         let Emulator {
             core,
-            producer,
-            resampler,
+            sink,
             audio_rate_adjust,
             ..
         } = self;
         let Some(core) = core else {
             return;
         };
-        let producer = producer.get_mut().expect("audio producer mutex poisoned");
         // Apply the PI controller's drift correction to the resampler ratio.
-        // Done as a relative-ratio nudge (not by changing `from`) so it does
-        // not force the resampler to rebuild every frame. A positive adjust
-        // makes the resampler emit fewer samples so the ring buffer drains; a
-        // negative adjust lets it fill. See `AudioResampler::set_adjust`.
-        resampler.set_adjust(*audio_rate_adjust);
-        let from = core.sample_rate() as u32;
+        sink.set_adjust(*audio_rate_adjust);
+        //resampler.set_adjust(*audio_rate_adjust);
+        let from = core.sample_rate();
         core.with_audio(&mut |samples| {
             if samples.is_empty() {
                 return;
             }
-            if let Err(e) = resampler.process(from, samples, |l, r| {
-                producer.push_iter([l, r].into_iter());
-            }) {
-                warn!("audio resample error: {e}");
-            }
+            sink.push_audio(from as f32, samples);
         });
     }
 
@@ -421,7 +401,9 @@ impl Emulator {
             1.0 / 60.0
         };
 
-        let p = self.producer.lock().unwrap();
+        let occupied_len = self.sink.occupied_len();
+
+        //let p = self.producer.lock().unwrap();
 
         trace!(
             "FRAME FPS {}/{} = {} : t={} AUDIO {}",
@@ -429,9 +411,9 @@ impl Emulator {
             self.display_fps,
             ratio,
             time.delta_secs(),
-            p.occupied_len()
+            occupied_len
         );
-        if p.occupied_len() > AUDIO_BUF_MAX {
+        if occupied_len > AUDIO_BUF_MAX {
             warn!("Dropping frame");
             self.next_frame += frame_time;
             return;
@@ -443,7 +425,7 @@ impl Emulator {
         // negative => buffer draining too quickly => slow input down so the
         // resampler emits more samples and the buffer refills). Applied to the
         // resampler input rate in `Emulator::update`.
-        let fill = p.occupied_len() as f64;
+        let fill = occupied_len as f64;
         let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
         self.audio_buf_integral += error * delta;
         // Anti-windup: keep the integral term within the output clamp.
@@ -465,13 +447,13 @@ impl Emulator {
         }
 
         // For safety
-        if p.occupied_len() < AUDIO_BUF_MIN {
+        if occupied_len < AUDIO_BUF_MIN {
             core.run();
             warn!("Duplicating frame");
             //self.core = Some(core);
             //return;
         }
-        drop(p);
+        //drop(p);
         self.update();
     }
 }

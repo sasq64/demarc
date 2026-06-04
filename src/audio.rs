@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use anyhow::Result;
 
 use bevy::prelude::*;
@@ -7,7 +9,10 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
-use ringbuf::{HeapCons, traits::*};
+use ringbuf::{
+    HeapCons, HeapProd,
+    traits::{Observer, *},
+};
 
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
@@ -164,6 +169,18 @@ impl AudioResampler {
     }
 }
 
+/// Wrapper that makes [`cpal::Stream`] `Send + Sync`.
+///
+/// cpal marks `Stream` as `!Send + !Sync` (`NotSendSyncAcrossAllPlatforms`)
+/// because a few backends require the handle to stay on its creating thread.
+/// We never call any functions on it so should be fine.
+pub struct SendStream(#[allow(dead_code)] cpal::Stream);
+
+// SAFETY: the ALSA stream handle is safe to move and drop across threads, and
+// it is never accessed after `init_audio_stream` returns it.
+unsafe impl Send for SendStream {}
+unsafe impl Sync for SendStream {}
+
 pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
@@ -200,4 +217,59 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
 
     stream.play()?;
     Ok((config.sample_rate.0 as f32, stream))
+}
+
+#[derive(Default)]
+pub struct AudioSink {
+    pub producer: Option<Mutex<HeapProd<f32>>>,
+    pub sample_rate: f32,
+    pub stream: Option<SendStream>,
+    pub resampler: Option<AudioResampler>,
+}
+
+impl AudioSink {
+    pub fn activate(&mut self) {
+        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
+        let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
+
+        let resampler = AudioResampler::new(44100, sample_rate as u32)
+            .expect("Failed to create audio resampler");
+
+        self.stream = Some(SendStream(stream));
+        self.sample_rate = sample_rate;
+        self.producer = Some(Mutex::new(producer));
+        self.resampler = Some(resampler);
+    }
+
+    pub fn deactivate(&mut self) {
+        self.stream = None;
+        self.producer = None;
+        self.resampler = None;
+    }
+
+    pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
+        if let Some(resampler) = &mut self.resampler {
+            if let Err(e) = resampler.process(from as u32, samples, |l, r| {
+                if let Some(producer) = &self.producer {
+                    producer.lock().unwrap().push_iter([l, r].into_iter());
+                }
+            }) {
+                warn!("audio resample error: {e}");
+            }
+        }
+    }
+
+    pub(crate) fn set_adjust(&mut self, audio_rate_adjust: f64) {
+        if let Some(resampler) = &mut self.resampler {
+            resampler.set_adjust(audio_rate_adjust);
+        }
+    }
+
+    pub(crate) fn occupied_len(&self) -> usize {
+        if let Some(producer) = &self.producer {
+            producer.lock().unwrap().occupied_len()
+        } else {
+            6000
+        }
+    }
 }

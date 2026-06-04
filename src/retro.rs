@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::exit;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -17,9 +16,6 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
-use ringbuf::traits::Split;
-
-use crate::audio::init_audio_stream;
 use crate::emulator::Emulator;
 use crate::hud::{SpawnToast, ToastType};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
@@ -92,14 +88,6 @@ pub fn system_dir() -> &'static Path {
     .as_path()
 }
 
-/// Keeps the per-emulator `cpal` output streams alive. A stream stops playing
-/// as soon as it is dropped, and `cpal::Stream` is neither `Send` nor `Sync`
-/// (so it can't live in an [`Emulator`] component), so the streams are parked
-/// here in a `NonSend` resource for the lifetime of the app. We never touch
-/// them again after creation — audio flows through the per-emulator ring buffer.
-#[derive(Default)]
-struct AudioStreams(Vec<cpal::Stream>);
-
 /// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
 /// expressed in normalized `[0, 1]` coordinates. Storing the rect directly
 /// (rather than a fixed quadrant index) lets us tile any NxM grid of emulators,
@@ -155,8 +143,6 @@ fn screenshot(commands: &mut Commands, name: impl Into<String>) {
 }
 
 fn setup_retro(world: &mut World) {
-    world.insert_non_send_resource(AudioStreams::default());
-
     let args = world.resource::<Args>();
 
     let mut tags = HashMap::new();
@@ -218,18 +204,9 @@ fn spawn_emulator(
     _match_fps: bool,
     max_time: Option<usize>,
     cell: Option<(usize, GridCell)>,
-    sound: bool, 
 ) {
-    let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-    let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
-    // Park the stream so it keeps playing; see [`AudioStreams`].
-    world.non_send_resource_mut::<AudioStreams>().0.push(stream);
-
     let mut res = world.resource_mut::<Assets<Image>>();
-    let x = &mut (*res);
-    //    let handle = x.add(image);
-    //   info!("SPWAWN {:?}", handle);
-    let emu = Emulator::new(x, tags, max_time, sample_rate, producer);
+    let emu = Emulator::new(&mut res, tags, max_time);
     let handle = emu.image.clone();
     world.spawn(emu);
 
