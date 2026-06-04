@@ -213,14 +213,15 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
 
     if path.is_dir() {
         if is_self_booting_dir(&path) {
+            debug!("FMT: Amiga self-booting");
             system_type = SystemType::Amiga;
             tags.insert("puae_use_whdload".into(), "disabled".into());
+        } else if has_matching(&path, ".slave").is_some() {
+            debug!("FMT: Amiga WHDLoad");
+            system_type = SystemType::Amiga;
+            tags.insert("puae_model".into(), "A1200".into());
+            tags.insert("puae_use_whdload".into(), "enabled".into());
         } else {
-            if has_matching(&path, ".slave").is_some() {
-                system_type = SystemType::Amiga;
-                tags.insert("puae_model".into(), "A1200".into());
-                tags.insert("puae_use_whdload".into(), "enabled".into());
-            }
             debug!("Checking");
             for f in fs::read_dir(&path)? {
                 let f = f?;
@@ -246,6 +247,7 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
         } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
             system_type = SystemType::C64;
         } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
+            debug!("FMT: Amiga exe");
             let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
             let s_dir = target_dir.join("s");
             fs::create_dir(&s_dir)?;
@@ -293,6 +295,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
     }
 
     if m3u.files.is_empty() {
+        debug!("FMT: M3U metadata only");
         let mut wf = handle_release(in_path.parent().unwrap(), &tags)?;
         wf.game_info.title = title;
         wf.game_info.group = group;
@@ -303,6 +306,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
     if let Some(path) = m3u.files.first() {
         let real_path = in_path.parent().unwrap().join(path);
         system_type = get_system_type(&real_path);
+        debug!("FMT: M3U {system_type:?}");
     }
 
     let game_info = GameInfo { title, group, year };
