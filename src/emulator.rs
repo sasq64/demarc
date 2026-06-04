@@ -214,8 +214,8 @@ impl Emulator {
             RenderAssetUsages::all(),
         );
 
-        let mut sink = AudioSink::default();
-        sink.activate();
+        let sink = AudioSink::default();
+        //sink.activate();
         let handle = images.add(image);
         Emulator {
             core: None,
@@ -237,6 +237,14 @@ impl Emulator {
             image: handle.clone(),
             width,
             height,
+        }
+    }
+
+    pub fn audio_active(&mut self, on: bool) {
+        if on && self.sink.stream.is_none() {
+            self.sink.activate();
+        } else if !on && self.sink.stream.is_some() {
+            self.sink.deactivate();
         }
     }
 

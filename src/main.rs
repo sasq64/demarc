@@ -91,13 +91,28 @@ struct Args {
     #[arg(long, value_delimiter = ',')]
     extra_options: Vec<String>,
 
-    /// Grid rendering with a 2x2 grid of emulators
-    #[arg(long)]
-    grid2x2: bool,
+    /// Grid rendering with an arbitrary COLSxROWS grid of emulators, e.g. --grid=5x4
+    #[arg(long, value_parser = parse_grid)]
+    grid: Option<(u32, u32)>,
+}
 
-    /// Grid rendering with a 3x3 grid of emulators
-    #[arg(long)]
-    grid3x3: bool,
+/// Parse a `COLSxROWS` grid specifier like `5x4` into `(cols, rows)`.
+fn parse_grid(s: &str) -> Result<(u32, u32), String> {
+    let (cols, rows) = s
+        .split_once(['x', 'X'])
+        .ok_or_else(|| format!("expected COLSxROWS, e.g. 5x4 (got `{s}`)"))?;
+    let cols: u32 = cols
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid column count `{cols}`"))?;
+    let rows: u32 = rows
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid row count `{rows}`"))?;
+    if cols == 0 || rows == 0 {
+        return Err("grid dimensions must be at least 1".into());
+    }
+    Ok((cols, rows))
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -156,6 +171,15 @@ struct AppSettings {
     games: Vec<PathBuf>,
     current_game: usize,
     max_time: Option<usize>,
+    /// Index of the emulator the user is currently "focused" on (its output
+    /// area is outlined). Cycled with RightAlt+Tab.
+    current_emu: usize,
+    /// When set, the focused emulator ([`Self::current_emu`]) fills the whole
+    /// window and the others stop rendering, as if it were the only core
+    /// running. Toggled with RightAlt+Enter.
+    maximized: bool,
+    all_emus: bool,
+    last_draw: f64,
 }
 
 /// Recursively collect all `.m3u` files under `dir` into `out`.
@@ -237,6 +261,10 @@ fn main() {
         games: games.clone(),
         current_game: 0,
         max_time: args.max_time,
+        current_emu: 0,
+        maximized: args.grid.is_none(),
+        all_emus: false,
+        last_draw: 0.0,
     };
 
     App::new()

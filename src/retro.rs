@@ -101,6 +101,18 @@ struct GridCell {
     size: Vec2,
 }
 
+/// Identifies an emulator's on-screen camera and its stable index, so the
+/// "current" emulator (cycled with RightAlt+Tab) can be looked up and its
+/// output area outlined. The rect itself comes from the optional [`GridCell`];
+/// a camera without one fills the whole window.
+#[derive(Component, Clone, Copy)]
+struct EmuView {
+    index: usize,
+}
+
+/// Color of the outline drawn around the currently-focused emulator.
+const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
+
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` maps cleanly to a distinct camera order.
 fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
@@ -116,14 +128,26 @@ fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
     cells
 }
 
-fn setup_ui_camera(mut commands: Commands) {
+fn grid_layout(args: &Args) -> Vec<GridCell> {
+    if let Some((cols, rows)) = args.grid {
+        grid_cells(cols, rows)
+    } else {
+        Vec::new()
+    }
+}
+
+fn setup_ui_camera(mut commands: Commands, args: Res<Args>) {
     // Camera for full res UI on top of screen. Its order must stay above every
-    // emulator camera (grid mode gives each cell a distinct order) so the HUD
-    // draws on top of all cells rather than being overdrawn by a later one.
+    // emulator camera (grid mode gives each cell a distinct order, `0..n`) so
+    // the HUD and the focus outline draw on top of all cells rather than being
+    // overdrawn by a later one. Derive the order from the cell count instead of
+    // a fixed value, which would otherwise be exceeded by grids larger than the
+    // constant (e.g. a 4x4 grid hides the outline for cells with order >= it).
+    let order = grid_layout(&args).len().max(1) as isize;
     commands.spawn((
         Camera2d,
         Camera {
-            order: 10,
+            order,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -174,13 +198,7 @@ fn setup_retro(world: &mut World) {
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
 
-    let cells = if args.grid3x3 {
-        grid_cells(3, 3)
-    } else if args.grid2x2 {
-        grid_cells(2, 2)
-    } else {
-        Vec::new()
-    };
+    let cells = grid_layout(args);
 
     if cells.is_empty() {
         spawn_emulator(world, tags, match_fps, max_time, None);
@@ -228,6 +246,9 @@ fn spawn_emulator(
             aspect_tweak: 1.0,
         },
         RenderLayers::layer(1),
+        EmuView {
+            index: cell.map_or(0, |(i, _)| i),
+        },
     ));
     if let Some((_, cell)) = cell {
         // The actual viewport rectangle is set from the live window size by
@@ -242,20 +263,36 @@ fn spawn_emulator(
 /// full window with no gap or overlap.
 fn update_grid_viewports(
     window: Single<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&GridCell, &mut Camera)>,
+    settings: Res<AppSettings>,
+    mut cameras: Query<(&GridCell, &EmuView, &mut Camera)>,
 ) {
     let size = window.physical_size();
     if size.x == 0 || size.y == 0 {
         return;
     }
     let fsize = size.as_vec2();
-    for (cell, mut camera) in &mut cameras {
-        let position = (cell.offset * fsize).round().as_uvec2();
-        let far = ((cell.offset + cell.size) * fsize).round().as_uvec2();
-        let vp_size = far - position;
+    for (cell, view, mut camera) in &mut cameras {
+        // When maximized, the focused emulator fills the whole window and the
+        // rest stop rendering, so it looks exactly like it was the only core
+        // running. Guard the writes so we don't retrigger change detection (and
+        // a render-graph rebuild) every frame when nothing changed.
+        let is_focused = view.index == settings.current_emu;
+        let active = !settings.maximized || is_focused;
+        if camera.is_active != active {
+            camera.is_active = active;
+        }
+        if !active {
+            continue;
+        }
+        let (position, vp_size) = if settings.maximized {
+            (UVec2::ZERO, size)
+        } else {
+            let position = (cell.offset * fsize).round().as_uvec2();
+            let far = ((cell.offset + cell.size) * fsize).round().as_uvec2();
+            (position, far - position)
+        };
         // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
-        // avoid retriggering change detection (and a render-graph rebuild)
-        // every frame when nothing moved.
+        // avoid retriggering change detection every frame when nothing moved.
         let unchanged = camera
             .viewport
             .as_ref()
@@ -268,6 +305,76 @@ fn update_grid_viewports(
             });
         }
     }
+}
+
+/// Route the default gizmos onto the UI render layer (layer 2) so they draw
+/// through the full-res UI camera, on top of every emulator camera.
+fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
+    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+    config.render_layers = RenderLayers::layer(2);
+    config.line.width = config_line_width();
+}
+
+/// Draw an orange rectangle around the output area of the currently-focused
+/// emulator (see [`AppSettings::current_emu`], cycled with RightAlt+Tab). The
+/// outline is skipped when only one emulator is on screen, where it would just
+/// frame the whole window.
+fn draw_current_emu_outline(
+    mut gizmos: Gizmos,
+    settings: Res<AppSettings>,
+    time: Res<Time>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    views: Query<(&EmuView, Option<&GridCell>)>,
+) {
+    // A single (or maximized) emulator fills the window, so an outline would
+    // just frame the whole screen — not useful.
+    if settings.maximized
+        || views.iter().count() < 2
+        || time.elapsed_secs_f64() - settings.last_draw > 2.0
+    {
+        return;
+    }
+    let (w, h) = (window.width(), window.height());
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    if settings.all_emus {
+        // Frame the whole screen rather than a single cell.
+        let rect = Vec2::new(
+            (w - config_line_width()).max(0.0),
+            (h - config_line_width()).max(0.0),
+        );
+        gizmos.rect_2d(Isometry2d::IDENTITY, rect, CURRENT_OUTLINE_COLOR);
+        return;
+    }
+    for (view, cell) in &views {
+        if view.index != settings.current_emu {
+            continue;
+        }
+        let (offset, size) = cell.map_or((Vec2::ZERO, Vec2::ONE), |c| (c.offset, c.size));
+        // The default Camera2d uses logical pixels with the origin centered and
+        // y pointing up; cell offsets are top-left fractions with y down.
+        let center = Vec2::new(
+            (offset.x + size.x * 0.5 - 0.5) * w,
+            (0.5 - (offset.y + size.y * 0.5)) * h,
+        );
+        // Inset by the line width so the outline sits inside the cell instead
+        // of being clipped against the window/cell edges.
+        let rect = Vec2::new(
+            (size.x * w - config_line_width()).max(0.0),
+            (size.y * h - config_line_width()).max(0.0),
+        );
+        gizmos.rect_2d(
+            Isometry2d::from_translation(center),
+            rect,
+            CURRENT_OUTLINE_COLOR,
+        );
+    }
+}
+
+/// Line width used both for the gizmo config and the outline inset.
+const fn config_line_width() -> f32 {
+    4.0
 }
 
 fn exe_dir() -> Option<PathBuf> {
@@ -351,7 +458,13 @@ fn run_retro(
     mut images: ResMut<Assets<Image>>,
     mut post_process: Query<&mut PostProcess>,
 ) {
+    let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
+    let mut show_info = false;
     if input.pressed(KeyCode::AltRight) {
+        settings.last_draw = time.elapsed_secs_f64();
+        if input.just_pressed(KeyCode::KeyC) {
+            settings.crt_effect = !settings.crt_effect;
+        }
         if input.just_pressed(KeyCode::KeyB) {
             settings.border_mode = if settings.border_mode == BorderMode::Stretch {
                 BorderMode::Black
@@ -372,22 +485,62 @@ fn run_retro(
                 _ => WindowMode::Windowed,
             };
         }
+        if emus.count() > 1 {
+            if input.just_pressed(KeyCode::KeyA) {
+                settings.all_emus = !settings.all_emus;
+            }
+            if input.just_pressed(KeyCode::Tab) {
+                let count = emus.iter().count();
+                if count > 0 {
+                    if shift {
+                        settings.current_emu = (settings.current_emu + count - 1) % count;
+                    } else {
+                        settings.current_emu = (settings.current_emu + 1) % count;
+                    }
+                }
+            }
+            if input.just_pressed(KeyCode::Enter) {
+                settings.maximized = !settings.maximized;
+                if settings.show_info && settings.maximized {
+                    show_info = true;
+                }
+                if !settings.maximized {
+                    writer.write(SpawnToast {
+                        text: "".into(),
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(1),
+                        toast_type: ToastType::InfoText,
+                    });
+                }
+            }
+        }
     }
 
-    for mut emu in &mut emus {
+    for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         let Some(image) = images.get_mut(&emu.image) else {
             continue;
         };
         let Some(dst) = image.data.as_mut() else {
             continue;
         };
+        if show_info && i == settings.current_emu {
+            let GameInfo { title, group, year } = &emu.work_file.game_info;
+            writer.write(SpawnToast {
+                text: format!("\"{title}\"\n{group}\n{year}"),
+                delay: Duration::from_secs(0),
+                duration: Duration::from_secs(2),
+                toast_type: ToastType::InfoText,
+            });
+        }
+
+        emu.audio_active(settings.all_emus || i == settings.current_emu);
 
         if emu.run_next && settings.current_game < settings.games.len() {
             emu.run_next = false;
             let game = settings.games[settings.current_game].clone();
             emu.load(&time, &game);
             settings.current_game += 1;
-            if settings.show_info {
+            if settings.show_info && settings.maximized {
                 let GameInfo { title, group, year } = &emu.work_file.game_info;
                 writer.write(SpawnToast {
                     text: format!("\"{title}\"\n{group}\n{year}"),
@@ -405,75 +558,78 @@ fn run_retro(
             emu.run_next = true;
         };
 
-        if input.pressed(KeyCode::AltRight) {
-            if input.just_pressed(KeyCode::KeyM) {
-                emu.set_mouse_buttons(true, false, false);
-            }
-            if input.just_pressed(KeyCode::KeyC) {
-                settings.crt_effect = !settings.crt_effect;
-            }
-            if input.just_pressed(KeyCode::KeyD) {
-                emu.disk_no = (emu.disk_no + 1) % emu.get_number_of_disks();
-                let disk_no = emu.disk_no;
-                emu.set_disk(disk_no);
-                let floppy = emu.work_file.system_type == SystemType::C64;
-                let d = emu.disk_no + 1;
+        if emu.core.is_none() {
+            continue;
+        }
 
-                writer.write(SpawnToast {
-                    toast_type: ToastType::BottomLeft,
-                    duration: Duration::from_millis(1500),
-                    text: if floppy {
-                        format!("\u{f09ef} #{d}")
+        if settings.all_emus || i == settings.current_emu {
+            if input.pressed(KeyCode::AltRight) {
+                if input.just_pressed(KeyCode::KeyM) {
+                    emu.set_mouse_buttons(true, false, false);
+                }
+                if input.just_pressed(KeyCode::KeyD) {
+                    emu.disk_no = (emu.disk_no + 1) % emu.get_number_of_disks();
+                    let disk_no = emu.disk_no;
+                    emu.set_disk(disk_no);
+                    let floppy = emu.work_file.system_type == SystemType::C64;
+                    let d = emu.disk_no + 1;
+
+                    writer.write(SpawnToast {
+                        toast_type: ToastType::BottomLeft,
+                        duration: Duration::from_millis(1500),
+                        text: if floppy {
+                            format!("\u{f09ef} #{d}")
+                        } else {
+                            format!("\u{f0249} #{d}")
+                        },
+                        ..Default::default()
+                    });
+                }
+                if input.just_pressed(KeyCode::KeyR) {
+                    emu.reset();
+                }
+                if input.just_pressed(KeyCode::KeyI) {
+                    let GameInfo { title, group, year } = &emu.work_file.game_info;
+                    if emu.show_info {
+                        writer.write(SpawnToast {
+                            text: "".into(),
+                            delay: Duration::from_secs(0),
+                            duration: Duration::from_secs(5000),
+                            toast_type: ToastType::InfoText,
+                        });
                     } else {
-                        format!("\u{f0249} #{d}")
-                    },
-                    ..Default::default()
-                });
-            }
-            if input.just_pressed(KeyCode::KeyR) {
-                emu.reset();
-            }
-            if input.just_pressed(KeyCode::KeyI) {
-                let GameInfo { title, group, year } = &emu.work_file.game_info;
-                if emu.show_info {
-                    writer.write(SpawnToast {
-                        text: "".into(),
-                        delay: Duration::from_secs(0),
-                        duration: Duration::from_secs(5000),
-                        toast_type: ToastType::InfoText,
-                    });
-                } else {
-                    writer.write(SpawnToast {
-                        text: format!("\"{title}\"\n{group}\n{year}"),
-                        delay: Duration::from_secs(0),
-                        duration: Duration::from_secs(5000),
-                        toast_type: ToastType::InfoText,
-                    });
+                        writer.write(SpawnToast {
+                            text: format!("\"{title}\"\n{group}\n{year}"),
+                            delay: Duration::from_secs(0),
+                            duration: Duration::from_secs(5000),
+                            toast_type: ToastType::InfoText,
+                        });
+                    }
+                    emu.show_info = !emu.show_info;
                 }
-                emu.show_info = !emu.show_info;
-            }
-            if input.just_pressed(KeyCode::KeyN) {
-                emu.run_next = true;
-                info!("{} vs {}", settings.current_game, settings.games.len());
-            }
-            if input.just_pressed(KeyCode::KeyW) {
-                for _ in 0..500 {
-                    emu.skip();
+                if input.just_pressed(KeyCode::KeyN) {
+                    emu.run_next = true;
+                    info!("{} vs {}", settings.current_game, settings.games.len());
                 }
+                if input.just_pressed(KeyCode::KeyW) {
+                    for _ in 0..500 {
+                        emu.skip();
+                    }
+                }
+                if input.just_pressed(KeyCode::KeyP) {
+                    screenshot(
+                        &mut commands,
+                        format!(
+                            "{}-{}.png",
+                            emu.work_file.game_info.title,
+                            time.elapsed_secs() as i32
+                        ),
+                    );
+                }
+            } else {
+                emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
             }
-            if input.just_pressed(KeyCode::KeyP) {
-                screenshot(
-                    &mut commands,
-                    format!(
-                        "{}-{}.png",
-                        emu.work_file.game_info.title,
-                        time.elapsed_secs() as i32
-                    ),
-                );
-            }
-        } else {
-            emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
-        };
+        }
         emu.run(&time);
 
         let bg_w = emu.width as usize;
@@ -535,7 +691,13 @@ fn run_retro(
 
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_retro, setup_ui_camera, fix_window));
-        app.add_systems(Update, (run_retro, update_grid_viewports));
+        app.add_systems(
+            Startup,
+            (setup_retro, setup_ui_camera, fix_window, setup_gizmos),
+        );
+        app.add_systems(
+            Update,
+            (run_retro, update_grid_viewports, draw_current_emu_outline),
+        );
     }
 }
