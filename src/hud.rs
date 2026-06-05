@@ -145,6 +145,99 @@ fn spawn_toast(
     }
 }
 
+/// A scrollable list of strings rendered inside a semi-transparent bordered box.
+///
+/// Only `visible_count` rows are shown at once, starting at `scroll_position`.
+/// Mutating `scroll_position` (or `items`) marks the component changed, which
+/// makes [`update_text_list`] refresh the row [`Text`]s on the next frame.
+#[derive(Component)]
+pub struct TextList {
+    pub items: Vec<String>,
+    pub scroll_position: usize,
+    pub visible_count: usize,
+}
+
+/// Marks a child text entity of a [`TextList`] and records which visible row it is.
+#[derive(Component)]
+struct TextListRow(usize);
+
+impl TextList {
+    /// Spawns a `TextList` and its row text entities, returning the container entity.
+    ///
+    /// The caller can insert/override the [`Node`] on the returned entity to position it.
+    pub fn spawn(
+        commands: &mut Commands,
+        font: Handle<Font>,
+        items: Vec<String>,
+        visible_count: usize,
+    ) -> Entity {
+        // Full-screen container that centers the content-sized box; the returned
+        // entity is the box itself (the one carrying `TextList`).
+        let mut box_entity = Entity::PLACEHOLDER;
+        commands
+            .spawn(Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|parent| {
+                box_entity = parent
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(16.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            row_gap: Val::Px(4.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+                        TextList {
+                            items,
+                            scroll_position: 0,
+                            visible_count,
+                        },
+                    ))
+                    .with_children(|box_node| {
+                        for i in 0..visible_count {
+                            box_node.spawn((
+                                Text::new(""),
+                                TextFont {
+                                    font: font.clone(),
+                                    font_size: 32.0,
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                                TextListRow(i),
+                            ));
+                        }
+                    })
+                    .id();
+            });
+        box_entity
+    }
+}
+
+/// Refreshes the visible rows of every [`TextList`] whose contents or scroll changed.
+fn update_text_list(
+    lists: Query<(&TextList, &Children), Changed<TextList>>,
+    mut rows: Query<(&TextListRow, &mut Text)>,
+) {
+    for (list, children) in &lists {
+        for child in children.iter() {
+            if let Ok((row, mut text)) = rows.get_mut(child) {
+                let idx = list.scroll_position + row.0;
+                text.0 = list.items.get(idx).cloned().unwrap_or_default();
+            }
+        }
+    }
+}
+
 fn handle_tween_done(mut commands: Commands, mut reader: MessageReader<CycleCompletedEvent>) {
     for msg in reader.read() {
         info!("DESPAWN");
@@ -163,6 +256,7 @@ impl Plugin for HudPlugin {
                 (
                     spawn_toast.run_if(on_message::<SpawnToast>),
                     update_relative_text_size.run_if(on_message::<WindowResized>),
+                    update_text_list,
                     handle_tween_done.run_if(on_message::<CycleCompletedEvent>),
                 ),
             );

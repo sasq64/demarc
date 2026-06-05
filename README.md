@@ -4,6 +4,11 @@
 
 An command line emulator frontend for the demoscene
 
+_because_
+
+Emulation is better than youtube!
+
+
 *Main goal*
 
 Make it easy to watch demos from C64 and Amiga
@@ -11,9 +16,9 @@ Make it easy to watch demos from C64 and Amiga
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay
 * CRT shader for "authentic" look
-* Can run Amiga exes, disk images or directories
-* Can run Atari exes or disk images
+* Can run Amiga/Atari/C64 exes & disk images
 * Right-Alt hotkey for disk switch etc
+* Can run multiple files at once in a grid
 
 
 ## BUILD
@@ -59,6 +64,13 @@ I = Toggle Info
 P = Screenshot
 R = Reset
 C = Toggle CRT filter
+
+For grid:
+
+TAB = Next emulator
+ENTER = Maximize/Unmazimize
+A = Select all emulators
+
 ```
 
 

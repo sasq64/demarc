@@ -17,7 +17,7 @@ use bevy::{
 };
 
 use crate::emulator::Emulator;
-use crate::hud::{SpawnToast, ToastType};
+use crate::hud::{SpawnToast, TextList, ToastType};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::{GameInfo, SystemType};
@@ -41,41 +41,19 @@ const CORE_NAME_ATARI: &str = "hatari_libretro";
 /// build time. Extracted to the user's cache dir on first run.
 const SYSTEM_ZIP: &[u8] = include_bytes!("../system.zip");
 
-/// Path to the `system` directory.
-///
-/// In debug builds, if a `system/` directory exists in the current working
-/// directory it is used as-is (so local edits are picked up without
-/// re-bundling). Otherwise, on first call the embedded [`SYSTEM_ZIP`] is
-/// unpacked into `~/.cache/demarc` (creating `~/.cache/demarc/system`) unless
-/// it already exists. The result is cached so extraction happens at most once
-/// per run.
 pub fn system_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
-        // In debug builds, prefer a `system/` directory next to where we're run
-        // from, so local edits to BIOS/config are picked up without re-bundling.
         if cfg!(debug_assertions) {
             let local = PathBuf::from("system");
             if local.is_dir() {
                 return local;
             }
         }
-        // `XDG_CACHE_HOME` already points at the cache root; `HOME`/`HOMEPATH`
-        // are home dirs, so for those we still need to descend into `.cache`.
-        let cache = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                ["HOME", "HOMEPATH"]
-                    .iter()
-                    .find_map(|var| std::env::var_os(var).map(PathBuf::from))
-                    .map(|home| home.join(".cache"))
-            })
-            .unwrap_or_default()
-            .join("demarc");
+        let cache = dirs::cache_dir().unwrap_or_default().join("demarc");
         info!("CACHE {cache:?}");
         let system = cache.join("system");
-        if !system.exists() {
-            info!("CREATE DIR");
+        if !system.exists() || !system.join(".v1").exists() {
             std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
                 .expect("Failed to read embedded system.zip");
@@ -89,9 +67,8 @@ pub fn system_dir() -> &'static Path {
 }
 
 /// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
-/// expressed in normalized `[0, 1]` coordinates. Storing the rect directly
-/// (rather than a fixed quadrant index) lets us tile any NxM grid of emulators,
-/// not just 2x2. [`update_grid_viewports`] keeps the camera's viewport sized to
+/// expressed in normalized `[0, 1]` coordinates.
+/// [`update_grid_viewports`] keeps the camera's viewport sized to
 /// this cell as the window changes.
 #[derive(Component, Clone, Copy)]
 struct GridCell {
@@ -167,8 +144,17 @@ fn screenshot(commands: &mut Commands, name: impl Into<String>) {
 }
 
 fn setup_retro(world: &mut World) {
-    let args = world.resource::<Args>();
+    // let asset_server = world.resource::<AssetServer>();
+    // let font: Handle<Font> = asset_server.load("font.ttf");
+    // let mut commands = world.commands();
+    // TextList::spawn(
+    //     &mut commands,
+    //     font,
+    //     ["One".into(), "Two".into(), "Three".into()].into(),
+    //     3,
+    // );
 
+    let args = world.resource::<Args>();
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
 
@@ -459,8 +445,9 @@ fn run_retro(
     mut post_process: Query<&mut PostProcess>,
 ) {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
+    let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
     let mut show_info = false;
-    if input.pressed(KeyCode::AltRight) {
+    if hot_key {
         settings.last_draw = time.elapsed_secs_f64();
         if input.just_pressed(KeyCode::KeyC) {
             settings.crt_effect = !settings.crt_effect;
@@ -563,7 +550,7 @@ fn run_retro(
         }
 
         if settings.all_emus || i == settings.current_emu {
-            if input.pressed(KeyCode::AltRight) {
+            if hot_key {
                 if input.just_pressed(KeyCode::KeyM) {
                     emu.set_mouse_buttons(true, false, false);
                 }
