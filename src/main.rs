@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
-use bevy::window::WindowMode;
+use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
 use bevy_tweening::TweeningPlugin;
 use clap::builder::styling::{AnsiColor, Style};
@@ -203,6 +203,9 @@ fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
+    window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
+}
 
 fn main() {
     let mut args = Args::parse();
@@ -235,11 +238,16 @@ fn main() {
     });
 
     tracing_subscriber::fmt()
+        .with_ansi(cfg!(not(target_os = "windows")))
         .with_env_filter(filter)
         .with_target(true)
         .compact()
         .init();
-    let primary_window = Some(Window {
+    // Only apply the fixed `resolution` when windowed. On Windows, requesting
+    // `BorderlessFullscreen` together with a fixed `resolution` conflicts in
+    // winit and the window never actually goes fullscreen, so we leave the
+    // resolution at its default (the monitor will drive it) when fullscreen.
+    let mut window = Window {
         title: "Demarc".into(),
         present_mode: PresentMode::Fifo,
         mode: if args.window {
@@ -247,10 +255,13 @@ fn main() {
         } else {
             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
         },
-        resolution: (720, 540).into(),
         resizable: false,
         ..Default::default()
-    });
+    };
+    if args.window {
+        window.resolution = (720, 540).into();
+    }
+    let primary_window = Some(window);
 
     let settings = AppSettings {
         border_mode: args.border.into(),
@@ -267,8 +278,10 @@ fn main() {
         last_draw: 0.0,
     };
 
-    App::new()
-        .insert_resource(args)
+    let win = args.window;
+
+    let mut app = App::new();
+    app.insert_resource(args)
         .insert_resource(settings)
         .add_plugins((
             DefaultPlugins
@@ -290,6 +303,9 @@ fn main() {
             TweeningPlugin,
             HudPlugin,
             ScreenSaverPlugin,
-        ))
-        .run();
+        ));
+    if !win {
+        app.add_systems(PostStartup, enter_fullscreen);
+    }
+    app.run();
 }
