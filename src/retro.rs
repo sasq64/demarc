@@ -409,7 +409,7 @@ pub fn create_core(
         set_var("puae_crop", "smaller");
         set_var("puae_horizontal_pos", "-5");
     } else if system_type == SystemType::C64 {
-        set_var("vice_jiffydos", "enabled");
+        set_var("vice_jiffydos", "disabled");
         set_var("vice_sid_extra", "none");
         set_var("vice_sid_model", "8580");
         set_var("vice_sound_sample_rate", "44100");
@@ -479,6 +479,9 @@ fn run_retro(
             if input.just_pressed(KeyCode::Tab) {
                 let count = emus.iter().count();
                 if count > 0 {
+                    if settings.show_info {
+                        show_info = true;
+                    }
                     if shift {
                         settings.current_emu = (settings.current_emu + count - 1) % count;
                     } else {
@@ -554,6 +557,9 @@ fn run_retro(
                 if input.just_pressed(KeyCode::KeyM) {
                     emu.set_mouse_buttons(true, false, false);
                 }
+                if input.just_pressed(KeyCode::KeyP) {
+                    emu.paused = !emu.paused;
+                }
                 if input.just_pressed(KeyCode::KeyD) {
                     emu.disk_no = (emu.disk_no + 1) % emu.get_number_of_disks();
                     let disk_no = emu.disk_no;
@@ -603,7 +609,7 @@ fn run_retro(
                         emu.skip();
                     }
                 }
-                if input.just_pressed(KeyCode::KeyP) {
+                if input.just_pressed(KeyCode::KeyT) {
                     screenshot(
                         &mut commands,
                         format!(

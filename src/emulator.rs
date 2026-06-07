@@ -17,7 +17,7 @@ use crate::utils::{WorkingFile, handle_file};
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
 /// `PostProcess` camera (matched via [`Self::image`]).
-#[derive(Component)]
+#[derive(Component, Default)]
 pub(crate) struct Emulator {
     pub(crate) core: Option<RetroCoreThreaded>,
     pub(crate) work_file: WorkingFile,
@@ -44,6 +44,7 @@ pub(crate) struct Emulator {
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) paused: bool,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -214,29 +215,16 @@ impl Emulator {
             RenderAssetUsages::all(),
         );
 
-        let sink = AudioSink::default();
-        //sink.activate();
         let handle = images.add(image);
         Emulator {
-            core: None,
-            work_file: WorkingFile::default(),
             tags,
-            match_fps: false,
-            show_info: false,
-            match_frames: 0,
-            display_fps: 0.0,
-            next_frame: 0.0,
-            start_time: 0.0,
             max_time,
             run_next: true,
-            sink,
             key_map: Self::build_keycode_map(),
-            audio_buf_integral: 0.0,
-            audio_rate_adjust: 0.0,
-            disk_no: 0,
             image: handle.clone(),
             width,
             height,
+            ..Default::default()
         }
     }
 
@@ -392,6 +380,11 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return;
         };
+
+        if self.paused {
+            self.next_frame = time.elapsed_secs_f64();
+            return;
+        }
 
         let ratio = (1.0 - self.display_fps / core.fps()).abs();
         if ratio < 0.01 && !self.match_fps {
