@@ -317,8 +317,12 @@ impl ViewNode for PostProcessNode {
         // Restrict the blit to the image rectangle (in `BorderMode::Black`) so the
         // letterbox/pillarbox bars are left showing the camera's clear color rather
         // than being overdrawn by the shader.
-        if let Some(rect) = border_scissor.0 {
-            render_pass.set_scissor_rect(rect.min.x, rect.min.y, rect.width(), rect.height());
+        if let (Some(rect), Some(target)) = (border_scissor.0, camera.physical_target_size) {
+            let max = rect.max.min(target);
+            let min = rect.min.min(max);
+            if max.x > min.x && max.y > min.y {
+                render_pass.set_scissor_rect(min.x, min.y, max.x - min.x, max.y - min.y);
+            }
         }
 
         render_pass.set_render_pipeline(pipeline);
