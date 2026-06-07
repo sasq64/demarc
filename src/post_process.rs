@@ -49,6 +49,7 @@ impl Plugin for PostProcessPlugin {
             ExtractResourcePlugin::<AppSettings>::default(),
             ExtractComponentPlugin::<PostProcess>::default(),
             ExtractComponentPlugin::<PostProcessUniform>::default(),
+            ExtractComponentPlugin::<BorderScissor>::default(),
             UniformComponentPlugin::<PostProcessUniform>::default(),
         ))
         .add_systems(PostUpdate, update_post_process_uniform);
@@ -120,6 +121,16 @@ pub struct PostProcessUniform {
     crt_enabled: u32,
 }
 
+/// Pixel rectangle (in physical framebuffer coords) that the post-process blit
+/// is restricted to with a scissor, so the letterbox/pillarbox bars are left
+/// untouched and show the camera's clear color instead of being overdrawn.
+///
+/// `None` means "no clipping" — the blit covers the whole viewport. That's used
+/// for [`BorderMode::Stretch`], where the bars are intentionally filled with
+/// stretched edge texels by the shader rather than the clear color.
+#[derive(Component, Clone, Copy, ExtractComponent)]
+pub struct BorderScissor(pub Option<URect>);
+
 fn update_post_process_uniform(
     images: Res<Assets<Image>>,
     settings: Res<AppSettings>,
@@ -133,13 +144,39 @@ fn update_post_process_uniform(
 ) {
     for (entity, pp, camera, existing) in &mut query {
         let uniform = compute_uniform(pp, &(*settings), camera, &images);
+        let scissor = BorderScissor(compute_scissor(&uniform, &(*settings), camera));
         match existing {
             Some(mut u) => *u = uniform,
             None => {
                 commands.entity(entity).insert(uniform);
             }
         }
+        commands.entity(entity).insert(scissor);
     }
+}
+
+/// Clip rectangle for the blit so the bars keep the clear color. Returns `None`
+/// (no clipping) for [`BorderMode::Stretch`], or when the image fills the whole
+/// viewport (`Stretch`/`Zoom` scaling), so we never scissor away visible pixels.
+fn compute_scissor(u: &PostProcessUniform, settings: &AppSettings, camera: &Camera) -> Option<URect> {
+    if !matches!(settings.border_mode, BorderMode::Black) {
+        return None;
+    }
+    let rect = camera.physical_viewport_rect()?;
+    let vp_min = rect.min.as_vec2();
+    let vp_size = rect.size().as_vec2();
+    // The image occupies screen-uv `[uv_offset, uv_offset + uv_scale]` within the
+    // viewport; the bars are whatever falls outside that. Clamp to the viewport so
+    // Zoom/Stretch (which push the image past the edges) just yield the full rect.
+    let img_min = (vp_min + u.uv_offset * vp_size).max(vp_min);
+    let img_max = (vp_min + (u.uv_offset + u.uv_scale) * vp_size).min(vp_min + vp_size);
+    if img_max.x <= img_min.x || img_max.y <= img_min.y {
+        return None;
+    }
+    Some(URect::from_corners(
+        img_min.round().as_uvec2(),
+        img_max.round().as_uvec2(),
+    ))
 }
 
 fn compute_uniform(
@@ -214,13 +251,16 @@ impl ViewNode for PostProcessNode {
         &'static PostProcess,
         &'static DynamicUniformIndex<PostProcessUniform>,
         &'static ExtractedCamera,
+        &'static BorderScissor,
     );
 
     fn run(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext,
-        (view_target, post_process, uniform_index, camera): QueryItem<Self::ViewQuery>,
+        (view_target, post_process, uniform_index, camera, border_scissor): QueryItem<
+            Self::ViewQuery,
+        >,
         world: &World,
     ) -> Result<(), NodeRunError> {
         let pipeline_resource = world.resource::<PostProcessPipeline>();
@@ -272,6 +312,13 @@ impl ViewNode for PostProcessNode {
         // no-op and the triangle covers the full target.
         if let Some(viewport) = &camera.viewport {
             render_pass.set_camera_viewport(viewport);
+        }
+
+        // Restrict the blit to the image rectangle (in `BorderMode::Black`) so the
+        // letterbox/pillarbox bars are left showing the camera's clear color rather
+        // than being overdrawn by the shader.
+        if let Some(rect) = border_scissor.0 {
+            render_pass.set_scissor_rect(rect.min.x, rect.min.y, rect.width(), rect.height());
         }
 
         render_pass.set_render_pipeline(pipeline);

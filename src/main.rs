@@ -27,6 +27,8 @@ use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
 use tracing_subscriber::EnvFilter;
 
+use crate::utils::{SystemType, get_system_type};
+
 const STYLES: Styles = Styles::styled()
     .header(
         Style::new()
@@ -94,6 +96,35 @@ struct Args {
     /// Grid rendering with an arbitrary COLSxROWS grid of emulators, e.g. --grid=5x4
     #[arg(long, value_parser = parse_grid)]
     grid: Option<(u32, u32)>,
+
+    /// Background clear color as a hex string, e.g. `#003` or `000080`.
+    #[arg(long, value_parser = parse_color, default_value = "000033")]
+    clear_color: Color,
+}
+
+/// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
+fn parse_color(s: &str) -> Result<Color, String> {
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    let expand = |c: char| -> String { format!("{c}{c}") };
+    let (r, g, b) = match hex.len() {
+        3 => {
+            let mut chars = hex.chars();
+            (
+                expand(chars.next().unwrap()),
+                expand(chars.next().unwrap()),
+                expand(chars.next().unwrap()),
+            )
+        }
+        6 => (hex[0..2].into(), hex[2..4].into(), hex[4..6].into()),
+        _ => {
+            return Err(format!(
+                "expected 3 or 6 hex digits, e.g. 000080 (got `{s}`)"
+            ));
+        }
+    };
+    let parse =
+        |c: String| u8::from_str_radix(&c, 16).map_err(|_| format!("invalid hex color `{s}`"));
+    Ok(Color::srgb_u8(parse(r)?, parse(g)?, parse(b)?))
 }
 
 /// Parse a `COLSxROWS` grid specifier like `5x4` into `(cols, rows)`.
@@ -195,11 +226,20 @@ fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_m3u_files(&path, out);
-        } else if path
+        }
+        if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("m3u"))
         {
             out.push(path);
+        } else {
+            // let t = get_system_type(&path);
+            // if t != SystemType::Unknown {
+            //     out.push(path);
+            //     // TODO: Option to treat dirs as one release here?
+            //     // out.push(dir.into());
+            //     // break;
+            // }
         }
     }
 }
@@ -279,10 +319,12 @@ fn main() {
     };
 
     let win = args.window;
+    let clear_color = args.clear_color;
 
     let mut app = App::new();
     app.insert_resource(args)
         .insert_resource(settings)
+        .insert_resource(ClearColor(clear_color))
         .add_plugins((
             DefaultPlugins
                 .build()
