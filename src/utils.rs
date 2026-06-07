@@ -63,13 +63,20 @@ pub struct WorkingFile {
 impl Drop for WorkingFile {
     fn drop(&mut self) {
         if self.is_temp {
-            // `path` may be the temp dir itself (Amiga) or a file inside it
-            // (Atari disk image); either way remove the whole temp dir.
-            let dir = if self.path.is_file() {
-                self.path.parent().unwrap_or(&self.path)
-            } else {
-                &self.path
-            };
+            // `path` may be the temp dir itself (Amiga), a file inside it (Atari
+            // disk image), or a subdirectory of it (zip with a single top-level
+            // dir). Walk up to the `demarc-` temp root and remove the whole tree.
+            let mut dir = self.path.as_path();
+            while dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| !n.starts_with("demarc-"))
+            {
+                match dir.parent() {
+                    Some(parent) => dir = parent,
+                    None => break,
+                }
+            }
             _ = fs::remove_dir_all(dir);
         }
     }
@@ -197,6 +204,90 @@ fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
     Ok(img_path)
 }
 
+/// Copy `files` into a fresh temp directory and write a `demo.m3u` that
+/// references each copied file by name. Returns the path to the `.m3u`, which
+/// lives inside the temp directory alongside the copied files.
+fn build_m3u(files: &[PathBuf]) -> Result<PathBuf> {
+    use std::io::Write;
+
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+
+    let mut contents = String::from("#EXTM3U\n");
+    for file in files {
+        let name = file
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("invalid file path: {:?}", file))?;
+        fs::copy(file, target_dir.join(name))?;
+        contents.push_str(&name.to_string_lossy());
+        contents.push('\n');
+    }
+
+    let m3u_path = target_dir.join("demo.m3u");
+    let mut m3u = fs::File::create(&m3u_path)?;
+    m3u.write_all(contents.as_bytes())?;
+    m3u.flush()?;
+
+    Ok(m3u_path)
+}
+
+/// Sort disk images so that the most "main" disk comes first. Ordering rules:
+/// 1. Files whose stem ends in a digit (a digit right next to the extension dot)
+///    come first, e.g. `disk3.d64`.
+/// 2. Files that contain a digit somewhere else come next, e.g. `disk2_extra.d64`.
+/// 3. Files with no digit at all come last, e.g. `anything.d64`.
+///
+/// Within each group files are ordered by name for a stable, predictable result.
+fn sort_disks(files: &mut [PathBuf]) {
+    fn rank(path: &Path) -> u8 {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if stem.chars().last().is_some_and(|c| c.is_ascii_digit()) {
+            0
+        } else if stem.chars().any(|c| c.is_ascii_digit()) {
+            1
+        } else {
+            2
+        }
+    }
+
+    files.sort_by(|a, b| {
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+}
+
+/// True if `path` is a regular file beginning with the ZIP local-file-header
+/// magic (`PK\x03\x04`).
+fn is_zip_file(path: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).is_ok() && magic == [0x50, 0x4b, 0x03, 0x04]
+}
+
+/// Extract `path` (a zip archive) into a fresh temp directory and return that
+/// directory.
+fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
+    archive.extract(&target_dir)?;
+
+    // If the archive contained a single top-level directory, descend into it so
+    // the release-detection logic sees the actual files, not the wrapper dir.
+    let entries: Vec<PathBuf> = fs::read_dir(&target_dir)?.flatten().map(|e| e.path()).collect();
+    if let [only] = entries.as_slice()
+        && only.is_dir()
+    {
+        return Ok(only.clone());
+    }
+    Ok(target_dir)
+}
+
 fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
     let mut system_type = get_system_type(in_path);
     let mut path = in_path.to_owned();
@@ -211,6 +302,13 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
         ..Default::default()
     };
 
+    if path.is_file() && is_zip_file(&path) {
+        debug!("FMT: zip archive");
+        path = unzip_to_temp(&path)?;
+        is_temp = true;
+        system_type = get_system_type(&path);
+    }
+
     if path.is_dir() {
         if is_self_booting_dir(&path) {
             debug!("FMT: Amiga self-booting");
@@ -223,15 +321,21 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
             tags.insert("puae_use_whdload".into(), "enabled".into());
         } else {
             debug!("Checking");
+            let mut files = vec![];
             for f in fs::read_dir(&path)? {
                 let f = f?;
                 let t = get_system_type(&f.path());
                 if t != SystemType::Unknown {
                     debug!("Found {t:?}");
+                    files.push(f.path());
                     path = f.path();
                     system_type = t;
-                    break;
                 }
+            }
+            if files.len() > 1 {
+                sort_disks(&mut files);
+                path = build_m3u(&files)?;
+                is_temp = true;
             }
         }
     }
