@@ -26,12 +26,14 @@ wgpu = "27"
 tempfile = "3.27.0"
 fatfs = "0.3.6"
 dirs = "6.0.0"
+ureq = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Inhibit the freedesktop screen saver over D-Bus while running fullscreen.
 zbus = "5"
 
 [profile.release]
+lto = "thin"
 codegen-units = 1
 strip = true
 opt-level = 2

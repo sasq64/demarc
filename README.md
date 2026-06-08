@@ -15,7 +15,7 @@ Make it easy to watch demos from C64 and Amiga
 
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay
-* CRT shader for "authentic" look
+* CRT filter for "authentic" look (using Timothy Lottes shader)
 * Can run Amiga/Atari/C64 exes & disk images
 * Right-Alt hotkey for disk switch etc
 * Can run multiple files at once in a grid
@@ -29,10 +29,7 @@ You need _rust_.
 
 ## RUN
 
-First, set your monitor to 50Hz if possible.
-
-You need libretro libraries for the emulated system. Libraries are searched for
-in `<current_dir>/libretro`, `<exec_dir>` and `/usr/lib/libretro/`
+Set your monitor to 50Hz if possible.
 
 then
 
@@ -41,16 +38,6 @@ then
 or
 
 `target/release/demarc <files>`
-
-### Windows
-
-Libraries are in `libretro/` 
-
-If you copy the exe to your path, also copy the DLL:s and it should work
-
-### Linux
-
-If you installed retroarch you may have libs available in /usr/lib/libretro
 
 ## SHORTCUTS
 
@@ -65,6 +52,8 @@ P = Screenshot
 R = Reset
 C = Toggle CRT filter
 M = Click mouse
+J = Toggle joystick/keyboard
+W/SHIFT-W = Skip forward 10/30s
 
 For grid:
 

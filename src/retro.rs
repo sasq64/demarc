@@ -21,21 +21,14 @@ use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::{GameInfo, SystemType};
-use crate::{AppSettings, Args};
+use crate::{AppSettings, Args, libloader};
 
 pub struct RetroPlugin {}
 
-#[cfg(target_os = "windows")]
-const LIB_EXT: &str = "dll";
-#[cfg(target_os = "macos")]
-const LIB_EXT: &str = "dylib";
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const LIB_EXT: &str = "so";
-
-const CORE_NAME_VICE: &str = "vice_x64sc_libretro";
-const CORE_NAME_UAE: &str = "puae_libretro";
-const CORE_NAME_AMSTRAD: &str = "cap32_libretro";
-const CORE_NAME_ATARI: &str = "hatari_libretro";
+const CORE_NAME_VICE: &str = "vice_x64sc";
+const CORE_NAME_UAE: &str = "puae";
+const CORE_NAME_AMSTRAD: &str = "cap32";
+const CORE_NAME_ATARI: &str = "hatari";
 
 /// The `system` directory (BIOS/firmware files) bundled into the binary at
 /// build time. Extracted to the user's cache dir on first run.
@@ -369,19 +362,7 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
-fn exe_dir() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-}
-
 pub fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
-    let search_path: Vec<PathBuf> = vec![
-        "libretro".into(),
-        exe_dir().unwrap_or(".".into()),
-        "/usr/lib/libretro".into(),
-    ];
-
     let core_name = match sytem_type {
         SystemType::C64 => CORE_NAME_VICE,
         SystemType::Amiga => CORE_NAME_UAE,
@@ -389,14 +370,8 @@ pub fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
         SystemType::AtariST => CORE_NAME_ATARI,
         _ => return Err(""),
     };
-    let lib_file = format!("{core_name}.{LIB_EXT}");
-    for path in search_path.iter() {
-        let check = path.join(&lib_file);
-        if check.exists() {
-            return Ok(check);
-        }
-    }
-    Err(core_name)
+
+    libloader::get_libretro(core_name).ok_or(core_name)
 }
 
 pub fn create_core(

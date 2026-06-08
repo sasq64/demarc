@@ -15,6 +15,8 @@ mod libretro;
 mod audio;
 mod emulator;
 mod hud;
+#[allow(dead_code)] // not yet wired into a caller
+mod libloader;
 mod post_process;
 mod retro;
 mod retro_emu;
@@ -105,7 +107,7 @@ struct Args {
     force_vsync: bool,
 
     /// Max queued frames. Lower values = better input response
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 2)]
     latency: u32,
 
     /// Extra options to add to libretro
