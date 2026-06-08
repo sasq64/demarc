@@ -362,6 +362,49 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
+/// Pick the focused emulator ([`AppSettings::current_emu`]) from the mouse
+/// pointer's position: whichever grid cell the cursor is over becomes current.
+/// This is the pointer-driven alternative to RightAlt+Tab. It only acts while
+/// the mouse is actually moving, so Tab still works when the pointer is idle.
+/// In single-emulator and maximized modes there are no [`GridCell`]s to hit (or
+/// only one cell is shown), so nothing changes.
+fn select_emu_by_mouse(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    time: Res<Time>,
+    mut settings: ResMut<AppSettings>,
+    views: Query<(&EmuView, &GridCell)>,
+) {
+    if settings.maximized || mouse_motion.delta == Vec2::ZERO {
+        return;
+    }
+    let (w, h) = (window.width(), window.height());
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    // Cursor position and `GridCell` offsets share the same convention:
+    // logical pixels / fractions from the top-left with y pointing down.
+    let norm = Vec2::new(cursor.x / w, cursor.y / h);
+    for (view, cell) in &views {
+        let max = cell.offset + cell.size;
+        let inside = norm.x >= cell.offset.x
+            && norm.x < max.x
+            && norm.y >= cell.offset.y
+            && norm.y < max.y;
+        if inside {
+            if settings.current_emu != view.index {
+                settings.current_emu = view.index;
+                // Flash the focus outline just as RightAlt+Tab does.
+                settings.last_draw = time.elapsed_secs_f64();
+            }
+            break;
+        }
+    }
+}
+
 pub fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
     let core_name = match sytem_type {
         SystemType::C64 => CORE_NAME_VICE,
@@ -471,7 +514,9 @@ fn run_retro(
         }
         if emus.count() > 1 {
             if input.just_pressed(KeyCode::KeyA) {
-                settings.all_emus = !settings.all_emus;
+                if !settings.maximized {
+                    settings.all_emus = !settings.all_emus;
+                }
             }
             if input.just_pressed(KeyCode::Tab) {
                 let count = emus.iter().count();
@@ -492,6 +537,7 @@ fn run_retro(
                     show_info = true;
                 }
                 if !settings.maximized {
+                    settings.all_emus = false;
                     writer.write(SetHudText {
                         location: HudLocation::InfoText,
                         ..Default::default()
@@ -545,6 +591,10 @@ fn run_retro(
 
         if emu.core.is_none() {
             continue;
+        }
+
+        if hot_key && shift && input.just_pressed(KeyCode::KeyN) {
+            emu.run_next = true;
         }
 
         if settings.all_emus || i == settings.current_emu {
@@ -659,6 +709,11 @@ fn run_retro(
                 emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
             }
         }
+
+        if settings.maximized && i != settings.current_emu {
+            continue;
+        }
+
         if !emu.run(&time) {
             writer.write(SetHudText {
                 location: HudLocation::TopRight,
@@ -731,7 +786,13 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (run_retro, update_grid_viewports, draw_current_emu_outline),
+            (
+                select_emu_by_mouse,
+                run_retro,
+                update_grid_viewports,
+                draw_current_emu_outline,
+            )
+                .chain(),
         );
     }
 }
