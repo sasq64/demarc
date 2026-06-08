@@ -31,9 +31,10 @@ pub unsafe extern "C" fn demarc_retro_log_rust(level: c_int, msg: *const c_char)
 }
 
 use crate::libretro::{
-    RETRO_DEVICE_ID_MOUSE_LEFT, RETRO_DEVICE_ID_MOUSE_MIDDLE, RETRO_DEVICE_ID_MOUSE_RIGHT,
-    RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_MASK,
-    RETRO_DEVICE_MOUSE, RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
+    RETRO_DEVICE_ID_JOYPAD_MASK, RETRO_DEVICE_ID_MOUSE_LEFT, RETRO_DEVICE_ID_MOUSE_MIDDLE,
+    RETRO_DEVICE_ID_MOUSE_RIGHT, RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y,
+    RETRO_DEVICE_JOYPAD, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_MASK, RETRO_DEVICE_MOUSE,
+    RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
@@ -91,6 +92,7 @@ pub trait RetroEmu {
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
+    fn set_joypad(&mut self, port: u32, id: u32, down: bool);
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8]));
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
     fn get_frame_size(&self) -> (usize, usize);
@@ -115,6 +117,9 @@ pub struct RetroState {
     pixel_format: c_int,
     fps: f64,
     keys: Vec<u8>,
+    /// Joypad button state as a bitmask per port (index 0 = Joystick #1,
+    /// 1 = Joystick #2). Bit `n` corresponds to `RETRO_DEVICE_ID_JOYPAD_*`.
+    joypad: [u16; 2],
 }
 
 pub struct RetroCoreDirect {
@@ -226,10 +231,19 @@ impl RetroCoreDirect {
     }
 
     fn input_state(&self, port: c_uint, device: c_uint, _index: c_uint, id: c_uint) -> i16 {
-        if port != 0 {
-            return 0;
-        }
         match device & RETRO_DEVICE_MASK {
+            RETRO_DEVICE_JOYPAD => {
+                let mask = self.state.joypad.get(port as usize).copied().unwrap_or(0);
+                if id == RETRO_DEVICE_ID_JOYPAD_MASK {
+                    mask as i16
+                } else if id < 16 {
+                    ((mask >> id) & 1) as i16
+                } else {
+                    0
+                }
+            }
+            // Mouse and keyboard are only wired to port 0.
+            _ if port != 0 => 0,
             RETRO_DEVICE_MOUSE => match id {
                 RETRO_DEVICE_ID_MOUSE_X => {
                     self.mouse.dx.clamp(i16::MIN as i32, i16::MAX as i32) as i16
@@ -547,6 +561,9 @@ impl RetroCoreDirect {
                 lib.get(b"retro_deinit")?;
             let retro_reset_sym: libloading::Symbol<unsafe extern "C" fn()> =
                 lib.get(b"retro_reset")?;
+            let retro_set_controller_port_device: libloading::Symbol<
+                unsafe extern "C" fn(c_uint, c_uint),
+            > = lib.get(b"retro_set_controller_port_device")?;
 
             let retro_run_fn: unsafe extern "C" fn() = *retro_run_sym;
             let retro_deinit_fn: unsafe extern "C" fn() = *retro_deinit_sym;
@@ -598,6 +615,12 @@ impl RetroCoreDirect {
                     return Err(anyhow!("retro_load_game failed"));
                 }
             }
+
+            // Tell the core both ports are joypads. Several cores (VICE among
+            // them) leave a port silent until the frontend selects a device for
+            // it, so without this our `set_joypad` state is never polled.
+            retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+            retro_set_controller_port_device(1, RETRO_DEVICE_JOYPAD);
 
             let mut av_info = retro_system_av_info::default();
             retro_get_avinfo_fn(&mut av_info);
@@ -709,6 +732,21 @@ impl RetroCoreDirect {
         self.mouse.middle = middle;
     }
 
+    /// Set or clear a joypad button on `port` (0 = Joystick #1, 1 = Joystick #2).
+    /// `id` is a `RETRO_DEVICE_ID_JOYPAD_*` button index.
+    pub(crate) fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
+        let Some(mask) = self.state.joypad.get_mut(port as usize) else {
+            return;
+        };
+        if id < 16 {
+            if down {
+                *mask |= 1 << id;
+            } else {
+                *mask &= !(1 << id);
+            }
+        }
+    }
+
     pub(crate) fn get_frame_size(&self) -> (usize, usize) {
         (self.state.frame_width, self.state.frame_height)
     }
@@ -744,6 +782,9 @@ impl RetroEmu for RetroCoreDirect {
     }
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
         RetroCoreDirect::set_mouse_buttons(self, left, right, middle)
+    }
+    fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
+        RetroCoreDirect::set_joypad(self, port, id, down)
     }
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
         RetroCoreDirect::with_frame(self, |w, h, fr| f(w, h, fr))
@@ -791,6 +832,11 @@ enum RetroCmd {
         left: bool,
         right: bool,
         middle: bool,
+    },
+    SetJoypad {
+        port: u32,
+        id: u32,
+        down: bool,
     },
     SetDisk {
         no: u32,
@@ -852,8 +898,13 @@ impl RetroCoreThreaded {
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
 
+        let mut latency = 3;
+        if let Some(l) = settings.get("latency") {
+            latency = l.parse().unwrap_or(3);
+        }
+
         let (cmd_tx, cmd_rx) = mpsc::channel::<RetroCmd>();
-        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(3);
+        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(latency);
         let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
 
         let handle = thread::Builder::new()
@@ -981,6 +1032,7 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
             right,
             middle,
         } => core.set_mouse_buttons(left, right, middle),
+        RetroCmd::SetJoypad { port, id, down } => core.set_joypad(port, id, down),
         RetroCmd::SetDisk { no } => {
             core.set_disk(no);
         }
@@ -1033,6 +1085,9 @@ impl RetroEmu for RetroCoreThreaded {
             right,
             middle,
         });
+    }
+    fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
+        let _ = self.cmd_tx.send(RetroCmd::SetJoypad { port, id, down });
     }
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
         f(self.frame_width, self.frame_height, &self.frame);

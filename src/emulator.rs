@@ -13,6 +13,38 @@ use crate::retro::create_core;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::{WorkingFile, handle_file};
 
+/// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
+/// In [`InputMode::Keyboard`] (the default) they map to the corresponding
+/// retro keys; the joystick modes instead drive the d-pad and fire button of
+/// libretro joypad port 0 (Joystick #1) or port 1 (Joystick #2).
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum InputMode {
+    #[default]
+    Keyboard,
+    Joystick1,
+    Joystick2,
+}
+
+impl InputMode {
+    /// Cycle Keyboard -> Joystick1 -> Joystick2 -> Keyboard.
+    pub(crate) fn next(self) -> Self {
+        match self {
+            InputMode::Keyboard => InputMode::Joystick1,
+            InputMode::Joystick1 => InputMode::Joystick2,
+            InputMode::Joystick2 => InputMode::Keyboard,
+        }
+    }
+
+    /// libretro joypad port this mode drives, or `None` for keyboard mode.
+    fn joypad_port(self) -> Option<u32> {
+        match self {
+            InputMode::Keyboard => None,
+            InputMode::Joystick1 => Some(0),
+            InputMode::Joystick2 => Some(1),
+        }
+    }
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
@@ -46,6 +78,8 @@ pub(crate) struct Emulator {
     pub(crate) height: u32,
     pub(crate) paused: bool,
     pub(crate) skipping: bool,
+    /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
+    pub(crate) input_mode: InputMode,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -259,6 +293,21 @@ impl Emulator {
         });
     }
 
+    /// Map the cursor keys and Enter to a `RETRO_DEVICE_ID_JOYPAD_*` button.
+    /// Other keys return `None` so they keep going to the keyboard even in a
+    /// joystick input mode.
+    fn joypad_button(key: KeyCode) -> Option<u32> {
+        use libretro::*;
+        match key {
+            KeyCode::ArrowUp => Some(RETRO_DEVICE_ID_JOYPAD_UP),
+            KeyCode::ArrowDown => Some(RETRO_DEVICE_ID_JOYPAD_DOWN),
+            KeyCode::ArrowLeft => Some(RETRO_DEVICE_ID_JOYPAD_LEFT),
+            KeyCode::ArrowRight => Some(RETRO_DEVICE_ID_JOYPAD_RIGHT),
+            KeyCode::Enter => Some(RETRO_DEVICE_ID_JOYPAD_B),
+            _ => None,
+        }
+    }
+
     pub fn feed_inputs(
         &mut self,
         input: &ButtonInput<KeyCode>,
@@ -287,13 +336,22 @@ impl Emulator {
         if input.pressed(KeyCode::ScrollLock) {
             mods |= libretro::RETROKMOD_SCROLLOCK as u16;
         }
+        let joypad_port = self.input_mode.joypad_port();
         for e in input.get_just_pressed() {
-            if let Some(code) = self.key_map.get(e) {
+            if let Some(port) = joypad_port
+                && let Some(id) = Self::joypad_button(*e)
+            {
+                self.core.as_mut().unwrap().set_joypad(port, id, true);
+            } else if let Some(code) = self.key_map.get(e) {
                 self.core.as_mut().unwrap().press_key(*code, true, mods);
             }
         }
         for e in input.get_just_released() {
-            if let Some(code) = self.key_map.get(e) {
+            if let Some(port) = joypad_port
+                && let Some(id) = Self::joypad_button(*e)
+            {
+                self.core.as_mut().unwrap().set_joypad(port, id, false);
+            } else if let Some(code) = self.key_map.get(e) {
                 self.core.as_mut().unwrap().press_key(*code, false, mods);
             }
         }

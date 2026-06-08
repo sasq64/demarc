@@ -16,7 +16,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, InputMode};
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
@@ -157,6 +157,8 @@ fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
+
+    set_var("latency", &args.latency.to_string());
 
     if args.aga {
         set_var("puae_model", "A1200");
@@ -574,6 +576,20 @@ fn run_retro(
             if hot_key {
                 if input.just_pressed(KeyCode::KeyM) {
                     emu.set_mouse_buttons(true, false, false);
+                }
+                if input.just_pressed(KeyCode::KeyJ) {
+                    emu.input_mode = emu.input_mode.next();
+                    let text = match emu.input_mode {
+                        InputMode::Keyboard => "\u{f030c}",
+                        InputMode::Joystick1 => "\u{f0297} #1",
+                        InputMode::Joystick2 => "\u{f0297} #2",
+                    };
+                    writer.write(SetHudText {
+                        text: text.into(),
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(1),
+                        location: HudLocation::BottomLeft,
+                    });
                 }
                 if input.just_pressed(KeyCode::KeyP) {
                     emu.paused = !emu.paused;

@@ -104,6 +104,10 @@ struct Args {
     #[arg(long)]
     force_vsync: bool,
 
+    /// Max queued frames. Lower values = better input response
+    #[arg(long, default_value_t = 3)]
+    latency: u32,
+
     /// Extra options to add to libretro
     #[arg(long, value_delimiter = ',')]
     extra_options: Vec<String>,
@@ -195,7 +199,7 @@ impl From<ScaleModeArg> for ScaleMode {
 enum BorderModeArg {
     /// Stretch the edge pixels outward into the border.
     Stretch,
-    /// Fill the border with black.
+    /// Fill the border with background color.
     Black,
 }
 
