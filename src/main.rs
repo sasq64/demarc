@@ -44,7 +44,18 @@ const STYLES: Styles = Styles::styled()
     .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, about = "Bevy + libretro front-end")]
+#[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, 
+    about = "Demo scene emulator frontend for the command line",
+    long_about = r#"
+DEMARC
+
+demarc is an emulator launcher/frontend with a focus on the (oldschool) demo scene.
+
+Examples:
+demarc edge_of_disgrace.zip
+demarc --aga --shuffle AmigaDemos/
+demarc --grid=3x3 gfx/*.prg
+"#)]
 struct Args {
     /// Path to the files to load
     files: Vec<PathBuf>,
@@ -76,6 +87,10 @@ struct Args {
     /// Amiga: Force high specs (68030 + FPU + 128MB Z3 RAM)
     #[arg(long)]
     high: bool,
+
+    /// C64: Always use JiffyDOS to load
+    #[arg(long)]
+    fast_load: bool,
 
     /// Open windowed
     #[arg(long)]
@@ -214,7 +229,7 @@ struct AppSettings {
 }
 
 /// Recursively collect all `.m3u` files under `dir` into `out`.
-fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>, group: bool) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -222,24 +237,31 @@ fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>) {
             return;
         }
     };
+    let mut files = vec![];
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_m3u_files(&path, out);
+            collect_m3u_files(&path, out, group);
+            continue;
         }
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("m3u"))
         {
             out.push(path);
+            return;
         } else {
-            // let t = get_system_type(&path);
-            // if t != SystemType::Unknown {
-            //     out.push(path);
-            //     // TODO: Option to treat dirs as one release here?
-            //     // out.push(dir.into());
-            //     // break;
-            // }
+            let t = get_system_type(&path);
+            if t != SystemType::Unknown {
+                files.push(path);
+            }
+        }
+    }
+    if !files.is_empty() {
+        if group {
+            out.push(dir.to_owned());
+        } else {
+            out.extend(files.iter().map(|f| f.into()));
         }
     }
 }
@@ -248,6 +270,19 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 }
 
 fn main() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(if cfg!(debug_assertions) {
+            "demarc=debug,warn"
+        } else {
+            "error"
+        })
+    });
+    tracing_subscriber::fmt()
+        .with_ansi(cfg!(not(target_os = "windows")))
+        .with_env_filter(filter)
+        .with_target(true)
+        .compact()
+        .init();
     let mut args = Args::parse();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
@@ -255,7 +290,7 @@ fn main() {
     for game in std::mem::take(&mut args.files) {
         if game.is_dir() {
             let len = games.len();
-            collect_m3u_files(&game, &mut games);
+            collect_m3u_files(&game, &mut games, false);
             if len == games.len() {
                 games.push(game);
             }
@@ -269,20 +304,6 @@ fn main() {
     }
 
     let multiple = games.len() > 1;
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(if cfg!(debug_assertions) {
-            "demarc=debug,warn"
-        } else {
-            "error"
-        })
-    });
-
-    tracing_subscriber::fmt()
-        .with_ansi(cfg!(not(target_os = "windows")))
-        .with_env_filter(filter)
-        .with_target(true)
-        .compact()
-        .init();
     // Only apply the fixed `resolution` when windowed. On Windows, requesting
     // `BorderlessFullscreen` together with a fixed `resolution` conflicts in
     // winit and the window never actually goes fullscreen, so we leave the

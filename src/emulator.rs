@@ -45,6 +45,7 @@ pub(crate) struct Emulator {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) paused: bool,
+    pub(crate) skipping: bool,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -356,14 +357,17 @@ impl Emulator {
             trace!("FRAME START");
         }
     }
-    pub fn skip(&mut self) {
+    pub fn skip(&mut self, frames: u32) {
         let Some(core) = self.core.as_mut() else {
             return;
         };
-        core.run();
+        core.skip_frames(frames);
+        info!("SKIPPING");
+        self.skipping = true;
+        self.paused = false;
     }
 
-    pub fn run(&mut self, time: &Time) {
+    pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
         let mut _fps = 60.0;
         if delta > 0.0 {
@@ -378,12 +382,12 @@ impl Emulator {
         }
 
         let Some(core) = self.core.as_mut() else {
-            return;
+            return true;
         };
 
         if self.paused {
             self.next_frame = time.elapsed_secs_f64();
-            return;
+            return true;
         }
 
         let ratio = (1.0 - self.display_fps / core.fps()).abs();
@@ -417,7 +421,7 @@ impl Emulator {
         if occupied_len > AUDIO_BUF_MAX {
             warn!("Dropping frame");
             self.next_frame += frame_time;
-            return;
+            return true;
         }
 
         // PI controller on audio-buffer fill. Output is a fractional
@@ -437,24 +441,26 @@ impl Emulator {
         self.audio_rate_adjust = adjust;
         //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
 
+        let mut result = true;
         if self.match_fps {
-            core.run();
+            result = core.run();
         } else {
             let t = time.elapsed_secs_f64();
             while t >= self.next_frame {
-                core.run();
+                result = core.run();
                 self.next_frame += frame_time;
             }
         }
 
         // For safety
         if occupied_len < AUDIO_BUF_MIN {
-            core.run();
+            result &= core.run();
             warn!("Duplicating frame");
             //self.core = Some(core);
             //return;
         }
         //drop(p);
         self.update();
+        result
     }
 }

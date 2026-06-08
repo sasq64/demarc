@@ -86,7 +86,7 @@ pub trait RetroEmu {
     fn set_disk(&mut self, no: u32);
     fn get_number_of_disks(&self) -> u32;
     /// Step the emulator by one presented frame
-    fn run(&mut self);
+    fn run(&mut self) -> bool;
     fn reset(&mut self);
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
@@ -99,6 +99,7 @@ pub trait RetroEmu {
     fn fps(&self) -> f64;
     fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
     fn unload(&mut self);
+    fn skip_frames(&mut self, frames: u32);
 }
 
 #[derive(Default)]
@@ -135,6 +136,7 @@ pub struct RetroCoreDirect {
     /// Temp dir holding this instance's private copy of the core .so. Held so
     /// the copy lives as long as the loaded library and is removed on drop.
     _core_tempdir: tempfile::TempDir,
+    skip_frames: u32,
 }
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
@@ -571,6 +573,7 @@ impl RetroCoreDirect {
                 core_path: CString::new(core_path.to_string_lossy().as_bytes()).unwrap(),
                 image_index: 0,
                 _core_tempdir: core_tempdir,
+                skip_frames: 0,
             };
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
@@ -719,8 +722,9 @@ impl RetroCoreDirect {
 /// (`RetroCore::method(self, ..)`) are used so the inherent method is selected
 /// rather than recursing into the trait method of the same name.
 impl RetroEmu for RetroCoreDirect {
-    fn run(&mut self) {
-        RetroCoreDirect::run(self)
+    fn run(&mut self) -> bool {
+        RetroCoreDirect::run(self);
+        true
     }
     fn reset(&mut self) {
         RetroCoreDirect::reset(self)
@@ -729,7 +733,7 @@ impl RetroEmu for RetroCoreDirect {
         RetroCoreDirect::set_disk(self, no);
     }
     fn get_number_of_disks(&self) -> u32 {
-        RetroCoreDirect::get_number_of_disks(&self)
+        RetroCoreDirect::get_number_of_disks(self)
     }
 
     fn press_key(&mut self, code: u32, down: bool, mods: u16) {
@@ -765,6 +769,10 @@ impl RetroEmu for RetroCoreDirect {
     fn unload(&mut self) {
         RetroCoreDirect::unload(self)
     }
+
+    fn skip_frames(&mut self, _frames: u32) {
+        todo!()
+    }
 }
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
@@ -791,9 +799,13 @@ enum RetroCmd {
         path: PathBuf,
     },
     Unload,
+    Skip {
+        frames: u32,
+    },
 }
 
 /// A single stepped frame's worth of data, pushed from the worker to main thread
+#[derive(Default)]
 struct RetroUpdate {
     width: usize,
     height: usize,
@@ -923,6 +935,19 @@ fn worker_loop(
         }
 
         core.run();
+        if core.skip_frames > 0 {
+            core.skip_frames -= 1;
+            if core.skip_frames == 0 {
+                let update = RetroUpdate {
+                    ..Default::default()
+                };
+                info!("0 UPDATE");
+                if update_tx.send(update).is_err() {
+                    return; // main side gone
+                }
+            }
+            continue;
+        }
 
         let (width, height) = core.get_frame_size();
         let mut frame = Vec::new();
@@ -963,13 +988,18 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
             let _res = core.save_png(&path).map_err(|e| e.to_string());
         }
         RetroCmd::Unload => return true,
+        RetroCmd::Skip { frames } => core.skip_frames = frames,
     }
     false
 }
 
 impl RetroEmu for RetroCoreThreaded {
-    fn run(&mut self) {
+    fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
+            if update.frame.is_empty() && update.audio.is_empty() {
+                info!("GOT 0 UPDATE");
+                return false;
+            }
             self.frame = update.frame;
             self.frame_width = update.width;
             self.frame_height = update.height;
@@ -980,6 +1010,7 @@ impl RetroEmu for RetroCoreThreaded {
         } //else //dev/{
         //panic!("No frame");
         //}
+        true
     }
     fn get_number_of_disks(&self) -> u32 {
         self.disk_count
@@ -1032,6 +1063,10 @@ impl RetroEmu for RetroCoreThreaded {
     }
     fn unload(&mut self) {
         let _ = self.cmd_tx.send(RetroCmd::Unload);
+    }
+
+    fn skip_frames(&mut self, frames: u32) {
+        let _ = self.cmd_tx.send(RetroCmd::Skip { frames });
     }
 }
 

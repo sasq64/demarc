@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -8,24 +9,26 @@ use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim};
 #[derive(Component)]
 pub struct InfoText;
 
-#[derive(Default)]
-pub enum ToastType {
+#[derive(Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum HudLocation {
     #[default]
     InfoText,
     BottomLeft,
+    TopLeft,
+    TopRight,
 }
 
 #[derive(Default, Message)]
-pub struct SpawnToast {
+pub struct SetHudText {
     pub text: String,
     pub delay: Duration,
     pub duration: Duration,
-    pub toast_type: ToastType,
+    pub location: HudLocation,
 }
 
 #[derive(Resource, Default)]
 struct HudState {
-    current_toast: Option<Entity>,
+    current_texts: HashMap<HudLocation, Entity>,
 }
 
 #[derive(Component)]
@@ -47,7 +50,7 @@ fn update_relative_text_size(
 fn spawn_toast(
     mut commands: Commands,
     mut state: ResMut<HudState>,
-    mut reader: MessageReader<SpawnToast>,
+    mut reader: MessageReader<SetHudText>,
     asset_server: Res<AssetServer>,
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
@@ -55,6 +58,13 @@ fn spawn_toast(
     warn!("SIZE {} {}", window.physical_width(), window.width());
     let font_size = window.physical_width() as f32 / 50.0;
     for msg in reader.read() {
+        if let Some(hud_text) = state.current_texts.get(&msg.location) {
+            commands.entity(*hud_text).despawn();
+            state.current_texts.remove_entry(&msg.location);
+        }
+        if msg.text.is_empty() {
+            continue;
+        }
         let show_tween = Tween::new(
             EaseFunction::QuadraticInOut,
             Duration::from_millis(500),
@@ -82,12 +92,9 @@ fn spawn_toast(
                 .then(hide_tween)
         };
 
-        match msg.toast_type {
-            ToastType::InfoText => {
-                if let Some(toast) = state.current_toast {
-                    commands.entity(toast).despawn();
-                }
-                let entity = commands.spawn((
+        let entity = match msg.location {
+            HudLocation::InfoText => {
+                commands.spawn((
                     Node {
                         //width: Val::Px(400.0),
                         position_type: PositionType::Absolute,
@@ -110,11 +117,10 @@ fn spawn_toast(
                         linebreak: LineBreak::WordBoundary,
                     },
                     TweenAnim::new(tween),
-                ));
-                state.current_toast = Some(entity.id());
+                ))
             }
-            ToastType::BottomLeft => {
-                let _entity = commands.spawn((
+            HudLocation::BottomLeft => {
+                commands.spawn((
                     Node {
                         //width: Val::Px(400.0),
                         position_type: PositionType::Absolute,
@@ -124,10 +130,6 @@ fn spawn_toast(
                         ..default()
                     },
                     Text::new(&msg.text),
-                    // TextShadow {
-                    //     offset: Vec2::new(2.0, -2.0),
-                    //     color: Color::BLACK,
-                    // },
                     TextFont {
                         font: font.clone(),
                         font_size: 64.0,
@@ -139,9 +141,58 @@ fn spawn_toast(
                         linebreak: LineBreak::WordBoundary,
                     },
                     TweenAnim::new(tween),
-                ));
+                ))
             }
-        }
+            HudLocation::TopLeft => {
+                commands.spawn((
+                    Node {
+                        //width: Val::Px(400.0),
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(0.0),
+                        left: Val::Px(0.0),
+                        margin: UiRect::all(Val::Px(60.0)),
+                        ..default()
+                    },
+                    Text::new(&msg.text),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 64.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                    TextLayout {
+                        justify: Justify::Right,
+                        linebreak: LineBreak::WordBoundary,
+                    },
+                    TweenAnim::new(tween),
+                ))
+            }
+            HudLocation::TopRight => {
+                commands.spawn((
+                    Node {
+                        //width: Val::Px(400.0),
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        margin: UiRect::all(Val::Px(60.0)),
+                        ..default()
+                    },
+                    Text::new(&msg.text),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 64.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                    TextLayout {
+                        justify: Justify::Right,
+                        linebreak: LineBreak::WordBoundary,
+                    },
+                    TweenAnim::new(tween),
+                ))
+            }
+        };
+        state.current_texts.insert(msg.location, entity.id());
     }
 }
 
@@ -249,12 +300,12 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<SpawnToast>()
+        app.add_message::<SetHudText>()
             .insert_resource(HudState::default())
             .add_systems(
                 Update,
                 (
-                    spawn_toast.run_if(on_message::<SpawnToast>),
+                    spawn_toast.run_if(on_message::<SetHudText>),
                     update_relative_text_size.run_if(on_message::<WindowResized>),
                     update_text_list,
                     handle_tween_done.run_if(on_message::<CycleCompletedEvent>),

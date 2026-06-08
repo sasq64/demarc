@@ -279,7 +279,10 @@ fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
 
     // If the archive contained a single top-level directory, descend into it so
     // the release-detection logic sees the actual files, not the wrapper dir.
-    let entries: Vec<PathBuf> = fs::read_dir(&target_dir)?.flatten().map(|e| e.path()).collect();
+    let entries: Vec<PathBuf> = fs::read_dir(&target_dir)?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     if let [only] = entries.as_slice()
         && only.is_dir()
     {
@@ -381,6 +384,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
     let mut year: String = "".into();
     let mut system_type = SystemType::Unknown;
     let mut tags = tags.clone();
+
     let m3u = parse_m3u(in_path).unwrap();
     info!("{:?}", m3u.tags);
     if let Some(t) = m3u.tags.get("title") {
@@ -411,6 +415,9 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
         let real_path = in_path.parent().unwrap().join(path);
         system_type = get_system_type(&real_path);
         debug!("FMT: M3U {system_type:?}");
+    }
+    if !tags.contains_key("vice_jiffydos") {
+        tags.insert("vice_jiffydos".into(), "enabled".into());
     }
 
     let game_info = GameInfo { title, group, year };

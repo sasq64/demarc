@@ -17,7 +17,7 @@ use bevy::{
 };
 
 use crate::emulator::Emulator;
-use crate::hud::{SpawnToast, TextList, ToastType};
+use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::{BorderMode, PostProcess, ScaleMode};
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::{GameInfo, SystemType};
@@ -173,6 +173,10 @@ fn setup_retro(world: &mut World) {
         set_var("puae_cpu_model", "68030");
         // set_var("puae_cpu_throttle", "10000");
         set_var("puae_cpu_compatibility", "exact");
+    }
+
+    if args.fast_load {
+        set_var("vice_jiffydos", "enabled");
     }
 
     for opt in &args.extra_options {
@@ -409,7 +413,6 @@ pub fn create_core(
         set_var("puae_crop", "smaller");
         set_var("puae_horizontal_pos", "-5");
     } else if system_type == SystemType::C64 {
-        set_var("vice_jiffydos", "disabled");
         set_var("vice_sid_extra", "none");
         set_var("vice_sid_model", "8580");
         set_var("vice_sound_sample_rate", "44100");
@@ -440,7 +443,7 @@ fn run_retro(
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
-    mut writer: MessageWriter<SpawnToast>,
+    mut writer: MessageWriter<SetHudText>,
     mut images: ResMut<Assets<Image>>,
     mut post_process: Query<&mut PostProcess>,
 ) {
@@ -451,6 +454,17 @@ fn run_retro(
         settings.last_draw = time.elapsed_secs_f64();
         if input.just_pressed(KeyCode::KeyC) {
             settings.crt_effect = !settings.crt_effect;
+            writer.write(SetHudText {
+                text: (if settings.crt_effect {
+                    "Filter on"
+                } else {
+                    "Filter off"
+                })
+                .into(),
+                delay: Duration::from_secs(0),
+                duration: Duration::from_secs(1),
+                location: HudLocation::TopLeft,
+            });
         }
         if input.just_pressed(KeyCode::KeyB) {
             settings.border_mode = if settings.border_mode == BorderMode::Stretch {
@@ -464,7 +478,13 @@ fn run_retro(
                 ScaleMode::Stretch => ScaleMode::Fit,
                 ScaleMode::Fit => ScaleMode::Zoom,
                 ScaleMode::Zoom => ScaleMode::Stretch,
-            }
+            };
+            writer.write(SetHudText {
+                text: format!("{:?}", settings.scale_mode),
+                delay: Duration::from_secs(0),
+                duration: Duration::from_secs(1),
+                location: HudLocation::TopLeft,
+            });
         }
         if input.just_pressed(KeyCode::KeyF) {
             window.mode = match window.mode {
@@ -495,11 +515,9 @@ fn run_retro(
                     show_info = true;
                 }
                 if !settings.maximized {
-                    writer.write(SpawnToast {
-                        text: "".into(),
-                        delay: Duration::from_secs(0),
-                        duration: Duration::from_secs(1),
-                        toast_type: ToastType::InfoText,
+                    writer.write(SetHudText {
+                        location: HudLocation::InfoText,
+                        ..Default::default()
                     });
                 }
             }
@@ -515,11 +533,11 @@ fn run_retro(
         };
         if show_info && i == settings.current_emu {
             let GameInfo { title, group, year } = &emu.work_file.game_info;
-            writer.write(SpawnToast {
+            writer.write(SetHudText {
                 text: format!("\"{title}\"\n{group}\n{year}"),
-                delay: Duration::from_secs(0),
                 duration: Duration::from_secs(2),
-                toast_type: ToastType::InfoText,
+                location: HudLocation::InfoText,
+                ..Default::default()
             });
         }
 
@@ -532,11 +550,11 @@ fn run_retro(
             settings.current_game += 1;
             if settings.show_info && settings.maximized {
                 let GameInfo { title, group, year } = &emu.work_file.game_info;
-                writer.write(SpawnToast {
+                writer.write(SetHudText {
                     text: format!("\"{title}\"\n{group}\n{year}"),
                     delay: Duration::from_secs(8),
                     duration: Duration::from_secs(15),
-                    toast_type: ToastType::InfoText,
+                    location: HudLocation::InfoText,
                 });
             }
             continue;
@@ -559,16 +577,32 @@ fn run_retro(
                 }
                 if input.just_pressed(KeyCode::KeyP) {
                     emu.paused = !emu.paused;
+                    if emu.paused {
+                        writer.write(SetHudText {
+                            location: HudLocation::TopRight,
+                            duration: Duration::from_secs(1500),
+                            text: "\u{f03e4}".into(),
+                            ..Default::default()
+                        });
+                    } else {
+                        writer.write(SetHudText {
+                            location: HudLocation::TopRight,
+                            ..Default::default()
+                        });
+                    }
                 }
                 if input.just_pressed(KeyCode::KeyD) {
-                    emu.disk_no = (emu.disk_no + 1) % emu.get_number_of_disks();
+                    let nd = emu.get_number_of_disks();
+                    if nd > 0 {
+                        emu.disk_no = (emu.disk_no + 1) % nd;
+                    }
                     let disk_no = emu.disk_no;
                     emu.set_disk(disk_no);
                     let floppy = emu.work_file.system_type == SystemType::C64;
                     let d = emu.disk_no + 1;
 
-                    writer.write(SpawnToast {
-                        toast_type: ToastType::BottomLeft,
+                    writer.write(SetHudText {
+                        location: HudLocation::BottomLeft,
                         duration: Duration::from_millis(1500),
                         text: if floppy {
                             format!("\u{f09ef} #{d}")
@@ -584,18 +618,16 @@ fn run_retro(
                 if input.just_pressed(KeyCode::KeyI) {
                     let GameInfo { title, group, year } = &emu.work_file.game_info;
                     if emu.show_info {
-                        writer.write(SpawnToast {
-                            text: "".into(),
-                            delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(5000),
-                            toast_type: ToastType::InfoText,
+                        writer.write(SetHudText {
+                            location: HudLocation::InfoText,
+                            ..Default::default()
                         });
                     } else {
-                        writer.write(SpawnToast {
+                        writer.write(SetHudText {
                             text: format!("\"{title}\"\n{group}\n{year}"),
                             delay: Duration::from_secs(0),
                             duration: Duration::from_secs(5000),
-                            toast_type: ToastType::InfoText,
+                            location: HudLocation::InfoText,
                         });
                     }
                     emu.show_info = !emu.show_info;
@@ -605,25 +637,43 @@ fn run_retro(
                     info!("{} vs {}", settings.current_game, settings.games.len());
                 }
                 if input.just_pressed(KeyCode::KeyW) {
-                    for _ in 0..500 {
-                        emu.skip();
-                    }
+                    let (frames, text) = if shift {
+                        (30 * 50, "\u{f0d06}".to_string())
+                    } else {
+                        (10 * 50, "\u{f0d71}".to_string())
+                    };
+                    emu.skip(frames);
+                    writer.write(SetHudText {
+                        location: HudLocation::TopRight,
+                        duration: Duration::from_secs(1500),
+                        text,
+                        ..Default::default()
+                    });
                 }
                 if input.just_pressed(KeyCode::KeyT) {
-                    screenshot(
-                        &mut commands,
-                        format!(
-                            "{}-{}.png",
-                            emu.work_file.game_info.title,
-                            time.elapsed_secs() as i32
-                        ),
+                    let name = format!(
+                        "{}-{}.png",
+                        emu.work_file.game_info.title,
+                        time.elapsed_secs() as i32
                     );
+                    screenshot(&mut commands, &name);
+                    writer.write(SetHudText {
+                        text: format!("Screenshot: {name}"),
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(5000),
+                        location: HudLocation::TopLeft,
+                    });
                 }
             } else {
                 emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
             }
         }
-        emu.run(&time);
+        if !emu.run(&time) {
+            writer.write(SetHudText {
+                location: HudLocation::TopRight,
+                ..Default::default()
+            });
+        }
 
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
