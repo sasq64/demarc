@@ -323,22 +323,36 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
             tags.insert("puae_model".into(), "A1200".into());
             tags.insert("puae_use_whdload".into(), "enabled".into());
         } else {
-            debug!("Checking");
             let mut files = vec![];
+            let mut one_file = None;
             for f in fs::read_dir(&path)? {
                 let f = f?;
                 let t = get_system_type(&f.path());
+                debug!("Checking {:?} => {:?}", f.path(), t);
                 if t != SystemType::Unknown {
-                    debug!("Found {t:?}");
-                    files.push(f.path());
-                    path = f.path();
-                    system_type = t;
+                    if one_file.is_none() {
+                        one_file = Some(f.path());
+                    }
+                    let ext = f
+                        .path()
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_string())
+                        .unwrap_or("".into())
+                        .to_lowercase();
+                    if ext == "d64" || ext == "adf" {
+                        debug!("Found {t:?}");
+                        files.push(f.path());
+                        path = f.path();
+                        system_type = t;
+                    }
                 }
             }
             if files.len() > 1 {
                 sort_disks(&mut files);
                 path = build_m3u(&files)?;
                 is_temp = true;
+            } else if let Some(f) = one_file {
+                path = f;
             }
         }
     }
@@ -436,6 +450,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
 /// - Metadata only M3U (Unknown system) with tags-> Redirect to parent
 /// - Direct file, no meta data, with tags
 pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
+    info!("Handlew {in_path:?}");
     if let Some(ext) = in_path.extension()
         && ext == "m3u"
     {
