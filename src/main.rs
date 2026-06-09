@@ -13,6 +13,7 @@ use clap::{ColorChoice, Parser};
 mod libretro;
 
 mod audio;
+mod commands;
 mod emulator;
 mod hud;
 mod libloader;
@@ -22,6 +23,7 @@ mod retro_emu;
 mod screensaver;
 mod utils;
 
+use commands::CommandPlugin;
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::{RetroPlugin, system_dir};
@@ -359,6 +361,7 @@ fn main() {
                     ..Default::default()
                 }),
             RetroPlugin {},
+            CommandPlugin,
             PostProcessPlugin,
             TweeningPlugin,
             HudPlugin,

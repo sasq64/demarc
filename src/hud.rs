@@ -55,7 +55,8 @@ fn spawn_toast(
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
     let font = asset_server.load("font.ttf");
-    let font_size = window.physical_width() as f32 / 50.0;
+    let fraction = 0.075;
+    let font_size = window.physical_height() as f32 * fraction;
     for msg in reader.read() {
         if let Some(hud_text) = state.current_texts.get(&msg.location) {
             commands.entity(*hud_text).despawn();
@@ -109,7 +110,7 @@ fn spawn_toast(
                         font_size,
                         ..default()
                     },
-                    RelativeTextSize { fraction: 0.07 },
+                    RelativeTextSize { fraction },
                     TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
                     TextLayout {
                         justify: Justify::Right,
@@ -125,7 +126,7 @@ fn spawn_toast(
                         position_type: PositionType::Absolute,
                         bottom: Val::Px(0.0),
                         left: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(60.0)),
+                        margin: UiRect::all(Val::Px(40.0)),
                         ..default()
                     },
                     Text::new(&msg.text),
@@ -149,16 +150,18 @@ fn spawn_toast(
                         position_type: PositionType::Absolute,
                         top: Val::Px(0.0),
                         left: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(60.0)),
+                        margin: UiRect::all(Val::Px(20.0)),
                         ..default()
                     },
                     Text::new(&msg.text),
                     TextFont {
                         font: font.clone(),
-                        font_size: 32.0,
+                        font_size: font_size * 0.5,
                         ..default()
                     },
-                    RelativeTextSize { fraction: 0.04 },
+                    RelativeTextSize {
+                        fraction: fraction * 0.5,
+                    },
                     TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
                     TextLayout {
                         justify: Justify::Right,
@@ -290,7 +293,6 @@ fn update_keys(
     mut lists: Query<&mut TextList>,
     mut writer: MessageWriter<TextListSelect>,
 ) {
-    let _ = writer;
     for mut list in &mut lists {
         if list.controlled {
             if input.just_pressed(KeyCode::ArrowUp) && list.selected > 0 {
