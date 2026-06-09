@@ -201,12 +201,18 @@ fn spawn_toast(
 /// Only `visible_count` rows are shown at once, starting at `scroll_position`.
 /// Mutating `scroll_position` (or `items`) marks the component changed, which
 /// makes [`update_text_list`] refresh the row [`Text`]s on the next frame.
-#[derive(Component)]
+#[derive(Default, Component)]
 pub struct TextList {
     pub items: Vec<String>,
     pub scroll_position: usize,
     pub visible_count: usize,
+    /// Index into `items` of the currently selected row.
+    pub selected: usize,
+    pub controlled: bool,
 }
+
+/// Background color drawn behind the selected row.
+const SELECTED_ROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
 
 /// Marks a child text entity of a [`TextList`] and records which visible row it is.
 #[derive(Component)]
@@ -250,8 +256,9 @@ impl TextList {
                         BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.8)),
                         TextList {
                             items,
-                            scroll_position: 0,
                             visible_count,
+                            controlled: true,
+                            ..Default::default()
                         },
                     ))
                     .with_children(|box_node| {
@@ -264,6 +271,7 @@ impl TextList {
                                     ..default()
                                 },
                                 TextColor(Color::WHITE),
+                                BackgroundColor(Color::NONE),
                                 TextListRow(i),
                             ));
                         }
@@ -274,16 +282,46 @@ impl TextList {
     }
 }
 
+fn update_keys(input: Res<ButtonInput<KeyCode>>, mut lists: Query<&mut TextList>) {
+    for mut list in &mut lists {
+        if list.controlled {
+            if input.just_pressed(KeyCode::ArrowUp) && list.selected > 0 {
+                list.selected -= 1;
+            }
+            if input.just_pressed(KeyCode::ArrowDown) && list.selected < (list.items.len() - 1) {
+                list.selected += 1;
+            }
+        }
+    }
+}
+
 /// Refreshes the visible rows of every [`TextList`] whose contents or scroll changed.
+///
+/// Also keeps `scroll_position` in range so that `selected` stays visible, and
+/// draws a background behind the selected row.
 fn update_text_list(
-    lists: Query<(&TextList, &Children), Changed<TextList>>,
-    mut rows: Query<(&TextListRow, &mut Text)>,
+    mut lists: Query<(&mut TextList, &Children), Changed<TextList>>,
+    mut rows: Query<(&TextListRow, &mut Text, &mut BackgroundColor)>,
 ) {
-    for (list, children) in &lists {
+    for (mut list, children) in &mut lists {
+        info!("CHANGED");
+        // Scroll so the selected item is within the visible window.
+        if list.visible_count > 0 {
+            if list.selected < list.scroll_position {
+                list.scroll_position = list.selected;
+            } else if list.selected >= list.scroll_position + list.visible_count {
+                list.scroll_position = list.selected + 1 - list.visible_count;
+            }
+        }
         for child in children.iter() {
-            if let Ok((row, mut text)) = rows.get_mut(child) {
+            if let Ok((row, mut text, mut bg)) = rows.get_mut(child) {
                 let idx = list.scroll_position + row.0;
                 text.0 = list.items.get(idx).cloned().unwrap_or_default();
+                bg.0 = if idx == list.selected && idx < list.items.len() {
+                    SELECTED_ROW_COLOR
+                } else {
+                    Color::NONE
+                };
             }
         }
     }
@@ -308,6 +346,7 @@ impl Plugin for HudPlugin {
                     spawn_toast.run_if(on_message::<SetHudText>),
                     update_relative_text_size.run_if(on_message::<WindowResized>),
                     update_text_list,
+                    update_keys,
                     handle_tween_done.run_if(on_message::<CycleCompletedEvent>),
                 ),
             );

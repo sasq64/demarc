@@ -1,6 +1,7 @@
 #![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 use std::path::{Path, PathBuf};
 
+use bevy::ecs::entity::EntityIndex;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
@@ -15,7 +16,6 @@ mod libretro;
 mod audio;
 mod emulator;
 mod hud;
-#[allow(dead_code)] // not yet wired into a caller
 mod libloader;
 mod post_process;
 mod retro;
@@ -31,7 +31,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::utils::{SystemType, get_system_type};
 
-const STYLES: Styles = Styles::styled()
+const CLAP_STYLES: Styles = Styles::styled()
     .header(
         Style::new()
             .bold()
@@ -46,7 +46,7 @@ const STYLES: Styles = Styles::styled()
     .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", styles = STYLES, color = ColorChoice::Always, 
+#[command(name = "demarc", styles = CLAP_STYLES, color = ColorChoice::Always, 
     about = "Demo scene emulator frontend for the command line",
     long_about = r#"
 DEMARC
@@ -91,6 +91,7 @@ struct Args {
     high: bool,
 
     /// C64: Always use JiffyDOS to load
+    /// Amiga: Turn off disk rotation emulation
     #[arg(long)]
     fast_load: bool,
 
@@ -223,19 +224,16 @@ struct AppSettings {
     games: Vec<PathBuf>,
     current_game: usize,
     max_time: Option<usize>,
-    /// Index of the emulator the user is currently "focused" on (its output
-    /// area is outlined). Cycled with RightAlt+Tab.
     current_emu: usize,
-    /// When set, the focused emulator ([`Self::current_emu`]) fills the whole
-    /// window and the others stop rendering, as if it were the only core
-    /// running. Toggled with RightAlt+Enter.
     maximized: bool,
     all_emus: bool,
     last_draw: f64,
+    text_list: Option<Entity>,
 }
 
 /// Recursively collect all `.m3u` files under `dir` into `out`.
 fn collect_m3u_files(dir: &Path, out: &mut Vec<PathBuf>, group: bool) {
+    info!("Collect {:?}", dir);
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -310,10 +308,6 @@ fn main() {
     }
 
     let multiple = games.len() > 1;
-    // Only apply the fixed `resolution` when windowed. On Windows, requesting
-    // `BorderlessFullscreen` together with a fixed `resolution` conflicts in
-    // winit and the window never actually goes fullscreen, so we leave the
-    // resolution at its default (the monitor will drive it) when fullscreen.
     let mut window = Window {
         title: "Demarc".into(),
         present_mode: PresentMode::Fifo,
@@ -337,12 +331,9 @@ fn main() {
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         games: games.clone(),
-        current_game: 0,
         max_time: args.max_time,
-        current_emu: 0,
         maximized: args.grid.is_none(),
-        all_emus: false,
-        last_draw: 0.0,
+        ..Default::default()
     };
 
     let win = args.window;

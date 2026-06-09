@@ -136,17 +136,53 @@ fn screenshot(commands: &mut Commands, name: impl Into<String>) {
         .observe(save_to_disk(name.into()));
 }
 
-fn setup_retro(world: &mut World) {
-    // let asset_server = world.resource::<AssetServer>();
-    // let font: Handle<Font> = asset_server.load("font.ttf");
-    // let mut commands = world.commands();
-    // TextList::spawn(
-    //     &mut commands,
-    //     font,
-    //     ["One".into(), "Two".into(), "Three".into()].into(),
-    //     3,
-    // );
+const HOTKEYS: &[(&str, &str); 13] = &[
+    ("N", "Next file"),
+    ("D", "Swap disk"),
+    ("S", "Change screen scale"),
+    ("C", "Toggle CRT filter"),
+    ("B", "Toggle border stretch"),
+    ("P", "Pause/Resume"),
+    ("M", "Click Left mouse button"),
+    ("J", "Toggle Joystick/Keyboard cursor keys"),
+    ("I", "Toggle Info"),
+    ("R", "Reset current emulator"),
+    ("T", "Take screenshot"),
+    ("W", "Warp 10s forward"),
+    ("I", "Toggle Info"),
+];
 
+fn handle_textlist(
+    mut commands: Commands,
+    mut settings: ResMut<AppSettings>,
+    asset_server: Res<AssetServer>,
+    input: Res<ButtonInput<KeyCode>>,
+) {
+    if input.just_pressed(KeyCode::AltRight) {
+        let font: Handle<Font> = asset_server.load("font.ttf");
+        let lines = HOTKEYS
+            .iter()
+            .map(|(key, text)| {
+                let c = char::from_u32(
+                    key.chars().next().unwrap_or('?') as u32 - b'A' as u32 + 0xf0b08,
+                )
+                .unwrap_or('?');
+                format!(" {c} {text} ")
+            })
+            .collect::<Vec<_>>();
+        if let Some(e) = settings.text_list.take() {
+            commands.entity(e).despawn();
+        }
+        let entity = TextList::spawn(&mut commands, font, lines, 8);
+        settings.text_list = Some(entity);
+    } else if input.just_pressed(KeyCode::Escape)
+        && let Some(e) = settings.text_list.take()
+    {
+        commands.entity(e).despawn();
+    }
+}
+
+fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
@@ -172,6 +208,7 @@ fn setup_retro(world: &mut World) {
 
     if args.fast_load {
         set_var("vice_jiffydos", "enabled");
+        set_var("puae_floppy_speed", "0");
     }
 
     for opt in &args.extra_options {
@@ -404,9 +441,7 @@ pub fn create_core(
     match get_core(system_type) {
         Ok(core) => RetroCoreThreaded::new(Path::new(&core), system_dir(), Some(game), settings),
         Err(name) => {
-            bail!(
-                "Can not find core '{name}' for '{game:?}'.\nExpected in current directory or /usr/lib/libretro"
-            );
+            bail!("Can not find core '{name}' for '{game:?}'");
         }
     }
 }
@@ -556,8 +591,8 @@ fn run_retro(
                     emu.input_mode = emu.input_mode.next();
                     let text = match emu.input_mode {
                         InputMode::Keyboard => "\u{f030c}",
-                        InputMode::Joystick1 => "\u{f0297} #1",
-                        InputMode::Joystick2 => "\u{f0297} #2",
+                        InputMode::Joystick1 => "\u{f0297}\u{b9}",
+                        InputMode::Joystick2 => "\u{f0297}\u{b2}",
                     };
                     writer.write(SetHudText {
                         text: text.into(),
@@ -690,9 +725,7 @@ fn run_retro(
         } else {
             emu.core.as_mut().unwrap().aspect_ratio()
         };
-        // Update only this emulator's own post-process camera (the one
-        // sampling its texture), so multiple emulators don't clobber each
-        // other's aspect ratio.
+
         for mut pp in &mut post_process {
             if pp.source == emu.image {
                 pp.aspect = aspect;
@@ -731,7 +764,12 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (run_retro, update_grid_viewports, draw_current_emu_outline),
+            (
+                run_retro,
+                update_grid_viewports,
+                draw_current_emu_outline,
+                handle_textlist,
+            ),
         );
     }
 }
