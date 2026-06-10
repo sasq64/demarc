@@ -367,7 +367,7 @@ fn main() {
             HudPlugin,
             ScreenSaverPlugin,
         ));
-    if !win {
+    if !win && cfg!(target_os = "windows") {
         app.add_systems(PostStartup, enter_fullscreen);
     }
     app.run();
