@@ -235,6 +235,7 @@ impl Emulator {
         images: &mut Assets<Image>,
         tags: HashMap<String, String>,
         max_time: Option<usize>,
+        match_fps: bool,
     ) -> Self {
         let width = 720;
         let height = 574;
@@ -259,6 +260,7 @@ impl Emulator {
             image: handle.clone(),
             width,
             height,
+            match_fps,
             ..Default::default()
         }
     }

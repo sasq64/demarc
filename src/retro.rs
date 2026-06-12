@@ -15,12 +15,12 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use crate::commands::{CmdMessage, check_hotkey};
+use crate::commands::{CmdMessage, check_hotkey, get_info_text};
 use crate::emulator::Emulator;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
-use crate::utils::{GameInfo, SystemType};
+use crate::utils::SystemType;
 use crate::{AppSettings, Args, libloader};
 
 pub struct RetroPlugin {}
@@ -197,12 +197,12 @@ fn setup_retro(world: &mut World) {
 fn spawn_emulator(
     world: &mut World,
     tags: HashMap<String, String>,
-    _match_fps: bool,
+    match_fps: bool,
     max_time: Option<usize>,
     cell: Option<(usize, GridCell)>,
 ) {
     let mut res = world.resource_mut::<Assets<Image>>();
-    let emu = Emulator::new(&mut res, tags, max_time);
+    let emu = Emulator::new(&mut res, tags, max_time, match_fps);
     let handle = emu.image.clone();
     world.spawn(emu);
 
@@ -445,9 +445,8 @@ fn run_retro(
             emu.load(&time, &game);
             settings.current_game += 1;
             if settings.show_info && settings.maximized {
-                let GameInfo { title, group, year } = &emu.work_file.game_info;
                 writer.write(SetHudText {
-                    text: format!("\"{title}\"\n{group}\n{year}"),
+                    text: get_info_text(&emu.work_file),
                     delay: Duration::from_secs(8),
                     duration: Duration::from_secs(15),
                     location: HudLocation::InfoText,

@@ -438,7 +438,9 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE => {
                     info!("Got DISK_CONTROL");
                     let callback = data as *mut retro_disk_control_callback;
-                    self.disk_callback = *callback;
+                    if !callback.is_null() {
+                        self.disk_callback = *callback;
+                    }
                 }
                 RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();

@@ -10,7 +10,7 @@ use crate::AppSettings;
 use crate::emulator::{Emulator, InputMode};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::utils::{GameInfo, SystemType};
+use crate::utils::{GameInfo, SystemType, WorkingFile};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -185,6 +185,49 @@ fn handle_textlist(
     }
 }
 
+fn get_system_name(work_file: &WorkingFile) -> String {
+    let tags = &work_file.settings;
+    let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
+    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
+    let mut base = match work_file.system_type {
+        SystemType::C64 => "C64",
+        SystemType::Amiga => "Amiga",
+        SystemType::Amstrad => "Amstrad CPC",
+        SystemType::Megadrive => "Megadrive",
+        SystemType::AtariST => {
+            if ste {
+                "Atari STE"
+            } else {
+                "Atari ST"
+            }
+        }
+        SystemType::Atari2600 => "Atari 2600",
+        SystemType::SuperNintendo => "SNES",
+        SystemType::Unknown => "Unknown",
+    }
+    .to_string();
+    if work_file.system_type == SystemType::Amiga {
+        if a1200 {
+            base += " (AGA)";
+        } else {
+            base += " 500";
+        }
+    }
+    base
+}
+
+pub fn get_info_text(work_file: &WorkingFile) -> String {
+    let system = get_system_name(work_file);
+    let GameInfo { title, group, year } = &work_file.game_info;
+    let year = if year.is_empty() {
+        "".into()
+    } else {
+        format!(" ({year})")
+    };
+
+    format!("\"{title}\"\n{group}\n{system}{year}")
+}
+
 fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut commands: Commands,
@@ -273,9 +316,8 @@ fn handle_cmd(
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
             if show_info && i == settings.current_emu {
-                let GameInfo { title, group, year } = &emu.work_file.game_info;
                 writer.write(SetHudText {
-                    text: format!("\"{title}\"\n{group}\n{year}"),
+                    text: get_info_text(&emu.work_file),
                     duration: Duration::from_secs(2),
                     location: HudLocation::InfoText,
                     ..Default::default()
@@ -291,8 +333,8 @@ fn handle_cmd(
                         emu.input_mode = emu.input_mode.next();
                         let text = match emu.input_mode {
                             InputMode::Keyboard => "\u{f030c}",
-                            InputMode::Joystick1 => "\u{f0297}\u{b9}",
-                            InputMode::Joystick2 => "\u{f0297}\u{b2}",
+                            InputMode::Joystick1 => "\u{f0297} \u{b9}",
+                            InputMode::Joystick2 => "\u{f0297} \u{b2}",
                         };
                         writer.write(SetHudText {
                             text: text.into(),
@@ -342,7 +384,6 @@ fn handle_cmd(
                         emu.reset();
                     }
                     Cmd::ToggleInfo => {
-                        let GameInfo { title, group, year } = &emu.work_file.game_info;
                         if emu.show_info {
                             writer.write(SetHudText {
                                 location: HudLocation::InfoText,
@@ -350,7 +391,7 @@ fn handle_cmd(
                             });
                         } else {
                             writer.write(SetHudText {
-                                text: format!("\"{title}\"\n{group}\n{year}"),
+                                text: get_info_text(&emu.work_file),
                                 delay: Duration::from_secs(0),
                                 duration: Duration::from_secs(5000),
                                 location: HudLocation::InfoText,
