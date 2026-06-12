@@ -341,11 +341,6 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
-            println!(
-                "COPY {:?} to {:?}",
-                entry.path(),
-                dst.as_ref().join(entry.file_name())
-            );
             fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
         }
     }
@@ -545,8 +540,6 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
 
 /// Recursively collect all detected emulator files under `dir` into `out`.
 pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    println!("Collect {:?}", dir);
-
     // if dir.is_dir() && is_self_booting_dir(dir) {
     //     println!("SELF BOOTING");
     //     out.push(dir.to_owned());
@@ -567,7 +560,6 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            println!("DIR {path:?}");
             dirs.push(path);
         } else if path
             .extension()
@@ -582,7 +574,6 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
                     mixed = true;
                 }
                 found_type = t;
-                println!("FILE {path:?}");
                 files.push(path);
             }
         }

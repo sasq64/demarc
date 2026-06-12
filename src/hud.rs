@@ -104,7 +104,7 @@ fn spawn_toast(
                         position_type: PositionType::Absolute,
                         bottom: Val::Px(0.0),
                         right: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(60.0)),
+                        margin: UiRect::all(Val::Px(40.0)),
                         ..default()
                     },
                     Text::new(&msg.text),
