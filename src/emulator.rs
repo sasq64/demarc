@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc::Sender;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -80,6 +81,9 @@ pub(crate) struct Emulator {
     pub(crate) skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
     pub(crate) input_mode: InputMode,
+    /// When set (the first emulator under `--record`), each frame's raw audio
+    /// is copied here at the core's native rate for the recorder to write.
+    pub(crate) record_tx: Option<Sender<(f32, Vec<i16>)>>,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -278,6 +282,7 @@ impl Emulator {
             core,
             sink,
             audio_rate_adjust,
+            record_tx,
             ..
         } = self;
         let Some(core) = core else {
@@ -290,6 +295,11 @@ impl Emulator {
         core.with_audio(&mut |samples| {
             if samples.is_empty() {
                 return;
+            }
+            // Tap the raw samples for the recorder before they're resampled
+            // for output; this runs even when this emulator's output is muted.
+            if let Some(tx) = record_tx.as_ref() {
+                let _ = tx.send((from as f32, samples.to_vec()));
             }
             sink.push_audio(from as f32, samples);
         });

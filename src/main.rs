@@ -18,6 +18,7 @@ mod emulator;
 mod hud;
 mod libloader;
 mod post_process;
+mod record;
 mod retro;
 mod retro_emu;
 mod screensaver;
@@ -26,6 +27,7 @@ mod utils;
 use commands::CommandPlugin;
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
+use record::{RecordPlugin, Recorder};
 use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
 use tracing_subscriber::EnvFilter;
@@ -127,6 +129,11 @@ struct Args {
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000033")]
     clear_color: Color,
+
+    /// Record the first emulator's output (after HUD + CRT) and audio to this
+    /// MP4 file. Requires the `ffmpeg` command-line tool to be installed.
+    #[arg(long, value_name = "FILE")]
+    record: Option<PathBuf>,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -284,12 +291,13 @@ fn main() {
         } else {
             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
         },
+        resolution: (720, 540).into(),
         resizable: false,
         ..Default::default()
     };
-    if args.window {
-        window.resolution = (720, 540).into();
-    }
+    // if args.window {
+    //     window.resolution = (720, 540).into();
+    // }
     let primary_window = Some(window);
 
     let settings = AppSettings {
@@ -306,6 +314,7 @@ fn main() {
 
     let win = args.window;
     let clear_color = args.clear_color;
+    let record = args.record.clone();
 
     let mut app = App::new();
     app.insert_resource(args)
@@ -332,7 +341,11 @@ fn main() {
             TweeningPlugin,
             HudPlugin,
             ScreenSaverPlugin,
+            RecordPlugin,
         ));
+    if let Some(path) = record {
+        app.insert_resource(Recorder::new(path));
+    }
     if !win && cfg!(target_os = "windows") {
         app.add_systems(PostStartup, enter_fullscreen);
     }

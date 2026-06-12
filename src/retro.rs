@@ -19,6 +19,7 @@ use crate::commands::{CmdMessage, check_hotkey, get_info_text};
 use crate::emulator::Emulator;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
+use crate::record::Recorder;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::utils::SystemType;
 use crate::{AppSettings, Args, libloader};
@@ -138,6 +139,7 @@ fn setup_retro(world: &mut World) {
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
 
     set_var("latency", &args.latency.to_string());
+    //set_var("puae_video_vresolution", "single");
 
     if args.aga {
         set_var("puae_model", "A1200");
@@ -416,6 +418,7 @@ fn run_retro(
     mut cmd_writer: MessageWriter<CmdMessage>,
     mut images: ResMut<Assets<Image>>,
     mut post_process: Query<&mut PostProcess>,
+    recorder: Option<Res<Recorder>>,
 ) {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
     let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
@@ -438,6 +441,13 @@ fn run_retro(
             continue;
         };
         emu.audio_active(settings.all_emus || i == settings.current_emu);
+
+        // Record the first emulator's audio when --record is active.
+        if i == 0 && emu.record_tx.is_none() {
+            if let Some(recorder) = &recorder {
+                emu.record_tx = Some(recorder.audio_sender());
+            }
+        }
 
         if emu.run_next && settings.current_game < settings.games.len() {
             emu.run_next = false;
