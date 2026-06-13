@@ -346,7 +346,7 @@ fn main() {
     if let Some(path) = record {
         app.insert_resource(Recorder::new(path));
     }
-    if !win && cfg!(target_os = "windows") {
+    if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
         app.add_systems(PostStartup, enter_fullscreen);
     }
     app.run();

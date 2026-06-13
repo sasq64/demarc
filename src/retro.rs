@@ -51,7 +51,7 @@ pub fn system_dir() -> &'static Path {
         let cache = dirs::cache_dir().unwrap_or_default().join("demarc");
         info!("CACHE {cache:?}");
         let system = cache.join("system");
-        if !system.exists() || !system.join(".v3").exists() {
+        if !system.exists() || !system.join(".v4").exists() {
             std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
                 .expect("Failed to read embedded system.zip");
