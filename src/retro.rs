@@ -32,6 +32,7 @@ const CORE_NAME_ATARI: &str = "hatari";
 const CORE_NAME_MEGADRIVE: &str = "picodrive";
 const CORE_NAME_STELLA: &str = "stella";
 const CORE_NAME_SNES: &str = "bsnes";
+const CORE_NAME_SPECTRUM: &str = "fuse";
 
 /// The `system` directory (BIOS/firmware files) bundled into the binary at
 /// build time. Extracted to the user's cache dir on first run.
@@ -138,6 +139,7 @@ fn setup_retro(world: &mut World) {
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
 
     set_var("latency", &args.latency.to_string());
+    set_var("fuse_machine", "Spectrum 128K");
 
     if args.aga {
         set_var("puae_model", "A1200");
@@ -364,6 +366,7 @@ pub fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
         SystemType::Megadrive => CORE_NAME_MEGADRIVE,
         SystemType::Atari2600 => CORE_NAME_STELLA,
         SystemType::SuperNintendo => CORE_NAME_SNES,
+        SystemType::ZXSpectrum => CORE_NAME_SPECTRUM,
         SystemType::Unknown => return Err(""),
     };
 

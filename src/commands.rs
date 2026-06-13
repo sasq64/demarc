@@ -194,6 +194,7 @@ fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Amiga => "Amiga",
         SystemType::Amstrad => "Amstrad CPC",
         SystemType::Megadrive => "Megadrive",
+        SystemType::ZXSpectrum => "ZX Spectrum",
         SystemType::AtariST => {
             if ste {
                 "Atari STE"
