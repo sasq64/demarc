@@ -134,6 +134,14 @@ struct Args {
     /// MP4 file. Requires the `ffmpeg` command-line tool to be installed.
     #[arg(long, value_name = "FILE")]
     record: Option<PathBuf>,
+
+    /// Frame rate to record at. Must match the screen/render rate (one frame is
+    /// captured per rendered frame), so the video stays in sync with the
+    /// realtime audio — e.g. 50 on a 50Hz display, 60 on a 60Hz one. Note that
+    /// the emulator content is 50fps regardless; on a 60Hz screen the extra
+    /// frames are duplicates.
+    #[arg(long, value_name = "FPS", default_value_t = 60)]
+    record_fps: u32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -315,6 +323,7 @@ fn main() {
     let win = args.window;
     let clear_color = args.clear_color;
     let record = args.record.clone();
+    let record_fps = args.record_fps;
 
     let mut app = App::new();
     app.insert_resource(args)
@@ -344,7 +353,7 @@ fn main() {
             RecordPlugin,
         ));
     if let Some(path) = record {
-        app.insert_resource(Recorder::new(path));
+        app.insert_resource(Recorder::new(path, record_fps));
     }
     if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
         app.add_systems(PostStartup, enter_fullscreen);

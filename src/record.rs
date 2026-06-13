@@ -26,9 +26,15 @@
 //! * **Cheap to encode.** `libx264 -preset ultrafast` keeps the encoder ahead
 //!   of capture at the cost of a larger file — the intended trade-off.
 //!
-//! Audio (the first emulator's raw stereo stream at its native rate) is muxed
-//! into the same `ffmpeg` live through a FIFO (Unix); on platforms without
-//! FIFOs it records video only.
+//! Audio is the first emulator's **played** stream — the cpal output, tapped at
+//! the device callback — muxed into the same `ffmpeg` live through a FIFO
+//! (Unix); on platforms without FIFOs it records video only. We deliberately
+//! record the played stream rather than the core's raw output: the emulator
+//! emits raw audio per `core.run()` at emulated-time pace, bursting many frames
+//! at once during startup catch-up / audio-buffer fill, whereas the cpal output
+//! has already been resampled and rate-controlled to a smooth, realtime pace by
+//! the audio sink. Recording that means the audio matches the realtime video
+//! frame-for-frame with no re-pacing, so it neither drifts nor glitches.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -43,7 +49,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
-use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 
 use crate::emulator::Emulator;
 
@@ -64,12 +70,21 @@ const START_AUDIO_WAIT_FRAMES: u32 = 60;
 /// `i16` frames (4 bytes).
 const MAX_PENDING_AUDIO: usize = 48_000 * 2 * 2 * 2;
 
+/// Video frames of audio to keep when the encoder starts. Audio (the cpal
+/// stream) begins playing as soon as the emulator is active, but video isn't
+/// captured until the window has sized up and the first readback lands, so the
+/// buffer holds a startup backlog with no matching frames. We drop all but the
+/// newest few frames so the audio starts roughly on the first captured scene
+/// instead of ahead of it.
+const AUDIO_START_LATENCY_FRAMES: usize = 3;
+
 #[derive(Resource)]
 pub struct Recorder {
     /// Final MP4 path requested by the user; `ffmpeg` writes it directly.
     output: PathBuf,
-    /// Capture frame rate handed to `ffmpeg`; taken from the monitor refresh
-    /// rate (vsync paces the render loop to it), defaulting to 60.
+    /// Frame rate handed to `ffmpeg`, from the `--record-fps` argument. One
+    /// frame is captured per rendered frame, so this must match the screen/
+    /// render rate or the video stretches out of sync with the realtime audio.
     fps: u32,
     /// Set once the capture target + readback have been wired up.
     capture_ready: bool,
@@ -97,11 +112,11 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(output: PathBuf) -> Self {
+    pub fn new(output: PathBuf, fps: u32) -> Self {
         let (audio_in_tx, audio_in_rx) = channel();
         Self {
             output,
-            fps: 50,
+            fps: fps.max(1),
             capture_ready: false,
             width: 0,
             height: 0,
@@ -147,8 +162,10 @@ impl Recorder {
         }
     }
 
-    /// Append captured audio to the encoder (or buffer it until the encoder
-    /// starts), tracking the native rate for `ffmpeg`'s input.
+    /// Forward captured audio to the encoder, or buffer it until the encoder
+    /// starts, tracking the native rate for `ffmpeg`'s input. The audio comes
+    /// from the cpal output (the actual played stream), which is already
+    /// realtime-paced, so it can be muxed straight through without re-pacing.
     fn write_audio(&mut self, rate: f32, samples: &[i16]) {
         if self.finished {
             return;
@@ -160,21 +177,17 @@ impl Recorder {
         for s in samples {
             bytes.extend_from_slice(&s.to_le_bytes());
         }
-        match &self.pipeline {
-            Some(p) => {
-                if let Some(tx) = &p.audio_tx {
-                    let _ = tx.send(bytes);
-                }
-                // Video-only pipeline: discard audio.
+        if let Some(p) = &self.pipeline {
+            if let Some(tx) = &p.audio_tx {
+                let _ = tx.send(bytes);
             }
-            None => {
-                self.pending_audio.extend_from_slice(&bytes);
-                if self.pending_audio.len() > MAX_PENDING_AUDIO {
-                    let trim = (self.pending_audio.len() - MAX_PENDING_AUDIO).next_multiple_of(4);
-                    self.pending_audio
-                        .drain(..trim.min(self.pending_audio.len()));
-                }
-            }
+            return; // video-only pipeline: discard audio
+        }
+        self.pending_audio.extend_from_slice(&bytes);
+        if self.pending_audio.len() > MAX_PENDING_AUDIO {
+            let trim = (self.pending_audio.len() - MAX_PENDING_AUDIO).next_multiple_of(4);
+            self.pending_audio
+                .drain(..trim.min(self.pending_audio.len()));
         }
     }
 
@@ -307,6 +320,14 @@ impl Recorder {
         if let Some(fifo) = &fifo_path {
             let (atx, arx) = channel::<Vec<u8>>();
             let fifo = fifo.clone();
+            // Drop the startup backlog so the audio doesn't begin ahead of the
+            // first captured video frame; keep only the newest few frames.
+            let frame_bytes = ((self.audio_rate / fps as f32).round() as usize) * 2 * 2;
+            let keep = (frame_bytes * AUDIO_START_LATENCY_FRAMES).next_multiple_of(4);
+            if self.pending_audio.len() > keep {
+                let drop = self.pending_audio.len() - keep;
+                self.pending_audio.drain(..drop);
+            }
             let pending = std::mem::take(&mut self.pending_audio);
             let _ = std::thread::Builder::new()
                 .name("record-audio".into())
@@ -403,7 +424,6 @@ fn setup_capture(
     mut recorder: ResMut<Recorder>,
     mut images: ResMut<Assets<Image>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    monitor: Query<&Monitor, With<PrimaryMonitor>>,
     emus: Query<&Emulator>,
     mut targets: Query<&mut RenderTarget, With<Camera>>,
 ) {
@@ -436,17 +456,6 @@ fn setup_capture(
         .unwrap_or((win_w, win_h));
     let scale = win_w.div_ceil(src_w).max(win_h.div_ceil(src_h)).max(1);
     let (w, h) = (src_w * scale, src_h * scale);
-
-    if let Some(mhz) = monitor
-        .iter()
-        .next()
-        .and_then(|m| m.refresh_rate_millihertz)
-    {
-        let fps = ((mhz as f64) / 1000.0).round() as u32;
-        if fps >= 1 {
-            recorder.fps = fps;
-        }
-    }
 
     // Render target. Must use the default 2D format so it matches the
     // post-process pipeline's color target. COPY_SRC lets the readback copy it.

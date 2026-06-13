@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::sync::mpsc::Sender;
 
 use anyhow::Result;
 
@@ -181,7 +182,10 @@ pub struct SendStream(#[allow(dead_code)] cpal::Stream);
 unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
-pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
+pub fn init_audio_stream(
+    mut consumer: HeapCons<f32>,
+    record_tx: Option<Sender<(f32, Vec<i16>)>>,
+) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
@@ -221,12 +225,25 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
         config.sample_rate.0, config.channels, config.buffer_size
     );
 
+    let record_rate = config.sample_rate.0 as f32;
     let stream = device.build_output_stream(
         &config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let count = consumer.pop_slice(output);
-            if count == 0 {
-                output.fill(0.0);
+            // Zero any tail we couldn't fill so the device (and the recording)
+            // gets silence on underrun rather than stale samples.
+            if count < output.len() {
+                output[count..].fill(0.0);
+            }
+            // Tap the exact buffer handed to the device: this is the realtime,
+            // rate-controlled stream the user actually hears, so the recording
+            // stays glitch-free and in sync with the realtime video.
+            if let Some(tx) = &record_tx {
+                let pcm = output
+                    .iter()
+                    .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+                    .collect();
+                let _ = tx.send((record_rate, pcm));
             }
         },
         |err| eprintln!("audio stream error: {err}"),
@@ -243,12 +260,15 @@ pub struct AudioSink {
     pub sample_rate: f32,
     pub stream: Option<SendStream>,
     pub resampler: Option<AudioResampler>,
+    /// When set (the emulator being recorded), the played output is copied here
+    /// from the device callback. Wired in before [`AudioSink::activate`].
+    pub record_tx: Option<Sender<(f32, Vec<i16>)>>,
 }
 
 impl AudioSink {
     pub fn activate(&mut self) {
         let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-        let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
+        let (sample_rate, stream) = init_audio_stream(consumer, self.record_tx.clone()).unwrap();
 
         let resampler = AudioResampler::new(44100, sample_rate as u32)
             .expect("Failed to create audio resampler");

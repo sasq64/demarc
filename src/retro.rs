@@ -138,6 +138,14 @@ fn setup_ui_camera(mut commands: Commands, args: Res<Args>) {
             ..default()
         },
         RenderLayers::layer(2),
+        // Pin the HUD/UI to this camera explicitly. Otherwise Bevy's default-UI-
+        // camera fallback picks the highest-order camera *targeting the primary
+        // window*; during recording `setup_capture` retargets this camera to the
+        // off-screen capture image and adds a window-only display camera (order
+        // 1000), which would then steal the UI and draw it straight to the
+        // window — visible on screen but absent from the recorded image. The
+        // marker keeps the HUD on this camera so it lands in the captured frame.
+        IsDefaultUiCamera,
     ));
 }
 
@@ -459,7 +467,7 @@ fn run_retro(
         // Record the first emulator's audio when --record is active.
         if i == 0 && emu.record_tx.is_none() {
             if let Some(recorder) = &recorder {
-                emu.record_tx = Some(recorder.audio_sender());
+                emu.set_record_tx(recorder.audio_sender());
             }
         }
 

@@ -282,7 +282,6 @@ impl Emulator {
             core,
             sink,
             audio_rate_adjust,
-            record_tx,
             ..
         } = self;
         let Some(core) = core else {
@@ -296,13 +295,22 @@ impl Emulator {
             if samples.is_empty() {
                 return;
             }
-            // Tap the raw samples for the recorder before they're resampled
-            // for output; this runs even when this emulator's output is muted.
-            if let Some(tx) = record_tx.as_ref() {
-                let _ = tx.send((from as f32, samples.to_vec()));
-            }
             sink.push_audio(from as f32, samples);
         });
+    }
+
+    /// Route this emulator's *played* audio (the cpal output) to the recorder.
+    /// We record the played stream, not the core's raw samples, because the sink
+    /// has already resampled and rate-controlled it to a smooth realtime pace —
+    /// raw `core.run()` output arrives in startup bursts that desync the video.
+    /// Rebuilds the stream if it is already running so the tap takes effect.
+    pub fn set_record_tx(&mut self, tx: Sender<(f32, Vec<i16>)>) {
+        self.record_tx = Some(tx.clone());
+        self.sink.record_tx = Some(tx);
+        if self.sink.stream.is_some() {
+            self.sink.deactivate();
+            self.sink.activate();
+        }
     }
 
     /// Map the cursor keys and Enter to a `RETRO_DEVICE_ID_JOYPAD_*` button.
