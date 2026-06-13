@@ -242,7 +242,10 @@ impl RetroCoreDirect {
                     0
                 }
             }
-            // Mouse and keyboard are only wired to port 0.
+            RETRO_DEVICE_KEYBOARD if self.state.keys.len() > id as usize => {
+                self.state.keys[id as usize] as i16
+            }
+            // The mouse is only wired to port 0.
             _ if port != 0 => 0,
             RETRO_DEVICE_MOUSE => match id {
                 RETRO_DEVICE_ID_MOUSE_X => {
@@ -256,9 +259,6 @@ impl RetroCoreDirect {
                 RETRO_DEVICE_ID_MOUSE_MIDDLE => self.mouse.middle as i16,
                 _ => 0,
             },
-            RETRO_DEVICE_KEYBOARD if self.state.keys.len() > id as usize => {
-                self.state.keys[id as usize] as i16
-            }
             _ => 0,
         }
     }

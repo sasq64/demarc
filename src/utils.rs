@@ -18,6 +18,7 @@ pub enum SystemType {
     Megadrive,
     Atari2600,
     SuperNintendo,
+    ZXSpectrum,
     #[default]
     Unknown,
 }
@@ -49,6 +50,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
             "dsk" => SystemType::Amstrad,
             "msa" | "st" => SystemType::AtariST,
             "a26" => SystemType::Atari2600,
+            "tap" | "scl" => SystemType::ZXSpectrum,
             "smc" | "sfc" => SystemType::SuperNintendo,
             _ => SystemType::Unknown,
         }
