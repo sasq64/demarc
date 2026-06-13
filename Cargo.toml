@@ -5,6 +5,8 @@ edition = "2024"
 
 [build-dependencies]
 cc = "1"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
 
 [dependencies]
 bevy = { version = "0.18.1", features = ["file_watcher"] }
