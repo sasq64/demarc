@@ -444,7 +444,7 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
                 debug!("COPY ALL: {name}");
                 fs::write(
                     s_dir.join("startup-sequence"),
-                    format!("echo \"Loading {name}...\"\n{name}\n"),
+                    format!("echo \"Loading...\"\n{name}\n"),
                 )?;
                 copy_dir_all(path.parent().unwrap(), &target_dir)?;
             } else {
