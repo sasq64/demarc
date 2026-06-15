@@ -42,6 +42,14 @@ fn check_reset_vector(data: &[u8]) -> bool {
     reset_addr as u32 >= bank_start
 }
 
+pub fn is_disk_image(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+        let ext = ext.to_lowercase();
+        return ["d64", "d81", "adf", "dms", "msa", "st", "atr", "xex"].contains(&ext.as_str());
+    }
+    false
+}
+
 pub fn get_system_type(path: &Path) -> SystemType {
     let mut system_type = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();
@@ -552,6 +560,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut dirs = vec![];
     let mut found_type = SystemType::Unknown;
     let mut mixed = false;
+    let mut disk_images = true;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -568,13 +577,16 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
                 if found_type != SystemType::Unknown && found_type != t {
                     mixed = true;
                 }
+                if !is_disk_image(&path) {
+                    disk_images = false;
+                }
                 found_type = t;
                 files.push(path);
             }
         }
     }
 
-    if mixed {
+    if mixed || (!disk_images) {
         out.extend(files.iter().map(|f| f.into()));
     } else if found_type != SystemType::Unknown {
         out.push(dir.to_owned());
