@@ -126,7 +126,6 @@ fn spawn_toast(
             HudLocation::BottomLeft => {
                 commands.spawn((
                     Node {
-                        //width: Val::Px(400.0),
                         position_type: PositionType::Absolute,
                         bottom: Val::Px(0.0),
                         left: Val::Px(0.0),
@@ -150,7 +149,6 @@ fn spawn_toast(
             HudLocation::TopLeft => {
                 commands.spawn((
                     Node {
-                        //width: Val::Px(400.0),
                         position_type: PositionType::Absolute,
                         top: Val::Px(0.0),
                         left: Val::Px(0.0),
@@ -177,7 +175,6 @@ fn spawn_toast(
             HudLocation::TopRight => {
                 commands.spawn((
                     Node {
-                        //width: Val::Px(400.0),
                         position_type: PositionType::Absolute,
                         top: Val::Px(0.0),
                         right: Val::Px(0.0),

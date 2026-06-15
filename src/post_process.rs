@@ -143,8 +143,8 @@ fn update_post_process_uniform(
     )>,
 ) {
     for (entity, pp, camera, existing) in &mut query {
-        let uniform = compute_uniform(pp, &(*settings), camera, &images);
-        let scissor = BorderScissor(compute_scissor(&uniform, &(*settings), camera));
+        let uniform = compute_uniform(pp, &settings, camera, &images);
+        let scissor = BorderScissor(compute_scissor(&uniform, &settings, camera));
         match existing {
             Some(mut u) => *u = uniform,
             None => {
@@ -158,7 +158,11 @@ fn update_post_process_uniform(
 /// Clip rectangle for the blit so the bars keep the clear color. Returns `None`
 /// (no clipping) for [`BorderMode::Stretch`], or when the image fills the whole
 /// viewport (`Stretch`/`Zoom` scaling), so we never scissor away visible pixels.
-fn compute_scissor(u: &PostProcessUniform, settings: &AppSettings, camera: &Camera) -> Option<URect> {
+fn compute_scissor(
+    u: &PostProcessUniform,
+    settings: &AppSettings,
+    camera: &Camera,
+) -> Option<URect> {
     if !matches!(settings.border_mode, BorderMode::Black) {
         return None;
     }

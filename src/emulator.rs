@@ -285,7 +285,6 @@ impl Emulator {
         };
         // Apply the PI controller's drift correction to the resampler ratio.
         sink.set_adjust(*audio_rate_adjust);
-        //resampler.set_adjust(*audio_rate_adjust);
         let from = core.sample_rate();
         core.with_audio(&mut |samples| {
             if samples.is_empty() {
@@ -442,15 +441,15 @@ impl Emulator {
 
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
-        let mut _fps = 60.0;
+        let mut measured_fps = 60.0;
         if delta > 0.0 {
-            _fps = 1.0 / delta;
+            measured_fps = 1.0 / delta;
             if self.display_fps == 0.0 {
-                if _fps > 40.0 || _fps < 500.0 {
-                    self.display_fps = _fps;
+                if measured_fps > 40.0 && measured_fps < 500.0 {
+                    self.display_fps = measured_fps;
                 }
             } else {
-                self.display_fps = self.display_fps * 0.95 + _fps * 0.05;
+                self.display_fps = self.display_fps * 0.95 + measured_fps * 0.05;
             }
         }
 
@@ -485,7 +484,7 @@ impl Emulator {
 
         trace!(
             "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-            _fps,
+            measured_fps,
             self.display_fps,
             ratio,
             time.delta_secs(),

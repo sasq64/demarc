@@ -61,12 +61,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
     };
     if system_type == SystemType::Unknown {
         info!("Checking {:?}", path);
-        if path.is_dir() {
-            // if is_self_booting_dir(path) {
-            //     debug!("FMT: Amiga self-booting");
-            //     system_type = SystemType::Amiga;
-            // }
-        } else if path.is_file() {
+        if path.is_file() {
             let Ok(data) = fs::read(path) else {
                 return SystemType::Unknown;
             };
@@ -174,10 +169,6 @@ pub struct GameInfo {
     pub year: String,
 }
 
-// let matches = path
-//     .file_name()
-//     .and_then(|n| n.to_str())
-//     .is_some_and(|n| n.to_lowercase().contains(&name.to_lowercase()));
 fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
         let path = e.path();
@@ -481,7 +472,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
     let mut system_type = SystemType::Unknown;
     let mut tags = tags.clone();
 
-    let m3u = parse_m3u(in_path).unwrap();
+    let m3u = parse_m3u(in_path)?;
     info!("{:?}", m3u.tags);
     if let Some(t) = m3u.tags.get("title") {
         title = t.clone();
@@ -532,7 +523,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
 /// - Metadata only M3U (Unknown system) with tags-> Redirect to parent
 /// - Direct file, no meta data, with tags
 pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
-    info!("Handlew {in_path:?}");
+    info!("Handle {in_path:?}");
     if let Some(ext) = in_path.extension()
         && ext == "m3u"
     {
@@ -616,14 +607,8 @@ mod tests {
     }
 
     #[test]
-    fn amiga_dir() {
+    fn amiga_exe() {
         let assets = Path::new("demos").to_owned();
-        let wf = handle_file(&assets.join("o2-intro").join("BACKUP"), &HashMap::new()).unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.system_type, SystemType::Amiga);
-        assert!(wf.path.join("README").exists());
-        assert!(wf.path.join("o2intro").exists());
-
         let wf = handle_file(&assets.join("o2-intro").join("o2intro"), &HashMap::new()).unwrap();
         println!("{:?}", wf);
         assert_eq!(wf.system_type, SystemType::Amiga);

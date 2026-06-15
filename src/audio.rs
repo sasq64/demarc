@@ -248,7 +248,10 @@ pub struct AudioSink {
 impl AudioSink {
     pub fn activate(&mut self) {
         let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-        let (sample_rate, stream) = init_audio_stream(consumer).unwrap();
+        let Ok((sample_rate, stream)) = init_audio_stream(consumer) else {
+            error!("Could not init audio");
+            return;
+        };
 
         let resampler = AudioResampler::new(44100, sample_rate as u32)
             .expect("Failed to create audio resampler");
@@ -267,11 +270,12 @@ impl AudioSink {
 
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
         if let Some(resampler) = &mut self.resampler {
-            if let Err(e) = resampler.process(from as u32, samples, |l, r| {
+            let res = resampler.process(from as u32, samples, |l, r| {
                 if let Some(producer) = &self.producer {
                     producer.lock().unwrap().push_iter([l, r].into_iter());
                 }
-            }) {
+            });
+            if let Err(e) = res {
                 warn!("audio resample error: {e}");
             }
         }

@@ -158,8 +158,6 @@ fn setup_retro(world: &mut World) {
     set_var("atari800_ntscpal", "PAL");
     //set_var("atari800_system", "Modern XL/XE(576K)");
     set_var("atari800_system", "Modern XL/XE(1088K)");
-    set_var("vice_c128_video_output", "VDC");
-
     set_var(
         "cbm_variant",
         match args.cbm_variant {
@@ -395,12 +393,12 @@ const fn config_line_width() -> f32 {
 }
 
 pub fn get_core(
-    sytem_type: SystemType,
+    system_type: SystemType,
     tags: &HashMap<String, String>,
 ) -> Result<PathBuf, &'static str> {
     let cv = tags.get("cbm_variant").map_or("", |s| s.as_str());
     info!("CBM VARIANT {cv}");
-    let core_name = match sytem_type {
+    let core_name = match system_type {
         SystemType::C64 if cv == "dtv" => CORE_NAME_VICE_DTV,
         SystemType::C64 if cv == "c128" => CORE_NAME_VICE_128,
         SystemType::C64 if cv == "c64_fast" => CORE_NAME_VICE_64,
@@ -514,7 +512,7 @@ fn run_retro(
             continue;
         }
 
-        if settings.all_emus || i == settings.current_emu && cmd.is_none() {
+        if (settings.all_emus || i == settings.current_emu) && cmd.is_none() {
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
         }
         if !emu.run(&time) {

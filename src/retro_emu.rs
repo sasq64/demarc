@@ -9,7 +9,7 @@ use std::sync::{Mutex, mpsc};
 use std::thread;
 
 use libloading::Library;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 unsafe extern "C" {
     fn demarc_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
@@ -109,7 +109,6 @@ pub struct RetroState {
     pub frame: Vec<u8>,
     pub frame_width: usize,
     pub frame_height: usize,
-    pub frame_dirty: bool,
     /// Display aspect ratio reported by the core (0.0 if unknown).
     pub aspect_ratio: f32,
     /// Audio sample rate reported by the core, in Hz (0.0 if unknown).
@@ -279,8 +278,7 @@ impl RetroCoreDirect {
                 let ptr = p.get();
                 if !ptr.is_null() {
                     let ctx = unsafe { &mut *ptr };
-                    let take = samples.len();
-                    ctx.audio_buf.extend(&samples[..take]);
+                    ctx.audio_buf.extend(samples);
                 }
             });
         }
@@ -367,7 +365,6 @@ impl RetroCoreDirect {
             }
             _ => {}
         }
-        state.frame_dirty = true;
     }
 
     unsafe extern "C" fn environment_cb(cmd: c_uint, data: *mut c_void) -> bool {
@@ -813,8 +810,10 @@ impl RetroEmu for RetroCoreDirect {
         RetroCoreDirect::unload(self)
     }
 
-    fn skip_frames(&mut self, _frames: u32) {
-        todo!()
+    fn skip_frames(&mut self, frames: u32) {
+        for _ in 0..frames {
+            RetroCoreDirect::run(self);
+        }
     }
 }
 
@@ -1060,9 +1059,7 @@ impl RetroEmu for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
-        } //else //dev/{
-        //panic!("No frame");
-        //}
+        }
         true
     }
     fn get_number_of_disks(&self) -> u32 {

@@ -87,6 +87,7 @@ impl KeyMapping {
 
 const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyN, "Next file", Cmd::NextFile),
+    KeyMapping::new(KeyCode::Space, "Next file", Cmd::NextFile),
     KeyMapping::new(KeyCode::KeyD, "Swap disk", Cmd::SwapDisk),
     KeyMapping::new(KeyCode::KeyS, "Change screen scale", Cmd::ChangeScale),
     KeyMapping::new(KeyCode::KeyC, "Toggle CRT filter", Cmd::ToggleCrt),
@@ -243,10 +244,10 @@ fn handle_cmd(
     mut writer: MessageWriter<SetHudText>,
 ) {
     let mut show_info = false;
+    let count = emus.iter().count();
+    let multi = count > 1;
     for cmd in cmds.read() {
         debug!("CMD: {:?}", cmd.0);
-        let count = emus.iter().count();
-        let multi = emus.count() > 1;
         match cmd.0 {
             Cmd::ToggleCrt => {
                 settings.crt_effect = !settings.crt_effect;
