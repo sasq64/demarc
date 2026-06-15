@@ -17,6 +17,7 @@ mod commands;
 mod emulator;
 mod hud;
 mod libloader;
+mod media_keys;
 mod post_process;
 mod retro;
 mod retro_emu;

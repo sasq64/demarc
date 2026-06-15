@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -9,6 +11,7 @@ use bevy::{
 use crate::AppSettings;
 use crate::emulator::{Emulator, InputMode};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
+use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::utils::{GameInfo, SystemType, WorkingFile};
 
@@ -446,14 +449,57 @@ fn handle_cmd(
     }
 }
 
+/// Holds the channels to the background MPRIS listener. The `mpsc` ends are
+/// wrapped in a `Mutex` so the resource is `Sync`; we keep the info sender alive
+/// (even though we don't push state to it) so the listener's channel stays open.
+#[derive(Resource)]
+struct MediaKeyChannel {
+    events: Mutex<mpsc::Receiver<MediaKeyEvent>>,
+    _info: Mutex<mpsc::Sender<MediaKeyInfo>>,
+}
+
+/// Start the media-key listener and store its channels.
+fn init_media_keys(mut commands: Commands) {
+    let (info, events) = media_keys::start();
+    commands.insert_resource(MediaKeyChannel {
+        events: Mutex::new(events),
+        _info: Mutex::new(info),
+    });
+}
+
+/// Translate media-key presses into [`Cmd`]s, mirroring the Ctrl-N / Ctrl-P
+/// hotkeys: Next plays the next file, Play/Pause toggles pause.
+fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<CmdMessage>) {
+    let Ok(events) = channel.events.lock() else {
+        return;
+    };
+    while let Ok(event) = events.try_recv() {
+        let cmd = match event {
+            MediaKeyEvent::Next => Some(Cmd::NextFile),
+            MediaKeyEvent::PlayPause | MediaKeyEvent::Play | MediaKeyEvent::Pause => {
+                Some(Cmd::PauseResume)
+            }
+            MediaKeyEvent::Previous | MediaKeyEvent::Stop => None,
+        };
+        if let Some(cmd) = cmd {
+            writer.write(CmdMessage(cmd, false));
+        }
+    }
+}
+
 pub struct CommandPlugin;
 
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>();
+        app.add_systems(Startup, init_media_keys);
         app.add_systems(
             Update,
-            (handle_textlist, handle_cmd.run_if(on_message::<CmdMessage>)),
+            (
+                handle_textlist,
+                handle_media_keys,
+                handle_cmd.run_if(on_message::<CmdMessage>),
+            ),
         );
     }
 }

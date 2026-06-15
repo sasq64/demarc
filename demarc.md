@@ -20,6 +20,7 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 * Can load disk images and executables
 * Right-Alt/Ctrl hotkey for disk switch etc
 * Can run multiple files at once in a grid
+* Linux: Pause screen blanker and handle media keys
 
 
 ## Download (Windows)
