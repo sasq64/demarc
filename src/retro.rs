@@ -33,6 +33,7 @@ const CORE_NAME_MEGADRIVE: &str = "picodrive";
 const CORE_NAME_STELLA: &str = "stella";
 const CORE_NAME_SNES: &str = "bsnes";
 const CORE_NAME_SPECTRUM: &str = "fuse";
+const CORE_NAME_XL: &str = "atari800";
 
 /// The `system` directory (BIOS/firmware files) bundled into the binary at
 /// build time. Extracted to the user's cache dir on first run.
@@ -151,6 +152,9 @@ fn setup_retro(world: &mut World) {
 
     set_var("latency", &args.latency.to_string());
     set_var("fuse_machine", "Spectrum 128K");
+    set_var("atari800_ntscpal", "PAL");
+    //set_var("atari800_system", "Modern XL/XE(576K)");
+    set_var("atari800_system", "Modern XL/XE(1088K)");
 
     if args.aga {
         set_var("puae_model", "A1200");
@@ -384,6 +388,7 @@ pub fn get_core(sytem_type: SystemType) -> Result<PathBuf, &'static str> {
         SystemType::Atari2600 => CORE_NAME_STELLA,
         SystemType::SuperNintendo => CORE_NAME_SNES,
         SystemType::ZXSpectrum => CORE_NAME_SPECTRUM,
+        SystemType::AtariXL => CORE_NAME_XL,
         SystemType::Unknown => return Err(""),
     };
 

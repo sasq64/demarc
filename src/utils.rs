@@ -19,6 +19,7 @@ pub enum SystemType {
     Atari2600,
     SuperNintendo,
     ZXSpectrum,
+    AtariXL,
     #[default]
     Unknown,
 }
@@ -52,6 +53,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
             "a26" => SystemType::Atari2600,
             "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
             "smc" | "sfc" => SystemType::SuperNintendo,
+            "atr" | "xex" | "atr" => SystemType::AtariXL,
             _ => SystemType::Unknown,
         }
     } else {
@@ -399,7 +401,7 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
                         .map(|e| e.to_string_lossy().to_string())
                         .unwrap_or("".into())
                         .to_lowercase();
-                    if ext == "d64" || ext == "adf" {
+                    if ext == "d64" || ext == "adf" || ext == "atr" {
                         debug!("Found {t:?}");
                         files.push(f.path());
                         path = f.path();
