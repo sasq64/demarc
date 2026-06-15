@@ -53,7 +53,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
             "a26" => SystemType::Atari2600,
             "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
             "smc" | "sfc" => SystemType::SuperNintendo,
-            "atr" | "xex" | "atr" => SystemType::AtariXL,
+            "atr" | "xex" | "atx" => SystemType::AtariXL,
             _ => SystemType::Unknown,
         }
     } else {

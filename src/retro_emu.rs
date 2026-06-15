@@ -384,7 +384,7 @@ impl RetroCoreDirect {
         ret
     }
     fn environment(&mut self, cmd: u32, data: *mut c_void) -> bool {
-        trace!("## ENV {cmd}");
+        // debug!("## ENV {cmd}");
         let mut handled = true;
         unsafe {
             match cmd {
@@ -481,6 +481,7 @@ impl RetroCoreDirect {
                     if !var.key.is_null() {
                         let key = CStr::from_ptr(var.key).to_string_lossy();
                         if let Some(value) = self.vars.get(key.as_ref()) {
+                            debug!("GET {key:?} {value:?}");
                             // Safe: the CString lives in the static OPTIONS map
                             // and is never mutated after SET_VARIABLES.
                             var.value = value.as_ptr();
@@ -679,13 +680,12 @@ impl RetroCoreDirect {
         // Relative motion has been consumed by the core this frame.
         self.mouse.dx = 0;
         self.mouse.dy = 0;
+        // Don't poll retro_get_system_av_info() here: av_info is captured once
+        // after load_game and kept current by the SET_SYSTEM_AV_INFO/SET_GEOMETRY
+        // callbacks. Some cores (e.g. atari800) re-run update_variables() inside
+        // get_system_av_info, so polling it every frame triggers a costly
+        // texture/option reinit on every frame.
         CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
-        CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
-        let mut av_info = retro_system_av_info::default();
-        unsafe { (self.retro_get_avinfo_fn)(&mut av_info) }
-        self.state.aspect_ratio = geometry_aspect(&av_info.geometry);
-        self.state.sample_rate = av_info.timing.sample_rate;
-        self.state.fps = av_info.timing.fps;
     }
 
     /// Display aspect ratio (width / height) the core wants, or 0.0 if unknown.
@@ -994,7 +994,6 @@ fn worker_loop(
                 let update = RetroUpdate {
                     ..Default::default()
                 };
-                info!("0 UPDATE");
                 if update_tx.send(update).is_err() {
                     return; // main side gone
                 }
