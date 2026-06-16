@@ -258,6 +258,7 @@ struct AppSettings {
     last_draw: f64,
     text_list: Option<Entity>,
     hotkey_pressed: f32,
+    mouse_index: Option<usize>,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
