@@ -542,8 +542,10 @@ fn run_retro(
             });
         }
 
+        let et = time.elapsed_secs_f64();
         if let Some(mt) = emu.max_time
-            && time.elapsed_secs_f64() > emu.start_time + (mt as f64)
+            && et > emu.start_time + (mt as f64)
+            && (et - settings.last_draw) > 1.0
         {
             emu.run_next = true;
         };
