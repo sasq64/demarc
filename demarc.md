@@ -27,7 +27,9 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 
 Pre-built windows binary [here](/dl/demarc.exe)
 
-(Note to windows users; if you _really_ don't want to use the command line, you can drag and drop demos onto the demarc executable to run them).
+*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system. 
+
+(Another note to windows users; if you _really_ don't want to use the command line, you can drag and drop demos onto the demarc executable to run them).
 
 
 ## Rust Install
@@ -48,7 +50,7 @@ Set your monitor to 50Hz if possible.
 
 `demarc --aga --shuffle Amiga/`
 
-*TIP:* Download all intros from [https://intros.c64.org](https://intros.c64.org/]) and run
+*TIP:* Download all intros from [https://intros.c64.org](https://intros.c64.org/) and run
 
 `demarc --grid=4x3 --shuffle intros_c64_org_12596_full`
 
@@ -75,7 +77,7 @@ _Right Alt_ or _Right Ctrl_ +
 
 ```
 D = Swap disk
-N = Next file
+SPACE = Next file
 S = Change scaling
 B = Change border
 I = Toggle Info
