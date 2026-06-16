@@ -31,7 +31,7 @@ fn sync_screen_saver(
     let fullscreen =
         !matches!(window.mode, WindowMode::Windowed) || covers_a_monitor(window, &monitors);
 
-    cursor_options.visible = !fullscreen;
+    cursor_options.visible = (!inhibitor.hide_mouse) || (!fullscreen);
 
     inhibitor.set_inhibited(fullscreen);
 }
@@ -70,9 +70,9 @@ fn covers_a_monitor(window: &Window, monitors: &Query<&Monitor>) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-use linux::ScreenSaverInhibitor;
+pub use linux::ScreenSaverInhibitor;
 #[cfg(not(target_os = "linux"))]
-use stub::ScreenSaverInhibitor;
+pub use stub::ScreenSaverInhibitor;
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -96,6 +96,7 @@ mod linux {
     pub struct ScreenSaverInhibitor {
         proxy: Option<ScreenSaverProxyBlocking<'static>>,
         cookie: Option<u32>,
+        pub hide_mouse: bool,
     }
 
     impl ScreenSaverInhibitor {
@@ -129,7 +130,9 @@ mod stub {
     use bevy::prelude::*;
 
     #[derive(Resource, Default)]
-    pub struct ScreenSaverInhibitor;
+    pub struct ScreenSaverInhibitor {
+        pub hide_mouse: bool,
+    }
 
     impl ScreenSaverInhibitor {
         pub fn set_inhibited(&mut self, _inhibited: bool) {}

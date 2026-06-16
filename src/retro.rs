@@ -20,6 +20,7 @@ use crate::emulator::Emulator;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
+use crate::screensaver::ScreenSaverInhibitor;
 use crate::utils::SystemType;
 use crate::{AppSettings, Args, CbmSystem, libloader};
 
@@ -39,13 +40,9 @@ const CORE_NAME_SPECTRUM: &str = "fuse";
 const CORE_NAME_XL: &str = "atari800";
 const CORE_NAME_TIC80: &str = "tic80";
 
-/// The `system` directory (BIOS/firmware files) bundled into the binary at
-/// build time. Extracted to the user's cache dir on first run.
-const SYSTEM_ZIP: &[u8] = include_bytes!("../system.zip");
+const SYSTEM_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/system.zip"));
 
 /// SHA-256 of `system.zip`, computed by `build.rs` when the archive is packed.
-/// Written to `system/.checksum` after extraction and compared on later runs to
-/// detect a stale cache (replaces the old `.v4` marker).
 const SYSTEM_CHECKSUM: &str = env!("SYSTEM_ZIP_CHECKSUM");
 
 pub fn system_dir() -> &'static Path {
@@ -218,6 +215,7 @@ fn setup_retro(world: &mut World) {
 
     if cells.is_empty() {
         spawn_emulator(world, tags, match_fps, max_time, None);
+        world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
         for (i, cell) in cells.into_iter().enumerate() {
             spawn_emulator(world, tags.clone(), match_fps, max_time, Some((i, cell)));
@@ -279,13 +277,17 @@ fn spawn_emulator(
 /// full window with no gap or overlap.
 fn update_grid_viewports(
     window: Single<&Window, With<PrimaryWindow>>,
-    settings: Res<AppSettings>,
+    mut settings: ResMut<AppSettings>,
     mut cameras: Query<(&GridCell, &EmuView, &mut Camera)>,
 ) {
     let size = window.physical_size();
     if size.x == 0 || size.y == 0 {
         return;
     }
+
+    let pos = window.cursor_position().unwrap_or_default() * window.scale_factor();
+    settings.mouse_index = None;
+
     let fsize = size.as_vec2();
     for (cell, view, mut camera) in &mut cameras {
         // When maximized, the focused emulator fills the whole window and the
@@ -307,6 +309,18 @@ fn update_grid_viewports(
             let far = ((cell.offset + cell.size) * fsize).round().as_uvec2();
             (position, far - position)
         };
+
+        if !settings.maximized {
+            let p0 = cell.offset * fsize;
+            let p1 = (cell.offset + cell.size) * fsize;
+            let r = Rect::from_corners(p0, p1);
+            if r.contains(pos) {
+                settings.mouse_index = Some(view.index);
+            }
+        } else {
+            settings.mouse_index = Some(99999);
+        }
+
         // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
         // avoid retriggering change detection every frame when nothing moved.
         let unchanged = camera
@@ -474,6 +488,21 @@ fn run_retro(
 
     let cmd = if hot_key { check_hotkey(&input) } else { None };
 
+    let mut show_info = false;
+    if mouse_buttons.just_pressed(MouseButton::Left)
+        && let Some(i) = settings.mouse_index
+    {
+        let t = time.elapsed_secs_f64();
+        if t - settings.last_draw < 0.2 {
+            settings.maximized = !settings.maximized;
+        }
+        if i < 999 {
+            settings.current_emu = i;
+            show_info = true;
+        }
+        settings.last_draw = t;
+    }
+
     if let Some(cmd) = cmd {
         settings.hotkey_pressed = 0.0;
         cmd_writer.write(CmdMessage(cmd, shift));
@@ -504,8 +533,19 @@ fn run_retro(
             continue;
         }
 
+        if show_info && i == settings.current_emu {
+            writer.write(SetHudText {
+                text: get_info_text(&emu.work_file),
+                duration: Duration::from_secs(2),
+                location: HudLocation::InfoText,
+                ..Default::default()
+            });
+        }
+
+        let et = time.elapsed_secs_f64();
         if let Some(mt) = emu.max_time
-            && time.elapsed_secs_f64() > emu.start_time + (mt as f64)
+            && et > emu.start_time + (mt as f64)
+            && (et - settings.last_draw) > 1.0
         {
             emu.run_next = true;
         };
