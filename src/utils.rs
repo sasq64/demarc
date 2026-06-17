@@ -459,6 +459,8 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
             if copy_all {
                 let name = path.file_name().unwrap().to_str().unwrap();
                 text += &format!("echo \"Loading...\"\n{name}\n");
+            } else {
+                text += "echo \"Loading...\"\namiga_file\n";
             }
             fs::write(s_dir.join("startup-sequence"), text)?;
             if copy_all {
