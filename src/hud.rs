@@ -1,7 +1,9 @@
+#![allow(clippy::type_complexity)]
 use std::collections::HashMap;
 use std::time::Duration;
 
 use bevy::prelude::*;
+
 use bevy::window::{PrimaryWindow, WindowResized};
 use bevy_tweening::lens::TextColorLens;
 use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim};
@@ -123,78 +125,72 @@ fn spawn_toast(
                     TweenAnim::new(tween),
                 ))
             }
-            HudLocation::BottomLeft => {
-                commands.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        bottom: Val::Px(0.0),
-                        left: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(40.0)),
-                        ..default()
-                    },
-                    Text::new(&msg.text),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 64.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
-                    TextLayout {
-                        justify: Justify::Right,
-                        linebreak: LineBreak::WordBoundary,
-                    },
-                    TweenAnim::new(tween),
-                ))
-            }
-            HudLocation::TopLeft => {
-                commands.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: Val::Px(0.0),
-                        left: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(20.0)),
-                        ..default()
-                    },
-                    Text::new(&msg.text),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: font_size * 0.7,
-                        ..default()
-                    },
-                    RelativeTextSize {
-                        fraction: fraction * 0.7,
-                    },
-                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
-                    TextLayout {
-                        justify: Justify::Right,
-                        linebreak: LineBreak::WordBoundary,
-                    },
-                    TweenAnim::new(tween),
-                ))
-            }
-            HudLocation::TopRight => {
-                commands.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        top: Val::Px(0.0),
-                        right: Val::Px(0.0),
-                        margin: UiRect::all(Val::Px(60.0)),
-                        ..default()
-                    },
-                    Text::new(&msg.text),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 72.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
-                    TextLayout {
-                        justify: Justify::Right,
-                        linebreak: LineBreak::WordBoundary,
-                    },
-                    TweenAnim::new(tween),
-                ))
-            }
+            HudLocation::BottomLeft => commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    margin: UiRect::all(Val::Px(40.0)),
+                    ..default()
+                },
+                Text::new(&msg.text),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 64.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextLayout {
+                    justify: Justify::Right,
+                    linebreak: LineBreak::WordBoundary,
+                },
+                TweenAnim::new(tween),
+            )),
+            HudLocation::TopLeft => commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    margin: UiRect::all(Val::Px(20.0)),
+                    ..default()
+                },
+                Text::new(&msg.text),
+                TextFont {
+                    font: font.clone(),
+                    font_size: font_size * 0.7,
+                    ..default()
+                },
+                RelativeTextSize {
+                    fraction: fraction * 0.7,
+                },
+                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextLayout {
+                    justify: Justify::Right,
+                    linebreak: LineBreak::WordBoundary,
+                },
+                TweenAnim::new(tween),
+            )),
+            HudLocation::TopRight => commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    margin: UiRect::all(Val::Px(60.0)),
+                    ..default()
+                },
+                Text::new(&msg.text),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 72.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextLayout {
+                    justify: Justify::Right,
+                    linebreak: LineBreak::WordBoundary,
+                },
+                TweenAnim::new(tween),
+            )),
         };
         state.current_texts.insert(msg.location, entity.id());
     }

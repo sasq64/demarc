@@ -21,6 +21,7 @@ use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
+use crate::text_input::TextInput;
 use crate::utils::SystemType;
 use crate::{AppSettings, Args, CbmSystem, libloader};
 
@@ -140,6 +141,16 @@ fn setup_ui_camera(mut commands: Commands, args: Res<Args>) {
             ..default()
         },
         RenderLayers::layer(2),
+    ));
+    commands.spawn((
+        Node {
+            display: Display::None,
+            position_type: PositionType::Absolute,
+            bottom: px(25.0),
+            left: px(15.0),
+            ..default()
+        },
+        TextInput::default(),
     ));
 }
 

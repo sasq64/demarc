@@ -22,6 +22,7 @@ mod post_process;
 mod retro;
 mod retro_emu;
 mod screensaver;
+mod text_input;
 mod utils;
 
 use commands::CommandPlugin;
@@ -29,6 +30,7 @@ use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
+use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
 use crate::utils::collect_files;
@@ -359,6 +361,7 @@ fn main() {
             PostProcessPlugin,
             TweeningPlugin,
             HudPlugin,
+            TextInputPlugin,
             ScreenSaverPlugin,
         ));
     if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
