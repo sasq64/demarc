@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::retro::system_dir;
+use crate::{libretro::retro_game_geometry, retro::system_dir};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum SystemType {
@@ -550,6 +550,30 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
         game_info,
         is_temp,
     })
+}
+
+pub fn get_info(in_path: &Path) -> Result<GameInfo> {
+    let mut game_info = GameInfo {
+        title: in_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        ..Default::default()
+    };
+
+    let m3u = parse_m3u(in_path)?;
+    info!("{:?}", m3u.tags);
+    if let Some(t) = m3u.tags.get("title") {
+        game_info.title = t.clone();
+    }
+    if let Some(t) = m3u.tags.get("group") {
+        game_info.group = t.clone();
+    }
+    if let Some(t) = m3u.tags.get("year") {
+        game_info.year = t.clone();
+    }
+    Ok(game_info)
 }
 
 fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {

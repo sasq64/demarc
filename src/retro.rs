@@ -17,12 +17,12 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey, get_info_text};
 use crate::emulator::Emulator;
-use crate::hud::{HudLocation, SetHudText};
+use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::text_input::TextInput;
-use crate::utils::SystemType;
+use crate::utils::{SystemType, get_info};
 use crate::{AppSettings, Args, CbmSystem, libloader};
 
 pub struct RetroPlugin {}
@@ -160,6 +160,7 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
+    let settings = world.resource::<AppSettings>();
     let mut tags = HashMap::new();
     let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
 
@@ -225,6 +226,13 @@ fn setup_retro(world: &mut World) {
 
     let cells = grid_layout(args);
 
+    let mut names = vec![];
+
+    for game in &settings.games {
+        let info = get_info(game).unwrap_or_default();
+        names.push(info.title);
+        //
+    }
     if cells.is_empty() {
         spawn_emulator(world, tags, match_fps, max_time, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
@@ -233,6 +241,11 @@ fn setup_retro(world: &mut World) {
             spawn_emulator(world, tags.clone(), match_fps, max_time, Some((i, cell)));
         }
     }
+
+    let asset_server = world.resource::<AssetServer>();
+    let font: Handle<Font> = asset_server.load("font.ttf");
+    let mut commands = world.commands();
+    TextList::spawn(&mut commands, font, names, 10, 200.0);
 }
 
 /// Create a single emulator entity: its own audio stream + ring buffer, its own

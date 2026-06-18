@@ -362,8 +362,7 @@ fn main() {
                     ..Default::default()
                 })
                 // Load assets from the extracted `system` dir so they can ship
-                // inside `system.zip` (embedded in the binary) rather than a
-                // loose `assets/` folder next to the executable.
+                // inside `system.zip` (embedded in the binary)
                 .set(AssetPlugin {
                     file_path: system_dir().to_string_lossy().into_owned(),
                     ..Default::default()
