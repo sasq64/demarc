@@ -37,6 +37,7 @@ fn check_reset_vector(data: &[u8]) -> bool {
     let reset_lo = data[len - 4 + 2] as u16;
     let reset_hi = data[len - 4 + 3] as u16;
     let reset_addr = (reset_hi << 8) | reset_lo;
+    println!("RESET {reset_addr:0x}");
 
     // Should point into the high ROM bank, typically $F000–$FFFF
     // (or $E000–$FFFF for 8KB, etc.)
@@ -102,6 +103,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
             }
         }
     }
+    debug!("Found {system_type:?}");
     system_type
 }
 
@@ -319,15 +321,21 @@ fn is_zip_file(path: &Path) -> bool {
     file.read_exact(&mut magic).is_ok() && magic == [0x50, 0x4b, 0x03, 0x04]
 }
 
-/// Extract `path` (a zip archive) into a fresh temp directory and return that
-/// directory.
-fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
-    archive.extract(&target_dir)?;
+/// True if `path` is a regular file whose LHA/LZH method id (`-lhX-`, `-lzX-`)
+/// sits at offset 2, as in every LHA archive header.
+fn is_lha_file(path: &Path) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut magic = [0u8; 7];
+    file.read_exact(&mut magic).is_ok() && magic[2] == b'-' && magic[3] == b'l' && magic[6] == b'-'
+}
 
-    // If the archive contained a single top-level directory, descend into it so
-    // the release-detection logic sees the actual files, not the wrapper dir.
+/// If the freshly-extracted `target_dir` contains a single top-level directory,
+/// descend into it so the release-detection logic sees the actual files, not
+/// the wrapper dir.
+fn descend_single_dir(target_dir: PathBuf) -> Result<PathBuf> {
     let entries: Vec<PathBuf> = fs::read_dir(&target_dir)?
         .flatten()
         .map(|e| e.path())
@@ -338,6 +346,43 @@ fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
         return Ok(only.clone());
     }
     Ok(target_dir)
+}
+
+/// Extract `path` (a zip archive) into a fresh temp directory and return that
+/// directory.
+fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
+    archive.extract(&target_dir)?;
+    descend_single_dir(target_dir)
+}
+
+/// Extract `path` (an LHA/LZH archive) into a fresh temp directory and return
+/// that directory.
+fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
+    use std::io::Read;
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let mut reader = delharc::parse_file(path)?;
+    loop {
+        let header = reader.header();
+        let out_path = target_dir.join(header.parse_pathname());
+        if header.is_directory() {
+            fs::create_dir_all(&out_path)?;
+        } else if reader.is_decoder_supported() {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut data = Vec::new();
+            reader.read_to_end(&mut data)?;
+            fs::write(&out_path, &data)?;
+        } else {
+            warn!("Unsupported LHA compression for {out_path:?}");
+        }
+        if !reader.next_file().map_err(std::io::Error::from)? {
+            break;
+        }
+    }
+    descend_single_dir(target_dir)
 }
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
@@ -371,6 +416,11 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
     if path.is_file() && is_zip_file(&path) {
         debug!("FMT: zip archive");
         path = unzip_to_temp(&path)?;
+        is_temp = true;
+        system_type = get_system_type(&path);
+    } else if path.is_file() && is_lha_file(&path) {
+        debug!("FMT: lha archive");
+        path = unlha_to_temp(&path)?;
         is_temp = true;
         system_type = get_system_type(&path);
     }
