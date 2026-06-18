@@ -14,6 +14,7 @@ mod libretro;
 mod audio;
 mod commands;
 mod emulator;
+mod fetch;
 mod hud;
 mod libloader;
 mod media_keys;
@@ -62,7 +63,7 @@ demarc --aga --shuffle AmigaDemos/
 demarc --grid=3x3 gfx/*.prg
 "#)]
 struct Args {
-    /// Path to the files to load
+    /// Path to the files to load, or an http(s):// URL to download and run
     files: Vec<PathBuf>,
 
     /// Treat disk images in same dir as separate files
@@ -289,6 +290,18 @@ fn main() {
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut games = Vec::with_capacity(args.files.len());
     for game in std::mem::take(&mut args.files) {
+        // Download HTTP(S) URLs to the local cache and continue with the file,
+        // so demarc can be launched directly with a link from a browser.
+        let game = match game.to_str() {
+            Some(s) if fetch::is_url(s) => match fetch::fetch_url(s) {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::error!("Failed to download {s}: {e}");
+                    continue;
+                }
+            },
+            _ => game,
+        };
         if game.is_dir() {
             let len = games.len();
             collect_files(&game, &mut games, args.many);
