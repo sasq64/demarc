@@ -52,6 +52,7 @@ pub enum HudLocation {
     BottomLeft,
     TopLeft,
     TopRight,
+    Error,
 }
 
 #[derive(Default, Message)]
@@ -125,7 +126,7 @@ fn spawn_toast(
                         ..default()
                     },
                     RelativeTextSize { fraction },
-                    TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
                     TextLayout {
                         justify: Justify::Right,
                         linebreak: LineBreak::WordBoundary,
@@ -147,7 +148,7 @@ fn spawn_toast(
                     font_size: FontSize::Px(64.0),
                     ..default()
                 },
-                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
                 TextLayout {
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
@@ -171,7 +172,7 @@ fn spawn_toast(
                 RelativeTextSize {
                     fraction: fraction * 0.7,
                 },
-                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
                 TextLayout {
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
@@ -192,7 +193,28 @@ fn spawn_toast(
                     font_size: FontSize::Px(72.0),
                     ..default()
                 },
-                TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+                TextLayout {
+                    justify: Justify::Right,
+                    linebreak: LineBreak::WordBoundary,
+                },
+                fade(),
+            )),
+            HudLocation::Error => commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    margin: UiRect::all(Val::Px(40.0)),
+                    ..default()
+                },
+                Text::new(&msg.text),
+                TextFont {
+                    font: font.clone(),
+                    font_size: FontSize::Px(32.0),
+                    ..default()
+                },
+                TextColor(Color::srgba(1.0, 0.0, 0.0, 0.0)),
                 TextLayout {
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
@@ -368,7 +390,10 @@ fn drive_hud_fades(
             continue;
         };
 
-        color.0 = Color::srgba(1.0, 1.0, 1.0, alpha);
+        let mut col = color.0;
+        col.set_alpha(alpha);
+        color.0 = col;
+        //color.0 = Color::srgba(1.0, 1.0, 1.0, alpha);
     }
 }
 

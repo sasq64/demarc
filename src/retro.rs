@@ -533,16 +533,29 @@ fn run_retro(
         if emu.run_next && settings.current_game < settings.games.len() {
             emu.run_next = false;
             let game = settings.games[settings.current_game].clone();
-            emu.load(&time, &game);
             settings.current_game += 1;
-            if settings.show_info && settings.maximized {
-                writer.write(SetHudText {
-                    text: get_info_text(&emu.work_file),
-                    delay: Duration::from_secs(8),
-                    duration: Duration::from_secs(15),
-                    location: HudLocation::InfoText,
-                });
-            }
+            match emu.load(&time, &game) {
+                Err(e) => {
+                    let text = format!("{:?}: {e:?}", game.file_name().unwrap_or_default());
+                    writer.write(SetHudText {
+                        text,
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(4),
+                        location: HudLocation::Error,
+                    });
+                    error!("{e:?}");
+                }
+                Ok(()) => {
+                    if settings.show_info && settings.maximized {
+                        writer.write(SetHudText {
+                            text: get_info_text(&emu.work_file),
+                            delay: Duration::from_secs(8),
+                            duration: Duration::from_secs(15),
+                            location: HudLocation::InfoText,
+                        });
+                    }
+                }
+            };
             continue;
         }
 
