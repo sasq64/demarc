@@ -111,7 +111,7 @@ struct Args {
     silent_drive: bool,
 
     /// Open windowed instead of full screen
-    #[arg(long)]
+    #[arg(short, long)]
     window: bool,
 
     /// Max number of seconds to play a file before skipping
@@ -127,7 +127,7 @@ struct Args {
     latency: u32,
 
     /// Extra options to add to libretro
-    #[arg(long, value_delimiter = ',')]
+    #[arg(short = 'x', long, value_delimiter = ',')]
     extra_options: Vec<String>,
 
     /// Render multiple emulators in a COLSxROWS grid, e.g. --grid=5x4
