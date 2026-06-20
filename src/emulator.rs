@@ -404,32 +404,37 @@ impl Emulator {
     }
 
     pub fn load(&mut self, time: &Time, game: &Path) {
-        if let Ok(work_file) = handle_file(game, &self.tags) {
-            self.core = None;
-            let core = match create_core(
-                work_file.system_type,
-                &work_file.path,
-                work_file.settings.clone(),
-            ) {
-                Ok(core) => core,
-                Err(e) => {
-                    error!("Could not load core for {:?}: {e:#}", work_file.system_type);
-                    return;
+        match handle_file(game, &self.tags) {
+            Ok(work_file) => {
+                self.core = None;
+                let core = match create_core(
+                    work_file.system_type,
+                    &work_file.path,
+                    work_file.settings.clone(),
+                ) {
+                    Ok(core) => core,
+                    Err(e) => {
+                        error!("Could not load core for {:?}: {e:#}", work_file.system_type);
+                        return;
+                    }
+                };
+                let t = work_file.system_type;
+                if t == SystemType::Megadrive
+                    || t == SystemType::SuperNintendo
+                    || t == SystemType::Atari2600
+                {
+                    self.input_mode = InputMode::Joystick1;
                 }
-            };
-            let t = work_file.system_type;
-            if t == SystemType::Megadrive
-                || t == SystemType::SuperNintendo
-                || t == SystemType::Atari2600
-            {
-                self.input_mode = InputMode::Joystick1;
+                self.core = Some(core);
+                self.work_file = work_file;
+                self.run_next = false;
+                self.next_frame = time.elapsed_secs_f64();
+                self.start_time = time.elapsed_secs_f64();
+                trace!("FRAME START");
             }
-            self.core = Some(core);
-            self.work_file = work_file;
-            self.run_next = false;
-            self.next_frame = time.elapsed_secs_f64();
-            self.start_time = time.elapsed_secs_f64();
-            trace!("FRAME START");
+            Err(e) => {
+                eprintln!("Error {e:?}");
+            }
         }
     }
     pub fn skip(&mut self, frames: u32) {
