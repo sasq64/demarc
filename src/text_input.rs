@@ -189,3 +189,247 @@ impl Plugin for TextInputPlugin {
             );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Collects every submitted line so tests can assert on it after `update()`.
+    #[derive(Resource, Default)]
+    struct Collected(Vec<String>);
+
+    fn collect(mut reader: MessageReader<TextInputSubmitted>, mut out: ResMut<Collected>) {
+        for msg in reader.read() {
+            out.0.push(msg.text.clone());
+        }
+    }
+
+    /// Build a headless app with the plugin under test plus a collector for
+    /// submitted lines. No rendering/windowing plugins are needed since the
+    /// systems only touch plain ECS components and messages.
+    fn setup() -> App {
+        let mut app = App::new();
+        app.add_plugins(TextInputPlugin)
+            .add_message::<KeyboardInput>()
+            .init_resource::<Collected>()
+            .add_systems(Update, collect.after(TextInput::on_input));
+        app
+    }
+
+    /// A pressed key event. `text` mirrors what winit produces for printable keys.
+    fn press(logical_key: Key, text: Option<&str>) -> KeyboardInput {
+        KeyboardInput {
+            key_code: KeyCode::KeyA,
+            logical_key,
+            state: ButtonState::Pressed,
+            text: text.map(Into::into),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        }
+    }
+
+    fn press_char(c: &str) -> KeyboardInput {
+        press(Key::Character(c.into()), Some(c))
+    }
+
+    /// Spawn a visible text input and let `was_added` create its child buffer.
+    fn spawn_input(app: &mut App) -> Entity {
+        let entity = app
+            .world_mut()
+            .spawn((
+                TextInput {
+                    text: String::new(),
+                    showing: true,
+                },
+                Node::default(),
+            ))
+            .id();
+        // First update spawns the TextBuffer child (deferred command in `was_added`).
+        app.update();
+        entity
+    }
+
+    /// Read back the current contents of the input's child text buffer.
+    fn buffer_text(app: &mut App, parent: Entity) -> String {
+        let mut query = app.world_mut().query::<(&TextBuffer, &ChildOf)>();
+        for (buf, child_of) in query.iter(app.world()) {
+            if child_of.parent() == parent {
+                return buf.buffer.join("");
+            }
+        }
+        panic!("no TextBuffer child found for {parent:?}");
+    }
+
+    fn buffer_pos(app: &mut App, parent: Entity) -> usize {
+        let mut query = app.world_mut().query::<(&TextBuffer, &ChildOf)>();
+        for (buf, child_of) in query.iter(app.world()) {
+            if child_of.parent() == parent {
+                return buf.pos;
+            }
+        }
+        panic!("no TextBuffer child found for {parent:?}");
+    }
+
+    fn send(app: &mut App, keys: impl IntoIterator<Item = KeyboardInput>) {
+        for key in keys {
+            app.world_mut().write_message(key);
+        }
+        app.update();
+    }
+
+    #[test]
+    fn was_added_spawns_buffer_and_cursor() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        let mut buffers = app.world_mut().query::<(&TextBuffer, &ChildOf)>();
+        assert_eq!(
+            buffers
+                .iter(app.world())
+                .filter(|(_, c)| c.parent() == entity)
+                .count(),
+            1,
+            "expected exactly one buffer child"
+        );
+
+        let mut cursors = app.world_mut().query::<(&Cursor, &ChildOf)>();
+        assert_eq!(
+            cursors
+                .iter(app.world())
+                .filter(|(_, c)| c.parent() == entity)
+                .count(),
+            1,
+            "expected exactly one cursor child"
+        );
+    }
+
+    #[test]
+    fn typing_appends_characters() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(&mut app, [press_char("h"), press_char("i")]);
+
+        assert_eq!(buffer_text(&mut app, entity), "hi");
+        assert_eq!(buffer_pos(&mut app, entity), 2);
+    }
+
+    #[test]
+    fn space_inserts_a_space() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(
+            &mut app,
+            [
+                press_char("a"),
+                press(Key::Space, Some(" ")),
+                press_char("b"),
+            ],
+        );
+
+        assert_eq!(buffer_text(&mut app, entity), "a b");
+    }
+
+    #[test]
+    fn backspace_removes_last_character() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(&mut app, [press_char("a"), press_char("b")]);
+        send(&mut app, [press(Key::Backspace, None)]);
+
+        assert_eq!(buffer_text(&mut app, entity), "a");
+        assert_eq!(buffer_pos(&mut app, entity), 1);
+    }
+
+    #[test]
+    fn backspace_on_empty_is_noop() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(&mut app, [press(Key::Backspace, None)]);
+
+        assert_eq!(buffer_text(&mut app, entity), "");
+        assert_eq!(buffer_pos(&mut app, entity), 0);
+    }
+
+    #[test]
+    fn arrows_move_cursor_and_insert_in_the_middle() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(&mut app, [press_char("a"), press_char("c")]);
+        // Move left once so the cursor sits between 'a' and 'c'.
+        send(&mut app, [press(Key::ArrowLeft, None)]);
+        assert_eq!(buffer_pos(&mut app, entity), 1);
+
+        send(&mut app, [press_char("b")]);
+        assert_eq!(buffer_text(&mut app, entity), "abc");
+    }
+
+    #[test]
+    fn arrows_are_clamped_to_bounds() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        // Left at start stays at 0.
+        send(&mut app, [press(Key::ArrowLeft, None)]);
+        assert_eq!(buffer_pos(&mut app, entity), 0);
+
+        send(&mut app, [press_char("x")]);
+        // Right past the end stays at the end.
+        send(&mut app, [press(Key::ArrowRight, None)]);
+        assert_eq!(buffer_pos(&mut app, entity), 1);
+    }
+
+    #[test]
+    fn enter_submits_and_resets() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        send(&mut app, [press_char("h"), press_char("i")]);
+        send(&mut app, [press(Key::Enter, None)]);
+
+        assert_eq!(app.world().resource::<Collected>().0, vec!["hi".to_string()]);
+        assert_eq!(buffer_text(&mut app, entity), "");
+        assert_eq!(buffer_pos(&mut app, entity), 0);
+
+        let text_input = app.world().get::<TextInput>(entity).unwrap();
+        assert!(!text_input.showing);
+        assert!(text_input.text.is_empty());
+
+        let node = app.world().get::<Node>(entity).unwrap();
+        assert_eq!(node.display, Display::None);
+    }
+
+    #[test]
+    fn input_is_ignored_when_hidden() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        // Hide it the way the rest of the app does: flip `showing` and let
+        // `was_changed` propagate it to the node's display.
+        app.world_mut().get_mut::<TextInput>(entity).unwrap().showing = false;
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(entity).unwrap().display,
+            Display::None
+        );
+
+        send(&mut app, [press_char("h"), press_char("i")]);
+
+        assert_eq!(buffer_text(&mut app, entity), "");
+    }
+
+    #[test]
+    fn setting_text_externally_syncs_into_buffer() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        app.world_mut().get_mut::<TextInput>(entity).unwrap().text = "preset".to_string();
+        app.update();
+
+        assert_eq!(buffer_text(&mut app, entity), "preset");
+    }
+}
