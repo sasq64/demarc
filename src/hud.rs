@@ -5,11 +5,45 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use bevy::window::{PrimaryWindow, WindowResized};
-use bevy_tweening::lens::TextColorLens;
-use bevy_tweening::{CycleCompletedEvent, Delay, Tween, TweenAnim};
 
 #[derive(Component)]
 pub struct InfoText;
+
+/// Drives a HUD toast's text alpha through a fade-in / hold / fade-out timeline,
+/// then despawns the entity. Replaces the old `bevy_tweening` animation.
+#[derive(Component)]
+struct HudFade {
+    elapsed: Duration,
+    /// Wait before fading in.
+    delay: Duration,
+    /// Fade alpha 0 -> 1.
+    fade_in: Duration,
+    /// Stay fully visible.
+    hold: Duration,
+    /// Fade alpha 1 -> 0.
+    fade_out: Duration,
+}
+
+impl HudFade {
+    fn new(delay: Duration, hold: Duration) -> Self {
+        Self {
+            elapsed: Duration::ZERO,
+            delay,
+            fade_in: Duration::from_millis(500),
+            hold,
+            fade_out: Duration::from_millis(500),
+        }
+    }
+}
+
+/// Quadratic in/out easing, matching the old `EaseFunction::QuadraticInOut`.
+fn ease_quad_in_out(t: f32) -> f32 {
+    if t < 0.5 {
+        2.0 * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+    }
+}
 
 #[derive(Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum HudLocation {
@@ -45,11 +79,9 @@ fn update_relative_text_size(
 ) {
     for event in resize_events.read() {
         for (rel, mut text_font) in &mut query {
-            text_font.font_size = event.height * rel.fraction;
-            info!(
-                "{} x {} => {}",
-                event.height, rel.fraction, text_font.font_size
-            );
+            let size = event.height * rel.fraction;
+            text_font.font_size = FontSize::Px(size);
+            info!("{} x {} => {}", event.height, rel.fraction, size);
         }
     }
 }
@@ -61,6 +93,7 @@ fn spawn_toast(
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
     let font = asset_server.load("font.ttf");
+    let font: FontSource = font.into();
     let fraction = 0.05;
     let font_size = window.height() * fraction;
     for msg in reader.read() {
@@ -71,32 +104,7 @@ fn spawn_toast(
         if msg.text.is_empty() {
             continue;
         }
-        let show_tween = Tween::new(
-            EaseFunction::QuadraticInOut,
-            Duration::from_millis(500),
-            TextColorLens {
-                start: Color::srgba(0., 0., 0., 0.),
-                end: Color::WHITE,
-            },
-        );
-        let hide_tween = Tween::new(
-            EaseFunction::QuadraticInOut,
-            Duration::from_millis(500),
-            TextColorLens {
-                start: Color::WHITE,
-                end: Color::srgba(0., 0., 0., 0.),
-            },
-        )
-        .with_cycle_completed_event(true);
-
-        let tween = if msg.delay == Duration::ZERO {
-            show_tween.then(Delay::new(msg.duration)).then(hide_tween)
-        } else {
-            Delay::new(msg.delay)
-                .then(show_tween)
-                .then(Delay::new(msg.duration))
-                .then(hide_tween)
-        };
+        let fade = || HudFade::new(msg.delay, msg.duration);
 
         let entity = match msg.location {
             HudLocation::InfoText => {
@@ -113,7 +121,7 @@ fn spawn_toast(
                     InfoText,
                     TextFont {
                         font: font.clone(),
-                        font_size,
+                        font_size: FontSize::Px(font_size),
                         ..default()
                     },
                     RelativeTextSize { fraction },
@@ -122,7 +130,7 @@ fn spawn_toast(
                         justify: Justify::Right,
                         linebreak: LineBreak::WordBoundary,
                     },
-                    TweenAnim::new(tween),
+                    fade(),
                 ))
             }
             HudLocation::BottomLeft => commands.spawn((
@@ -136,7 +144,7 @@ fn spawn_toast(
                 Text::new(&msg.text),
                 TextFont {
                     font: font.clone(),
-                    font_size: 64.0,
+                    font_size: FontSize::Px(64.0),
                     ..default()
                 },
                 TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
@@ -144,7 +152,7 @@ fn spawn_toast(
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
                 },
-                TweenAnim::new(tween),
+                fade(),
             )),
             HudLocation::TopLeft => commands.spawn((
                 Node {
@@ -157,7 +165,7 @@ fn spawn_toast(
                 Text::new(&msg.text),
                 TextFont {
                     font: font.clone(),
-                    font_size: font_size * 0.7,
+                    font_size: FontSize::Px(font_size * 0.7),
                     ..default()
                 },
                 RelativeTextSize {
@@ -168,7 +176,7 @@ fn spawn_toast(
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
                 },
-                TweenAnim::new(tween),
+                fade(),
             )),
             HudLocation::TopRight => commands.spawn((
                 Node {
@@ -181,7 +189,7 @@ fn spawn_toast(
                 Text::new(&msg.text),
                 TextFont {
                     font: font.clone(),
-                    font_size: 72.0,
+                    font_size: FontSize::Px(72.0),
                     ..default()
                 },
                 TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
@@ -189,18 +197,17 @@ fn spawn_toast(
                     justify: Justify::Right,
                     linebreak: LineBreak::WordBoundary,
                 },
-                TweenAnim::new(tween),
+                fade(),
             )),
         };
         state.current_texts.insert(msg.location, entity.id());
     }
 }
 
+#[derive(Message)]
+pub struct TextListSelect(pub usize);
+
 /// A scrollable list of strings rendered inside a semi-transparent bordered box.
-///
-/// Only `visible_count` rows are shown at once, starting at `scroll_position`.
-/// Mutating `scroll_position` (or `items`) marks the component changed, which
-/// makes [`update_text_list`] refresh the row [`Text`]s on the next frame.
 #[derive(Default, Component)]
 pub struct TextList {
     pub items: Vec<String>,
@@ -211,7 +218,6 @@ pub struct TextList {
     pub controlled: bool,
 }
 
-/// Background color drawn behind the selected row.
 const SELECTED_ROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
 
 /// Marks a child text entity of a [`TextList`] and records which visible row it is.
@@ -268,8 +274,8 @@ impl TextList {
                             box_node.spawn((
                                 Text::new(""),
                                 TextFont {
-                                    font: font.clone(),
-                                    font_size: 22.0,
+                                    font: font.clone().into(),
+                                    font_size: FontSize::Px(22.0),
                                     ..default()
                                 },
                                 TextColor(Color::WHITE),
@@ -282,66 +288,87 @@ impl TextList {
             });
         box_entity
     }
-}
-
-#[derive(Message)]
-pub struct TextListSelect(pub usize);
-
-fn update_keys(
-    input: Res<ButtonInput<KeyCode>>,
-    mut lists: Query<&mut TextList>,
-    mut writer: MessageWriter<TextListSelect>,
-) {
-    for mut list in &mut lists {
-        if list.controlled {
-            if input.just_pressed(KeyCode::ArrowUp) && list.selected > 0 {
-                list.selected -= 1;
+    fn update_keys(
+        input: Res<ButtonInput<KeyCode>>,
+        mut lists: Query<&mut TextList>,
+        mut writer: MessageWriter<TextListSelect>,
+    ) {
+        for mut list in &mut lists {
+            if list.controlled {
+                if input.just_pressed(KeyCode::ArrowUp) && list.selected > 0 {
+                    list.selected -= 1;
+                }
+                if input.just_pressed(KeyCode::ArrowDown) && list.selected < (list.items.len() - 1)
+                {
+                    list.selected += 1;
+                }
+                if input.just_pressed(KeyCode::Enter) {
+                    writer.write(TextListSelect(list.selected));
+                }
             }
-            if input.just_pressed(KeyCode::ArrowDown) && list.selected < (list.items.len() - 1) {
-                list.selected += 1;
+        }
+    }
+
+    fn update_text_list(
+        mut lists: Query<(&mut TextList, &Children), Changed<TextList>>,
+        mut rows: Query<(&TextListRow, &mut Text, &mut BackgroundColor)>,
+    ) {
+        for (mut list, children) in &mut lists {
+            // Scroll so the selected item is within the visible window.
+            if list.visible_count > 0 {
+                if list.selected < list.scroll_position {
+                    list.scroll_position = list.selected;
+                } else if list.selected >= list.scroll_position + list.visible_count {
+                    list.scroll_position = list.selected + 1 - list.visible_count;
+                }
             }
-            if input.just_pressed(KeyCode::Enter) {
-                writer.write(TextListSelect(list.selected));
+            for child in children.iter() {
+                if let Ok((row, mut text, mut bg)) = rows.get_mut(child) {
+                    let idx = list.scroll_position + row.0;
+                    text.0 = list.items.get(idx).cloned().unwrap_or_default();
+                    bg.0 = if idx == list.selected && idx < list.items.len() {
+                        SELECTED_ROW_COLOR
+                    } else {
+                        Color::NONE
+                    };
+                }
             }
         }
     }
 }
 
-/// Refreshes the visible rows of every [`TextList`] whose contents or scroll changed.
-///
-/// Also keeps `scroll_position` in range so that `selected` stays visible, and
-/// draws a background behind the selected row.
-fn update_text_list(
-    mut lists: Query<(&mut TextList, &Children), Changed<TextList>>,
-    mut rows: Query<(&TextListRow, &mut Text, &mut BackgroundColor)>,
+/// Advances each [`HudFade`], updating the text alpha, and despawns the toast
+/// once the fade-out completes.
+fn drive_hud_fades(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut state: ResMut<HudState>,
+    mut query: Query<(Entity, &mut HudFade, &mut TextColor)>,
 ) {
-    for (mut list, children) in &mut lists {
-        // Scroll so the selected item is within the visible window.
-        if list.visible_count > 0 {
-            if list.selected < list.scroll_position {
-                list.scroll_position = list.selected;
-            } else if list.selected >= list.scroll_position + list.visible_count {
-                list.scroll_position = list.selected + 1 - list.visible_count;
-            }
-        }
-        for child in children.iter() {
-            if let Ok((row, mut text, mut bg)) = rows.get_mut(child) {
-                let idx = list.scroll_position + row.0;
-                text.0 = list.items.get(idx).cloned().unwrap_or_default();
-                bg.0 = if idx == list.selected && idx < list.items.len() {
-                    SELECTED_ROW_COLOR
-                } else {
-                    Color::NONE
-                };
-            }
-        }
-    }
-}
+    for (entity, mut fade, mut color) in &mut query {
+        fade.elapsed += time.delta();
 
-fn handle_tween_done(mut commands: Commands, mut reader: MessageReader<CycleCompletedEvent>) {
-    for msg in reader.read() {
-        info!("DESPAWN");
-        commands.entity(msg.anim_entity).despawn();
+        let e = fade.elapsed.as_secs_f32();
+        let d = fade.delay.as_secs_f32();
+        let fi = fade.fade_in.as_secs_f32();
+        let h = fade.hold.as_secs_f32();
+        let fo = fade.fade_out.as_secs_f32();
+
+        let alpha = if e < d {
+            0.0
+        } else if e < d + fi {
+            ease_quad_in_out((e - d) / fi)
+        } else if e < d + fi + h {
+            1.0
+        } else if e < d + fi + h + fo {
+            1.0 - ease_quad_in_out((e - (d + fi + h)) / fo)
+        } else {
+            state.current_texts.retain(|_, ent| *ent != entity);
+            commands.entity(entity).despawn();
+            continue;
+        };
+
+        color.0 = Color::srgba(1.0, 1.0, 1.0, alpha);
     }
 }
 
@@ -357,9 +384,9 @@ impl Plugin for HudPlugin {
                 (
                     spawn_toast.run_if(on_message::<SetHudText>),
                     update_relative_text_size.run_if(on_message::<WindowResized>),
-                    update_text_list,
-                    update_keys,
-                    handle_tween_done.run_if(on_message::<CycleCompletedEvent>),
+                    TextList::update_text_list,
+                    TextList::update_keys,
+                    drive_hud_fades,
                 ),
             );
     }

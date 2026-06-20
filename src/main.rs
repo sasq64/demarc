@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
-use bevy_tweening::TweeningPlugin;
 use clap::builder::styling::{AnsiColor, Style};
 use clap::builder::{Styles, styling};
 use clap::{ColorChoice, Parser};
@@ -359,7 +358,6 @@ fn main() {
             RetroPlugin {},
             CommandPlugin,
             PostProcessPlugin,
-            TweeningPlugin,
             HudPlugin,
             TextInputPlugin,
             ScreenSaverPlugin,

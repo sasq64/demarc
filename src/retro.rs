@@ -522,7 +522,7 @@ fn run_retro(
     }
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
-        let Some(image) = images.get_mut(&emu.image) else {
+        let Some(mut image) = images.get_mut(&emu.image) else {
             continue;
         };
         let Some(dst) = image.data.as_mut() else {
@@ -590,6 +590,9 @@ fn run_retro(
                     .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
             }
         });
+        // `AssetMut` holds the `images` borrow until dropped (its destructor fires
+        // change detection), so release it before re-borrowing `images` below.
+        drop(image);
         // For some reason we need to compensate the hatari aspect
         let aspect = if emu.work_file.system_type == SystemType::AtariST {
             let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
@@ -614,7 +617,7 @@ fn run_retro(
             debug!("SIZE CHANGE TO {w} {h}");
             emu.width = w as u32;
             emu.height = h as u32;
-            if let Some(image) = images.get_mut(&emu.image) {
+            if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(
                     Extent3d {

@@ -1,10 +1,6 @@
 use bevy::{
     camera::Camera,
-    core_pipeline::{
-        FullscreenShader,
-        core_2d::graph::{Core2d, Node2d},
-    },
-    ecs::query::QueryItem,
+    core_pipeline::{Core2d, Core2dSystems, FullscreenShader},
     image::Image,
     prelude::*,
     render::{
@@ -16,9 +12,6 @@ use bevy::{
         },
         extract_resource::ExtractResourcePlugin,
         render_asset::RenderAssets,
-        render_graph::{
-            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
-        },
         render_resource::{
             AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, PipelineCache,
@@ -26,7 +19,7 @@ use bevy::{
             SamplerDescriptor, ShaderStages, ShaderType, TextureFormat, TextureSampleType,
             binding_types::{sampler, texture_2d, uniform_buffer},
         },
-        renderer::{RenderContext, RenderDevice},
+        renderer::{RenderContext, RenderDevice, ViewQuery},
         settings::WgpuFeatures,
         texture::GpuImage,
         view::ViewTarget,
@@ -58,22 +51,15 @@ impl Plugin for PostProcessPlugin {
             return;
         };
 
+        // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
+        // render pass is just a system in the per-camera `Core2d` schedule. We run
+        // in the `PostProcess` set (where tonemapping lives), which is ordered
+        // before upscaling presents the view target to the swapchain.
         render_app
             .add_systems(RenderStartup, init_lottes_pipeline)
-            .add_render_graph_node::<ViewNodeRunner<PostProcessNode>>(Core2d, PostProcessLabel)
-            .add_render_graph_edges(
-                Core2d,
-                (
-                    Node2d::Tonemapping,
-                    PostProcessLabel,
-                    Node2d::EndMainPassPostProcessing,
-                ),
-            );
+            .add_systems(Core2d, post_process_pass.in_set(Core2dSystems::PostProcess));
     }
 }
-
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct PostProcessLabel;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ScaleMode {
@@ -246,95 +232,84 @@ fn compute_uniform(
     }
 }
 
-#[derive(Default)]
-struct PostProcessNode;
+/// Runs the Lottes CRT blit for the current view. As a `Core2d` render system,
+/// this is invoked once per camera with [`CurrentView`](bevy::render::renderer::CurrentView)
+/// set; the [`ViewQuery`] simply skips cameras without a [`PostProcess`] component.
+fn post_process_pass(
+    view: ViewQuery<(
+        &ViewTarget,
+        &PostProcess,
+        &DynamicUniformIndex<PostProcessUniform>,
+        &ExtractedCamera,
+        &BorderScissor,
+    )>,
+    pipeline_resource: Res<PostProcessPipeline>,
+    pipeline_cache: Res<PipelineCache>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    uniforms: Res<ComponentUniforms<PostProcessUniform>>,
+    settings: Res<AppSettings>,
+    mut render_context: RenderContext,
+) {
+    let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
 
-impl ViewNode for PostProcessNode {
-    type ViewQuery = (
-        &'static ViewTarget,
-        &'static PostProcess,
-        &'static DynamicUniformIndex<PostProcessUniform>,
-        &'static ExtractedCamera,
-        &'static BorderScissor,
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
+        return;
+    };
+
+    let Some(source_image) = gpu_images.get(&post_process.source) else {
+        return;
+    };
+
+    let Some(uniform_binding) = uniforms.uniforms().binding() else {
+        return;
+    };
+
+    let sampler = match settings.border_mode {
+        BorderMode::Stretch => &pipeline_resource.sampler_stretch,
+        BorderMode::Black => &pipeline_resource.sampler_black,
+    };
+
+    let bind_group = render_context.render_device().create_bind_group(
+        "lottes_bind_group",
+        &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
+        &BindGroupEntries::sequential((
+            &source_image.texture_view,
+            sampler,
+            uniform_binding.clone(),
+        )),
     );
 
-    fn run(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        (view_target, post_process, uniform_index, camera, border_scissor): QueryItem<
-            Self::ViewQuery,
-        >,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let pipeline_resource = world.resource::<PostProcessPipeline>();
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
-        let uniforms = world.resource::<ComponentUniforms<PostProcessUniform>>();
+    let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("lottes_pass"),
+        color_attachments: &[Some(view_target.get_unsampled_color_attachment())],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
 
-        let settings = world.resource::<AppSettings>();
-
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id)
-        else {
-            return Ok(());
-        };
-
-        let Some(source_image) = gpu_images.get(&post_process.source) else {
-            return Ok(());
-        };
-
-        let Some(uniform_binding) = uniforms.uniforms().binding() else {
-            return Ok(());
-        };
-
-        let sampler = match settings.border_mode {
-            BorderMode::Stretch => &pipeline_resource.sampler_stretch,
-            BorderMode::Black => &pipeline_resource.sampler_black,
-        };
-
-        let bind_group = render_context.render_device().create_bind_group(
-            "lottes_bind_group",
-            &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
-            &BindGroupEntries::sequential((
-                &source_image.texture_view,
-                sampler,
-                uniform_binding.clone(),
-            )),
-        );
-
-        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("lottes_pass"),
-            color_attachments: &[Some(view_target.get_unsampled_color_attachment())],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        // Restrict the fullscreen blit to this camera's viewport so grid-mode
-        // emulators each draw into their own quadrant instead of overdrawing
-        // the whole window. Without a viewport (single-emulator case) this is a
-        // no-op and the triangle covers the full target.
-        if let Some(viewport) = &camera.viewport {
-            render_pass.set_camera_viewport(viewport);
-        }
-
-        // Restrict the blit to the image rectangle (in `BorderMode::Black`) so the
-        // letterbox/pillarbox bars are left showing the camera's clear color rather
-        // than being overdrawn by the shader.
-        if let (Some(rect), Some(target)) = (border_scissor.0, camera.physical_target_size) {
-            let max = rect.max.min(target);
-            let min = rect.min.min(max);
-            if max.x > min.x && max.y > min.y {
-                render_pass.set_scissor_rect(min.x, min.y, max.x - min.x, max.y - min.y);
-            }
-        }
-
-        render_pass.set_render_pipeline(pipeline);
-        render_pass.set_bind_group(0, &bind_group, &[uniform_index.index()]);
-        render_pass.draw(0..3, 0..1);
-
-        Ok(())
+    // Restrict the fullscreen blit to this camera's viewport so grid-mode
+    // emulators each draw into their own quadrant instead of overdrawing
+    // the whole window. Without a viewport (single-emulator case) this is a
+    // no-op and the triangle covers the full target.
+    if let Some(viewport) = &camera.viewport {
+        render_pass.set_camera_viewport(viewport);
     }
+
+    // Restrict the blit to the image rectangle (in `BorderMode::Black`) so the
+    // letterbox/pillarbox bars are left showing the camera's clear color rather
+    // than being overdrawn by the shader.
+    if let (Some(rect), Some(target)) = (border_scissor.0, camera.physical_target_size) {
+        let max = rect.max.min(target);
+        let min = rect.min.min(max);
+        if max.x > min.x && max.y > min.y {
+            render_pass.set_scissor_rect(min.x, min.y, max.x - min.x, max.y - min.y);
+        }
+    }
+
+    render_pass.set_render_pipeline(pipeline);
+    render_pass.set_bind_group(0, &bind_group, &[uniform_index.index()]);
+    render_pass.draw(0..3, 0..1);
 }
 
 #[derive(Resource)]
@@ -397,7 +372,9 @@ fn init_lottes_pipeline(
         fragment: Some(FragmentState {
             shader,
             targets: vec![Some(ColorTargetState {
-                format: TextureFormat::bevy_default(),
+                // Matches the view target's main texture format (Bevy's former
+                // `TextureFormat::bevy_default()`, now deprecated).
+                format: TextureFormat::Rgba8UnormSrgb,
                 blend: None,
                 write_mask: ColorWrites::ALL,
             })],
