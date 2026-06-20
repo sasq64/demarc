@@ -54,23 +54,23 @@ pub fn is_disk_image(path: &Path) -> bool {
 }
 
 pub fn get_system_type(path: &Path) -> SystemType {
-    let mut system_type = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
-        let ext = ext.to_lowercase();
-        match ext.as_str() {
-            "adf" | "dms" | "ipf" | "hdf" | "lha" | "slave" => SystemType::Amiga,
-            "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
-            "dsk" => SystemType::Amstrad,
-            "msa" | "st" => SystemType::AtariST,
-            "a26" => SystemType::Atari2600,
-            "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
-            "smc" | "sfc" => SystemType::SuperNintendo,
-            "atr" | "xex" | "atx" => SystemType::AtariXL,
-            "tic80" | "tic" => SystemType::Tic80,
-            "p8" => SystemType::Pico8,
-            _ => SystemType::Unknown,
-        }
+    let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+        ext.to_lowercase()
     } else {
-        SystemType::Unknown
+        "".to_string()
+    };
+    let mut system_type = match ext.as_str() {
+        "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
+        "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
+        "dsk" => SystemType::Amstrad,
+        "msa" | "st" => SystemType::AtariST,
+        "a26" => SystemType::Atari2600,
+        "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
+        "smc" | "sfc" => SystemType::SuperNintendo,
+        "atr" | "xex" | "atx" => SystemType::AtariXL,
+        "tic80" | "tic" => SystemType::Tic80,
+        "p8" => SystemType::Pico8,
+        _ => SystemType::Unknown,
     };
     if system_type == SystemType::Unknown {
         info!("Checking {:?}", path);
@@ -86,10 +86,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
                         .starts_with("SEGA ")
                 {
                     system_type = SystemType::Megadrive;
-                } else if l.is_power_of_two()
-                    && (2048..=32768).contains(&l)
-                    && check_reset_vector(&data)
-                {
+                } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
                 } else if data[0..2] == [0x60, 0x1a] {
                     system_type = SystemType::AtariST;
@@ -97,7 +94,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::Amiga;
                 } else if (0x0400..=0x0801).contains(&u16::from_le_bytes(
                     data[..2].try_into().unwrap_or_default(),
-                )) {
+                )) && ext == "prg"
+                {
                     system_type = SystemType::C64;
                 }
             }
@@ -332,29 +330,13 @@ fn is_lha_file(path: &Path) -> bool {
     file.read_exact(&mut magic).is_ok() && magic[2] == b'-' && magic[3] == b'l' && magic[6] == b'-'
 }
 
-/// If the freshly-extracted `target_dir` contains a single top-level directory,
-/// descend into it so the release-detection logic sees the actual files, not
-/// the wrapper dir.
-fn descend_single_dir(target_dir: PathBuf) -> Result<PathBuf> {
-    let entries: Vec<PathBuf> = fs::read_dir(&target_dir)?
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    if let [only] = entries.as_slice()
-        && only.is_dir()
-    {
-        return Ok(only.clone());
-    }
-    Ok(target_dir)
-}
-
 /// Extract `path` (a zip archive) into a fresh temp directory and return that
 /// directory.
 fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
     archive.extract(&target_dir)?;
-    descend_single_dir(target_dir)
+    Ok(target_dir)
 }
 
 /// Extract `path` (an LHA/LZH archive) into a fresh temp directory and return
@@ -382,7 +364,7 @@ fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
             break;
         }
     }
-    descend_single_dir(target_dir)
+    Ok(target_dir)
 }
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
@@ -397,6 +379,66 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
         }
     }
     Ok(())
+}
+
+/// Result of recursively scanning a release directory.
+struct ScannedDir {
+    /// Disk images (`.d64`, `.adf`, `.atr`) found anywhere under the directory.
+    disk_images: Vec<PathBuf>,
+    /// The first recognized file of any type encountered during the walk.
+    first_file: Option<PathBuf>,
+    /// System type of the last disk image found, or of the first recognized
+    /// file when no disk images were present. `Unknown` if nothing matched.
+    system_type: SystemType,
+}
+
+/// Recursively scan `dir`, collecting disk images and remembering the first
+/// recognized file along with the system type that should be used.
+fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
+    let mut disk_images = vec![];
+    let mut first_file = None;
+    let mut system_type = SystemType::Unknown;
+
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+
+        if path.is_dir() {
+            let sub = scan_release_dir(&path)?;
+            if first_file.is_none() {
+                first_file = sub.first_file;
+            }
+            if sub.system_type != SystemType::Unknown {
+                system_type = sub.system_type;
+            }
+            disk_images.extend(sub.disk_images);
+            continue;
+        }
+
+        let t = get_system_type(&path);
+        println!("Checking {:?} => {:?}", path, t);
+        if t == SystemType::Unknown {
+            continue;
+        }
+        if first_file.is_none() {
+            first_file = Some(path.clone());
+            system_type = t;
+        }
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if ext == "d64" || ext == "adf" || ext == "atr" {
+            println!("Found {t:?}");
+            disk_images.push(path);
+            system_type = t;
+        }
+    }
+
+    Ok(ScannedDir {
+        disk_images,
+        first_file,
+        system_type,
+    })
 }
 
 fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
@@ -421,7 +463,7 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
     } else if path.is_file() && is_lha_file(&path) {
         debug!("FMT: lha archive");
         path = unlha_to_temp(&path)?;
-        is_temp = true;
+        //is_temp = true;
         system_type = get_system_type(&path);
     }
     let mut copy_all = false;
@@ -437,41 +479,18 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
             tags.insert("puae_model".into(), "A1200".into());
             tags.insert("puae_use_whdload".into(), "enabled".into());
         } else {
-            let mut files = vec![];
-            let mut one_file = None;
-            for f in fs::read_dir(&path)? {
-                let f = f?;
-                let t = get_system_type(&f.path());
-                debug!("Checking {:?} => {:?}", f.path(), t);
-                if t != SystemType::Unknown {
-                    if one_file.is_none() {
-                        one_file = Some(f.path());
-                        system_type = t;
-                    }
-                    let ext = f
-                        .path()
-                        .extension()
-                        .map(|e| e.to_string_lossy().to_string())
-                        .unwrap_or("".into())
-                        .to_lowercase();
-                    if ext == "d64" || ext == "adf" || ext == "atr" {
-                        debug!("Found {t:?}");
-                        files.push(f.path());
-                        path = f.path();
-                        system_type = t;
-                    }
-                }
+            let scan = scan_release_dir(&path)?;
+            if scan.system_type != SystemType::Unknown {
+                system_type = scan.system_type;
             }
+            let mut files = scan.disk_images;
             if files.len() > 1 {
                 sort_disks(&mut files);
                 path = build_m3u(&files)?;
                 is_temp = true;
-            } else if let Some(f) = one_file {
+            } else if let Some(f) = scan.first_file {
                 path = f;
                 copy_all = true;
-                //let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-                //copy_dir_all(&path, &target_dir)?;
-                //path = target_dir;
             }
         }
     }
@@ -603,12 +622,6 @@ pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<Wor
 
 /// Recursively collect all detected emulator files under `dir` into `out`.
 pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, many: bool) {
-    // if dir.is_dir() && is_self_booting_dir(dir) {
-    //     println!("SELF BOOTING");
-    //     out.push(dir.to_owned());
-    //     return;
-    // }
-
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -689,6 +702,41 @@ mod tests {
         assert!(wf.path.join("s").exists());
         assert!(wf.path.join("s/startup-sequence").exists());
         assert!(wf.path.join("amiga_file").exists());
+    }
+
+    #[test]
+    fn amiga_lha() {
+        let assets = Path::new("testdata").to_owned();
+        let wf = handle_file(&assets.join("vS10-ami.lha"), &HashMap::new()).unwrap();
+        println!("{:?}", wf);
+        assert_eq!(wf.system_type, SystemType::Amiga);
+        assert!(wf.path.join("s").exists());
+        assert!(wf.path.join("s/startup-sequence").exists());
+    }
+
+    #[test]
+    fn zip_with_extra_files() {
+        let assets = Path::new("testdata").to_owned();
+        let wf = handle_file(
+            &assets.join("gigabates_Terrain-Spotting.zip"),
+            &HashMap::new(),
+        )
+        .unwrap();
+        println!("{:?}", wf);
+        assert_eq!(wf.system_type, SystemType::Tic80);
+        assert!(wf.path.extension().unwrap_or_default().to_str() == Some("tic"));
+    }
+
+    #[test]
+    fn prg_dir() {
+        let assets = Path::new("testdata").to_owned();
+        let mut out = vec![];
+        collect_files(&assets.join("intros"), &mut out, true);
+        println!("{:?}", out);
+        assert_eq!(out.len(), 15);
+        let wf = handle_file(&out[0], &HashMap::new()).unwrap();
+        println!("{:?}", wf);
+        assert_eq!(wf.system_type, SystemType::C64);
     }
 
     #[test]
