@@ -50,32 +50,45 @@ const SYSTEM_CHECKSUM: &str = env!("SYSTEM_ZIP_CHECKSUM");
 pub fn system_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
-        if cfg!(debug_assertions) {
-            let local = PathBuf::from("system");
-            if local.is_dir() {
-                return local;
-            }
-        }
-        let cache = dirs::cache_dir().unwrap_or_default().join("demarc");
-        info!("CACHE {cache:?}");
-        let system = cache.join("system");
-        let checksum_file = system.join(".checksum");
-        let up_to_date = std::fs::read_to_string(&checksum_file)
-            .map(|c| c.trim() == SYSTEM_CHECKSUM)
-            .unwrap_or(false);
-        if !up_to_date {
-            std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
-            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
-                .expect("Failed to read embedded system.zip");
-            archive
-                .extract(&cache)
-                .expect("Failed to extract system.zip");
-            std::fs::write(&checksum_file, SYSTEM_CHECKSUM)
-                .expect("Failed to write system checksum");
-        }
+        let system = resolve_system_dir();
+        // Canonicalize so callers (e.g. cores given a working dir) always get an
+        // absolute path, independent of the process's current directory.
         system
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("Failed to canonicalize system dir {system:?}: {e}"))
     })
     .as_path()
+}
+
+/// Locate the `system` directory, preferring a local one in debug builds and
+/// otherwise extracting the embedded `system.zip` into the user cache.
+fn resolve_system_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
+        let local = PathBuf::from("system");
+        if local.is_dir() {
+            debug!("Using local system dir");
+            return local;
+        }
+        warn!("Could not find local system dir");
+    }
+    let cache = dirs::cache_dir().unwrap_or_default().join("demarc");
+    info!("CACHE {cache:?}");
+    let system = cache.join("system");
+    let checksum_file = system.join(".checksum");
+    let up_to_date = std::fs::read_to_string(&checksum_file)
+        .map(|c| c.trim() == SYSTEM_CHECKSUM)
+        .unwrap_or(false);
+    if !up_to_date {
+        std::fs::create_dir_all(&cache).expect("Failed to create demarc cache directory");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(SYSTEM_ZIP))
+            .expect("Failed to read embedded system.zip");
+        archive
+            .extract(&cache)
+            .expect("Failed to extract system.zip");
+        std::fs::write(&checksum_file, SYSTEM_CHECKSUM)
+            .expect("Failed to write system checksum");
+    }
+    system
 }
 
 /// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
