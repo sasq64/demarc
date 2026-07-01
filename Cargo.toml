@@ -33,6 +33,25 @@ dirs = "6.0.0"
 ureq = "3"
 delharc = "0.6.1"
 
+# Flash (SWF) support via Ruffle. Ruffle is not published to crates.io, so these
+# are git dependencies pinned to a specific rev. Ruffle brings its own `wgpu`
+# (v27), distinct from the `wgpu = 29` above that matches Bevy; FlashEmu uses its
+# own offscreen wgpu instance via `ruffle_render_wgpu::wgpu`, so the two versions
+# coexist without interacting.
+ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", features = [
+    "audio",
+    "mp3",
+    "nellymoser",
+    "aac",
+    "lzma",
+    "default_font",
+    "default_compatibility_rules",
+] }
+ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
+ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
+swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
+pollster = "0.4"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Inhibit the freedesktop screen saver over D-Bus while running fullscreen, and
 # expose an MPRIS media-player interface so media keys control the emulator.

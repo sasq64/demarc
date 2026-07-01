@@ -10,7 +10,7 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 use crate::audio::AudioSink;
 use crate::libretro;
 use crate::retro::create_core;
-use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
+use crate::retro_emu::RetroEmu;
 use crate::utils::{SystemType, WorkingFile, handle_file};
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
@@ -51,7 +51,7 @@ impl InputMode {
 /// `PostProcess` camera (matched via [`Self::image`]).
 #[derive(Component, Default)]
 pub(crate) struct Emulator {
-    pub(crate) core: Option<RetroCoreThreaded>,
+    pub(crate) core: Option<Box<dyn RetroEmu + Send + Sync>>,
     pub(crate) work_file: WorkingFile,
     pub(crate) run_next: bool,
     pub(crate) next_frame: f64,

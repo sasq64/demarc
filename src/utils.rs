@@ -22,6 +22,7 @@ pub enum SystemType {
     AtariXL,
     Tic80,
     Pico8,
+    Flash,
     #[default]
     Unknown,
 }
@@ -70,6 +71,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "atr" | "xex" | "atx" => SystemType::AtariXL,
         "tic80" | "tic" => SystemType::Tic80,
         "p8" => SystemType::Pico8,
+        "swf" => SystemType::Flash,
         _ => SystemType::Unknown,
     };
     if system_type == SystemType::Unknown {
@@ -92,6 +94,9 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::AtariST;
                 } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                     system_type = SystemType::Amiga;
+                } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
+                    // Flash SWF signatures: uncompressed / zlib / LZMA.
+                    system_type = SystemType::Flash;
                 } else if (0x0400..=0x0801).contains(&u16::from_le_bytes(
                     data[..2].try_into().unwrap_or_default(),
                 )) && ext == "prg"

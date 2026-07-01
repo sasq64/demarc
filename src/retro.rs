@@ -17,6 +17,7 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey, get_info_text};
 use crate::emulator::Emulator;
+use crate::flash_emu::FlashEmu;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
@@ -453,6 +454,8 @@ pub fn get_core(
         SystemType::AtariXL => CORE_NAME_XL,
         SystemType::Tic80 => CORE_NAME_TIC80,
         SystemType::Pico8 => CORE_NAME_PICO8,
+        // Flash is handled by FlashEmu in create_core before reaching get_core.
+        SystemType::Flash => return Err(""),
         SystemType::Unknown => return Err(""),
     };
 
@@ -463,7 +466,10 @@ pub fn create_core(
     system_type: SystemType,
     game: &Path,
     mut tags: HashMap<String, String>,
-) -> Result<RetroCoreThreaded> {
+) -> Result<Box<dyn RetroEmu + Send + Sync>> {
+    if system_type == SystemType::Flash {
+        return Ok(Box::new(FlashEmu::new(game, tags)?));
+    }
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
             tags.insert(name.into(), val.into());
@@ -487,7 +493,12 @@ pub fn create_core(
         set_var("hatari_video_crop_overscan", "false");
     }
     match get_core(system_type, &tags) {
-        Ok(core) => RetroCoreThreaded::new(Path::new(&core), system_dir(), Some(game), tags),
+        Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
+            Path::new(&core),
+            system_dir(),
+            Some(game),
+            tags,
+        )?)),
         Err(name) => {
             bail!("Can not find core '{name}' for '{game:?}'");
         }

@@ -14,6 +14,7 @@ mod libretro;
 mod audio;
 mod commands;
 mod emulator;
+mod flash_emu;
 mod hud;
 mod libloader;
 mod media_keys;
