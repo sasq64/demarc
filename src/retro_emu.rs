@@ -92,6 +92,11 @@ pub trait RetroEmu {
     fn reset(&mut self);
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
+    /// Set the absolute pointer position in normalized frame coordinates
+    /// (`0.0..=1.0`, origin top-left). Cores driven by relative mouse motion
+    /// (libretro) ignore this; Flash needs it so Ruffle's internal cursor tracks
+    /// the visible OS cursor for hit-testing buttons.
+    fn set_mouse_position(&mut self, _x: f32, _y: f32) {}
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
     fn set_joypad(&mut self, port: u32, id: u32, down: bool);
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8]));

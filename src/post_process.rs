@@ -175,41 +175,59 @@ fn compute_uniform(
     camera: &Camera,
     images: &Assets<Image>,
 ) -> PostProcessUniform {
-    let crt_enabled = settings.crt_effect as u32;
-    let identity = PostProcessUniform {
-        uv_scale: Vec2::ONE,
-        uv_offset: Vec2::ZERO,
-        crt_enabled,
-    };
-    if matches!(settings.scale_mode, ScaleMode::Stretch) {
-        return identity;
-    }
     // Use the viewport size, not the full render target: in grid mode each
     // camera renders into its own sub-rect, so aspect must be computed against
     // that quadrant. `physical_viewport_size` falls back to the full target
     // when no viewport is set (single-emulator case).
-    let Some(target) = camera.physical_viewport_size() else {
-        return identity;
+    let (uv_scale, uv_offset) = match (camera.physical_viewport_size(), images.get(&pp.source)) {
+        (Some(target), Some(source)) => scale_offset(
+            target,
+            source.size(),
+            pp.aspect,
+            pp.aspect_tweak,
+            settings.scale_mode,
+        ),
+        _ => (Vec2::ONE, Vec2::ZERO),
     };
-    let Some(source) = images.get(&pp.source) else {
-        return identity;
-    };
-    let src = source.size();
-    if target.x == 0 || target.y == 0 || src.x == 0 || src.y == 0 {
-        return identity;
+    PostProcessUniform {
+        uv_scale,
+        uv_offset,
+        crt_enabled: settings.crt_effect as u32,
+    }
+}
+
+/// The letterbox/pillarbox transform for showing a `src`-sized source in a
+/// `target`-sized viewport under `scale_mode`. The shader (and the pointer
+/// mapping in `retro.rs`) map a screen-uv to the source with
+/// `(screen_uv - uv_offset) / uv_scale`; this returns `(uv_scale, uv_offset)`.
+/// `Stretch`, a degenerate size, or a target that already matches the source
+/// aspect all yield the identity transform.
+pub fn scale_offset(
+    target: UVec2,
+    src: UVec2,
+    aspect: f32,
+    aspect_tweak: f32,
+    scale_mode: ScaleMode,
+) -> (Vec2, Vec2) {
+    if matches!(scale_mode, ScaleMode::Stretch)
+        || target.x == 0
+        || target.y == 0
+        || src.x == 0
+        || src.y == 0
+    {
+        return (Vec2::ONE, Vec2::ZERO);
     }
     let target_aspect = target.x as f32 / target.y as f32;
     // Use the display aspect ratio the core reports; fall back to the texture's
     // pixel dimensions when the core doesn't supply one.
-    let base_aspect = if pp.aspect > 0.0 {
-        pp.aspect
+    let base_aspect = if aspect > 0.0 {
+        aspect
     } else {
         src.x as f32 / src.y as f32
     };
-    let source_aspect = base_aspect * pp.aspect_tweak;
+    let source_aspect = base_aspect * aspect_tweak;
 
-    let mut sm = settings.scale_mode;
-
+    let mut sm = scale_mode;
     if (target_aspect - source_aspect).abs() < 0.02 {
         sm = ScaleMode::Zoom;
     }
@@ -225,11 +243,10 @@ fn compute_uniform(
         (ScaleMode::Zoom, true) => Vec2::new(1.0, target_aspect / source_aspect),
         (ScaleMode::Zoom, false) => Vec2::new(source_aspect / target_aspect, 1.0),
     };
-    PostProcessUniform {
-        uv_scale: scale,
-        uv_offset: Vec2::new((1.0 - scale.x) * 0.5, (1.0 - scale.y) * 0.5),
-        crt_enabled,
-    }
+    (
+        scale,
+        Vec2::new((1.0 - scale.x) * 0.5, (1.0 - scale.y) * 0.5),
+    )
 }
 
 /// Runs the Lottes CRT blit for the current view. As a `Core2d` render system,

@@ -391,7 +391,10 @@ mod tests {
         send(&mut app, [press_char("h"), press_char("i")]);
         send(&mut app, [press(Key::Enter, None)]);
 
-        assert_eq!(app.world().resource::<Collected>().0, vec!["hi".to_string()]);
+        assert_eq!(
+            app.world().resource::<Collected>().0,
+            vec!["hi".to_string()]
+        );
         assert_eq!(buffer_text(&mut app, entity), "");
         assert_eq!(buffer_pos(&mut app, entity), 0);
 
@@ -410,7 +413,10 @@ mod tests {
 
         // Hide it the way the rest of the app does: flip `showing` and let
         // `was_changed` propagate it to the node's display.
-        app.world_mut().get_mut::<TextInput>(entity).unwrap().showing = false;
+        app.world_mut()
+            .get_mut::<TextInput>(entity)
+            .unwrap()
+            .showing = false;
         app.update();
         assert_eq!(
             app.world().get::<Node>(entity).unwrap().display,

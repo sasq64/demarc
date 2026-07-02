@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, channel, sync_channel};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
 
@@ -28,6 +27,7 @@ use ruffle_core::backend::audio::{
     AudioBackend, AudioMixer, DecodeError, RegisterError, SoundHandle, SoundInstanceHandle,
     SoundStreamInfo, SoundTransform,
 };
+use ruffle_core::backend::navigator::{NullExecutor, NullNavigatorBackend};
 use ruffle_core::events::{
     KeyDescriptor, KeyLocation, LogicalKey, MouseButton as RuffleMouseButton, NamedKey,
     PhysicalKey, PlayerEvent,
@@ -48,15 +48,31 @@ use crate::retro_emu::RetroEmu;
 /// Audio output rate handed to the frontend. Matches the other cores so the
 /// existing [`crate::audio::AudioResampler`] converts to the device rate.
 const SAMPLE_RATE: u32 = 44100;
-/// Channel depth for frame updates; small for low latency, like the libretro
-/// worker. Blocking sends provide backpressure if the frontend falls behind.
-const UPDATE_QUEUE: usize = 2;
+/// Channel depth for frame updates; a few frames of slack, like the libretro
+/// worker ([`crate::retro_emu::RetroCoreThreaded`]). Blocking sends provide
+/// backpressure so the worker runs at the frontend's consumption rate.
+const UPDATE_QUEUE: usize = 3;
 
 /// Commands sent from [`FlashEmu`] (main thread) to the Ruffle worker.
 enum FlashCmd {
-    PressKey { code: u32, down: bool },
-    MouseMotion { dx: f32, dy: f32 },
-    MouseButtons { left: bool, right: bool, middle: bool },
+    PressKey {
+        code: u32,
+        down: bool,
+    },
+    MouseMotion {
+        dx: f32,
+        dy: f32,
+    },
+    /// Absolute pointer position in normalized frame coords (`0.0..=1.0`).
+    MousePosition {
+        x: f32,
+        y: f32,
+    },
+    MouseButtons {
+        left: bool,
+        right: bool,
+        middle: bool,
+    },
     Reset,
     SavePng(PathBuf),
     Skip(u32),
@@ -69,8 +85,10 @@ struct FlashUpdate {
     height: usize,
     /// RGBA8, tightly packed, alpha forced opaque.
     frame: Vec<u8>,
-    /// Interleaved stereo i16 for this frame's elapsed time.
+    /// Interleaved stereo i16 for this frame (`SAMPLE_RATE / fps` samples).
     audio: Vec<i16>,
+    /// Live movie frame rate (ActionScript can change it at runtime).
+    fps: f64,
 }
 
 /// Result of the worker's one-time setup, awaited synchronously by
@@ -151,23 +169,21 @@ impl FlashEmu {
 
 impl RetroEmu for FlashEmu {
     fn run(&mut self) -> bool {
-        // Drain to the newest frame; accumulate all audio so nothing is lost.
-        let mut got = false;
-        let rx = self.update_rx.get_mut().unwrap();
-        loop {
-            match rx.try_recv() {
-                Ok(update) => {
-                    self.width = update.width;
-                    self.height = update.height;
-                    self.frame = update.frame;
-                    self.audio.extend_from_slice(&update.audio);
-                    got = true;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
+        // Consume exactly one frame per call, like `RetroCoreThreaded::run`: the
+        // frontend (`Emulator::run`) paces `run()` at the movie's fps and assumes
+        // each call carries one frame's worth of audio. Draining the whole channel
+        // here instead would push several frames of audio per paced call (flooding
+        // the sink past `AUDIO_BUF_MAX` -> continuous "Dropping frame") and would
+        // keep the bounded channel from ever filling, defeating the blocking-send
+        // backpressure that throttles the worker to real time.
+        if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
+            self.width = update.width;
+            self.height = update.height;
+            self.frame = update.frame;
+            self.audio.extend_from_slice(&update.audio);
+            self.fps = update.fps;
         }
-        got
+        true
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
@@ -205,6 +221,10 @@ impl RetroEmu for FlashEmu {
 
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
         let _ = self.cmd_tx.send(FlashCmd::MouseMotion { dx, dy });
+    }
+
+    fn set_mouse_position(&mut self, x: f32, y: f32) {
+        let _ = self.cmd_tx.send(FlashCmd::MousePosition { x, y });
     }
 
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
@@ -264,7 +284,7 @@ fn worker_loop(
     setup_tx: Sender<SetupResult>,
 ) {
     let setup = build_player(game);
-    let (player, proxy, width, height, fps) = match setup {
+    let (player, proxy, mut executor, width, height, fps) = match setup {
         Ok(v) => v,
         Err(e) => {
             let _ = setup_tx.send(SetupResult::Err(e.to_string()));
@@ -273,19 +293,13 @@ fn worker_loop(
     };
     let _ = setup_tx.send(SetupResult::Ok { width, height, fps });
 
-    let frame_dur = Duration::from_secs_f64(1.0 / fps.max(1.0));
     // Absolute cursor position in stage pixels; Ruffle wants absolute coords but
     // the RetroEmu trait only offers relative motion.
     let mut cursor = (width as f64 / 2.0, height as f64 / 2.0);
     let mut buttons = (false, false, false);
-    let mut last_capture: Option<Vec<u8>> = None;
-    let mut last = Instant::now();
-
-    let profile = std::env::var("FLASH_PROFILE").is_ok();
-    let mut prof_n = 0u32;
-    let mut prof_tick = Duration::ZERO;
-    let mut prof_render = Duration::ZERO;
-    let mut prof_capture = Duration::ZERO;
+    // Fractional carry so the per-frame audio chunk averages exactly
+    // `SAMPLE_RATE / fps` samples even when that isn't a whole number.
+    let mut audio_carry = 0.0f64;
 
     loop {
         // Apply all pending commands.
@@ -293,68 +307,57 @@ fn worker_loop(
         loop {
             match cmd_rx.try_recv() {
                 Ok(FlashCmd::Unload) => return,
-                Ok(cmd) => apply_cmd(&player, cmd, width, height, &mut cursor, &mut buttons, &mut skip),
+                Ok(cmd) => apply_cmd(
+                    &player,
+                    cmd,
+                    width,
+                    height,
+                    &mut cursor,
+                    &mut buttons,
+                    &mut skip,
+                ),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
         }
 
-        let now = Instant::now();
-        let dt = now.duration_since(last);
-        last = now;
-
-        let t_tick;
-        let t_render;
-        {
+        // Produce exactly one movie frame per iteration and hand it to the
+        // channel, mirroring the libretro worker
+        // ([`crate::retro_emu::RetroCoreThreaded`]): the worker does no timing of
+        // its own. The blocking send below makes it run at the frontend's
+        // consumption rate, and the frontend's `Emulator` layer owns pacing and
+        // audio-rate matching just as it does for a libretro core.
+        //
+        // "One frame" is `tick(1/fps)`, not a bare `run_frame()`: alongside the
+        // timeline it advances `flash.utils` timers, `NetStream`/streamed-sound
+        // playback, and the audio backend — machinery timer-driven AS3 content
+        // (e.g. this Flex/Away3D demo, whose menu and music are timer/stream
+        // driven) needs to progress at all — and it stream-preloads incrementally
+        // so big movies present as they load. Passing the movie's own frame
+        // duration advances exactly one frame; it is a per-frame quantum, not
+        // wall-clock pacing.
+        let live_fps = {
             let mut p = player.lock().unwrap();
-            // Do NOT preload with an unlimited budget here: `tick`/`run_frame`
-            // already stream-preload each frame with a per-frame time box (see
-            // `Player::run_frame`), so a large movie starts presenting frames
-            // immediately. Calling `preload(ExecutionLimit::none())` ourselves
-            // would block the worker on the *entire* movie before the first
-            // frame — a multi-second freeze on big SWFs.
-            for _ in 0..skip {
-                p.run_frame();
+            let frame_dur = FloatDuration::from_secs(1.0 / p.frame_rate().max(1.0));
+            for _ in 0..=skip {
+                p.tick(frame_dur);
             }
-            let a = Instant::now();
-            p.tick(FloatDuration::from_secs(dt.as_secs_f64()));
-            t_tick = a.elapsed();
-            let b = Instant::now();
             p.render();
-            t_render = b.elapsed();
-        }
+            p.frame_rate().max(1.0)
+        };
+        // Pump the navigator's executor so pending external fetches (e.g. the
+        // relative `.mp3` load) make progress; results are delivered on the next
+        // `tick`.
+        executor.run();
 
-        let c = Instant::now();
         let frame = capture_frame(&player)
-            .or_else(|| last_capture.clone())
             .unwrap_or_else(|| vec![0u8; width as usize * height as usize * 4]);
-        let t_capture = c.elapsed();
-        last_capture = Some(frame.clone());
-        if profile {
-            prof_n += 1;
-            prof_tick += t_tick;
-            prof_render += t_render;
-            prof_capture += t_capture;
-            if prof_n == 60 {
-                let live_fps = player.lock().unwrap().frame_rate();
-                eprintln!(
-                    "[flash] over {prof_n} frames: tick={:.2}ms render={:.2}ms capture={:.2}ms  ({:.1} fps ceiling)  live_fps={live_fps}",
-                    prof_tick.as_secs_f64() * 1000.0 / 60.0,
-                    prof_render.as_secs_f64() * 1000.0 / 60.0,
-                    prof_capture.as_secs_f64() * 1000.0 / 60.0,
-                    60.0 / (prof_tick + prof_render + prof_capture).as_secs_f64(),
-                );
-                prof_n = 0;
-                prof_tick = Duration::ZERO;
-                prof_render = Duration::ZERO;
-                prof_capture = Duration::ZERO;
-            }
-        }
 
-        // Pull mixed audio for the elapsed wall-clock time so the rate stays
-        // correct regardless of loop jitter; the frontend resampler + PI
-        // controller absorb the remaining drift.
-        let n_frames = (SAMPLE_RATE as f64 * dt.as_secs_f64()).round() as usize;
+        // One frame's worth of audio, frame-locked to video like a libretro
+        // core's per-`run` audio batch.
+        audio_carry += SAMPLE_RATE as f64 * (skip + 1) as f64 / live_fps;
+        let n_frames = audio_carry.floor() as usize;
+        audio_carry -= n_frames as f64;
         let mut audio = vec![0i16; n_frames * 2];
         proxy.mix::<i16>(&mut audio);
 
@@ -365,14 +368,11 @@ fn worker_loop(
                 height: height as usize,
                 frame,
                 audio,
+                fps: live_fps,
             })
             .is_err()
         {
             return;
-        }
-
-        if let Some(remaining) = frame_dur.checked_sub(now.elapsed()) {
-            thread::sleep(remaining);
         }
     }
 }
@@ -386,6 +386,7 @@ fn build_player(
 ) -> Result<(
     PlayerHandle,
     ruffle_core::backend::audio::AudioMixerProxy,
+    NullExecutor,
     u32,
     u32,
     f64,
@@ -414,15 +415,43 @@ fn build_player(
     let proxy = mixer.proxy();
     let audio = FlashAudio { mixer };
 
+    // Give the movie a navigator rooted at its own directory so relative
+    // external loads (e.g. `URLRequest("99er.mp3")` for streamed audio, or any
+    // sibling asset) resolve to the files next to the SWF. Without this the
+    // default null navigator has an empty base path and every relative fetch
+    // fails, which can leave preloader-gated movies stuck on a black frame.
+    // `NullNavigatorBackend` runs fetch futures on its own `NullExecutor`, which
+    // the worker must pump each iteration (see `worker_loop`).
+    let executor = NullExecutor::new();
+    // `parent()` yields `Some("")` for a bare filename like `99er.swf`, which
+    // can't be canonicalized; fall back to the current directory in that case.
+    let base = match game.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let navigator = NullNavigatorBackend::with_base_path(base, &executor)
+        .map_err(|e| anyhow!("failed to set Flash base path '{}': {e}", base.display()))?;
+
     let player = PlayerBuilder::new()
         .with_renderer(renderer)
         .with_audio(audio)
+        .with_navigator(navigator)
         .with_movie(movie)
         .with_viewport_dimensions(width, height, 1.0)
         .with_autoplay(true)
         .build();
 
-    Ok((player, proxy, width, height, fps))
+    // This player has no OS window, and it renders into a fixed-size offscreen
+    // target sized to the movie's stage. Honoring `Stage.displayState =
+    // FULL_SCREEN` would switch the stage to a fullscreen size the movie then
+    // scales its content to — landing outside our fixed target and presenting as
+    // a black frame. Deny fullscreen so such requests are ignored and the movie
+    // keeps rendering at its native stage size; the frontend scales the output
+    // to the display instead. (The default UI backend otherwise accepts the
+    // request, so this must be set explicitly.)
+    player.lock().unwrap().set_allow_fullscreen(false);
+
+    Ok((player, proxy, executor, width, height, fps))
 }
 
 /// Capture the current frame as RGBA8 by downcasting the player's renderer to
@@ -449,6 +478,16 @@ fn apply_cmd(
         FlashCmd::MouseMotion { dx, dy } => {
             cursor.0 = (cursor.0 + dx as f64).clamp(0.0, width as f64);
             cursor.1 = (cursor.1 + dy as f64).clamp(0.0, height as f64);
+            player.lock().unwrap().handle_event(PlayerEvent::MouseMove {
+                x: cursor.0,
+                y: cursor.1,
+            });
+        }
+        FlashCmd::MousePosition { x, y } => {
+            // Absolute pointer from the frontend, mapped into stage pixels so
+            // Ruffle's cursor lands where the visible OS cursor is.
+            cursor.0 = (x as f64 * width as f64).clamp(0.0, width as f64);
+            cursor.1 = (y as f64 * height as f64).clamp(0.0, height as f64);
             player.lock().unwrap().handle_event(PlayerEvent::MouseMove {
                 x: cursor.0,
                 y: cursor.1,
@@ -503,9 +542,7 @@ fn apply_cmd(
         }
         FlashCmd::SavePng(path) => {
             if let Some(rgba) = capture_frame(player) {
-                if let Some(img) =
-                    image::RgbaImage::from_raw(width, height, rgba)
-                {
+                if let Some(img) = image::RgbaImage::from_raw(width, height, rgba) {
                     let _ = img.save(&path);
                 }
             }
@@ -528,18 +565,44 @@ fn printable_char(code: u32) -> Option<char> {
 /// are unmapped in v1.
 fn retro_key_to_descriptor(code: u32) -> Option<KeyDescriptor> {
     const LETTERS: [PhysicalKey; 26] = [
-        PhysicalKey::KeyA, PhysicalKey::KeyB, PhysicalKey::KeyC, PhysicalKey::KeyD,
-        PhysicalKey::KeyE, PhysicalKey::KeyF, PhysicalKey::KeyG, PhysicalKey::KeyH,
-        PhysicalKey::KeyI, PhysicalKey::KeyJ, PhysicalKey::KeyK, PhysicalKey::KeyL,
-        PhysicalKey::KeyM, PhysicalKey::KeyN, PhysicalKey::KeyO, PhysicalKey::KeyP,
-        PhysicalKey::KeyQ, PhysicalKey::KeyR, PhysicalKey::KeyS, PhysicalKey::KeyT,
-        PhysicalKey::KeyU, PhysicalKey::KeyV, PhysicalKey::KeyW, PhysicalKey::KeyX,
-        PhysicalKey::KeyY, PhysicalKey::KeyZ,
+        PhysicalKey::KeyA,
+        PhysicalKey::KeyB,
+        PhysicalKey::KeyC,
+        PhysicalKey::KeyD,
+        PhysicalKey::KeyE,
+        PhysicalKey::KeyF,
+        PhysicalKey::KeyG,
+        PhysicalKey::KeyH,
+        PhysicalKey::KeyI,
+        PhysicalKey::KeyJ,
+        PhysicalKey::KeyK,
+        PhysicalKey::KeyL,
+        PhysicalKey::KeyM,
+        PhysicalKey::KeyN,
+        PhysicalKey::KeyO,
+        PhysicalKey::KeyP,
+        PhysicalKey::KeyQ,
+        PhysicalKey::KeyR,
+        PhysicalKey::KeyS,
+        PhysicalKey::KeyT,
+        PhysicalKey::KeyU,
+        PhysicalKey::KeyV,
+        PhysicalKey::KeyW,
+        PhysicalKey::KeyX,
+        PhysicalKey::KeyY,
+        PhysicalKey::KeyZ,
     ];
     const DIGITS: [PhysicalKey; 10] = [
-        PhysicalKey::Digit0, PhysicalKey::Digit1, PhysicalKey::Digit2, PhysicalKey::Digit3,
-        PhysicalKey::Digit4, PhysicalKey::Digit5, PhysicalKey::Digit6, PhysicalKey::Digit7,
-        PhysicalKey::Digit8, PhysicalKey::Digit9,
+        PhysicalKey::Digit0,
+        PhysicalKey::Digit1,
+        PhysicalKey::Digit2,
+        PhysicalKey::Digit3,
+        PhysicalKey::Digit4,
+        PhysicalKey::Digit5,
+        PhysicalKey::Digit6,
+        PhysicalKey::Digit7,
+        PhysicalKey::Digit8,
+        PhysicalKey::Digit9,
     ];
 
     let desc = |physical: PhysicalKey, logical: LogicalKey, loc: KeyLocation| KeyDescriptor {
@@ -550,28 +613,80 @@ fn retro_key_to_descriptor(code: u32) -> Option<KeyDescriptor> {
 
     Some(match code {
         // Arrows
-        273 => desc(PhysicalKey::ArrowUp, LogicalKey::Named(NamedKey::ArrowUp), KeyLocation::Standard),
-        274 => desc(PhysicalKey::ArrowDown, LogicalKey::Named(NamedKey::ArrowDown), KeyLocation::Standard),
-        275 => desc(PhysicalKey::ArrowRight, LogicalKey::Named(NamedKey::ArrowRight), KeyLocation::Standard),
-        276 => desc(PhysicalKey::ArrowLeft, LogicalKey::Named(NamedKey::ArrowLeft), KeyLocation::Standard),
+        273 => desc(
+            PhysicalKey::ArrowUp,
+            LogicalKey::Named(NamedKey::ArrowUp),
+            KeyLocation::Standard,
+        ),
+        274 => desc(
+            PhysicalKey::ArrowDown,
+            LogicalKey::Named(NamedKey::ArrowDown),
+            KeyLocation::Standard,
+        ),
+        275 => desc(
+            PhysicalKey::ArrowRight,
+            LogicalKey::Named(NamedKey::ArrowRight),
+            KeyLocation::Standard,
+        ),
+        276 => desc(
+            PhysicalKey::ArrowLeft,
+            LogicalKey::Named(NamedKey::ArrowLeft),
+            KeyLocation::Standard,
+        ),
         // Named keys
-        13 => desc(PhysicalKey::Enter, LogicalKey::Named(NamedKey::Enter), KeyLocation::Standard),
-        27 => desc(PhysicalKey::Escape, LogicalKey::Named(NamedKey::Escape), KeyLocation::Standard),
-        8 => desc(PhysicalKey::Backspace, LogicalKey::Named(NamedKey::Backspace), KeyLocation::Standard),
-        9 => desc(PhysicalKey::Tab, LogicalKey::Named(NamedKey::Tab), KeyLocation::Standard),
-        32 => desc(PhysicalKey::Space, LogicalKey::Character(' '), KeyLocation::Standard),
+        13 => desc(
+            PhysicalKey::Enter,
+            LogicalKey::Named(NamedKey::Enter),
+            KeyLocation::Standard,
+        ),
+        27 => desc(
+            PhysicalKey::Escape,
+            LogicalKey::Named(NamedKey::Escape),
+            KeyLocation::Standard,
+        ),
+        8 => desc(
+            PhysicalKey::Backspace,
+            LogicalKey::Named(NamedKey::Backspace),
+            KeyLocation::Standard,
+        ),
+        9 => desc(
+            PhysicalKey::Tab,
+            LogicalKey::Named(NamedKey::Tab),
+            KeyLocation::Standard,
+        ),
+        32 => desc(
+            PhysicalKey::Space,
+            LogicalKey::Character(' '),
+            KeyLocation::Standard,
+        ),
         // Modifiers (left variants)
-        304 => desc(PhysicalKey::ShiftLeft, LogicalKey::Named(NamedKey::Shift), KeyLocation::Left),
-        306 => desc(PhysicalKey::ControlLeft, LogicalKey::Named(NamedKey::Control), KeyLocation::Left),
+        304 => desc(
+            PhysicalKey::ShiftLeft,
+            LogicalKey::Named(NamedKey::Shift),
+            KeyLocation::Left,
+        ),
+        306 => desc(
+            PhysicalKey::ControlLeft,
+            LogicalKey::Named(NamedKey::Control),
+            KeyLocation::Left,
+        ),
         // Letters a-z (RETROK_a == 97)
         97..=122 => {
             let i = (code - 97) as usize;
-            desc(LETTERS[i], LogicalKey::Character(char::from(code as u8)), KeyLocation::Standard)
+            desc(
+                LETTERS[i],
+                LogicalKey::Character(char::from(code as u8)),
+                KeyLocation::Standard,
+            )
         }
         // Digits 0-9 (RETROK_0 == 48)
         48..=57 => {
             let i = (code - 48) as usize;
-            desc(DIGITS[i], LogicalKey::Character(char::from(code as u8)), KeyLocation::Standard)
+            desc(
+                DIGITS[i],
+                LogicalKey::Character(char::from(code as u8)),
+                KeyLocation::Standard,
+            )
         }
         _ => return None,
     })
@@ -581,6 +696,7 @@ fn retro_key_to_descriptor(code: u32) -> Option<KeyDescriptor> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::time::Duration;
 
     /// End-to-end smoke test: load an SWF, run a few frames, and confirm we get
     /// a full RGBA frame at the movie's dimensions. Requires a working GPU
@@ -597,38 +713,24 @@ mod tests {
         assert!(w > 0 && h > 0, "movie has non-zero dimensions");
         assert!(emu.fps() > 0.0, "movie has a frame rate");
 
-        // Pump until the worker delivers at least one rendered frame.
+        // Pump until the worker delivers a rendered frame with real content.
+        // (`run()` returns `true` unconditionally, like `RetroCoreThreaded`, so
+        // detect the first frame by its pixels rather than the return value.)
         let mut got_frame = false;
         for _ in 0..600 {
-            if emu.run() {
-                got_frame = true;
+            emu.run();
+            emu.with_frame(&mut |_, _, buf| got_frame = buf.iter().any(|&b| b != 0));
+            if got_frame {
                 break;
             }
             std::thread::sleep(Duration::from_millis(16));
         }
-        assert!(got_frame, "worker produced a frame");
+        assert!(got_frame, "worker produced a non-empty frame");
 
         // Let a few more frames accumulate so animated content is visible.
-        let iters = if std::env::var("FLASH_PROFILE").is_ok() {
-            600
-        } else {
-            30
-        };
-        eprintln!("[flash] movie fps = {}", emu.fps());
-        let mut delivered = 0u32;
-        let t0 = Instant::now();
-        for _ in 0..iters {
-            if emu.run() {
-                delivered += 1;
-            }
+        for _ in 0..30 {
+            emu.run();
             std::thread::sleep(Duration::from_millis(16));
-        }
-        if std::env::var("FLASH_PROFILE").is_ok() {
-            eprintln!(
-                "[flash] delivered {delivered} new frames in {:.2}s = {:.1} fps to frontend",
-                t0.elapsed().as_secs_f64(),
-                delivered as f64 / t0.elapsed().as_secs_f64(),
-            );
         }
 
         emu.with_frame(&mut |fw, fh, buf| {

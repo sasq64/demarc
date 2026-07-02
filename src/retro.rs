@@ -86,8 +86,7 @@ fn resolve_system_dir() -> PathBuf {
         archive
             .extract(&cache)
             .expect("Failed to extract system.zip");
-        std::fs::write(&checksum_file, SYSTEM_CHECKSUM)
-            .expect("Failed to write system checksum");
+        std::fs::write(&checksum_file, SYSTEM_CHECKSUM).expect("Failed to write system checksum");
     }
     system
 }
@@ -515,7 +514,8 @@ fn run_retro(
     mut writer: MessageWriter<SetHudText>,
     mut cmd_writer: MessageWriter<CmdMessage>,
     mut images: ResMut<Assets<Image>>,
-    mut post_process: Query<&mut PostProcess>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(&EmuView, &Camera, &mut PostProcess)>,
 ) {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
     let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
@@ -543,6 +543,49 @@ fn run_retro(
     if let Some(cmd) = cmd {
         settings.hotkey_pressed = 0.0;
         cmd_writer.write(CmdMessage(cmd, shift));
+    }
+
+    // Map the OS cursor to normalized frame coordinates of the emulator it is
+    // over, inverting the same letterbox transform the post-process shader uses
+    // (`source_uv = (screen_uv - uv_offset) / uv_scale`). Pointer-driven cores
+    // (Flash) need this so the emulator's cursor tracks the visible OS cursor.
+    let cursor = window.cursor_position().map(|c| c * window.scale_factor());
+    let mut pointer: Option<(usize, Vec2)> = None;
+    if let Some(pos) = cursor {
+        for (view, camera, pp) in &cameras {
+            if !camera.is_active {
+                continue;
+            }
+            let Some(rect) = camera.physical_viewport_rect() else {
+                continue;
+            };
+            let vp_min = rect.min.as_vec2();
+            let vp_size = rect.size().as_vec2();
+            if vp_size.x <= 0.0 || vp_size.y <= 0.0 {
+                continue;
+            }
+            if !Rect::from_corners(vp_min, vp_min + vp_size).contains(pos) {
+                continue;
+            }
+            let screen_uv = (pos - vp_min) / vp_size;
+            let src = images
+                .get(&pp.source)
+                .map(|i| i.size())
+                .unwrap_or(UVec2::ONE);
+            let (uv_scale, uv_offset) = crate::post_process::scale_offset(
+                rect.size(),
+                src,
+                pp.aspect,
+                pp.aspect_tweak,
+                settings.scale_mode,
+            );
+            let frame_uv = (screen_uv - uv_offset) / uv_scale;
+            // Ignore hits in the letterbox bars, where the cursor is off-image.
+            if (0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y) {
+                pointer = Some((view.index, frame_uv));
+                break;
+            }
+        }
     }
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
@@ -605,7 +648,8 @@ fn run_retro(
         }
 
         if (settings.all_emus || i == settings.current_emu) && cmd.is_none() {
-            emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
+            let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
+            emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         if !emu.run(&time) {
             writer.write(SetHudText {
@@ -642,7 +686,7 @@ fn run_retro(
             emu.core.as_mut().unwrap().aspect_ratio()
         };
 
-        for mut pp in &mut post_process {
+        for (_, _, mut pp) in &mut cameras {
             if pp.source == emu.image {
                 pp.aspect = aspect;
             }

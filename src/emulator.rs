@@ -317,6 +317,9 @@ impl Emulator {
         input: &ButtonInput<KeyCode>,
         mouse_buttons: &ButtonInput<MouseButton>,
         mouse_motion: &AccumulatedMouseMotion,
+        // Absolute pointer in normalized frame coords when the cursor is over
+        // this emulator's output. Used by pointer-driven cores (Flash).
+        abs_pointer: Option<Vec2>,
     ) {
         let mut mods: u16 = libretro::RETROKMOD_NONE as u16;
         if input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight) {
@@ -372,6 +375,11 @@ impl Emulator {
                 .as_mut()
                 .unwrap()
                 .add_mouse_motion(motion.x, motion.y);
+        }
+        // Sent after the relative motion so it is authoritative for cores that
+        // track an absolute cursor (Flash); relative-mouse cores ignore it.
+        if let Some(p) = abs_pointer {
+            self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
         self.core.as_mut().unwrap().set_mouse_buttons(
             mouse_buttons.pressed(MouseButton::Left),
