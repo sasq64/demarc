@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use bevy::{
+    asset::AssetId,
     camera::Camera,
     core_pipeline::{Core2d, Core2dSystems, FullscreenShader},
     image::Image,
@@ -14,31 +18,47 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{
             AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-            CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, PipelineCache,
-            RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-            SamplerDescriptor, ShaderStages, ShaderType, TextureFormat, TextureSampleType,
+            CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState,
+            PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, Sampler,
+            SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Texture,
+            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+            TextureView, TextureViewDescriptor,
             binding_types::{sampler, texture_2d, uniform_buffer},
         },
-        renderer::{RenderContext, RenderDevice, ViewQuery},
+        renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
         settings::WgpuFeatures,
         texture::GpuImage,
         view::ViewTarget,
     },
 };
+use librashader::presets::ShaderFeatures;
+use librashader::runtime::{Size, Viewport};
+use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
 use crate::AppSettings;
 
-/// Path of the post-process shader to load at runtime from the `system` asset
-/// directory (unpacked from the embedded `system.zip`). Selected on the command
-/// line; both shaders share the same bindings and uniform layout.
-#[derive(Resource, Clone, Copy)]
-pub struct ShaderPath(pub &'static str);
+/// Format of both the librashader intermediate target and the composite blit's
+/// output. Matches Bevy's view-target main texture (formerly
+/// `TextureFormat::bevy_default()`).
+const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+
+/// Filesystem paths of the two `.slangp` presets loaded at runtime: the visible
+/// effect (selected on the command line) and a plain passthrough (`stock.slangp`)
+/// used when the CRT/LCD effect is toggled off. Absolute paths, resolved from
+/// the `system` dir (or a user-supplied `--preset`) in `main`.
+#[derive(Resource, Clone)]
+pub struct ShaderPath {
+    pub effect: PathBuf,
+    pub passthrough: PathBuf,
+}
 
 pub struct PostProcessPlugin {
-    /// Asset path of the shader to run, e.g. `shaders/lottes.wgsl`.
-    pub shader_path: &'static str,
+    /// Absolute path of the effect `.slangp` preset to run.
+    pub effect_path: PathBuf,
+    /// Absolute path of the passthrough `.slangp` preset (`stock.slangp`).
+    pub passthrough_path: PathBuf,
 }
 
 impl Plugin for PostProcessPlugin {
@@ -56,16 +76,19 @@ impl Plugin for PostProcessPlugin {
             return;
         };
 
-        // Hand the chosen shader path to the render world so pipeline init can
-        // load it. It's a plain resource (not extracted) because it never changes.
-        render_app.insert_resource(ShaderPath(self.shader_path));
+        // Hand the chosen preset paths to the render world so init can load them.
+        // A plain resource (not extracted) because they never change.
+        render_app.insert_resource(ShaderPath {
+            effect: self.effect_path.clone(),
+            passthrough: self.passthrough_path.clone(),
+        });
 
         // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
         // render pass is just a system in the per-camera `Core2d` schedule. We run
         // in the `PostProcess` set (where tonemapping lives), which is ordered
         // before upscaling presents the view target to the swapchain.
         render_app
-            .add_systems(RenderStartup, init_lottes_pipeline)
+            .add_systems(RenderStartup, (init_blit_pipeline, init_filter_chains))
             .add_systems(Core2d, post_process_pass.in_set(Core2dSystems::PostProcess));
     }
 }
@@ -258,9 +281,15 @@ pub fn scale_offset(
     )
 }
 
-/// Runs the Lottes CRT blit for the current view. As a `Core2d` render system,
-/// this is invoked once per camera with [`CurrentView`](bevy::render::renderer::CurrentView)
-/// set; the [`ViewQuery`] simply skips cameras without a [`PostProcess`] component.
+/// Renders the current view in two stages: first the librashader `.slangp`
+/// filter chain turns the emulator framebuffer into an intermediate texture
+/// (the effect, at display resolution, preserving the source aspect ratio),
+/// then a passthrough blit composites that intermediate into the view target
+/// with the letterbox/pillarbox transform and border handling.
+///
+/// As a `Core2d` render system this is invoked once per camera with
+/// [`CurrentView`](bevy::render::renderer::CurrentView) set; the [`ViewQuery`]
+/// skips cameras without a [`PostProcess`] component.
 fn post_process_pass(
     view: ViewQuery<(
         &ViewTarget,
@@ -274,11 +303,17 @@ fn post_process_pass(
     gpu_images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
     settings: Res<AppSettings>,
+    chains: Option<ResMut<SlangChains>>,
     mut render_context: RenderContext,
 ) {
     let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
 
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
+        return;
+    };
+
+    // Absent if the preset failed to load; skip rendering rather than panic.
+    let Some(mut chains) = chains else {
         return;
     };
 
@@ -290,6 +325,65 @@ fn post_process_pass(
         return;
     };
 
+    // --- Stage 1: run the librashader filter chain into an intermediate ---
+    //
+    // Size the intermediate to the aspect-correct `Fit` image rectangle at the
+    // camera's physical viewport resolution, so the effect (scanlines/mask) is
+    // rendered at display density. The intermediate then behaves exactly like
+    // the raw source texture did for the composite blit below — same aspect, so
+    // `compute_uniform`'s `uv_scale`/`uv_offset` still apply unchanged.
+    let source_id = post_process.source.id();
+    let src_size = UVec2::new(source_image.texture.width(), source_image.texture.height());
+    let viewport_size = camera
+        .physical_viewport_size
+        .or(camera.physical_target_size)
+        .unwrap_or(src_size);
+    let (fit_scale, _) = scale_offset(
+        viewport_size,
+        src_size,
+        post_process.aspect,
+        post_process.aspect_tweak,
+        ScaleMode::Fit,
+    );
+    let inter_size = (viewport_size.as_vec2() * fit_scale)
+        .round()
+        .as_uvec2()
+        .max(UVec2::ONE);
+
+    let device = render_context.render_device().clone();
+    chains.target(&device, source_id, inter_size);
+    // Split the borrow so the target (in `targets`) and the chosen chain
+    // (`effect`/`passthrough`) can be borrowed at once — they're disjoint fields.
+    let SlangChains {
+        effect,
+        passthrough,
+        frame_count,
+        targets,
+    } = &mut *chains;
+    let target = &targets[&source_id];
+    let chain = if settings.crt_effect { effect } else { passthrough };
+    let lr_size = Size::new(inter_size.x, inter_size.y);
+    let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
+    let viewport = Viewport {
+        x: 0.0,
+        y: 0.0,
+        mvp: None,
+        output,
+        size: lr_size,
+    };
+    if let Err(err) = chain.frame(
+        &source_image.texture,
+        &viewport,
+        render_context.command_encoder(),
+        *frame_count,
+        None,
+    ) {
+        error!("librashader frame failed: {err}");
+        return;
+    }
+    *frame_count += 1;
+
+    // --- Stage 2: composite the intermediate into the view target ---
     let sampler = match settings.border_mode {
         BorderMode::Stretch => &pipeline_resource.sampler_stretch,
         BorderMode::Black => &pipeline_resource.sampler_black,
@@ -298,11 +392,7 @@ fn post_process_pass(
     let bind_group = render_context.render_device().create_bind_group(
         "lottes_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
-        &BindGroupEntries::sequential((
-            &source_image.texture_view,
-            sampler,
-            uniform_binding.clone(),
-        )),
+        &BindGroupEntries::sequential((&target.view, sampler, uniform_binding.clone())),
     );
 
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -349,13 +439,112 @@ struct PostProcessPipeline {
     pipeline_id: CachedRenderPipelineId,
 }
 
-fn init_lottes_pipeline(
+/// A librashader intermediate render target: the emulator framebuffer with the
+/// filter chain applied, at display resolution and preserving the source aspect
+/// ratio. Sized to the [`ScaleMode::Fit`] image rectangle of the view; recreated
+/// when that size changes (window resize / core resolution change).
+struct IntermediateTarget {
+    size: UVec2,
+    texture: Texture,
+    view: TextureView,
+}
+
+/// The two librashader filter chains plus per-emulator intermediate targets.
+///
+/// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
+/// so it lives as a render-world resource. `frame()` takes `&mut self`, and the
+/// targets are recreated on resize, so the whole thing is accessed via `ResMut`.
+#[derive(Resource)]
+struct SlangChains {
+    /// The visible effect preset (CRT/LCD), selected on the command line.
+    effect: FilterChain,
+    /// Plain passthrough (`stock.slangp`), used when the effect is toggled off.
+    passthrough: FilterChain,
+    /// RetroArch-style frame counter fed to the shaders (feedback/animation).
+    frame_count: usize,
+    /// One intermediate target per emulator, keyed by its source image.
+    targets: HashMap<AssetId<Image>, IntermediateTarget>,
+}
+
+impl SlangChains {
+    /// Return the intermediate target for `source`, creating or resizing it to
+    /// `size` first. `size` is the display-resolution image rectangle.
+    fn target(
+        &mut self,
+        device: &RenderDevice,
+        source: AssetId<Image>,
+        size: UVec2,
+    ) -> &IntermediateTarget {
+        let entry = self.targets.entry(source);
+        let needs_build = !matches!(entry, std::collections::hash_map::Entry::Occupied(ref e) if e.get().size == size);
+        if needs_build {
+            let texture = device.create_texture(&TextureDescriptor {
+                label: Some("slang_intermediate"),
+                size: Extent3d {
+                    width: size.x,
+                    height: size.y,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TARGET_FORMAT,
+                // librashader renders into it; the composite blit samples it.
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&TextureViewDescriptor::default());
+            self.targets
+                .insert(source, IntermediateTarget { size, texture, view });
+        }
+        &self.targets[&source]
+    }
+}
+
+/// Load both `.slangp` filter chains onto Bevy's own wgpu device/queue, so they
+/// share the emulator's source textures and the view target directly.
+fn init_filter_chains(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    shader_path: Res<ShaderPath>,
+) {
+    let device = render_device.wgpu_device();
+    let queue: &wgpu::Queue = &render_queue;
+    let load = |path: &PathBuf| {
+        FilterChain::load_from_path(path, ShaderFeatures::NONE, device, queue, None)
+    };
+    let effect = match load(&shader_path.effect) {
+        Ok(chain) => chain,
+        Err(err) => {
+            error!("failed to load shader preset {:?}: {err}", shader_path.effect);
+            return;
+        }
+    };
+    let passthrough = match load(&shader_path.passthrough) {
+        Ok(chain) => chain,
+        Err(err) => {
+            error!(
+                "failed to load passthrough preset {:?}: {err}",
+                shader_path.passthrough
+            );
+            return;
+        }
+    };
+    commands.insert_resource(SlangChains {
+        effect,
+        passthrough,
+        frame_count: 0,
+        targets: HashMap::new(),
+    });
+}
+
+fn init_blit_pipeline(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
     pipeline_cache: Res<PipelineCache>,
-    shader_path: Res<ShaderPath>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
         "lottes_bind_group_layout",
@@ -390,7 +579,9 @@ fn init_lottes_pipeline(
         );
         render_device.create_sampler(&SamplerDescriptor::default())
     };
-    let shader = asset_server.load(shader_path.0);
+    // Passthrough composite blit; the CRT/LCD effect is applied upstream by the
+    // librashader filter chain into an intermediate texture that this samples.
+    let shader = asset_server.load("shaders/blit.wgsl");
 
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("lottes_pipeline".into()),
@@ -401,7 +592,7 @@ fn init_lottes_pipeline(
             targets: vec![Some(ColorTargetState {
                 // Matches the view target's main texture format (Bevy's former
                 // `TextureFormat::bevy_default()`, now deprecated).
-                format: TextureFormat::Rgba8UnormSrgb,
+                format: TARGET_FORMAT,
                 blend: None,
                 write_mask: ColorWrites::ALL,
             })],

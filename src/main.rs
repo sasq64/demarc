@@ -86,6 +86,12 @@ struct Args {
     #[arg(long, value_enum)]
     shader: Option<ShaderArg>,
 
+    /// Path to a libretro `.slangp` shader preset to use instead of `--shader`,
+    /// e.g. any preset from the slang-shaders repo. Takes precedence over
+    /// `--shader`.
+    #[arg(long)]
+    preset: Option<PathBuf>,
+
     /// Shuffle the list of files into a random order.
     #[arg(long)]
     shuffle: bool,
@@ -248,19 +254,21 @@ impl From<ScaleModeArg> for ScaleMode {
 enum ShaderArg {
     /// Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems.
     Lottes,
-    /// Game Boy dot-matrix LCD shader with pixel drop-shadows (GPL v3).
+    /// cgwg dot-matrix LCD grid shader, for handheld LCD systems.
     Lcd,
-    /// Lightweight LCD grid shader (no drop-shadows).
+    /// Lightweight single-pass LCD grid shader (zfast-lcd).
     LcdSimple,
 }
 
 impl ShaderArg {
-    /// Asset path of the shader, relative to the `system` asset directory.
+    /// Path of the `.slangp` preset, relative to the `system` asset directory.
+    /// These are RetroArch libretro presets bundled under `shaders/slangp/`
+    /// (see `system/shaders/slangp/`) and run through librashader.
     fn path(self) -> &'static str {
         match self {
-            ShaderArg::Lottes => "shaders/lottes.wgsl",
-            ShaderArg::Lcd => "shaders/lcd.wgsl",
-            ShaderArg::LcdSimple => "shaders/lcd_simple.wgsl",
+            ShaderArg::Lottes => "shaders/slangp/crt/crt-lottes.slangp",
+            ShaderArg::Lcd => "shaders/slangp/handheld/lcd-grid-v2.slangp",
+            ShaderArg::LcdSimple => "shaders/slangp/handheld/zfast-lcd.slangp",
         }
     }
 }
@@ -370,15 +378,23 @@ fn main() {
 
     let win = args.window;
     let clear_color = args.clear_color;
-    // Default the LCD shader for handheld LCD systems (Game Boy / GBA), falling
-    // back to the Lottes CRT shader for everything else, unless overridden.
-    let shader =
-        args.shader
-            .unwrap_or_else(|| match games.first().map(|g| utils::get_system_type(g)) {
-                Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
-                _ => ShaderArg::Lottes,
+    // A user-supplied `--preset` wins; otherwise pick a bundled preset by name,
+    // defaulting to the LCD preset for handheld LCD systems (Game Boy / GBA) and
+    // the Lottes CRT preset for everything else. Both resolve to an absolute
+    // `.slangp` path; the passthrough (`stock.slangp`) is always the bundled one.
+    let effect_path = match &args.preset {
+        Some(path) => path.clone(),
+        None => {
+            let shader = args.shader.unwrap_or_else(|| {
+                match games.first().map(|g| utils::get_system_type(g)) {
+                    Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+                    _ => ShaderArg::Lottes,
+                }
             });
-    let shader_path = shader.path();
+            system_dir().join(shader.path())
+        }
+    };
+    let passthrough_path = system_dir().join("shaders/slangp/stock.slangp");
 
     let mut app = App::new();
     app.insert_resource(args)
@@ -401,7 +417,10 @@ fn main() {
                 }),
             RetroPlugin {},
             CommandPlugin,
-            PostProcessPlugin { shader_path },
+            PostProcessPlugin {
+                effect_path,
+                passthrough_path,
+            },
             HudPlugin,
             TextInputPlugin,
             ScreenSaverPlugin,
