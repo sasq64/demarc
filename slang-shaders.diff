@@ -1,0 +1,76 @@
+diff --git i/handheld/shaders/authentic_gbc/authentic_gbc.slang w/handheld/shaders/authentic_gbc/authentic_gbc.slang
+index e3d436ae..e2e5e290 100644
+--- i/handheld/shaders/authentic_gbc/authentic_gbc.slang
++++ w/handheld/shaders/authentic_gbc/authentic_gbc.slang
+@@ -94,8 +94,12 @@ vec3 pixel_color(vec2 tx_orig) {
+ 
+ void main() {
+     // Figure out four nearest texels in source texture and sample them.
+-    vec2 tx_coord_i;
+-    const vec2 tx_coord_f = modf(tx_coord, tx_coord_i);
++    // modf() is avoided because naga's SPIR-V frontend leaves the ModfResult
++    // special type unregistered, failing librashader/wgpu validation with
++    // "MissingSpecialType". tx_coord is non-negative, so floor + subtract is
++    // equivalent (both integer and fractional parts are used below).
++    const vec2 tx_coord_i = floor(tx_coord);
++    const vec2 tx_coord_f = tx_coord - tx_coord_i;
+     const vec2 tx_coord_off = step(vec2(0.5), tx_coord_f) * 2.0 - 1.0;
+     const vec2 tx_coord_offs[] = {vec2(0.0), vec2(tx_coord_off.x, 0.0), vec2(0.0, tx_coord_off.y),
+                                   tx_coord_off};
+diff --git i/handheld/shaders/authentic_gbc/authentic_gbc_fast.slang w/handheld/shaders/authentic_gbc/authentic_gbc_fast.slang
+index 9b2bc2ce..9f26902c 100644
+--- i/handheld/shaders/authentic_gbc/authentic_gbc_fast.slang
++++ w/handheld/shaders/authentic_gbc/authentic_gbc_fast.slang
+@@ -78,8 +78,12 @@ vec3 pixel_color(vec2 tx_orig) {
+ 
+ void main() {
+     // Figure out four nearest texels in source texture and sample them.
+-    vec2 tx_coord_i;
+-    const vec2 tx_coord_f = modf(tx_coord, tx_coord_i);
++    // modf() is avoided because naga's SPIR-V frontend leaves the ModfResult
++    // special type unregistered, failing librashader/wgpu validation with
++    // "MissingSpecialType". tx_coord is non-negative, so floor + subtract is
++    // equivalent (both integer and fractional parts are used below).
++    const vec2 tx_coord_i = floor(tx_coord);
++    const vec2 tx_coord_f = tx_coord - tx_coord_i;
+     const vec2 tx_coord_off = step(vec2(0.5), tx_coord_f) * 2.0 - 1.0;
+     const vec2 tx_coord_offs[] = {vec2(0.0), vec2(tx_coord_off.x, 0.0), vec2(0.0, tx_coord_off.y),
+                                   tx_coord_off};
+diff --git i/handheld/shaders/authentic_gbc/authentic_gbc_single_pass.slang w/handheld/shaders/authentic_gbc/authentic_gbc_single_pass.slang
+index 94a8e6ec..3d170e92 100644
+--- i/handheld/shaders/authentic_gbc/authentic_gbc_single_pass.slang
++++ w/handheld/shaders/authentic_gbc/authentic_gbc_single_pass.slang
+@@ -73,8 +73,12 @@ vec3 pixel_color(vec2 tx_orig) {
+ 
+ void main() {
+     // Figure out four nearest texels in source texture and sample them.
+-    vec2 tx_coord_i;
+-    const vec2 tx_coord_f = modf(tx_coord, tx_coord_i);
++    // modf() is avoided because naga's SPIR-V frontend leaves the ModfResult
++    // special type unregistered, failing librashader/wgpu validation with
++    // "MissingSpecialType". tx_coord is non-negative, so floor + subtract is
++    // equivalent (both integer and fractional parts are used below).
++    const vec2 tx_coord_i = floor(tx_coord);
++    const vec2 tx_coord_f = tx_coord - tx_coord_i;
+     const vec2 tx_coord_off = step(vec2(0.5), tx_coord_f) * 2.0 - 1.0;
+     const vec2 tx_coord_offs[] = {vec2(0.0), vec2(tx_coord_off.x, 0.0), vec2(0.0, tx_coord_off.y),
+                                   tx_coord_off};
+diff --git i/handheld/shaders/gameboy/shader-files/gb-pass0.slang w/handheld/shaders/gameboy/shader-files/gb-pass0.slang
+index 6709f45f..a3bf8d21 100644
+--- i/handheld/shaders/gameboy/shader-files/gb-pass0.slang
++++ w/handheld/shaders/gameboy/shader-files/gb-pass0.slang
+@@ -366,8 +366,12 @@ void main()
+             is_on_dot = 1.0;
+     } else {
+         // Non-integer scaling mode - use geometric intersection for accuracy
+-        vec2 tx_coord_i;
+-        const vec2 tx_coord_f = modf(tx_coord, tx_coord_i);
++        // NOTE: `modf` is avoided here because naga's SPIR-V frontend fails to
++        // register the ModfResult special type, tripping a validation error
++        // ("MissingSpecialType") when librashader compiles this pass on wgpu.
++        // `tx_coord` is always non-negative, so fract() is equivalent to the
++        // fractional part returned by modf().
++        const vec2 tx_coord_f = fract(tx_coord);
+ 
+         // Calculate pixel rectangle in output space
+         vec2 pixel_center = (tx_coord_f - 0.5) * tx_to_px;
