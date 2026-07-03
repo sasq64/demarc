@@ -33,12 +33,9 @@ dirs = "6.0.0"
 ureq = "3"
 delharc = "0.6.1"
 
-# Flash (SWF) support via Ruffle. Ruffle is not published to crates.io, so these
-# are git dependencies pinned to a specific rev. Ruffle brings its own `wgpu`
-# (v27), distinct from the `wgpu = 29` above that matches Bevy; FlashEmu uses its
-# own offscreen wgpu instance via `ruffle_render_wgpu::wgpu`, so the two versions
-# coexist without interacting.
-ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", features = [
+# Flash (SWF) support via Ruffle, gated behind the `flash` feature
+# Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above
+ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
     "audio",
     "mp3",
     "nellymoser",
@@ -47,10 +44,21 @@ ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a
     "default_font",
     "default_compatibility_rules",
 ] }
-ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
-ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
-swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
-pollster = "0.4"
+ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
+ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
+swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
+pollster = { version = "0.4", optional = true }
+
+[features]
+default = []
+# Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
+flash = [
+    "dep:ruffle_core",
+    "dep:ruffle_render",
+    "dep:ruffle_render_wgpu",
+    "dep:swf",
+    "dep:pollster",
+]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Inhibit the freedesktop screen saver over D-Bus while running fullscreen, and
@@ -64,3 +72,11 @@ lto = "thin"
 codegen-units = 1
 strip = true
 opt-level = 2
+
+# Profiling build: release-optimized but with debug symbols and no stripping so
+# `perf`/flamegraph can attribute samples to Ruffle internals. Used for
+# benchmarking the Flash backend (see src/flash_emu.rs `flash_bench`).
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true

@@ -14,6 +14,7 @@ mod libretro;
 mod audio;
 mod commands;
 mod emulator;
+#[cfg(feature = "flash")]
 mod flash_emu;
 mod hud;
 mod libloader;

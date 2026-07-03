@@ -17,6 +17,7 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey, get_info_text};
 use crate::emulator::Emulator;
+#[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
@@ -467,7 +468,12 @@ pub fn create_core(
     mut tags: HashMap<String, String>,
 ) -> Result<Box<dyn RetroEmu + Send + Sync>> {
     if system_type == SystemType::Flash {
+        #[cfg(feature = "flash")]
         return Ok(Box::new(FlashEmu::new(game, tags)?));
+        #[cfg(not(feature = "flash"))]
+        return Err(anyhow::anyhow!(
+            "Flash (SWF) support is not enabled; rebuild with --features flash"
+        ));
     }
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
