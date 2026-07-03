@@ -43,6 +43,8 @@ const CORE_NAME_SPECTRUM: &str = "fuse";
 const CORE_NAME_XL: &str = "atari800";
 const CORE_NAME_TIC80: &str = "tic80";
 const CORE_NAME_PICO8: &str = "fake08";
+const CORE_NAME_GAMEBOY: &str = "gambatte";
+const CORE_NAME_GBA: &str = "mgba";
 
 const SYSTEM_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/system.zip"));
 
@@ -454,6 +456,8 @@ pub fn get_core(
         SystemType::AtariXL => CORE_NAME_XL,
         SystemType::Tic80 => CORE_NAME_TIC80,
         SystemType::Pico8 => CORE_NAME_PICO8,
+        SystemType::Gameboy => CORE_NAME_GAMEBOY,
+        SystemType::Gba => CORE_NAME_GBA,
         // Flash is handled by FlashEmu in create_core before reaching get_core.
         SystemType::Flash => return Err(""),
         SystemType::Unknown => return Err(""),

@@ -30,11 +30,16 @@ use wgpu::SamplerBorderColor;
 
 use crate::AppSettings;
 
-/// The Lottes CRT shader, loaded at runtime from the `system` asset directory
-/// (unpacked from the embedded `system.zip`).
-const LOTTES_SHADER_PATH: &str = "shaders/lottes.wgsl";
+/// Path of the post-process shader to load at runtime from the `system` asset
+/// directory (unpacked from the embedded `system.zip`). Selected on the command
+/// line; both shaders share the same bindings and uniform layout.
+#[derive(Resource, Clone, Copy)]
+pub struct ShaderPath(pub &'static str);
 
-pub struct PostProcessPlugin;
+pub struct PostProcessPlugin {
+    /// Asset path of the shader to run, e.g. `shaders/lottes.wgsl`.
+    pub shader_path: &'static str,
+}
 
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
@@ -50,6 +55,10 @@ impl Plugin for PostProcessPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
+
+        // Hand the chosen shader path to the render world so pipeline init can
+        // load it. It's a plain resource (not extracted) because it never changes.
+        render_app.insert_resource(ShaderPath(self.shader_path));
 
         // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
         // render pass is just a system in the per-camera `Core2d` schedule. We run
@@ -346,6 +355,7 @@ fn init_lottes_pipeline(
     asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
     pipeline_cache: Res<PipelineCache>,
+    shader_path: Res<ShaderPath>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
         "lottes_bind_group_layout",
@@ -380,7 +390,7 @@ fn init_lottes_pipeline(
         );
         render_device.create_sampler(&SamplerDescriptor::default())
     };
-    let shader = asset_server.load(LOTTES_SHADER_PATH);
+    let shader = asset_server.load(shader_path.0);
 
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("lottes_pipeline".into()),

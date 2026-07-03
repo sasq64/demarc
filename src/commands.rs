@@ -220,7 +220,7 @@ fn get_memory(work_file: &WorkingFile) -> String {
         SystemType::Tic80 => "272KB".to_string(),
         SystemType::Pico8 => "?".to_string(),
         SystemType::Flash => "?".to_string(),
-        SystemType::Unknown => "?".to_string(),
+        _ => "?".to_string(),
     }
 }
 
@@ -247,6 +247,8 @@ fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Tic80 => "Tic-80",
         SystemType::Pico8 => "Pico8",
         SystemType::Flash => "Flash",
+        SystemType::Gameboy => "Gameboy",
+        SystemType::Gba => "GBA",
         SystemType::Unknown => "Unknown",
     }
     .to_string();

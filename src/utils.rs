@@ -23,6 +23,8 @@ pub enum SystemType {
     Tic80,
     Pico8,
     Flash,
+    Gameboy,
+    Gba,
     #[default]
     Unknown,
 }
@@ -71,6 +73,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "atr" | "xex" | "atx" => SystemType::AtariXL,
         "tic80" | "tic" => SystemType::Tic80,
         "p8" => SystemType::Pico8,
+        "gb" | "gbc" => SystemType::Gameboy,
+        "gba" | "agb" => SystemType::Gba,
         "swf" => SystemType::Flash,
         _ => SystemType::Unknown,
     };

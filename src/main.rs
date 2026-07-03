@@ -79,6 +79,11 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
+    /// Post-process shader used to render the emulator screen. Defaults to the
+    /// LCD shader for Game Boy / GBA titles and the Lottes CRT shader otherwise.
+    #[arg(long, value_enum)]
+    shader: Option<ShaderArg>,
+
     /// Shuffle the list of files into a random order.
     #[arg(long)]
     shuffle: bool,
@@ -234,6 +239,27 @@ impl From<ScaleModeArg> for ScaleMode {
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum ShaderArg {
+    /// Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems.
+    Lottes,
+    /// Game Boy dot-matrix LCD shader with pixel drop-shadows (GPL v3).
+    Lcd,
+    /// Lightweight LCD grid shader (no drop-shadows).
+    LcdSimple,
+}
+
+impl ShaderArg {
+    /// Asset path of the shader, relative to the `system` asset directory.
+    fn path(self) -> &'static str {
+        match self {
+            ShaderArg::Lottes => "shaders/lottes.wgsl",
+            ShaderArg::Lcd => "shaders/lcd.wgsl",
+            ShaderArg::LcdSimple => "shaders/lcd_simple.wgsl",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
 enum BorderModeArg {
     /// Stretch the edge pixels outward into the border.
     Stretch,
@@ -337,6 +363,15 @@ fn main() {
 
     let win = args.window;
     let clear_color = args.clear_color;
+    // Default the LCD shader for handheld LCD systems (Game Boy / GBA), falling
+    // back to the Lottes CRT shader for everything else, unless overridden.
+    let shader = args.shader.unwrap_or_else(|| {
+        match games.first().map(|g| utils::get_system_type(g)) {
+            Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+            _ => ShaderArg::Lottes,
+        }
+    });
+    let shader_path = shader.path();
 
     let mut app = App::new();
     app.insert_resource(args)
@@ -359,7 +394,7 @@ fn main() {
                 }),
             RetroPlugin {},
             CommandPlugin,
-            PostProcessPlugin,
+            PostProcessPlugin { shader_path },
             HudPlugin,
             TextInputPlugin,
             ScreenSaverPlugin,
