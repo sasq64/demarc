@@ -312,6 +312,24 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
 }
 
+fn auto_screenshot(
+    mut commands: Commands,
+    mut frame: bevy::prelude::Local<u32>,
+    mut exit: bevy::prelude::MessageWriter<bevy::app::AppExit>,
+) {
+    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+    *frame += 1;
+    if *frame == 200 {
+        let path = std::env::var("AUTO_SHOT").unwrap();
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path));
+    }
+    if *frame == 230 {
+        exit.write(bevy::app::AppExit::Success);
+    }
+}
+
 fn main() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
@@ -360,6 +378,12 @@ fn main() {
     };
     if args.window {
         window.resolution = (720, 540).into();
+    }
+    if let Ok(res) = std::env::var("WIN_RES") {
+        if let Some((w, h)) = res.split_once('x') {
+            window.resolution = (w.parse().unwrap(), h.parse().unwrap()).into();
+            window.mode = WindowMode::Windowed;
+        }
     }
     let primary_window = Some(window);
 
@@ -427,6 +451,9 @@ fn main() {
         ));
     if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
         app.add_systems(PostStartup, enter_fullscreen);
+    }
+    if std::env::var("AUTO_SHOT").is_ok() {
+        app.add_systems(bevy::app::Update, auto_screenshot);
     }
     app.run();
 }
