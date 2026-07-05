@@ -734,7 +734,9 @@ fn run_retro(
                     },
                     TextureDimension::D2,
                     vec![0u8; w * h * 4],
-                    TextureFormat::Rgba8UnormSrgb,
+                    // Raw display-space frame, not sRGB — see the note at the
+                    // initial texture creation in `emulator.rs`.
+                    TextureFormat::Rgba8Unorm,
                     RenderAssetUsages::default(),
                 );
             }

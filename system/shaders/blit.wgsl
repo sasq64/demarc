@@ -20,9 +20,23 @@ struct PostProcessUniform {
 }
 @group(0) @binding(2) var<uniform> settings: PostProcessUniform;
 
+// Convert an sRGB/display value to linear. The librashader `.slangp` chains (and
+// the passthrough) output display-ready, gamma-encoded color — that's what a
+// RetroArch backbuffer receives and shows directly. Bevy's view target is an
+// sRGB texture, so writing those display values straight in would make the
+// hardware sRGB-encode them a *second* time, washing the image out and (for
+// crt-royale) inflating the subtle diffusion glow into a fat bright outline.
+// Linearizing here cancels the view target's encode so the shader's output
+// reaches the screen unchanged.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lower = c / 12.92;
+    let higher = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(higher, lower, c <= vec3<f32>(0.04045));
+}
+
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
     let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-    return vec4<f32>(c, 1.0);
+    return vec4<f32>(srgb_to_linear(c), 1.0);
 }

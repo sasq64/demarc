@@ -248,7 +248,13 @@ impl Emulator {
             },
             TextureDimension::D2,
             vec![0u8; (width * height * 4) as usize],
-            TextureFormat::Rgba8UnormSrgb,
+            // NON-sRGB on purpose: libretro cores deliver raw display-space
+            // (gamma-encoded) pixels, exactly like a RetroArch core framebuffer.
+            // The `.slangp` shaders do their own gamma linearization, so this
+            // texture must NOT be `Rgba8UnormSrgb` — that would make the hardware
+            // sRGB-decode the frame before the shader, double-linearizing the
+            // input (see the matching note in `blit.wgsl` about the output side).
+            TextureFormat::Rgba8Unorm,
             RenderAssetUsages::all(),
         );
 
