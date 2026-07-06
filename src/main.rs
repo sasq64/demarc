@@ -314,18 +314,24 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 
 fn auto_screenshot(
     mut commands: Commands,
-    mut frame: bevy::prelude::Local<u32>,
+    time: Res<Time>,
+    mut shot: bevy::prelude::Local<bool>,
     mut exit: bevy::prelude::MessageWriter<bevy::app::AppExit>,
 ) {
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-    *frame += 1;
-    if *frame == 200 {
+    let secs = std::env::var("AUTO_SHOT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4.0);
+    let t = time.elapsed_secs();
+    if !*shot && t >= secs {
+        *shot = true;
         let path = std::env::var("AUTO_SHOT").unwrap();
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path));
     }
-    if *frame == 230 {
+    if t >= secs + 1.5 {
         exit.write(bevy::app::AppExit::Success);
     }
 }
