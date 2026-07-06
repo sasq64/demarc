@@ -32,8 +32,8 @@ use bevy::{
     },
 };
 use librashader::presets::ShaderFeatures;
-use librashader::runtime::{Size, Viewport};
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
+use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
@@ -327,25 +327,35 @@ fn post_process_pass(
 
     // --- Stage 1: run the librashader filter chain into an intermediate ---
     //
-    // Size the intermediate to the aspect-correct `Fit` image rectangle at the
-    // camera's physical viewport resolution, so the effect (scanlines/mask) is
-    // rendered at display density. The intermediate then behaves exactly like
-    // the raw source texture did for the composite blit below — same aspect, so
-    // `compute_uniform`'s `uv_scale`/`uv_offset` still apply unchanged.
+    // Size the intermediate to the image's actual on-screen pixel extent under
+    // the current scale mode, so the effect (scanlines/mask) is rendered at
+    // exactly the display pixel density it will be shown at. The composite blit
+    // below then samples the intermediate 1:1 (identity texel mapping) instead
+    // of bilinearly resampling a fixed-size effect to a different on-screen size
+    // — that resampling beats against the high-frequency phosphor mask and
+    // produces coloured R/G/B moiré lines (worst under Stretch/Zoom).
+    //
+    // `inter_size = viewport ⊙ uv_scale`: for Fit it's the aspect-correct image
+    // rectangle (unchanged); for Stretch it's the full viewport (source
+    // stretched to fill); for Zoom it's larger than the viewport on the cropped
+    // axis — the full scaled image, of which the composite shows the centre.
+    // Because the composite's `uv_scale`/`uv_offset` come from `scale_offset`
+    // with the same mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands
+    // on exact texel centres: one screen pixel per intermediate texel.
     let source_id = post_process.source.id();
     let src_size = UVec2::new(source_image.texture.width(), source_image.texture.height());
     let viewport_size = camera
         .physical_viewport_size
         .or(camera.physical_target_size)
         .unwrap_or(src_size);
-    let (fit_scale, _) = scale_offset(
+    let (image_scale, _) = scale_offset(
         viewport_size,
         src_size,
         post_process.aspect,
         post_process.aspect_tweak,
-        ScaleMode::Fit,
+        settings.scale_mode,
     );
-    let inter_size = (viewport_size.as_vec2() * fit_scale)
+    let inter_size = (viewport_size.as_vec2() * image_scale)
         .round()
         .as_uvec2()
         .max(UVec2::ONE);
@@ -361,7 +371,11 @@ fn post_process_pass(
         targets,
     } = &mut *chains;
     let target = &targets[&source_id];
-    let chain = if settings.crt_effect { effect } else { passthrough };
+    let chain = if settings.crt_effect {
+        effect
+    } else {
+        passthrough
+    };
     // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
     // 24px tiles). When render_width / tile_size is an even integer, a tile
     // boundary lands exactly on the screen center, where the mask's manual
@@ -522,8 +536,14 @@ impl SlangChains {
                 view_formats: &[],
             });
             let view = texture.create_view(&TextureViewDescriptor::default());
-            self.targets
-                .insert(source, IntermediateTarget { size, texture, view });
+            self.targets.insert(
+                source,
+                IntermediateTarget {
+                    size,
+                    texture,
+                    view,
+                },
+            );
         }
         &self.targets[&source]
     }
@@ -545,7 +565,10 @@ fn init_filter_chains(
     let effect = match load(&shader_path.effect) {
         Ok(chain) => chain,
         Err(err) => {
-            error!("failed to load shader preset {:?}: {err}", shader_path.effect);
+            error!(
+                "failed to load shader preset {:?}: {err}",
+                shader_path.effect
+            );
             return;
         }
     };
