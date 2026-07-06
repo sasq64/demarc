@@ -151,6 +151,10 @@ struct Args {
     #[arg(long)]
     reu: bool,
 
+    /// ILBM: Animate colour-cycling (CRNG) ranges. Off by default.
+    #[arg(long)]
+    color_cycle: bool,
+
     /// Commodore variant (Only C64 well supported)
     #[arg(long, value_enum, default_value_t = CbmSystem::C64)]
     cbm_variant: CbmSystem,

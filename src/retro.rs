@@ -231,6 +231,10 @@ fn setup_retro(world: &mut World) {
         set_var("vice_ram_expansion_unit", "16384kB");
     }
 
+    if args.color_cycle {
+        set_var("color_cycle", "enabled");
+    }
+
     for opt in &args.extra_options {
         if let Some((key, val)) = opt.split_once("=") {
             set_var(key.trim(), val.trim());
