@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 
@@ -16,7 +16,7 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey, get_info_text};
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, QueuedFrame};
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::hud::{HudLocation, SetHudText};
@@ -606,13 +606,8 @@ fn run_retro(
         }
     }
 
+    let now = Instant::now();
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
-        let Some(mut image) = images.get_mut(&emu.image) else {
-            continue;
-        };
-        let Some(dst) = image.data.as_mut() else {
-            continue;
-        };
         emu.audio_active(settings.all_emus || i == settings.current_emu);
 
         let d = if emu.run_next && settings.current_game < (settings.games.len() as isize) - 1 {
@@ -684,61 +679,110 @@ fn run_retro(
             });
         }
 
-        let bg_w = emu.width as usize;
-        let bg_h = emu.height as usize;
-
-        emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
-            let copy_w = w.min(bg_w);
-            let copy_h = h.min(bg_h);
-            for y in 0..copy_h {
-                let src_off = y * w * 4;
-                let dst_off = y * bg_w * 4;
-                dst[dst_off..dst_off + copy_w * 4]
-                    .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
-            }
-        });
-        // `AssetMut` holds the `images` borrow until dropped (its destructor fires
-        // change detection), so release it before re-borrowing `images` below.
-        drop(image);
-        // For some reason we need to compensate the hatari aspect
-        let aspect = if emu.work_file.system_type == SystemType::AtariST {
-            let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
-            if h > 0 {
-                w as f32 / h as f32
-            } else {
-                emu.core.as_mut().unwrap().aspect_ratio()
-            }
+        // Push each freshly produced frame onto the delay line, tagged with the
+        // instant its matching audio will actually be heard (ring buffer +
+        // output device latency). Smooth the delay so ring-buffer jitter
+        // doesn't make the video judder. With no active audio (or a low-latency
+        // sink) the delay is ~0 and frames pass straight through.
+        let measured = if settings.av_sync {
+            emu.sink.audio_delay().as_secs_f64()
         } else {
-            emu.core.as_mut().unwrap().aspect_ratio()
+            0.0
         };
+        emu.av_delay_secs = if emu.av_delay_secs == 0.0 {
+            measured
+        } else {
+            emu.av_delay_secs * 0.9 + measured * 0.1
+        };
+        let delay = Duration::from_secs_f64(emu.av_delay_secs);
 
-        for (_, _, mut pp) in &mut cameras {
-            if pp.source == emu.image {
-                pp.aspect = aspect;
+        if emu.core.as_mut().unwrap().take_new_frame() {
+            // For some reason we need to compensate the hatari aspect
+            let aspect = if emu.work_file.system_type == SystemType::AtariST {
+                let (w, h) = emu.core.as_ref().unwrap().get_frame_size();
+                if h > 0 {
+                    w as f32 / h as f32
+                } else {
+                    emu.core.as_ref().unwrap().aspect_ratio()
+                }
+            } else {
+                emu.core.as_ref().unwrap().aspect_ratio()
+            };
+            let mut qf = QueuedFrame {
+                display_at: now + delay,
+                width: 0,
+                height: 0,
+                aspect,
+                data: Vec::new(),
+            };
+            emu.core.as_ref().unwrap().with_frame(&mut |w, h, frame| {
+                qf.width = w;
+                qf.height = h;
+                qf.data = frame.to_vec();
+            });
+            // Cap the backlog so a stalled/silent audio sink can't grow it
+            // without bound (~5s at 50fps); drop the oldest if it overflows.
+            if emu.frame_queue.len() >= 240 {
+                emu.frame_queue.pop_front();
             }
+            emu.frame_queue.push_back(qf);
         }
 
-        let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
+        // Present the most recent frame whose scheduled time has arrived,
+        // discarding any older ones still due this tick.
+        let mut present: Option<QueuedFrame> = None;
+        while emu.frame_queue.front().is_some_and(|f| f.display_at <= now) {
+            present = emu.frame_queue.pop_front();
+        }
+        let Some(frame) = present else {
+            continue;
+        };
 
-        if (w != bg_w || h != bg_h) && w > 0 && h > 0 {
-            debug!("SIZE CHANGE TO {w} {h}");
-            emu.width = w as u32;
-            emu.height = h as u32;
+        // Recreate the target texture on a resolution change, then copy the
+        // frame in. Both share one `images` borrow, released at block end so
+        // its change-detection destructor fires before the next iteration.
+        if frame.width > 0
+            && frame.height > 0
+            && (frame.width as u32 != emu.width || frame.height as u32 != emu.height)
+        {
+            debug!("SIZE CHANGE TO {} {}", frame.width, frame.height);
+            emu.width = frame.width as u32;
+            emu.height = frame.height as u32;
             if let Some(mut image) = images.get_mut(&emu.image) {
-                // Recreate with new dimensions
                 *image = Image::new(
                     Extent3d {
-                        width: w as u32,
-                        height: h as u32,
+                        width: frame.width as u32,
+                        height: frame.height as u32,
                         depth_or_array_layers: 1,
                     },
                     TextureDimension::D2,
-                    vec![0u8; w * h * 4],
+                    vec![0u8; frame.width * frame.height * 4],
                     // Raw display-space frame, not sRGB — see the note at the
                     // initial texture creation in `emulator.rs`.
                     TextureFormat::Rgba8Unorm,
                     RenderAssetUsages::default(),
                 );
+            }
+        }
+
+        let bg_w = emu.width as usize;
+        let bg_h = emu.height as usize;
+        if let Some(mut image) = images.get_mut(&emu.image)
+            && let Some(dst) = image.data.as_mut()
+        {
+            let copy_w = frame.width.min(bg_w);
+            let copy_h = frame.height.min(bg_h);
+            for y in 0..copy_h {
+                let src_off = y * frame.width * 4;
+                let dst_off = y * bg_w * 4;
+                dst[dst_off..dst_off + copy_w * 4]
+                    .copy_from_slice(&frame.data[src_off..src_off + copy_w * 4]);
+            }
+        }
+
+        for (_, _, mut pp) in &mut cameras {
+            if pp.source == emu.image {
+                pp.aspect = frame.aspect;
             }
         }
     }

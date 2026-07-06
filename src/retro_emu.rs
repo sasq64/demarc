@@ -89,6 +89,13 @@ pub trait RetroEmu {
     fn get_number_of_disks(&self) -> u32;
     /// Step the emulator by one presented frame
     fn run(&mut self) -> bool;
+    /// Whether a fresh frame has been produced since the last call, consuming
+    /// the flag. Used to timestamp frames for the audio-synced video delay
+    /// line, so a repeated (dropped/paused) frame isn't re-queued. Cores that
+    /// produce a frame on every `run` (the default) always report `true`.
+    fn take_new_frame(&mut self) -> bool {
+        true
+    }
     fn reset(&mut self);
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
@@ -898,6 +905,11 @@ pub struct RetroCoreThreaded {
     sample_rate: f64,
     fps: f64,
     disk_count: u32,
+    /// Set when `run` receives a fresh update from the worker, cleared by
+    /// [`take_new_frame`](RetroEmu::take_new_frame). Sticky across the several
+    /// `run` calls a single main-thread tick may make, so a produced frame is
+    /// never missed.
+    got_frame: bool,
 }
 
 struct SetupResult {
@@ -972,6 +984,7 @@ impl RetroCoreThreaded {
                 sample_rate: 0.0,
                 fps,
                 disk_count: disks,
+                got_frame: false,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -1080,8 +1093,12 @@ impl RetroEmu for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
+            self.got_frame = true;
         }
         true
+    }
+    fn take_new_frame(&mut self) -> bool {
+        std::mem::replace(&mut self.got_frame, false)
     }
     fn get_number_of_disks(&self) -> u32 {
         self.disk_count

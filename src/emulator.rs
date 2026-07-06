@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::time::Instant;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -45,6 +46,20 @@ impl InputMode {
     }
 }
 
+/// A produced emulator frame held in [`Emulator::frame_queue`] until its
+/// matching audio reaches the speakers. Presenting frames on this schedule
+/// keeps video aligned with a high-latency audio sink (e.g. Bluetooth).
+pub(crate) struct QueuedFrame {
+    /// Wall-clock instant this frame should be copied to the display texture.
+    pub(crate) display_at: Instant,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    /// Display aspect ratio captured with the frame, so a resolution/aspect
+    /// change is applied when the frame is shown, not when it is produced.
+    pub(crate) aspect: f32,
+    pub(crate) data: Vec<u8>,
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
@@ -81,6 +96,12 @@ pub(crate) struct Emulator {
     pub(crate) skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
     pub(crate) input_mode: InputMode,
+    /// Produced-but-not-yet-shown frames, ordered by [`QueuedFrame::display_at`].
+    /// Drained in `run_retro` to present each frame when its audio is heard.
+    pub(crate) frame_queue: VecDeque<QueuedFrame>,
+    /// Smoothed audio-output delay (seconds) driving the video delay line.
+    /// EMA-filtered so ring-buffer jitter doesn't make the video judder.
+    pub(crate) av_delay_secs: f64,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -435,6 +456,10 @@ impl Emulator {
         }
         self.core = Some(core);
         self.work_file = work_file;
+        // Drop any frames queued for the previous game so they aren't shown
+        // after the switch, and let the delay re-converge from the new stream.
+        self.frame_queue.clear();
+        self.av_delay_secs = 0.0;
         self.run_next = false;
         self.next_frame = time.elapsed_secs_f64();
         self.start_time = time.elapsed_secs_f64();
