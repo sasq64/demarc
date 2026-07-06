@@ -54,6 +54,7 @@ pub(crate) struct Emulator {
     pub(crate) core: Option<Box<dyn RetroEmu + Send + Sync>>,
     pub(crate) work_file: WorkingFile,
     pub(crate) run_next: bool,
+    pub(crate) run_prev: bool,
     pub(crate) next_frame: f64,
     pub(crate) start_time: f64,
     pub(crate) max_time: Option<usize>,

@@ -285,7 +285,7 @@ struct AppSettings {
     crt_effect: bool,
     show_info: bool,
     games: Vec<PathBuf>,
-    current_game: usize,
+    current_game: isize,
     max_time: Option<usize>,
     current_emu: usize,
     maximized: bool,
@@ -354,6 +354,7 @@ fn main() {
     let settings = AppSettings {
         border_mode: args.border.into(),
         scale_mode: args.scale.into(),
+        current_game: -1,
         crt_effect: true,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),

@@ -611,10 +611,18 @@ fn run_retro(
         };
         emu.audio_active(settings.all_emus || i == settings.current_emu);
 
-        if emu.run_next && settings.current_game < settings.games.len() {
+        let d = if emu.run_next && settings.current_game < (settings.games.len() as isize) - 1 {
             emu.run_next = false;
-            let game = settings.games[settings.current_game].clone();
-            settings.current_game += 1;
+            1
+        } else if emu.run_prev && settings.current_game > 0 {
+            emu.run_prev = false;
+            -1
+        } else {
+            0
+        };
+        if d != 0 {
+            settings.current_game += d;
+            let game = settings.games[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
                     let text = format!("{:?}: {e:?}", game.file_name().unwrap_or_default());

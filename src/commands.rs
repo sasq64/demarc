@@ -21,6 +21,7 @@ use crate::utils::{GameInfo, SystemType, WorkingFile};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cmd {
     NextFile,
+    PrevFile,
     SwapDisk,
     ChangeScale,
     ToggleCrt,
@@ -88,12 +89,13 @@ impl KeyMapping {
 
 const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyN, "Next file", Cmd::NextFile),
+    KeyMapping::new(KeyCode::KeyP, "Prev file", Cmd::PrevFile),
     KeyMapping::new(KeyCode::Space, "Next file", Cmd::NextFile),
     KeyMapping::new(KeyCode::KeyD, "Swap disk", Cmd::SwapDisk),
     KeyMapping::new(KeyCode::KeyS, "Change screen scale", Cmd::ChangeScale),
     KeyMapping::new(KeyCode::KeyC, "Toggle CRT filter", Cmd::ToggleCrt),
     KeyMapping::new(KeyCode::KeyB, "Toggle border stretch", Cmd::ToggleBorder),
-    KeyMapping::new(KeyCode::KeyP, "Pause/Resume", Cmd::PauseResume),
+    KeyMapping::new(KeyCode::KeyU, "Pause/Resume", Cmd::PauseResume),
     KeyMapping::new(KeyCode::KeyM, "Click Left mouse button", Cmd::MouseClick),
     KeyMapping::new(KeyCode::KeyF, "Toggle fullscreen", Cmd::Fullscreen),
     KeyMapping::new(
@@ -463,6 +465,10 @@ fn handle_cmd(
                     }
                     Cmd::NextFile => {
                         emu.run_next = true;
+                        debug!("{} vs {}", settings.current_game, settings.games.len());
+                    }
+                    Cmd::PrevFile => {
+                        emu.run_prev = true;
                         debug!("{} vs {}", settings.current_game, settings.games.len());
                     }
                     Cmd::Warp10 => {
