@@ -60,3 +60,13 @@ That's sufficient because:
 Frexp is identical with FrexpResult { size, scalar }.
 
 Note there's a second, separate gap at next_block.rs:1770: the pointer-form Glo::Modf | Glo::Frexp is flatly UnsupportedExtInst (the TODO: gfx-rs/naga#2526 referenced there). But glslang emits the Struct form for shader modf, which is why we got MissingSpecialType (expression built) rather than UnsupportedExtInst. So fixing the struct arms resolves the real-world cases; full pointer-form support is a larger, orthogonal change.
+
+CRT-ROYALE RED VERTICAL CENTER LINE
+
+Root cause: crt-royale tiles its phosphor mask at a fixed triad size (default 3 px → 24 px tiles). When render_width / tile_size is an even integer (e.g. 2880/24 = 120), a tile boundary lands exactly on the center column, where the mask's manual frac() tiling has a coordinate discontinuity that duplicates a red subpixel. Only shows at even-divisor resolutions.
+
+crt-royale's own fix (FIX_DISCONTINUITIES) uses ddx/ddy in a header that's also compiled for the vertex stage, where derivatives are illegal on the slang/glslang path — fails to compile (phosphor-mask-resizing.h:653 'dFdx'). It's off by default in stock crt-royale too, so RetroArch has the same tiling and only looks clean because it isn't at an even-divisor size.
+
+Fix (src/post_process.rs): each frame, for the active CRT chain, pick the integer tile size in 22–26 px whose screen center sits furthest from a tile boundary and set mask_triad_size_desired at runtime via librashader. Keeps triads ~3 px (visually identical, mask stays pixel-sharp) and pushes the seam off-center; picks 24 (the stock default) when the center is already clear, so it only acts at pathological resolutions.
+
+Caveat: this removes the prominent center line but doesn't eliminate crt-royale's underlying per-tile frac() discontinuity — a faint per-tile seam is inherent and only the (uncompilable) derivative fix would remove it fully.

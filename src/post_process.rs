@@ -362,6 +362,34 @@ fn post_process_pass(
     } = &mut *chains;
     let target = &targets[&source_id];
     let chain = if settings.crt_effect { effect } else { passthrough };
+    // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
+    // 24px tiles). When render_width / tile_size is an even integer, a tile
+    // boundary lands exactly on the screen center, where the mask's manual
+    // frac() tiling has a coordinate discontinuity that duplicates a subpixel
+    // (a visible red vertical line). crt-royale's own fix (FIX_DISCONTINUITIES)
+    // uses ddx/ddy in a vertex-shared header and won't compile on the
+    // slang/glslang path. Instead, nudge the triad size a fraction so the
+    // center falls as far as possible from any tile boundary: pick the integer
+    // tile size near 24px whose center offset is furthest from a boundary. This
+    // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
+    // the seam off-center. No-op on presets without this parameter.
+    if settings.crt_effect {
+        use librashader::runtime::FilterChainParameters;
+        let width = inter_size.x as f32;
+        let mut best_tile = 24i32;
+        let mut best_dist = -1.0f32;
+        for tile in 22..=26 {
+            let center_coord = width / (2.0 * tile as f32);
+            let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
+            if dist > best_dist {
+                best_dist = dist;
+                best_tile = tile;
+            }
+        }
+        chain
+            .parameters()
+            .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
+    }
     let lr_size = Size::new(inter_size.x, inter_size.y);
     let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
     let viewport = Viewport {
