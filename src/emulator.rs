@@ -484,6 +484,9 @@ impl Emulator {
             1.0 / 60.0
         };
 
+        // A core with no audio (e.g. a still image) never fills the audio sink,
+        // so none of the audio-buffer-driven pacing below applies to it.
+        let has_audio = core.sample_rate() > 0.0;
         let occupied_len = self.sink.occupied_len();
 
         //let p = self.producer.lock().unwrap();
@@ -530,8 +533,10 @@ impl Emulator {
             }
         }
 
-        // For safety
-        if !self.skipping && occupied_len < AUDIO_BUF_MIN {
+        // For safety: if the audio buffer is running dry, advance an extra frame
+        // to refill it. Only meaningful when the core actually produces audio;
+        // otherwise the buffer is always empty and this would fire every frame.
+        if has_audio && !self.skipping && occupied_len < AUDIO_BUF_MIN {
             result &= core.run();
             warn!("Duplicating frame");
         }
