@@ -124,8 +124,104 @@ fn unpack_byterun1(src: &[u8], expected: usize) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Decode an in-memory ILBM/IFF image into an RGBA image.
-pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
+/// A colour-cycling range (CRNG chunk), as used by DeluxePaint. The colours in
+/// palette registers `low..=high` are rotated over time to animate the image.
+#[derive(Debug, Clone, Copy)]
+pub struct CycleRange {
+    /// Lowest palette register in the range.
+    pub low: u8,
+    /// Highest palette register in the range.
+    pub high: u8,
+    /// Cycling speed. In CRNG units, `16384` == 60 steps per second, so the
+    /// step rate in Hz is `rate * 60 / 16384`.
+    pub rate: u16,
+    /// Whether cycling is enabled for this range (CRNG flag bit 0).
+    pub active: bool,
+    /// Whether the cycle direction is reversed (CRNG flag bit 1).
+    pub reverse: bool,
+}
+
+/// A paletted ILBM image plus any colour-cycling ranges. Pixels are stored as
+/// palette indices (row-major, one byte each) so the palette can be rotated at
+/// display time. Only produced for plain-palette images (not HAM).
+pub struct IndexedImage {
+    pub width: u32,
+    pub height: u32,
+    /// RGB triplets, one per palette register.
+    pub palette: Vec<[u8; 3]>,
+    /// One palette index per pixel, `width * height` bytes, row-major.
+    pub indices: Vec<u8>,
+    /// Colour-cycling ranges declared by CRNG chunks.
+    pub ranges: Vec<CycleRange>,
+}
+
+/// Parsed bitmap ready to be turned into RGBA or an [`IndexedImage`].
+struct Parsed {
+    width: usize,
+    height: usize,
+    num_planes: usize,
+    is_ham: bool,
+    /// Palette, already expanded to 64 entries for Extra-HalfBrite images so a
+    /// plain index lookup covers the upper half-bright registers.
+    palette: Vec<[u8; 3]>,
+    /// One palette index per pixel, `width * height` bytes.
+    indices: Vec<u8>,
+    ranges: Vec<CycleRange>,
+}
+
+/// Decode the planar body into one palette index per pixel (row-major).
+fn decode_indices(
+    width: usize,
+    height: usize,
+    num_planes: usize,
+    row_bytes: usize,
+    planes_per_row: usize,
+    planar: &[u8],
+) -> Vec<u8> {
+    let mut indices = vec![0u8; width * height];
+    for y in 0..height {
+        let row_base = y * planes_per_row * row_bytes;
+        for x in 0..width {
+            let byte_idx = x / 8;
+            let bit = 7 - (x % 8);
+            let mut index = 0u32;
+            for p in 0..num_planes {
+                let b = planar[row_base + p * row_bytes + byte_idx];
+                index |= (((b >> bit) & 1) as u32) << p;
+            }
+            // At most 8 planes (checked in `parse`), so the index fits in a byte.
+            indices[y * width + x] = index as u8;
+        }
+    }
+    indices
+}
+
+/// Collect the colour-cycling ranges from every CRNG chunk in the FORM.
+fn parse_ranges(form: &Chunk) -> Vec<CycleRange> {
+    form.chunks()
+        .filter(|c| c.id() == "CRNG")
+        .filter_map(|c| {
+            let d = c.data();
+            // CRNG: pad(2) rate(2) flags(2) low(1) high(1).
+            if d.len() < 8 {
+                return None;
+            }
+            let rate = u16::from_be_bytes([d[2], d[3]]);
+            let flags = u16::from_be_bytes([d[4], d[5]]);
+            Some(CycleRange {
+                low: d[6],
+                high: d[7],
+                rate,
+                active: flags & 1 != 0,
+                reverse: flags & 2 != 0,
+            })
+        })
+        .collect()
+}
+
+/// Parse an in-memory ILBM/IFF image into its palette, per-pixel indices, and
+/// colour-cycling ranges.
+fn parse(bytes: &[u8]) -> Result<Parsed> {
     let form = Chunk { data: bytes };
     if form.id() != "FORM" || form.data().get(0..4) != Some(b"ILBM") {
         bail!("not an ILBM FORM");
@@ -144,7 +240,7 @@ pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
     let is_ehb = camg & CAMG_EHB != 0;
 
     // Colour map: RGB triplets, one per palette entry.
-    let palette: Vec<[u8; 3]> = form
+    let mut palette: Vec<[u8; 3]> = form
         .find("CMAP")
         .map(|c| c.data().chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
         .unwrap_or_default();
@@ -178,35 +274,66 @@ pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
         );
     }
 
-    let mut img = RgbaImage::new(header.width as u32, header.height as u32);
+    let indices = decode_indices(width, height, num_planes, row_bytes, planes_per_row, &planar);
 
-    for y in 0..height {
-        let row_base = y * planes_per_row * row_bytes;
+    // Extra-HalfBrite: expand the palette to 64 registers so a plain index
+    // lookup yields the upper half-bright colours, letting EHB use the same
+    // indexed path as any other palette image.
+    if is_ehb {
+        palette.resize(32, [0, 0, 0]);
+        let base: Vec<[u8; 3]> = palette[..32].to_vec();
+        palette.extend(base.iter().map(|c| [c[0] >> 1, c[1] >> 1, c[2] >> 1]));
+    }
+
+    let ranges = parse_ranges(&form);
+
+    Ok(Parsed {
+        width,
+        height,
+        num_planes,
+        is_ham,
+        palette,
+        indices,
+        ranges,
+    })
+}
+
+/// Decode an in-memory ILBM/IFF image into an RGBA image (colours resolved,
+/// cycling not applied).
+pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
+    let p = parse(bytes)?;
+    let mut img = RgbaImage::new(p.width as u32, p.height as u32);
+    for y in 0..p.height {
         // HAM carries colour forward across a scanline, seeded from black.
         let mut prev = [0u8, 0, 0];
-        for x in 0..width {
-            // Reassemble the pixel's plane bits into an index.
-            let byte_idx = x / 8;
-            let bit = 7 - (x % 8);
-            let mut index = 0usize;
-            for p in 0..num_planes {
-                let b = planar[row_base + p * row_bytes + byte_idx];
-                index |= (((b >> bit) & 1) as usize) << p;
-            }
-
-            let rgb = if is_ham {
-                ham_pixel(index, num_planes, &palette, &mut prev)
-            } else if is_ehb {
-                ehb_pixel(index, &palette)
+        for x in 0..p.width {
+            let index = p.indices[y * p.width + x] as usize;
+            let rgb = if p.is_ham {
+                ham_pixel(index, p.num_planes, &p.palette, &mut prev)
             } else {
-                palette.get(index).copied().unwrap_or([0, 0, 0])
+                p.palette.get(index).copied().unwrap_or([0, 0, 0])
             };
-
             img.put_pixel(x as u32, y as u32, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
         }
     }
-
     Ok(img)
+}
+
+/// Decode an in-memory ILBM/IFF image into an [`IndexedImage`], preserving the
+/// palette and per-pixel indices so colour cycling can be applied at display
+/// time. Fails for HAM images, whose pixels aren't plain palette lookups.
+pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
+    let p = parse(bytes)?;
+    if p.is_ham {
+        bail!("HAM images can't be displayed as an indexed (colour-cycled) image");
+    }
+    Ok(IndexedImage {
+        width: p.width as u32,
+        height: p.height as u32,
+        palette: p.palette,
+        indices: p.indices,
+        ranges: p.ranges,
+    })
 }
 
 /// Resolve one Hold-And-Modify pixel, updating the running colour.
@@ -227,19 +354,15 @@ fn ham_pixel(index: usize, num_planes: usize, palette: &[[u8; 3]], prev: &mut [u
     *prev
 }
 
-/// Resolve one Extra-HalfBrite pixel: indices >= 32 are half-bright copies.
-fn ehb_pixel(index: usize, palette: &[[u8; 3]]) -> [u8; 3] {
-    if index < 32 {
-        palette.get(index).copied().unwrap_or([0, 0, 0])
-    } else {
-        let base = palette.get(index - 32).copied().unwrap_or([0, 0, 0]);
-        [base[0] >> 1, base[1] >> 1, base[2] >> 1]
-    }
-}
-
 /// Load an ILBM/IFF image from a file into an RGBA image.
 pub fn load(path: &Path) -> Result<RgbaImage> {
     load_from_memory(&fs::read(path)?)
+}
+
+/// Load an ILBM/IFF image from a file into an [`IndexedImage`] (see
+/// [`load_indexed_from_memory`]).
+pub fn load_indexed(path: &Path) -> Result<IndexedImage> {
+    load_indexed_from_memory(&fs::read(path)?)
 }
 
 #[cfg(test)]
