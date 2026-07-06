@@ -20,6 +20,7 @@ use crate::emulator::Emulator;
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::hud::{HudLocation, SetHudText};
+use crate::image_emu::ImageEmu;
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
@@ -458,7 +459,7 @@ pub fn get_core(
         SystemType::Pico8 => CORE_NAME_PICO8,
         SystemType::Gameboy => CORE_NAME_GAMEBOY,
         SystemType::Gba => CORE_NAME_GBA,
-        // Flash is handled by FlashEmu in create_core before reaching get_core.
+        SystemType::Ilbm => return Err(""),
         SystemType::Flash => return Err(""),
         SystemType::Unknown => return Err(""),
     };
@@ -478,6 +479,9 @@ pub fn create_core(
         return Err(anyhow::anyhow!(
             "Flash (SWF) support is not enabled; rebuild with --features flash"
         ));
+    }
+    if system_type == SystemType::Ilbm {
+        return Ok(Box::new(ImageEmu::new(game, tags)?));
     }
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {

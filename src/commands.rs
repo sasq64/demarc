@@ -249,6 +249,7 @@ fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Flash => "Flash",
         SystemType::Gameboy => "Gameboy",
         SystemType::Gba => "GBA",
+        SystemType::Ilbm => "Amiga Gfx",
         SystemType::Unknown => "Unknown",
     }
     .to_string();

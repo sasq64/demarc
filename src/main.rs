@@ -17,6 +17,8 @@ mod emulator;
 #[cfg(feature = "flash")]
 mod flash_emu;
 mod hud;
+mod ilbm;
+mod image_emu;
 mod libloader;
 mod media_keys;
 mod post_process;
@@ -365,12 +367,12 @@ fn main() {
     let clear_color = args.clear_color;
     // Default the LCD shader for handheld LCD systems (Game Boy / GBA), falling
     // back to the Lottes CRT shader for everything else, unless overridden.
-    let shader = args.shader.unwrap_or_else(|| {
-        match games.first().map(|g| utils::get_system_type(g)) {
-            Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
-            _ => ShaderArg::Lottes,
-        }
-    });
+    let shader =
+        args.shader
+            .unwrap_or_else(|| match games.first().map(|g| utils::get_system_type(g)) {
+                Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+                _ => ShaderArg::Lottes,
+            });
     let shader_path = shader.path();
 
     let mut app = App::new();

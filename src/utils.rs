@@ -25,6 +25,7 @@ pub enum SystemType {
     Flash,
     Gameboy,
     Gba,
+    Ilbm,
     #[default]
     Unknown,
 }
@@ -76,6 +77,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "gb" | "gbc" => SystemType::Gameboy,
         "gba" | "agb" => SystemType::Gba,
         "swf" => SystemType::Flash,
+        "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
         _ => SystemType::Unknown,
     };
     if system_type == SystemType::Unknown {
@@ -98,6 +100,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::AtariST;
                 } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                     system_type = SystemType::Amiga;
+                } else if l >= 12 && &data[0..4] == b"FORM" && &data[8..12] == b"ILBM" {
+                    system_type = SystemType::Ilbm;
                 } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
                     // Flash SWF signatures: uncompressed / zlib / LZMA.
                     system_type = SystemType::Flash;
@@ -746,6 +750,15 @@ mod tests {
         let wf = handle_file(&out[0], &HashMap::new()).unwrap();
         println!("{:?}", wf);
         assert_eq!(wf.system_type, SystemType::C64);
+    }
+
+    #[test]
+    fn ilbm_file() {
+        // Detected both by the `.iff` extension and, for a hypothetical
+        // unrecognized extension, by the FORM/ILBM signature.
+        let wf = handle_file(Path::new("test.iff"), &HashMap::new()).unwrap();
+        assert_eq!(wf.system_type, SystemType::Ilbm);
+        assert_eq!(wf.path, Path::new("test.iff"));
     }
 
     #[test]
