@@ -211,7 +211,8 @@ fn compute_uniform(
     // camera renders into its own sub-rect, so aspect must be computed against
     // that quadrant. `physical_viewport_size` falls back to the full target
     // when no viewport is set (single-emulator case).
-    let (uv_scale, uv_offset) = match (camera.physical_viewport_size(), images.get(&pp.source)) {
+    let viewport = camera.physical_viewport_size();
+    let (mut uv_scale, mut uv_offset) = match (viewport, images.get(&pp.source)) {
         (Some(target), Some(source)) => scale_offset(
             target,
             source.size(),
@@ -221,6 +222,24 @@ fn compute_uniform(
         ),
         _ => (Vec2::ONE, Vec2::ZERO),
     };
+    // Snap the composite transform to the intermediate's integer pixel grid so
+    // the passthrough blit samples it exactly 1:1 (identity texel mapping).
+    //
+    // `post_process_pass` sizes the intermediate texture to `inter_size =
+    // round(viewport * uv_scale)`, but the image's on-screen footprint is the
+    // *fractional* `viewport * uv_scale`. That sub-texel mismatch makes the
+    // nearest-sampled blit drift up to half a texel across the image and, by the
+    // centring symmetry, duplicate one column at the exact screen centre — a
+    // visible mask-phase discontinuity (the thin red vertical line under
+    // crt-lottes at "Fit"). Forcing the footprint to that integer `inter_size`
+    // (and an integer top-left) makes `(screen_uv - uv_offset) / uv_scale` land
+    // on exact texel centres: one screen pixel per intermediate texel, no seam.
+    if let Some(target) = viewport {
+        let target = target.as_vec2();
+        let inter = (uv_scale * target).round().max(Vec2::ONE);
+        uv_scale = inter / target;
+        uv_offset = (uv_offset * target).round() / target;
+    }
     PostProcessUniform {
         uv_scale,
         uv_offset,
