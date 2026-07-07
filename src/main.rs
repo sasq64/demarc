@@ -163,7 +163,7 @@ struct Args {
     reu: bool,
 
     /// ILBM: Animate colour-cycling (CRNG) ranges. Off by default.
-    #[arg(long)]
+    #[arg(short = 'C', long)]
     color_cycle: bool,
 
     /// Commodore variant (Only C64 well supported)
