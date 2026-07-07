@@ -5,7 +5,8 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use libloading::Library;
@@ -108,6 +109,12 @@ pub trait RetroEmu {
     fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
     fn unload(&mut self);
     fn skip_frames(&mut self, frames: u32);
+    /// Total number of emulated frames the core has stepped so far. Used by the
+    /// `--speed-test` benchmark to measure throughput. Defaults to 0 for cores
+    /// that don't track it.
+    fn frames_stepped(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Default)]
@@ -898,6 +905,9 @@ pub struct RetroCoreThreaded {
     sample_rate: f64,
     fps: f64,
     disk_count: u32,
+    /// Emulated frames stepped by the worker so far (shared with the worker
+    /// thread); read by `--speed-test`.
+    frames: Arc<AtomicU64>,
 }
 
 struct SetupResult {
@@ -913,6 +923,7 @@ impl RetroCoreThreaded {
         system_dir: &Path,
         game: Option<&Path>,
         settings: HashMap<String, String>,
+        speed_test: bool,
     ) -> Result<Self> {
         let core_path = core_path.to_path_buf();
         let system_dir = system_dir.to_path_buf();
@@ -927,6 +938,8 @@ impl RetroCoreThreaded {
         let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(latency);
         let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
 
+        let frames = Arc::new(AtomicU64::new(0));
+        let worker_frames = Arc::clone(&frames);
         let handle = thread::Builder::new()
             .name("retro-emu".into())
             .spawn(move || {
@@ -950,7 +963,7 @@ impl RetroCoreThreaded {
                         return;
                     }
                 };
-                worker_loop(&mut core, &cmd_rx, &update_tx);
+                worker_loop(&mut core, &cmd_rx, &update_tx, &worker_frames, speed_test);
                 // `core` is dropped here, running retro_deinit on this thread.
             })?;
 
@@ -972,6 +985,7 @@ impl RetroCoreThreaded {
                 sample_rate: 0.0,
                 fps,
                 disk_count: disks,
+                frames,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -990,6 +1004,8 @@ fn worker_loop(
     core: &mut RetroCoreDirect,
     cmd_rx: &mpsc::Receiver<RetroCmd>,
     update_tx: &mpsc::SyncSender<RetroUpdate>,
+    frames: &AtomicU64,
+    speed_test: bool,
 ) {
     loop {
         // Drain all pending commands without blocking.
@@ -1006,6 +1022,8 @@ fn worker_loop(
         }
 
         core.run();
+        // Count every emulated frame the core steps, including skipped ones.
+        frames.fetch_add(1, Ordering::Relaxed);
         if core.skip_frames > 0 {
             core.skip_frames -= 1;
             if core.skip_frames == 0 {
@@ -1035,7 +1053,15 @@ fn worker_loop(
             sample_rate: core.sample_rate(),
             fps: core.fps(),
         };
-        if update_tx.send(update).is_err() {
+        if speed_test {
+            // Benchmark: never block on the consumer. Hand off the latest frame
+            // if there's room, otherwise drop it and keep emulating flat-out so
+            // throughput reflects the core, not the (vsync-limited) main loop.
+            match update_tx.try_send(update) {
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => return,
+            }
+        } else if update_tx.send(update).is_err() {
             return; // main side gone
         }
     }
@@ -1142,6 +1168,9 @@ impl RetroEmu for RetroCoreThreaded {
     fn skip_frames(&mut self, frames: u32) {
         let _ = self.cmd_tx.send(RetroCmd::Skip { frames });
     }
+    fn frames_stepped(&self) -> u64 {
+        self.frames.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for RetroCoreThreaded {
@@ -1243,7 +1272,8 @@ mod tests {
         settings.insert("puae_model".into(), "A500".into());
 
         let mut emu =
-            RetroCoreThreaded::new(&core_path, system_dir, Some(game_path), settings).unwrap();
+            RetroCoreThreaded::new(&core_path, system_dir, Some(game_path), settings, false)
+                .unwrap();
         // Object-safety / interchangeability check.
         let emu: &mut dyn RetroEmu = &mut emu;
 
@@ -1304,7 +1334,8 @@ mod tests {
             .iter()
             .map(|(core, game, settings, png)| {
                 let emu =
-                    RetroCoreThreaded::new(core, system_dir, Some(game), settings.clone()).unwrap();
+                    RetroCoreThreaded::new(core, system_dir, Some(game), settings.clone(), false)
+                        .unwrap();
                 (*png, emu)
             })
             .collect();

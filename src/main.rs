@@ -131,6 +131,11 @@ struct Args {
     #[arg(long)]
     force_vsync: bool,
 
+    /// Benchmark: run emulation unthrottled (no vsync, audio dropped) for two
+    /// seconds, print the number of frames stepped, then exit.
+    #[arg(long)]
+    speed_test: bool,
+
     /// Max queued frames. Lower values = better input response
     #[arg(long, default_value_t = 2)]
     latency: u32,
@@ -252,6 +257,8 @@ enum ShaderArg {
     Lcd,
     /// Lightweight LCD grid shader (no drop-shadows).
     LcdSimple,
+    /// No post-process effect — render the raw emulator screen.
+    None,
 }
 
 impl ShaderArg {
@@ -261,6 +268,9 @@ impl ShaderArg {
             ShaderArg::Lottes => "shaders/lottes.wgsl",
             ShaderArg::Lcd => "shaders/lcd.wgsl",
             ShaderArg::LcdSimple => "shaders/lcd_simple.wgsl",
+            // `None` reuses the Lottes shader, which passes the raw screen
+            // through unchanged when `crt_effect` is disabled.
+            ShaderArg::None => "shaders/lottes.wgsl",
         }
     }
 }
@@ -298,6 +308,7 @@ struct AppSettings {
     text_list: Option<Entity>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
+    speed_test: bool,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -341,7 +352,13 @@ fn main() {
     let multiple = games.len() > 1;
     let mut window = Window {
         title: "Demarc".into(),
-        present_mode: PresentMode::Fifo,
+        // In speed-test mode run the presentation unthrottled so the emulation
+        // loop is limited only by the CPU/GPU, not the display refresh.
+        present_mode: if args.speed_test {
+            PresentMode::AutoNoVsync
+        } else {
+            PresentMode::Fifo
+        },
         mode: if args.window {
             WindowMode::Windowed
         } else {
@@ -355,21 +372,6 @@ fn main() {
     }
     let primary_window = Some(window);
 
-    let settings = AppSettings {
-        border_mode: args.border.into(),
-        scale_mode: args.scale.into(),
-        current_game: -1,
-        crt_effect: true,
-        show_info: args.info == InfoDisplay::Always
-            || (multiple && args.info == InfoDisplay::OnMulti),
-        games: games.clone(),
-        max_time: args.max_time,
-        maximized: args.grid.is_none(),
-        ..Default::default()
-    };
-
-    let win = args.window;
-    let clear_color = args.clear_color;
     // Default the LCD shader for handheld LCD systems (Game Boy / GBA), falling
     // back to the Lottes CRT shader for everything else, unless overridden.
     let shader =
@@ -380,7 +382,30 @@ fn main() {
             });
     let shader_path = shader.path();
 
+    let settings = AppSettings {
+        border_mode: args.border.into(),
+        scale_mode: args.scale.into(),
+        current_game: -1,
+        // `--shader none` starts with the post-process effect disabled.
+        crt_effect: !matches!(shader, ShaderArg::None),
+        show_info: args.info == InfoDisplay::Always
+            || (multiple && args.info == InfoDisplay::OnMulti),
+        games: games.clone(),
+        max_time: args.max_time,
+        maximized: args.grid.is_none(),
+        speed_test: args.speed_test,
+        ..Default::default()
+    };
+
+    let win = args.window;
+    let clear_color = args.clear_color;
+
+    let speed_test = args.speed_test;
     let mut app = App::new();
+    if speed_test {
+        // Drive the update loop as fast as possible regardless of window focus.
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
     app.insert_resource(args)
         .insert_resource(settings)
         .insert_resource(ClearColor(clear_color))
