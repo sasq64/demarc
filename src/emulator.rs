@@ -102,6 +102,8 @@ pub(crate) struct Emulator {
     /// Smoothed audio-output delay (seconds) driving the video delay line.
     /// EMA-filtered so ring-buffer jitter doesn't make the video judder.
     pub(crate) av_delay_secs: f64,
+    /// Benchmark mode: step the core once per update with no audio or pacing.
+    pub(crate) speed_test: bool,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -258,6 +260,7 @@ impl Emulator {
         tags: HashMap<String, String>,
         max_time: Option<usize>,
         match_fps: bool,
+        speed_test: bool,
     ) -> Self {
         let width = 720;
         let height = 574;
@@ -289,6 +292,7 @@ impl Emulator {
             width,
             height,
             match_fps,
+            speed_test,
             ..Default::default()
         }
     }
@@ -446,6 +450,7 @@ impl Emulator {
             work_file.system_type,
             &work_file.path,
             work_file.settings.clone(),
+            self.speed_test,
         )?;
         let t = work_file.system_type;
         if t == SystemType::Megadrive
@@ -493,6 +498,12 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return true;
         };
+
+        // Benchmark mode: pump the core once per update with no audio handling
+        // and no frame pacing, so throughput is bound only by CPU/GPU speed.
+        if self.speed_test {
+            return core.run();
+        }
 
         if self.paused {
             self.next_frame = time.elapsed_secs_f64();

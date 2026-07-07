@@ -137,6 +137,11 @@ struct Args {
     #[arg(long)]
     force_vsync: bool,
 
+    /// Benchmark: run emulation unthrottled (no vsync, audio dropped) for two
+    /// seconds, print the number of frames stepped, then exit.
+    #[arg(long)]
+    speed_test: bool,
+
     /// Max queued frames. Lower values = better input response
     #[arg(long, default_value_t = 2)]
     latency: u32,
@@ -263,6 +268,8 @@ enum ShaderArg {
     Lcd,
     /// Lightweight single-pass LCD grid shader (zfast-lcd).
     LcdSimple,
+    /// No post-process effect — render the raw emulator screen.
+    None,
 }
 
 impl ShaderArg {
@@ -274,6 +281,10 @@ impl ShaderArg {
             ShaderArg::Lottes => "shaders/slangp/crt/crt-lottes.slangp",
             ShaderArg::Lcd => "shaders/slangp/handheld/lcd-grid-v2.slangp",
             ShaderArg::LcdSimple => "shaders/slangp/handheld/zfast-lcd.slangp",
+            // `None` starts with the effect disabled (see `crt_effect`); the
+            // path only matters if it's toggled on, so reuse the stock
+            // passthrough preset.
+            ShaderArg::None => "shaders/slangp/stock.slangp",
         }
     }
 }
@@ -313,6 +324,7 @@ struct AppSettings {
     text_list: Option<Entity>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
+    speed_test: bool,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -380,7 +392,13 @@ fn main() {
     let multiple = games.len() > 1;
     let mut window = Window {
         title: "Demarc".into(),
-        present_mode: PresentMode::Fifo,
+        // In speed-test mode run the presentation unthrottled so the emulation
+        // loop is limited only by the CPU/GPU, not the display refresh.
+        present_mode: if args.speed_test {
+            PresentMode::AutoNoVsync
+        } else {
+            PresentMode::Fifo
+        },
         mode: if args.window {
             WindowMode::Windowed
         } else {
@@ -400,41 +418,49 @@ fn main() {
     }
     let primary_window = Some(window);
 
+    // Default the LCD preset for handheld LCD systems (Game Boy / GBA), falling
+    // back to the Lottes CRT preset for everything else, unless overridden.
+    let shader = args.shader.unwrap_or_else(|| {
+        match games.first().map(|g| utils::get_system_type(g)) {
+            Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+            _ => ShaderArg::Lottes,
+        }
+    });
+    // A user-supplied `--preset` wins; otherwise resolve the bundled preset by
+    // name. Both resolve to an absolute `.slangp` path; the passthrough
+    // (`stock.slangp`) is always the bundled one.
+    let effect_path = match &args.preset {
+        Some(path) => path.clone(),
+        None => system_dir().join(shader.path()),
+    };
+    let passthrough_path = system_dir().join("shaders/slangp/stock.slangp");
+
     let settings = AppSettings {
         border_mode: args.border.into(),
         scale_mode: args.scale.into(),
         current_game: -1,
-        crt_effect: true,
+        // `--shader none` starts with the post-process effect disabled; an
+        // explicit `--preset` always enables it.
+        crt_effect: args.preset.is_some() || !matches!(shader, ShaderArg::None),
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         games: games.clone(),
         max_time: args.max_time,
         maximized: args.grid.is_none(),
         av_sync: !args.no_av_sync,
+        speed_test: args.speed_test,
         ..Default::default()
     };
 
     let win = args.window;
     let clear_color = args.clear_color;
-    // A user-supplied `--preset` wins; otherwise pick a bundled preset by name,
-    // defaulting to the LCD preset for handheld LCD systems (Game Boy / GBA) and
-    // the Lottes CRT preset for everything else. Both resolve to an absolute
-    // `.slangp` path; the passthrough (`stock.slangp`) is always the bundled one.
-    let effect_path = match &args.preset {
-        Some(path) => path.clone(),
-        None => {
-            let shader = args.shader.unwrap_or_else(|| {
-                match games.first().map(|g| utils::get_system_type(g)) {
-                    Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
-                    _ => ShaderArg::Lottes,
-                }
-            });
-            system_dir().join(shader.path())
-        }
-    };
-    let passthrough_path = system_dir().join("shaders/slangp/stock.slangp");
 
+    let speed_test = args.speed_test;
     let mut app = App::new();
+    if speed_test {
+        // Drive the update loop as fast as possible regardless of window focus.
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
+    }
     app.insert_resource(args)
         .insert_resource(settings)
         .insert_resource(ClearColor(clear_color))
