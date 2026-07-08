@@ -73,8 +73,9 @@ struct Args {
     #[arg(long)]
     many: bool,
 
-    /// How to map emulator screen onto window.
-    #[arg(long, value_enum, default_value_t = ScaleModeArg::Fit)]
+    /// How to map emulator screen onto window: `stretch`, `fit`, `zoom`, or a
+    /// scale factor like `2` or `2.5` (fractional allowed).
+    #[arg(long, value_parser = parse_scale_mode, default_value = "fit")]
     scale: ScaleModeArg,
 
     /// How to fill the border outside the image.
@@ -225,7 +226,7 @@ enum InfoDisplay {
     OnMulti,
 }
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 enum ScaleModeArg {
     /// Fill the window, distorting the aspect ratio.
     Stretch,
@@ -233,6 +234,30 @@ enum ScaleModeArg {
     Fit,
     /// Preserve aspect ratio, cropping top/bottom or left/right to fill.
     Zoom,
+    /// Scale the source by a fixed factor, centred. Whole numbers keep pixels
+    /// integer-sized; fractional factors (e.g. 2.5) are applied exactly.
+    Fixed(f32),
+}
+
+/// Parse a `--scale` value: one of the named modes (`stretch`, `fit`, `zoom`)
+/// or a positive scale factor like `2`, `2x`, or `2.5`.
+fn parse_scale_mode(s: &str) -> Result<ScaleModeArg, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "stretch" => Ok(ScaleModeArg::Stretch),
+        "fit" => Ok(ScaleModeArg::Fit),
+        "zoom" => Ok(ScaleModeArg::Zoom),
+        other => {
+            // Accept an optional trailing `x`, e.g. `2x` or `2.5x`.
+            let num = other.strip_suffix('x').unwrap_or(other);
+            match num.parse::<f32>() {
+                Ok(n) if n.is_finite() && n > 0.0 => Ok(ScaleModeArg::Fixed(n)),
+                _ => Err(format!(
+                    "expected stretch, fit, zoom, or a positive scale factor \
+                     like 2 or 2.5 (got `{s}`)"
+                )),
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -251,6 +276,7 @@ impl From<ScaleModeArg> for ScaleMode {
             ScaleModeArg::Stretch => ScaleMode::Stretch,
             ScaleModeArg::Fit => ScaleMode::Fit,
             ScaleModeArg::Zoom => ScaleMode::Zoom,
+            ScaleModeArg::Fixed(n) => ScaleMode::Fixed(n),
         }
     }
 }

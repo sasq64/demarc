@@ -333,6 +333,9 @@ fn handle_cmd(
                     ScaleMode::Stretch => ScaleMode::Fit,
                     ScaleMode::Fit => ScaleMode::Zoom,
                     ScaleMode::Zoom => ScaleMode::Stretch,
+                    // The fixed integer scales are CLI-only; the keyboard cycle
+                    // returns to the aspect-preserving modes.
+                    ScaleMode::Fixed(_) => ScaleMode::Fit,
                 };
                 writer.write(SetHudText {
                     text: format!("{:?}", settings.scale_mode),

@@ -93,7 +93,7 @@ impl Plugin for PostProcessPlugin {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum ScaleMode {
     /// Fill the window, distorting the source aspect ratio.
     Stretch,
@@ -103,6 +103,13 @@ pub enum ScaleMode {
     /// Preserve the source aspect ratio by scaling to fill the window and
     /// cropping the overflow (top/bottom or left/right).
     Zoom,
+    /// Scale the source by a fixed factor `n` and centre the result in the
+    /// window. Square-pixel systems get `n`×`n` screen pixels; the core's
+    /// reported aspect corrects non-square pixels (e.g. Amiga half-width →
+    /// 2n×n). Whole-number factors keep pixels integer-sized for crispness;
+    /// fractional factors (e.g. 2.5) are applied exactly. If the scaled image
+    /// is larger than the window it overflows and is cropped.
+    Fixed(f32),
 }
 
 /// How the shader samples outside the source image (in the letterbox/pillarbox
@@ -268,6 +275,34 @@ pub fn scale_offset(
     {
         return (Vec2::ONE, Vec2::ZERO);
     }
+    // Exact integer scaling, aspect-aware. The core's reported display aspect
+    // divided by the framebuffer's own pixel dimensions gives the pixel aspect
+    // ratio (PAR): how wide each source pixel should appear relative to its
+    // height. Square-pixel systems (Game Boy 160×144 @ ~1.11, etc.) give
+    // PAR≈1 → `n`×`n` pixels; an Amiga half-width framebuffer gives PAR≈2 →
+    // 2n×n; half-height gives PAR≈0.5 → n×2n. We keep the factor on the denser
+    // axis at exactly `n` and multiply the other by the PAR, rounded so pixels
+    // stay integer-sized (and therefore crisp). The result is centred.
+    if let ScaleMode::Fixed(n) = scale_mode {
+        let base_aspect = if aspect > 0.0 {
+            aspect
+        } else {
+            src.x as f32 / src.y as f32
+        };
+        let par = (base_aspect * aspect_tweak) / (src.x as f32 / src.y as f32);
+        // Whole-number factors round the aspect-corrected axis so pixels stay
+        // integer-sized (crisp). A fractional factor is an explicit request for
+        // non-integer scaling, so honour it exactly on both axes.
+        let snap = |v: f32| if n.fract() == 0.0 { v.round() } else { v }.max(1.0);
+        let (hx, hy) = if par >= 1.0 {
+            (snap(n * par), n)
+        } else {
+            (n, snap(n / par))
+        };
+        let footprint = Vec2::new(src.x as f32 * hx, src.y as f32 * hy);
+        let scale = footprint / target.as_vec2();
+        return (scale, (Vec2::ONE - scale) * 0.5);
+    }
     let target_aspect = target.x as f32 / target.y as f32;
     // Use the display aspect ratio the core reports; fall back to the texture's
     // pixel dimensions when the core doesn't supply one.
@@ -293,6 +328,8 @@ pub fn scale_offset(
         // so screen uv [0,1] maps to a sub-range of the source.
         (ScaleMode::Zoom, true) => Vec2::new(1.0, target_aspect / source_aspect),
         (ScaleMode::Zoom, false) => Vec2::new(source_aspect / target_aspect, 1.0),
+        // `Fixed` and `Stretch` returned early above; unreachable here.
+        (ScaleMode::Fixed(_), _) => Vec2::ONE,
     };
     (
         scale,
