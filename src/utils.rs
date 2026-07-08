@@ -756,9 +756,9 @@ mod tests {
     fn ilbm_file() {
         // Detected both by the `.iff` extension and, for a hypothetical
         // unrecognized extension, by the FORM/ILBM signature.
-        let wf = handle_file(Path::new("test.iff"), &HashMap::new()).unwrap();
+        let wf = handle_file(Path::new("testdata/test.iff"), &HashMap::new()).unwrap();
         assert_eq!(wf.system_type, SystemType::Ilbm);
-        assert_eq!(wf.path, Path::new("test.iff"));
+        assert_eq!(wf.path, Path::new("testdata/test.iff"));
     }
 
     #[test]

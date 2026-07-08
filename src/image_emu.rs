@@ -191,12 +191,9 @@ impl RetroEmu for ImageEmu {
     }
 
     fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let buf = image::RgbaImage::from_raw(
-            self.width as u32,
-            self.height as u32,
-            self.frame.clone(),
-        )
-        .ok_or("failed to build image buffer")?;
+        let buf =
+            image::RgbaImage::from_raw(self.width as u32, self.height as u32, self.frame.clone())
+                .ok_or("failed to build image buffer")?;
         buf.save(path)?;
         Ok(())
     }
@@ -221,7 +218,7 @@ mod tests {
 
     #[test]
     fn image_emu_presents_ilbm_frame() {
-        let mut emu = ImageEmu::new(Path::new("test.iff"), HashMap::new()).unwrap();
+        let mut emu = ImageEmu::new(Path::new("testdata/test.iff"), HashMap::new()).unwrap();
         assert_eq!(emu.get_frame_size(), (640, 512));
         // `run` always succeeds; the frame is ready immediately.
         assert!(emu.run());
@@ -241,7 +238,7 @@ mod tests {
     fn color_cycling_changes_the_frame() {
         // Cycling is opt-in, so enable it via the tag `--color-cycle` sets.
         let tags = HashMap::from([("color_cycle".to_string(), "enabled".to_string())]);
-        let mut emu = ImageEmu::new(Path::new("test.iff"), tags).unwrap();
+        let mut emu = ImageEmu::new(Path::new("testdata/test.iff"), tags).unwrap();
         // test.iff carries active CRNG chunks, so there is something to cycle.
         assert!(
             !emu.ranges.is_empty(),
@@ -260,7 +257,7 @@ mod tests {
     #[test]
     fn cycling_is_off_without_the_tag() {
         // Without `--color-cycle` no ranges are active, so the frame is static.
-        let emu = ImageEmu::new(Path::new("test.iff"), HashMap::new()).unwrap();
+        let emu = ImageEmu::new(Path::new("testdata/test.iff"), HashMap::new()).unwrap();
         assert!(
             emu.ranges.is_empty(),
             "colour cycling should be disabled by default"

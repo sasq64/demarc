@@ -345,7 +345,10 @@ fn decode_pbm(width: usize, height: usize, compression: u8, body: &[u8]) -> Resu
         c => bail!("unsupported PBM compression: {c}"),
     };
     if raw.len() < expected {
-        bail!("decoded PBM body too small: got {}, expected {expected}", raw.len());
+        bail!(
+            "decoded PBM body too small: got {}, expected {expected}",
+            raw.len()
+        );
     }
     let mut indices = vec![0u8; width * height];
     for y in 0..height {
@@ -611,7 +614,7 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
     let num_planes = header.num_planes as usize;
 
     // Bytes per bitplane per scanline: rows are padded to a 16-bit boundary.
-    let row_bytes = ((width + 15) / 16) * 2;
+    let row_bytes = width.div_ceil(16) * 2;
     // A mask plane (masking == 1) is stored as an extra plane per row.
     let planes_per_row = num_planes + if header.masking == 1 { 1 } else { 0 };
     let expected = row_bytes * planes_per_row * height;
@@ -622,7 +625,10 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
         c => bail!("unsupported compression: {c}"),
     };
     if planar.len() < expected {
-        bail!("decoded body too small: got {}, expected {expected}", planar.len());
+        bail!(
+            "decoded body too small: got {}, expected {expected}",
+            planar.len()
+        );
     }
 
     match num_planes {
@@ -630,7 +636,14 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
             num_planes,
             is_ham: false, // filled in by the caller from CAMG
             palette: Vec::new(),
-            indices: decode_indices(width, height, num_planes, row_bytes, planes_per_row, &planar),
+            indices: decode_indices(
+                width,
+                height,
+                num_planes,
+                row_bytes,
+                planes_per_row,
+                &planar,
+            ),
             line_palettes: None,
         }),
         24 | 32 => Ok(Content::Rgb(decode_deep(
@@ -675,7 +688,11 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
 
     let camg = form
         .find("CAMG")
-        .and_then(|c| c.data().get(0..4).map(|b| u32::from_be_bytes(b.try_into().unwrap())))
+        .and_then(|c| {
+            c.data()
+                .get(0..4)
+                .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        })
         .unwrap_or(0);
     let is_ham = camg & CAMG_HAM != 0;
     let is_ehb = camg & CAMG_EHB != 0;
@@ -684,11 +701,16 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
     // formats; RGB8/RGBN carry colour per pixel.
     let mut palette: Vec<[u8; 3]> = form
         .find("CMAP")
-        .map(|c| c.data().chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
+        .map(|c| {
+            c.data()
+                .chunks_exact(3)
+                .map(|c| [c[0], c[1], c[2]])
+                .collect()
+        })
         .unwrap_or_default();
 
     // Row width in bytes for the planar (ILBM/ACBM) formats.
-    let row_bytes = ((width + 15) / 16) * 2;
+    let row_bytes = width.div_ceil(16) * 2;
 
     let content = match form_type.as_str() {
         "ILBM" => decode_ilbm(&form, &header, width, height)?,
@@ -739,7 +761,11 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
     // header chunks rather than the per-format decoders.
     let content = match content {
         Content::Rgb(px) => Content::Rgb(px),
-        Content::Indexed { num_planes, indices, .. } => {
+        Content::Indexed {
+            num_planes,
+            indices,
+            ..
+        } => {
             // Extra-HalfBrite: expand the palette to 64 registers so a plain
             // index lookup yields the upper half-bright colours, letting EHB
             // use the same indexed path as any other palette image.
@@ -785,7 +811,13 @@ pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
                 img.put_pixel(x, y, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
             }
         }
-        Content::Indexed { num_planes, is_ham, palette, indices, line_palettes } => {
+        Content::Indexed {
+            num_planes,
+            is_ham,
+            palette,
+            indices,
+            line_palettes,
+        } => {
             for y in 0..p.height {
                 // For dynamic-palette images each row has its own palette;
                 // otherwise every row shares the single global one.
@@ -803,7 +835,11 @@ pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
                     } else {
                         pal.get(index).copied().unwrap_or([0, 0, 0])
                     };
-                    img.put_pixel(x as u32, y as u32, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+                    img.put_pixel(
+                        x as u32,
+                        y as u32,
+                        image::Rgba([rgb[0], rgb[1], rgb[2], 255]),
+                    );
                 }
             }
         }
@@ -834,13 +870,18 @@ pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
         Content::Indexed { is_ham: true, .. } => {
             bail!("HAM images can't be displayed as an indexed (colour-cycled) image")
         }
-        Content::Indexed { line_palettes: Some(_), .. } => {
+        Content::Indexed {
+            line_palettes: Some(_),
+            ..
+        } => {
             bail!("dynamic-palette images can't be displayed as an indexed (colour-cycled) image")
         }
         Content::Rgb(_) => {
             bail!("truecolour images can't be displayed as an indexed (colour-cycled) image")
         }
-        Content::Indexed { palette, indices, .. } => Ok(IndexedImage {
+        Content::Indexed {
+            palette, indices, ..
+        } => Ok(IndexedImage {
             width: (p.width * p.xscale) as u32,
             height: (p.height * p.yscale) as u32,
             // Aspect correction replicates indices, not colours, so the palette
@@ -871,26 +912,31 @@ fn ham_pixel(index: usize, num_planes: usize, palette: &[[u8; 3]], prev: &mut [u
 }
 
 /// Load an ILBM/IFF image from a file into an RGBA image.
-pub fn load(path: &Path) -> Result<RgbaImage> {
-    load_from_memory(&fs::read(path)?)
+pub fn load(path: impl AsRef<Path>) -> Result<RgbaImage> {
+    load_from_memory(&fs::read(path.as_ref())?)
 }
 
 /// Load an ILBM/IFF image from a file into an [`IndexedImage`] (see
 /// [`load_indexed_from_memory`]).
-pub fn load_indexed(path: &Path) -> Result<IndexedImage> {
-    load_indexed_from_memory(&fs::read(path)?)
+pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {
+    load_indexed_from_memory(&fs::read(path.as_ref())?)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    fn get_path(name: &str) -> PathBuf {
+        Path::new("testdata/iffILBM").join(name)
+    }
 
     /// Load a test image from the `iffILBM/` corpus and assert it decodes to the
     /// expected size and isn't a single flat colour (which would signal a
     /// mis-decode). Returns the decoded image for further checks.
     fn check(file: &str, w: u32, h: u32) -> RgbaImage {
-        let img = load(Path::new("iffILBM").join(file).as_path())
-            .unwrap_or_else(|e| panic!("failed to load {file}: {e}"));
+        let img = load(get_path(file)).unwrap_or_else(|e| panic!("failed to load {file}: {e}"));
         assert_eq!(img.dimensions(), (w, h), "wrong dimensions for {file}");
         let first = img.get_pixel(0, 0);
         assert!(
@@ -902,7 +948,7 @@ mod tests {
 
     #[test]
     fn test_ilbm() {
-        let img = load(Path::new("test.iff")).unwrap();
+        let img = load("testdata/test.iff").unwrap();
         assert_eq!(img.dimensions(), (640, 512));
         // The image must not be entirely one colour.
         let first = img.get_pixel(0, 0);
@@ -982,7 +1028,7 @@ mod tests {
     /// for a plain paletted image.
     #[test]
     fn test_load_indexed() {
-        let img = load_indexed(Path::new("iffILBM/abydos.ilbm")).unwrap();
+        let img = load_indexed(get_path("abydos.ilbm")).unwrap();
         assert_eq!((img.width, img.height), (320, 240));
         assert_eq!(img.indices.len(), (320 * 240) as usize);
         assert!(!img.palette.is_empty());
@@ -995,18 +1041,15 @@ mod tests {
     /// not plain palette lookups) so callers fall back to the RGBA path.
     #[test]
     fn test_indexed_rejects_non_palette() {
-        assert!(load_indexed(Path::new("iffILBM/GINA")).is_err(), "HAM");
-        assert!(load_indexed(Path::new("iffILBM/24.iff")).is_err(), "deep");
-        assert!(
-            load_indexed(Path::new("iffILBM/WorldMap2.24")).is_err(),
-            "RGB8"
-        );
+        assert!(load_indexed(get_path("GINA")).is_err(), "HAM");
+        assert!(load_indexed(get_path("24.iff")).is_err(), "deep");
+        assert!(load_indexed(get_path("WorldMap2.24")).is_err(), "RGB8");
     }
 
     /// Colour-cycling ranges are collected from CRNG chunks.
     #[test]
     fn test_cycle_ranges() {
-        let img = load_indexed(Path::new("iffILBM/water.lbm")).unwrap();
+        let img = load_indexed(get_path("water.lbm")).unwrap();
         assert!(!img.ranges.is_empty(), "expected CRNG ranges");
     }
 
@@ -1040,18 +1083,20 @@ mod tests {
     /// path must reject them (callers then use the fixed-RGBA path).
     #[test]
     fn test_indexed_rejects_dynamic_palette() {
-        assert!(load_indexed(Path::new("iffILBM/amiga-ferrari.dhr")).is_err());
-        assert!(load_indexed(Path::new("iffILBM/Lake.mp")).is_err());
+        assert!(load_indexed(Path::new("testdata/iffILBM/amiga-ferrari.dhr")).is_err());
+        assert!(load_indexed(Path::new("testdata/iffILBM/Lake.mp")).is_err());
     }
 
     /// A dynamic-palette image should genuinely use more than its base 16
     /// colours: colours must vary between the top and bottom of the frame.
     #[test]
     fn test_ctbl_varies_down_screen() {
-        let img = load(Path::new("iffILBM/amiga-ferrari.dhr")).unwrap();
-        let top: std::collections::HashSet<_> = (0..img.width()).map(|x| img.get_pixel(x, 0).0).collect();
-        let bottom: std::collections::HashSet<_> =
-            (0..img.width()).map(|x| img.get_pixel(x, img.height() - 1).0).collect();
+        let img = load(Path::new("testdata/iffILBM/amiga-ferrari.dhr")).unwrap();
+        let top: std::collections::HashSet<_> =
+            (0..img.width()).map(|x| img.get_pixel(x, 0).0).collect();
+        let bottom: std::collections::HashSet<_> = (0..img.width())
+            .map(|x| img.get_pixel(x, img.height() - 1).0)
+            .collect();
         assert_ne!(top, bottom, "per-scanline palette had no visible effect");
     }
 
@@ -1087,7 +1132,10 @@ mod tests {
     fn test_display_scale() {
         assert_eq!(display_scale("ILBM", 640, 256, CAMG_HIRES), (1, 2)); // hires
         assert_eq!(display_scale("ILBM", 320, 512, CAMG_LACE), (2, 1)); // lores lace
-        assert_eq!(display_scale("ILBM", 640, 512, CAMG_HIRES | CAMG_LACE), (1, 1));
+        assert_eq!(
+            display_scale("ILBM", 640, 512, CAMG_HIRES | CAMG_LACE),
+            (1, 1)
+        );
         assert_eq!(display_scale("ILBM", 320, 200, 0), (1, 1)); // lores
         // Garbage in the high bits must not read as a resolution.
         assert_eq!(display_scale("ILBM", 320, 200, 0x4800), (1, 1));
