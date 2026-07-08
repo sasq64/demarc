@@ -56,8 +56,6 @@ pub fn system_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let system = resolve_system_dir();
-        // Canonicalize so callers (e.g. cores given a working dir) always get an
-        // absolute path, independent of the process's current directory.
         system
             .canonicalize()
             .unwrap_or_else(|e| panic!("Failed to canonicalize system dir {system:?}: {e}"))
@@ -622,7 +620,7 @@ fn run_retro(
         // Drop audio entirely in the speed-test benchmark.
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
 
-        let d = if emu.run_next && settings.current_game < (settings.games.len() as isize) - 1 {
+        let d = if emu.run_next && settings.current_game < (settings.files.len() as isize) - 1 {
             emu.run_next = false;
             1
         } else if emu.run_prev && settings.current_game > 0 {
@@ -633,7 +631,7 @@ fn run_retro(
         };
         if d != 0 {
             settings.current_game += d;
-            let game = settings.games[settings.current_game as usize].clone();
+            let game = settings.files[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
                     let text = format!("{:?}: {e:?}", game.file_name().unwrap_or_default());

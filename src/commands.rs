@@ -465,11 +465,11 @@ fn handle_cmd(
                     }
                     Cmd::NextFile => {
                         emu.run_next = true;
-                        debug!("{} vs {}", settings.current_game, settings.games.len());
+                        debug!("{} vs {}", settings.current_game, settings.files.len());
                     }
                     Cmd::PrevFile => {
                         emu.run_prev = true;
-                        debug!("{} vs {}", settings.current_game, settings.games.len());
+                        debug!("{} vs {}", settings.current_game, settings.files.len());
                     }
                     Cmd::Warp10 => {
                         let text = "\u{f0d71}".to_string();

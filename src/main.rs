@@ -81,7 +81,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
-    /// Post-process shader used to render the emulator screen. Defaults to the
+    /// Shader used to render the emulator screen. Defaults to the
     /// LCD shader for Game Boy / GBA titles and the Lottes CRT shader otherwise.
     #[arg(long, value_enum)]
     shader: Option<ShaderArg>,
@@ -90,7 +90,7 @@ struct Args {
     /// e.g. any preset from the slang-shaders repo. Takes precedence over
     /// `--shader`.
     #[arg(long)]
-    preset: Option<PathBuf>,
+    slangp: Option<PathBuf>,
 
     /// Shuffle the list of files into a random order.
     #[arg(long)]
@@ -312,7 +312,7 @@ struct AppSettings {
     scale_mode: ScaleMode,
     crt_effect: bool,
     show_info: bool,
-    games: Vec<PathBuf>,
+    files: Vec<PathBuf>,
     current_game: isize,
     max_time: Option<usize>,
     current_emu: usize,
@@ -331,30 +331,6 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
 }
 
-fn auto_screenshot(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut shot: bevy::prelude::Local<bool>,
-    mut exit: bevy::prelude::MessageWriter<bevy::app::AppExit>,
-) {
-    use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-    let secs = std::env::var("AUTO_SHOT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4.0);
-    let t = time.elapsed_secs();
-    if !*shot && t >= secs {
-        *shot = true;
-        let path = std::env::var("AUTO_SHOT").unwrap();
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path));
-    }
-    if t >= secs + 1.5 {
-        exit.write(bevy::app::AppExit::Success);
-    }
-}
-
 fn main() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
@@ -371,29 +347,27 @@ fn main() {
         .init();
     let mut args = Args::parse();
 
-    // Expand any directory in `games` into the `.m3u` files found within it.
-    let mut games = Vec::with_capacity(args.files.len());
-    for game in std::mem::take(&mut args.files) {
-        if game.is_dir() {
-            let len = games.len();
-            collect_files(&game, &mut games, args.many);
-            if len == games.len() {
-                games.push(game);
+    // Expand any directory in `files` into the `.m3u` files found within it.
+    let mut files = Vec::with_capacity(args.files.len());
+    for file in std::mem::take(&mut args.files) {
+        if file.is_dir() {
+            let len = files.len();
+            collect_files(&file, &mut files, args.many);
+            if len == files.len() {
+                files.push(file);
             }
         } else {
-            games.push(game);
+            files.push(file);
         }
     }
     if args.shuffle {
         use rand::seq::SliceRandom;
-        games.shuffle(&mut rand::rng());
+        files.shuffle(&mut rand::rng());
     }
 
-    let multiple = games.len() > 1;
+    let multiple = files.len() > 1;
     let mut window = Window {
         title: "Demarc".into(),
-        // In speed-test mode run the presentation unthrottled so the emulation
-        // loop is limited only by the CPU/GPU, not the display refresh.
         present_mode: if args.speed_test {
             PresentMode::AutoNoVsync
         } else {
@@ -410,26 +384,18 @@ fn main() {
     if args.window {
         window.resolution = (720, 540).into();
     }
-    if let Ok(res) = std::env::var("WIN_RES") {
-        if let Some((w, h)) = res.split_once('x') {
-            window.resolution = (w.parse().unwrap(), h.parse().unwrap()).into();
-            window.mode = WindowMode::Windowed;
-        }
-    }
     let primary_window = Some(window);
 
-    // Default the LCD preset for handheld LCD systems (Game Boy / GBA), falling
-    // back to the Lottes CRT preset for everything else, unless overridden.
-    let shader = args.shader.unwrap_or_else(|| {
-        match games.first().map(|g| utils::get_system_type(g)) {
-            Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
-            _ => ShaderArg::Lottes,
-        }
-    });
+    let shader =
+        args.shader
+            .unwrap_or_else(|| match files.first().map(|g| utils::get_system_type(g)) {
+                Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+                _ => ShaderArg::Lottes,
+            });
     // A user-supplied `--preset` wins; otherwise resolve the bundled preset by
     // name. Both resolve to an absolute `.slangp` path; the passthrough
     // (`stock.slangp`) is always the bundled one.
-    let effect_path = match &args.preset {
+    let effect_path = match &args.slangp {
         Some(path) => path.clone(),
         None => system_dir().join(shader.path()),
     };
@@ -439,12 +405,12 @@ fn main() {
         border_mode: args.border.into(),
         scale_mode: args.scale.into(),
         current_game: -1,
-        // `--shader none` starts with the post-process effect disabled; an
+        // `--shader none` starts with the shaders disabled; an
         // explicit `--preset` always enables it.
-        crt_effect: args.preset.is_some() || !matches!(shader, ShaderArg::None),
+        crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
-        games: games.clone(),
+        files: files.clone(),
         max_time: args.max_time,
         maximized: args.grid.is_none(),
         av_sync: !args.no_av_sync,
@@ -491,9 +457,6 @@ fn main() {
         ));
     if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
         app.add_systems(PostStartup, enter_fullscreen);
-    }
-    if std::env::var("AUTO_SHOT").is_ok() {
-        app.add_systems(bevy::app::Update, auto_screenshot);
     }
     app.run();
 }
