@@ -1,6 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Mutex;
 
 use anyhow::Result;
 
@@ -183,14 +181,11 @@ pub struct SendStream(#[allow(dead_code)] cpal::Stream);
 unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
-pub fn init_audio_stream(
-    mut consumer: HeapCons<f32>,
-    device_latency_us: Arc<AtomicU64>,
-) -> Result<(f32, cpal::Stream)> {
+pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
-    let target: SampleRate = 48000;
+    let target = SampleRate(48000);
 
     let supported = device
         .supported_output_configs()?
@@ -223,23 +218,15 @@ pub fn init_audio_stream(
 
     info!(
         "cpal cfg: rate={} channels={} buffer={:?}",
-        config.sample_rate, config.channels, config.buffer_size
+        config.sample_rate.0, config.channels, config.buffer_size
     );
 
     let stream = device.build_output_stream(
         &config,
-        move |output: &mut [f32], info: &cpal::OutputCallbackInfo| {
+        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let count = consumer.pop_slice(output);
             if count == 0 {
                 output.fill(0.0);
-            }
-            // Time between this callback and when these samples are actually
-            // heard: the output device's own latency. On a Bluetooth sink this
-            // is the large codec/stack delay (100-300ms) that pushes audio well
-            // behind video; capturing it lets the video delay line compensate.
-            let ts = info.timestamp();
-            if let Some(latency) = ts.playback.duration_since(&ts.callback) {
-                device_latency_us.store(latency.as_micros() as u64, Ordering::Relaxed);
             }
         },
         |err| eprintln!("audio stream error: {err}"),
@@ -247,7 +234,7 @@ pub fn init_audio_stream(
     )?;
 
     stream.play()?;
-    Ok((config.sample_rate as f32, stream))
+    Ok((config.sample_rate.0 as f32, stream))
 }
 
 #[derive(Default)]
@@ -256,16 +243,12 @@ pub struct AudioSink {
     pub sample_rate: f32,
     pub stream: Option<SendStream>,
     pub resampler: Option<AudioResampler>,
-    /// Output device latency in microseconds, updated from the cpal callback's
-    /// presentation timestamp. Includes a Bluetooth sink's playback delay.
-    device_latency_us: Arc<AtomicU64>,
 }
 
 impl AudioSink {
     pub fn activate(&mut self) {
         let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-        let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.device_latency_us.clone())
-        else {
+        let Ok((sample_rate, stream)) = init_audio_stream(consumer) else {
             error!("Could not init audio");
             return;
         };
@@ -283,27 +266,6 @@ impl AudioSink {
         self.stream = None;
         self.producer = None;
         self.resampler = None;
-        self.device_latency_us.store(0, Ordering::Relaxed);
-    }
-
-    /// Total wall-clock delay before audio pushed *now* is heard: the samples
-    /// already queued in the ring buffer drain first, then the output device
-    /// (incl. a Bluetooth sink) adds its own latency. Zero when no stream is
-    /// active. The video delay line targets this so a frame is shown exactly
-    /// when its matching audio reaches the speakers.
-    pub(crate) fn audio_delay(&self) -> Duration {
-        if self.stream.is_none() {
-            return Duration::ZERO;
-        }
-        // `occupied_len` counts interleaved stereo f32 samples, so two per frame.
-        let ring_frames = self.occupied_len() as f64 / 2.0;
-        let ring_secs = if self.sample_rate > 0.0 {
-            ring_frames / self.sample_rate as f64
-        } else {
-            0.0
-        };
-        Duration::from_secs_f64(ring_secs)
-            + Duration::from_micros(self.device_latency_us.load(Ordering::Relaxed))
     }
 
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {

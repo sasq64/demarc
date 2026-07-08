@@ -146,11 +146,6 @@ struct Args {
     #[arg(long, default_value_t = 2)]
     latency: u32,
 
-    /// Don't delay video to match audio output latency. Lowers video latency,
-    /// but audio may lag video on high-latency sinks (e.g. Bluetooth)
-    #[arg(long)]
-    no_av_sync: bool,
-
     /// Extra options to add to libretro
     #[arg(short = 'x', long, value_delimiter = ',')]
     extra_options: Vec<String>,
@@ -318,8 +313,6 @@ struct AppSettings {
     current_emu: usize,
     maximized: bool,
     all_emus: bool,
-    /// Delay video to match audio-output latency (see `--no-av-sync`).
-    av_sync: bool,
     last_draw: f64,
     text_list: Option<Entity>,
     hotkey_pressed: f32,
@@ -413,7 +406,6 @@ fn main() {
         files: files.clone(),
         max_time: args.max_time,
         maximized: args.grid.is_none(),
-        av_sync: !args.no_av_sync,
         speed_test: args.speed_test,
         ..Default::default()
     };
