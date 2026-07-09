@@ -83,6 +83,17 @@ codegen-units = 1
 strip = true
 opt-level = 2
 
+# Fast-iteration build: keeps opt-level=2 so the emulator/shaders run at a usable
+# speed, but drops the ship-only settings that make rebuilds slow. Parallel codegen
+# + incremental + no LTO link pass turns a one-file change from tens of seconds into
+# a few. Use `cargo build --profile release-fast`.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+strip = false
+
 # Profiling build: release-optimized but with debug symbols and no stripping so
 # `perf`/flamegraph can attribute samples to Ruffle internals. Used for
 # benchmarking the Flash backend (see src/flash_emu.rs `flash_bench`).
