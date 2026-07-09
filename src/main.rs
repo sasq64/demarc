@@ -479,10 +479,10 @@ fn main() {
 
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
-    for game in std::mem::take(&mut args.files) {
+    for file in std::mem::take(&mut args.files) {
         // Download HTTP(S) URLs to the local cache and continue with the file,
         // so demarc can be launched directly with a link from a browser.
-        let game = match game.to_str() {
+        let file = match file.to_str() {
             Some(s) if fetch::is_url(s) => match fetch::fetch_url(s) {
                 Ok(path) => path,
                 Err(e) => {
@@ -490,13 +490,13 @@ fn main() {
                     continue;
                 }
             },
-            _ => game,
+            _ => file,
         };
-        if game.is_dir() {
+        if file.is_dir() {
             let len = files.len();
-            collect_files(&game, &mut files, args.many);
+            collect_files(&file, &mut files, args.many);
             if len == files.len() {
-                files.push(game);
+                files.push(file);
             }
         } else {
             files.push(file);
