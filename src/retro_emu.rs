@@ -117,9 +117,19 @@ pub trait RetroEmu {
     }
 }
 
+/// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture
+/// upload (and PNG encoder) expect. Each `u32` holds one pixel with its bytes
+/// already in `[r, g, b, a]` memory order (see the LUTs / `video_refresh`), so
+/// this is a plain, always-sound width-narrowing view.
+fn frame_bytes(pixels: &[u32]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(pixels.as_ptr() as *const u8, std::mem::size_of_val(pixels))
+    }
+}
+
 #[derive(Default)]
 pub struct RetroState {
-    pub frame: Vec<u8>,
+    pub frame: Vec<u32>,
     pub frame_width: usize,
     pub frame_height: usize,
     /// Display aspect ratio reported by the core (0.0 if unknown).
@@ -132,6 +142,70 @@ pub struct RetroState {
     /// Joypad button state as a bitmask per port (index 0 = Joystick #1,
     /// 1 = Joystick #2). Bit `n` corresponds to `RETRO_DEVICE_ID_JOYPAD_*`.
     joypad: [u16; 2],
+}
+
+const fn expand5(c: u8) -> u8 {
+    (c << 3) | (c >> 2)
+}
+
+const fn expand6(c: u8) -> u8 {
+    (c << 2) | (c >> 4)
+}
+
+/// Precomputed RGB565 → packed RGBA8888 table (256 KiB in rodata). Indexed by
+/// the raw 16-bit pixel value; each entry is a `u32` whose native bytes are
+/// `[r, g, b, 255]`. Replaces the per-pixel bit unpacking in
+/// [`RetroCoreDirect::video_refresh`].
+static RGB565_LUT: [u32; 65536] = {
+    let mut lut = [0u32; 65536];
+    let mut p = 0usize;
+    while p < 65536 {
+        let v = p as u16;
+        let r5 = ((v >> 11) & 0x1f) as u8;
+        let g6 = ((v >> 5) & 0x3f) as u8;
+        let b5 = (v & 0x1f) as u8;
+        lut[p] = u32::from_ne_bytes([expand5(r5), expand6(g6), expand5(b5), 255]);
+        p += 1;
+    }
+    lut
+};
+
+/// Precomputed 0RGB1555 → packed RGBA8888 table (256 KiB in rodata). Indexed by
+/// the raw 16-bit pixel value; each entry is a `u32` whose native bytes are
+/// `[r, g, b, 255]`.
+static RGB1555_LUT: [u32; 65536] = {
+    let mut lut = [0u32; 65536];
+    let mut p = 0usize;
+    while p < 65536 {
+        let v = p as u16;
+        let r5 = ((v >> 10) & 0x1f) as u8;
+        let g5 = ((v >> 5) & 0x1f) as u8;
+        let b5 = (v & 0x1f) as u8;
+        lut[p] = u32::from_ne_bytes([expand5(r5), expand5(g5), expand5(b5), 255]);
+        p += 1;
+    }
+    lut
+};
+
+/// Convert a 16-bits-per-pixel libretro framebuffer to packed RGBA8888 using
+/// `lut`, which maps each raw 16-bit little-endian pixel to one output pixel.
+/// `dst` must already be sized to `width * height`.
+fn convert_16bpp(
+    src: &[u8],
+    dst: &mut [u32],
+    width: usize,
+    height: usize,
+    pitch: usize,
+    lut: &[u32; 65536],
+) {
+    for y in 0..height {
+        let src_row = &src[y * pitch..y * pitch + width * 2];
+        let dst_row = &mut dst[y * width..(y + 1) * width];
+        for (out, px) in dst_row.iter_mut().zip(src_row.chunks_exact(2)) {
+            let p = u16::from_le_bytes([px[0], px[1]]) as usize;
+            *out = lut[p];
+        }
+    }
 }
 
 pub struct RetroCoreDirect {
@@ -208,7 +282,7 @@ impl RetroCoreDirect {
         f(
             self.state.frame_width,
             self.state.frame_height,
-            &self.state.frame,
+            frame_bytes(&self.state.frame),
         );
     }
     pub fn with_audio(&mut self, f: impl FnOnce(&[i16])) {
@@ -321,11 +395,27 @@ impl RetroCoreDirect {
         });
     }
 
+    fn video_refresh_dumb(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
+        for y in 0..height {
+            let src_row = &data[y * pitch..y * pitch + width * 4];
+            let dst_row = &mut self.state.frame[y * width..(y + 1) * width];
+            for x in 0..width {
+                // Source is 4-byte BGRA (little-endian XRGB8888); repack so
+                // the u32's native bytes come out `[r, g, b, 255]`: R in the
+                // low byte, B in byte 2.
+                dst_row[x] = (src_row[x * 4 + 2] as u32)
+                    | ((src_row[x * 4 + 1] as u32) << 8)
+                    | ((src_row[x * 4] as u32) << 16)
+                    | (0xFF << 24);
+            }
+        }
+    }
+
     fn video_refresh(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
         let state = &mut self.state;
         state.frame_width = width;
         state.frame_height = height;
-        let needed = width * height * 4;
+        let needed = width * height;
         if state.frame.len() != needed {
             state.frame.resize(needed, 0);
         }
@@ -333,50 +423,19 @@ impl RetroCoreDirect {
         match pixel_format {
             RETRO_PIXEL_FORMAT_XRGB8888 => {
                 for y in 0..height {
-                    let src_row = &data[y * pitch..];
-                    let dst_row = &mut state.frame[y * width * 4..(y + 1) * width * 4];
-                    for x in 0..width {
-                        let b = src_row[x * 4];
-                        let g = src_row[x * 4 + 1];
-                        let r = src_row[x * 4 + 2];
-                        dst_row[x * 4] = r;
-                        dst_row[x * 4 + 1] = g;
-                        dst_row[x * 4 + 2] = b;
-                        dst_row[x * 4 + 3] = 255;
+                    let src_row = &data[y * pitch..y * pitch + width * 4];
+                    let dst_row = &mut state.frame[y * width..(y + 1) * width];
+                    for (out, px) in dst_row.iter_mut().zip(src_row.chunks_exact(4)) {
+                        // Source is BGRA (little-endian XRGB8888); repack to RGBA.
+                        *out = u32::from_ne_bytes([px[2], px[1], px[0], 255]);
                     }
                 }
             }
             RETRO_PIXEL_FORMAT_RGB565 => {
-                for y in 0..height {
-                    let src_row = &data[y * pitch..];
-                    let dst_row = &mut state.frame[y * width * 4..(y + 1) * width * 4];
-                    for x in 0..width {
-                        let p: u16 = src_row[x * 2] as u16 | ((src_row[x * 2 + 1] as u16) << 8);
-                        let r5 = ((p >> 11) & 0x1f) as u8;
-                        let g6 = ((p >> 5) & 0x3f) as u8;
-                        let b5 = (p & 0x1f) as u8;
-                        dst_row[x * 4] = (r5 << 3) | (r5 >> 2);
-                        dst_row[x * 4 + 1] = (g6 << 2) | (g6 >> 4);
-                        dst_row[x * 4 + 2] = (b5 << 3) | (b5 >> 2);
-                        dst_row[x * 4 + 3] = 255;
-                    }
-                }
+                convert_16bpp(data, &mut state.frame, width, height, pitch, &RGB565_LUT)
             }
             RETRO_PIXEL_FORMAT_0RGB1555 => {
-                for y in 0..height {
-                    let src_row = &data[y * pitch..];
-                    let dst_row = &mut state.frame[y * width * 4..(y + 1) * width * 4];
-                    for x in 0..width {
-                        let p: u16 = src_row[x * 2] as u16 | ((src_row[x * 2 + 1] as u16) << 8);
-                        let r5 = ((p >> 10) & 0x1f) as u8;
-                        let g5 = ((p >> 5) & 0x1f) as u8;
-                        let b5 = (p & 0x1f) as u8;
-                        dst_row[x * 4] = (r5 << 3) | (r5 >> 2);
-                        dst_row[x * 4 + 1] = (g5 << 3) | (g5 >> 2);
-                        dst_row[x * 4 + 2] = (b5 << 3) | (b5 >> 2);
-                        dst_row[x * 4 + 3] = 255;
-                    }
-                }
+                convert_16bpp(data, &mut state.frame, width, height, pitch, &RGB1555_LUT)
             }
             _ => {}
         }
@@ -724,11 +783,12 @@ impl RetroCoreDirect {
     pub fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let width = self.state.frame_width as u32;
         let height = self.state.frame_height as u32;
-        let expected = (width as usize) * (height as usize) * 4;
+        let expected = (width as usize) * (height as usize);
         if width == 0 || height == 0 || self.state.frame.len() < expected {
             return Err("no frame available".into());
         }
-        let buf = image::RgbaImage::from_raw(width, height, self.state.frame[..expected].to_vec())
+        let bytes = frame_bytes(&self.state.frame[..expected]).to_vec();
+        let buf = image::RgbaImage::from_raw(width, height, bytes)
             .ok_or("failed to build image buffer")?;
         buf.save(path)?;
         Ok(())
