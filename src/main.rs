@@ -452,6 +452,25 @@ fn main() {
             DefaultPlugins
                 .build()
                 .disable::<bevy::log::LogPlugin>()
+                // Bevy's default compute pool grabs every remaining core and runs
+                // the multi-threaded ECS executor across all of them. This app has
+                // only a handful of trivial systems and is GPU-bound plus one
+                // dedicated emulator worker thread, so those extra threads spend
+                // their time coordinating (task-queue push/pop, mutex contention)
+                // rather than computing — ~34% of total CPU on a 24-core machine.
+                // Capping the pool at 2 removes that spin with no throughput cost.
+                .set(bevy::app::TaskPoolPlugin {
+                    task_pool_options: bevy::app::TaskPoolOptions {
+                        compute: bevy::app::TaskPoolThreadAssignmentPolicy {
+                            min_threads: 1,
+                            max_threads: 2,
+                            percent: 0.0,
+                            on_thread_spawn: None,
+                            on_thread_destroy: None,
+                        },
+                        ..Default::default()
+                    },
+                })
                 .set(WindowPlugin {
                     primary_window,
                     ..Default::default()
