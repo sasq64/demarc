@@ -1,22 +1,4 @@
 
-
-build_release:
-    cargo build --release 
-
-gen_cert:
-    openssl req -x509 \
-        -newkey ec \
-        -pkeyopt ec_paramgen_curve:prime256v1 \
-        -keyout server/server.key \
-        -out server/server.crt \
-        -days 14 \
-        -nodes \
-        -subj "/CN=minnberg.se" \
-        -addext "subjectAltName=DNS:localhost,DNS:minnberg.se,IP:188.166.54.191,IP:127.0.0.1,IP:::1"
-
-check_wasm:
-    CARGO_BUILD_TARGET=wasm32-unknown-unknown cargo check -p wasm-client
-
 test:
     cargo test
 
@@ -43,6 +25,33 @@ cachegrind:
 gb:
     cargo run --profile release-fast -- demos/nightmode.gb
 
+c64:
+    cargo run --profile release-fast -- demos/quantum_icc2026_v1p.prg
+
 ami:
     cargo run --profile release-fast -- demos/rebels.adf
 
+royale:
+    cargo run --profile release-fast -- --slangp slang-shaders/crt/crt-royale.slangp demos/rebels.adf
+
+install:
+    cargo build --release
+    sudo cp target/release/demarc /usr/local/bin
+
+HOME := x'${HOME}'
+ZOLA := HOME / "projects/docs/minnberg"
+
+win:
+    cargo xwin build --release --target x86_64-pc-windows-msvc
+    cp target/x86_64-pc-windows-msvc/release/demarc.exe {{ZOLA}}/static/dl/
+
+site:
+    cp demarc.md {{ZOLA}}/content/
+    zola -r {{ZOLA}} build
+    rsync -avz {{ZOLA}}/public/ sasq@minnberg.se:/var/www/html/
+
+pal:
+    hyprctl keyword monitor "eDP-1,2880x1920@50,auto,2"
+
+ntsc:
+    hyprctl keyword monitor "eDP-1,2880x1920@60,auto,2"
