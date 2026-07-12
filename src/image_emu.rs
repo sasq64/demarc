@@ -10,11 +10,10 @@
 //! ILBM images can define colour-cycling ranges (CRNG chunks). When cycling is
 //! enabled (opt-in via `--color-cycle`) the image is kept in its paletted form
 //! and the RGBA frame is regenerated in [`run`](RetroEmu::run) from a palette
-//! that is rotated according to elapsed wall-clock time, animating the picture
-//! the way DeluxePaint did. Without the flag the image is presented static.
+//! that is rotated according to how many frames have elapsed, animating the
+//! picture the way DeluxePaint did.
 
 use std::path::Path;
-use std::time::Instant;
 
 use anyhow::Result;
 
@@ -23,6 +22,11 @@ use crate::retro_emu::RetroEmu;
 
 /// The CRNG `rate` value that corresponds to 60 cycle steps per second.
 const CRNG_RATE_60HZ: f64 = 16384.0;
+
+/// Frames per second the frontend is expected to call [`run`](RetroEmu::run)
+/// at. The colour-cycling animation advances one frame per call, so this is
+/// both the reported [`fps`](RetroEmu::fps) and the time base for cycling.
+const FRAME_RATE: f64 = 60.0;
 
 /// Presents a single decoded image as a "frame". For colour-cycling images the
 /// frame is refreshed from a rotated palette on each [`run`](RetroEmu::run).
@@ -37,18 +41,14 @@ pub struct ImageEmu {
     indices: Vec<u8>,
     /// Active, in-bounds cycling ranges. Empty means the frame is static.
     ranges: Vec<CycleRange>,
-    /// Time origin for the cycling animation.
-    start: Instant,
+    /// Number of `run` calls so far; the cycling clock, one step per frame.
+    frames: u64,
     /// Per-range step offset last rendered, used to skip redundant redraws.
     last_offsets: Vec<i64>,
 }
 
 impl ImageEmu {
     pub fn new(game: &Path) -> Result<Self> {
-        // Colour cycling is opt-in via `--color-cycle`; without it the image is
-        // presented static even when it carries CRNG ranges.
-        // Prefer the indexed decode so colour cycling can be animated. HAM
-        // images (and any non-palette case) fall back to a fixed RGBA frame.
         match ilbm::load_indexed(game) {
             Ok(img) => {
                 let width = img.width as usize;
@@ -74,7 +74,7 @@ impl ImageEmu {
                     palette: img.palette,
                     indices: img.indices,
                     ranges,
-                    start: Instant::now(),
+                    frames: 0,
                     last_offsets: Vec::new(),
                 };
                 // Render the initial (unrotated) frame so the first presented
@@ -93,7 +93,7 @@ impl ImageEmu {
                     palette: Vec::new(),
                     indices: Vec::new(),
                     ranges: Vec::new(),
-                    start: Instant::now(),
+                    frames: 0,
                     last_offsets: Vec::new(),
                 })
             }
@@ -144,7 +144,10 @@ impl RetroEmu for ImageEmu {
     // leaves the frame untouched; otherwise the frame is only rebuilt when the
     // rotation has actually moved.
     fn run(&mut self) -> bool {
-        let elapsed = self.start.elapsed().as_secs_f64();
+        // Time is derived from the frame count on the assumption that the
+        // frontend calls `run` at `FRAME_RATE`; no wall clock is consulted.
+        self.frames += 1;
+        let elapsed = self.frames as f64 / FRAME_RATE;
         let offsets = self.cycle_offsets(elapsed);
         if offsets != self.last_offsets {
             self.render(elapsed);
@@ -179,7 +182,7 @@ impl RetroEmu for ImageEmu {
     // A nominal rate keeps the frontend's frame pacing happy; it also sets how
     // often `run` is called, i.e. the colour-cycling refresh rate.
     fn fps(&self) -> f64 {
-        60.0
+        FRAME_RATE
     }
 
     fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
