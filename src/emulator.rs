@@ -83,6 +83,7 @@ pub(crate) struct Emulator {
     pub(crate) input_mode: InputMode,
     /// Benchmark mode: step the core once per update with no audio or pacing.
     pub(crate) speed_test: bool,
+    pub(crate) is_image: bool,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -435,9 +436,17 @@ impl Emulator {
         if t == SystemType::Megadrive
             || t == SystemType::SuperNintendo
             || t == SystemType::Atari2600
+            || t == SystemType::Gameboy
+            || t == SystemType::Gba
         {
             self.input_mode = InputMode::Joystick1;
         }
+        if t == SystemType::Ilbm {
+            self.is_image = true;
+            let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
+            self.paused = !cycle_enabled;
+        }
+
         self.core = Some(core);
         self.work_file = work_file;
         self.run_next = false;

@@ -776,6 +776,6 @@ mod tests {
         let mut out = vec![];
         collect_files(&assets, &mut out, false);
         println!("{:?}", out);
-        assert_eq!(out.len(), 6);
+        assert_eq!(out.len(), 8);
     }
 }

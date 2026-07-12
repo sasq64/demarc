@@ -22,8 +22,11 @@ cachegrind_debug:
 cachegrind:
   CARGO_MANIFEST_DIR=. valgrind --tool=cachegrind target/release/client
 
+run file="demos/rebels.adf":
+    cargo run --profile release-fast -- --shuffle {{file}}
+
 gb:
-    cargo run --profile release-fast -- demos/nightmode.gb
+    cargo run --profile release-fast -- --scale 4 demos/nightmode.gb
 
 c64:
     cargo run --profile release-fast -- demos/quantum_icc2026_v1p.prg
@@ -31,8 +34,11 @@ c64:
 ami:
     cargo run --profile release-fast -- demos/rebels.adf
 
-royale:
-    cargo run --profile release-fast -- --slangp slang-shaders/crt/crt-royale.slangp demos/rebels.adf
+iff:
+    cargo run --profile release-fast -- -C testdata/test.iff
+
+royale file="demos/rebels.adf":
+    cargo run --profile release-fast -- --shuffle --slangp slang-shaders/crt/crt-royale.slangp {{file}}
 
 install:
     cargo build --release

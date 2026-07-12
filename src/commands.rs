@@ -412,18 +412,20 @@ fn handle_cmd(
                     }
                     Cmd::PauseResume => {
                         emu.paused = !emu.paused;
-                        if emu.paused {
-                            writer.write(SetHudText {
-                                location: HudLocation::TopRight,
-                                duration: Duration::from_secs(1500),
-                                text: "\u{f03e4}".into(),
-                                ..Default::default()
-                            });
-                        } else {
-                            writer.write(SetHudText {
-                                location: HudLocation::TopRight,
-                                ..Default::default()
-                            });
+                        if !emu.is_image {
+                            if emu.paused {
+                                writer.write(SetHudText {
+                                    location: HudLocation::TopRight,
+                                    duration: Duration::from_secs(1500),
+                                    text: "\u{f03e4}".into(),
+                                    ..Default::default()
+                                });
+                            } else {
+                                writer.write(SetHudText {
+                                    location: HudLocation::TopRight,
+                                    ..Default::default()
+                                });
+                            }
                         }
                     }
                     Cmd::SwapDisk => {

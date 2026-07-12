@@ -13,7 +13,6 @@
 //! that is rotated according to elapsed wall-clock time, animating the picture
 //! the way DeluxePaint did. Without the flag the image is presented static.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -45,10 +44,9 @@ pub struct ImageEmu {
 }
 
 impl ImageEmu {
-    pub fn new(game: &Path, tags: HashMap<String, String>) -> Result<Self> {
+    pub fn new(game: &Path) -> Result<Self> {
         // Colour cycling is opt-in via `--color-cycle`; without it the image is
         // presented static even when it carries CRNG ranges.
-        let cycle_enabled = tags.get("color_cycle").is_some_and(|v| v == "enabled");
         // Prefer the indexed decode so colour cycling can be animated. HAM
         // images (and any non-palette case) fall back to a fixed RGBA frame.
         match ilbm::load_indexed(game) {
@@ -59,19 +57,16 @@ impl ImageEmu {
                 // palette; anything else is left untouched (a fixed colour).
                 // With cycling disabled the list is empty and the frame stays
                 // static.
-                let ranges: Vec<CycleRange> = if cycle_enabled {
-                    img.ranges
-                        .into_iter()
-                        .filter(|r| {
-                            r.active
-                                && r.rate > 0
-                                && r.high > r.low
-                                && (r.high as usize) < img.palette.len()
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+                let ranges: Vec<CycleRange> = img
+                    .ranges
+                    .into_iter()
+                    .filter(|r| {
+                        r.active
+                            && r.rate > 0
+                            && r.high > r.low
+                            && (r.high as usize) < img.palette.len()
+                    })
+                    .collect();
                 let mut emu = Self {
                     width,
                     height,
@@ -149,9 +144,6 @@ impl RetroEmu for ImageEmu {
     // leaves the frame untouched; otherwise the frame is only rebuilt when the
     // rotation has actually moved.
     fn run(&mut self) -> bool {
-        if self.ranges.is_empty() {
-            return true;
-        }
         let elapsed = self.start.elapsed().as_secs_f64();
         let offsets = self.cycle_offsets(elapsed);
         if offsets != self.last_offsets {
@@ -218,7 +210,7 @@ mod tests {
 
     #[test]
     fn image_emu_presents_ilbm_frame() {
-        let mut emu = ImageEmu::new(Path::new("testdata/test.iff"), HashMap::new()).unwrap();
+        let mut emu = ImageEmu::new(Path::new("testdata/test.iff")).unwrap();
         assert_eq!(emu.get_frame_size(), (640, 512));
         // `run` always succeeds; the frame is ready immediately.
         assert!(emu.run());
@@ -237,8 +229,7 @@ mod tests {
     #[test]
     fn color_cycling_changes_the_frame() {
         // Cycling is opt-in, so enable it via the tag `--color-cycle` sets.
-        let tags = HashMap::from([("color_cycle".to_string(), "enabled".to_string())]);
-        let mut emu = ImageEmu::new(Path::new("testdata/test.iff"), tags).unwrap();
+        let mut emu = ImageEmu::new(Path::new("testdata/test.iff")).unwrap();
         // test.iff carries active CRNG chunks, so there is something to cycle.
         assert!(
             !emu.ranges.is_empty(),
@@ -252,15 +243,5 @@ mod tests {
         emu.render(1.0);
         let frame_b = emu.frame.clone();
         assert_ne!(frame_a, frame_b, "colour cycling did not change the frame");
-    }
-
-    #[test]
-    fn cycling_is_off_without_the_tag() {
-        // Without `--color-cycle` no ranges are active, so the frame is static.
-        let emu = ImageEmu::new(Path::new("testdata/test.iff"), HashMap::new()).unwrap();
-        assert!(
-            emu.ranges.is_empty(),
-            "colour cycling should be disabled by default"
-        );
     }
 }

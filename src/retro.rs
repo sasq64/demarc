@@ -493,7 +493,7 @@ pub fn create_core(
         ));
     }
     if system_type == SystemType::Ilbm {
-        return Ok(Box::new(ImageEmu::new(game, tags)?));
+        return Ok(Box::new(ImageEmu::new(game)?));
     }
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
