@@ -170,6 +170,10 @@ struct Args {
     /// Commodore variant (Only C64 well supported)
     #[arg(long, value_enum, default_value_t = CbmSystem::C64)]
     cbm_variant: CbmSystem,
+
+    /// Don't silence libretro cores' stdout/stderr (for debugging)
+    #[arg(long)]
+    no_silence: bool,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -350,7 +354,58 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
 }
 
+/// A `Write` that targets a raw fd directly, bypassing Rust's `Stdout`. Used to
+/// keep logging going after we've pointed fd 1 at `/dev/null`. `Copy` so it can
+/// be handed out repeatedly by a `MakeWriter` closure without owning the fd.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct FdWriter(std::os::fd::RawFd);
+
+#[cfg(unix)]
+impl std::io::Write for FdWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // SAFETY: `self.0` is a live fd (the dup of the original stdout, kept
+        // open for the process lifetime); the buffer is valid for `buf.len()`.
+        let n = unsafe { libc::write(self.0, buf.as_ptr().cast(), buf.len()) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Silence stdout *and* stderr for the rest of the process by redirecting fds 1
+/// and 2 to `/dev/null`, so libretro cores' `printf`/`fprintf`/`puts` output is
+/// discarded. Returns a `FdWriter` over a dup of the *original* stdout so tracing
+/// can keep writing to the real terminal. Redirecting (rather than `close`ing the
+/// fds) is deliberate: it keeps them valid, so a later `open` can't reuse them and
+/// get scribbled on by a core.
+#[cfg(unix)]
+fn silence_stdout() -> std::io::Result<FdWriter> {
+    use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
+
+    // Duplicate the current stdout; the dup outlives this call (never closed).
+    let saved = std::io::stdout().as_fd().try_clone_to_owned()?;
+    let devnull = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
+    // SAFETY: dup2 onto STDOUT_FILENO/STDERR_FILENO; all fds are valid for the call.
+    for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        if unsafe { libc::dup2(devnull.as_raw_fd(), target) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(FdWriter(saved.into_raw_fd()))
+}
+
 fn main() {
+    // Parse args before touching stdout/stderr so clap's help/errors are visible,
+    // and so `--no-silence` can be honoured when setting up logging below.
+    let mut args = Args::parse();
+
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
             "demarc=debug,warn"
@@ -358,13 +413,22 @@ fn main() {
             "error"
         })
     });
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_ansi(cfg!(not(target_os = "windows")))
         .with_env_filter(filter)
         .with_target(true)
-        .compact()
-        .init();
-    let mut args = Args::parse();
+        .compact();
+    // On Unix, silence the cores by redirecting stdout/stderr to /dev/null and
+    // route tracing to a dup of the original stdout, unless `--no-silence` asks
+    // us to leave them alone (for debugging core output).
+    #[cfg(unix)]
+    match if args.no_silence { None } else { silence_stdout().ok() } {
+        Some(writer) => builder.with_writer(move || writer).init(),
+        // Silencing disabled or redirect failed: use the default stdout writer.
+        None => builder.init(),
+    }
+    #[cfg(not(unix))]
+    builder.init();
 
     // Expand any directory in `files` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());

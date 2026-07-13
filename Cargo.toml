@@ -70,6 +70,11 @@ flash = [
     "dep:pollster",
 ]
 
+[target.'cfg(unix)'.dependencies]
+# Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
+# keeping the original stdout for tracing (see `silence_stdout` in main.rs).
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Inhibit the freedesktop screen saver over D-Bus while running fullscreen, and
 # expose an MPRIS media-player interface so media keys control the emulator.
