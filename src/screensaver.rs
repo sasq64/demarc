@@ -28,8 +28,7 @@ fn sync_screen_saver(
     mut inhibitor: ResMut<ScreenSaverInhibitor>,
 ) {
     let window = window.into_inner();
-    let fullscreen =
-        !matches!(window.mode, WindowMode::Windowed) || covers_a_monitor(window, &monitors);
+    let fullscreen = covers_a_monitor(window, &monitors);
 
     cursor_options.visible = (!inhibitor.hide_mouse) || (!fullscreen);
 
