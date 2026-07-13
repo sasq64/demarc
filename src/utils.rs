@@ -129,22 +129,44 @@ pub struct WorkingFile {
 
 impl Drop for WorkingFile {
     fn drop(&mut self) {
-        if self.is_temp {
-            // `path` may be the temp dir itself (Amiga), a file inside it (Atari
-            // disk image), or a subdirectory of it (zip with a single top-level
-            // dir). Walk up to the `demarc-` temp root and remove the whole tree.
-            let mut dir = self.path.as_path();
-            while dir
+        if !self.is_temp {
+            return;
+        }
+        // `path` may be the temp dir itself (Amiga), a file inside it (Atari
+        // disk image), or a subdirectory of it (zip with a single top-level
+        // dir). Walk up to the `demarc-` temp root and remove the whole tree.
+        //
+        // Safety: every builder that sets `is_temp` roots `path` in a
+        // `demarc-` dir created under the system temp dir. Rather than trust
+        // that invariant, only ever remove a directory that (a) is itself
+        // named `demarc-*` and (b) lives under the system temp dir. If no such
+        // ancestor is found we bail out — never walk up to `/` and delete
+        // something we shouldn't.
+        let tmp_root = std::env::temp_dir();
+        let mut dir = self.path.as_path();
+        loop {
+            let is_demarc_root = dir
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| !n.starts_with("demarc-"))
-            {
-                match dir.parent() {
-                    Some(parent) => dir = parent,
-                    None => break,
+                .is_some_and(|n| n.starts_with("demarc-"));
+            if is_demarc_root {
+                if dir.starts_with(&tmp_root) {
+                    _ = fs::remove_dir_all(dir);
+                } else {
+                    warn!("Refusing to remove temp dir outside {tmp_root:?}: {dir:?}");
+                }
+                return;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => {
+                    warn!(
+                        "Temp WorkingFile has no demarc- ancestor, not removing: {:?}",
+                        self.path
+                    );
+                    return;
                 }
             }
-            _ = fs::remove_dir_all(dir);
         }
     }
 }
@@ -440,7 +462,7 @@ fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
-        if ext == "d64" || ext == "adf" || ext == "atr" {
+        if ext == "d64" || ext == "adf" || ext == "atr" || ext == "msa" {
             println!("Found {t:?}");
             disk_images.push(path);
             system_type = t;
@@ -476,7 +498,7 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
     } else if path.is_file() && is_lha_file(&path) {
         debug!("FMT: lha archive");
         path = unlha_to_temp(&path)?;
-        //is_temp = true;
+        is_temp = true;
         system_type = get_system_type(&path);
     }
     let mut copy_all = false;
