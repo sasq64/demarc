@@ -175,13 +175,13 @@ fn handle_textlist(
                     .iter()
                     .map(|m| {
                         if m.shift {
-                            format!(" \u{f0636}+{} {} ", m.glyph(), m.description)
+                            format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
                         } else {
                             format!(" {} {} ", m.glyph(), m.description)
                         }
                     })
                     .collect::<Vec<_>>();
-                let entity = TextList::spawn(&mut commands, font, lines, 8, 500.0);
+                let entity = TextList::spawn(&mut commands, font, lines, 8, 580.0);
                 settings.text_list = Some(entity);
             }
         }
