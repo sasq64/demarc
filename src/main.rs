@@ -379,6 +379,38 @@ impl std::io::Write for FdWriter {
     }
 }
 
+/// Raise the process's soft open-file limit to the hard limit (or a large
+/// fallback), best-effort. Some bundled libretro cores (notably the Amiga
+/// `puae` core) leak POSIX named semaphores across reloads — every file
+/// switch loads a fresh core instance, and each one opens sync semaphores
+/// under the same PID-keyed names the previous instance never closed. macOS
+/// defaults to a stingy 256-fd soft limit, which that leak exhausts after only
+/// a few dozen Amiga files; Linux's much larger default rarely notices. This
+/// doesn't stop the leak, it just buys enough headroom that a normal session
+/// won't hit it.
+#[cfg(unix)]
+fn raise_fd_limit() {
+    const FALLBACK_LIMIT: libc::rlim_t = 65536;
+    unsafe {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+            return;
+        }
+        let target = if limit.rlim_max == libc::RLIM_INFINITY {
+            FALLBACK_LIMIT
+        } else {
+            limit.rlim_max
+        };
+        if target > limit.rlim_cur {
+            limit.rlim_cur = target;
+            libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+        }
+    }
+}
+
 /// Silence stdout *and* stderr for the rest of the process by redirecting fds 1
 /// and 2 to `/dev/null`, so libretro cores' `printf`/`fprintf`/`puts` output is
 /// discarded. Returns a `FdWriter` over a dup of the *original* stdout so tracing
@@ -402,6 +434,9 @@ fn silence_stdout() -> std::io::Result<FdWriter> {
 }
 
 fn main() {
+    #[cfg(unix)]
+    raise_fd_limit();
+
     // Parse args before touching stdout/stderr so clap's help/errors are visible,
     // and so `--no-silence` can be honoured when setting up logging below.
     let mut args = Args::parse();
