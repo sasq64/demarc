@@ -395,7 +395,7 @@ fn handle_cmd(
             }
             if settings.all_emus || i == settings.current_emu {
                 match cmd.0 {
-                    Cmd::MouseClick => emu.set_mouse_buttons(true, false, false),
+                    Cmd::MouseClick => emu.set_mouse_buttons(0x1),
                     Cmd::ToggleInput => {
                         emu.input_mode = emu.input_mode.next();
                         let text = match emu.input_mode {

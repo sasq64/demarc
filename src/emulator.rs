@@ -84,6 +84,7 @@ pub(crate) struct Emulator {
     /// Benchmark mode: step the core once per update with no audio or pacing.
     pub(crate) speed_test: bool,
     pub(crate) is_image: bool,
+    pub(crate) buttons: u32,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -394,21 +395,19 @@ impl Emulator {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
         self.core.as_mut().unwrap().set_mouse_buttons(
-            mouse_buttons.pressed(MouseButton::Left),
+            mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1),
             mouse_buttons.pressed(MouseButton::Right),
             mouse_buttons.pressed(MouseButton::Middle),
         );
+        self.buttons = 0;
     }
 
     pub fn get_frame_size(&self) -> (usize, usize) {
         self.core.as_ref().unwrap().get_frame_size()
     }
 
-    pub fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
-        self.core
-            .as_mut()
-            .unwrap()
-            .set_mouse_buttons(left, right, middle);
+    pub fn set_mouse_buttons(&mut self, buttons: u32) {
+        self.buttons = buttons;
     }
 
     pub fn get_number_of_disks(&self) -> u32 {
