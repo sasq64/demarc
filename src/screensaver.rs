@@ -7,7 +7,9 @@
 //! platforms the plugin compiles to a no-op.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, Monitor, PrimaryWindow, WindowMode, WindowPosition};
+use bevy::window::{CursorOptions, Monitor, PrimaryWindow, WindowPosition};
+#[cfg(not(target_os = "linux"))]
+use bevy::window::WindowMode;
 
 pub struct ScreenSaverPlugin;
 
@@ -31,10 +33,19 @@ fn sync_screen_saver(
     #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
 ) {
     let window = window.into_inner();
+    // `window.mode` is the primary signal on macOS, where `covers_a_monitor`
+    // never matches (a fullscreen NSWindow is sized to the visible frame, not
+    // the monitor's physical bounds). On Linux it's unreliable: under Wayland
+    // winit leaves `window.mode` at a stale `BorderlessFullscreen` after the
+    // window is toggled back out of fullscreen, which would keep us inhibited
+    // forever — so there we trust geometric coverage only, as before.
+    #[cfg(not(target_os = "linux"))]
     let requested_fullscreen = matches!(
         window.mode,
         WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _)
     );
+    #[cfg(target_os = "linux")]
+    let requested_fullscreen = false;
     let fullscreen = requested_fullscreen || covers_a_monitor(window, &monitors);
     let hide_cursor = inhibitor.hide_mouse && fullscreen;
 
