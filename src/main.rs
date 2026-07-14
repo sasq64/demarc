@@ -591,7 +591,13 @@ fn main() {
             TextInputPlugin,
             ScreenSaverPlugin,
         ));
-    if !win && (cfg!(target_os = "windows") || cfg!(target_os = "linux")) {
+    // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
+    // (so early setup systems see a stable, non-transitional window size);
+    // this restores the actually-requested fullscreen mode afterward. Needed
+    // on every platform `fix_window` runs on — previously gated to
+    // Windows/Linux only, which left macOS permanently stuck in `Windowed`
+    // after Startup even though `!win` asked for fullscreen.
+    if !win {
         app.add_systems(PostStartup, enter_fullscreen);
     }
     app.run();

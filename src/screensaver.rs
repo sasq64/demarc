@@ -14,6 +14,8 @@ pub struct ScreenSaverPlugin;
 impl Plugin for ScreenSaverPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScreenSaverInhibitor>();
+        #[cfg(target_os = "macos")]
+        app.init_resource::<mac_cursor::MacCursor>();
         app.add_systems(Update, sync_screen_saver);
     }
 }
@@ -26,20 +28,36 @@ fn sync_screen_saver(
     monitors: Query<&Monitor>,
     mut cursor_options: Single<&mut CursorOptions>,
     mut inhibitor: ResMut<ScreenSaverInhibitor>,
+    #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
 ) {
     let window = window.into_inner();
-    let fullscreen = covers_a_monitor(window, &monitors);
+    let requested_fullscreen = matches!(
+        window.mode,
+        WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _)
+    );
+    let fullscreen = requested_fullscreen || covers_a_monitor(window, &monitors);
+    let hide_cursor = inhibitor.hide_mouse && fullscreen;
 
-    cursor_options.visible = (!inhibitor.hide_mouse) || (!fullscreen);
+    cursor_options.visible = !hide_cursor;
+    #[cfg(target_os = "macos")]
+    mac_cursor.set_hidden(hide_cursor);
 
     inhibitor.set_inhibited(fullscreen);
 }
 
-/// Detects fullscreen that Bevy isn't aware of.
+/// Fallback fullscreen detection for when [`Window::mode`] doesn't reflect
+/// reality.
 ///
-/// A compositor (notably Wayland tiling WMs like Hyprland) can fullscreen a
-/// window itself, leaving [`Window::mode`] as [`WindowMode::Windowed`]. We catch
-/// that by checking whether the window fully covers one of the monitors.
+/// [`sync_screen_saver`] checks `window.mode` first since that's the mode we
+/// ourselves requested. This exists for the case a compositor (notably
+/// Wayland tiling WMs like Hyprland) fullscreens a window on its own,
+/// leaving `window.mode` at [`WindowMode::Windowed`]. We catch that by
+/// checking whether the window fully covers one of the monitors.
+///
+/// Note this is a poor fit for macOS: a `BorderlessFullscreen` window there
+/// is sized to the screen's *visible* frame (screen minus menu bar), never
+/// the monitor's full physical bounds, so this always reports `false` there
+/// — harmless since `window.mode` already covers that case correctly.
 ///
 /// On X11 winit reports the window's physical position, so we can do a proper
 /// rectangle-cover test. On Wayland the position is never reported (it stays
@@ -66,6 +84,55 @@ fn covers_a_monitor(window: &Window, monitors: &Query<&Monitor>) -> bool {
         }
         None => win_w == monitor.physical_width && win_h == monitor.physical_height,
     })
+}
+
+/// Hides the OS cursor via Quartz on macOS.
+///
+/// Bevy/winit's `CursorOptions::visible` maps to `NSCursor hide`/`unhide`,
+/// which the window server keeps re-asserting via its cursor-rect mechanism
+/// for a borderless-fullscreen `NSWindow` (there's no real fullscreen space to
+/// anchor it to), so the arrow reappears the moment the mouse moves. Dropping
+/// to `CGDisplayHideCursor`/`CGDisplayShowCursor` hides it at the display
+/// level instead, sidestepping that entirely.
+#[cfg(target_os = "macos")]
+mod mac_cursor {
+    use bevy::prelude::*;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayHideCursor(display: u32) -> i32;
+        fn CGDisplayShowCursor(display: u32) -> i32;
+    }
+
+    /// Tracks the last state we told Quartz, so repeated calls with the same
+    /// value are no-ops. This matters because `CGDisplayHideCursor` /
+    /// `CGDisplayShowCursor` are refcounted (per Apple's docs): calling
+    /// `Hide` every frame without a balancing `Show` each time would need an
+    /// equal number of `Show` calls to ever bring the cursor back.
+    #[derive(Resource, Default)]
+    pub struct MacCursor {
+        hidden: bool,
+    }
+
+    impl MacCursor {
+        pub fn set_hidden(&mut self, hidden: bool) {
+            if hidden == self.hidden {
+                return;
+            }
+            self.hidden = hidden;
+            // SAFETY: CGMainDisplayID/CGDisplayHideCursor/CGDisplayShowCursor
+            // take no pointers and are safe to call from any thread.
+            unsafe {
+                let display = CGMainDisplayID();
+                if hidden {
+                    CGDisplayHideCursor(display);
+                } else {
+                    CGDisplayShowCursor(display);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
