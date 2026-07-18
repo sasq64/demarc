@@ -42,3 +42,11 @@ lto = "thin"
 codegen-units = 1
 strip = true
 opt-level = 2
+
+# Local fork of wgpu-hal 27.0.4 with a one-line fix: fall back to a plain
+# (non-robust) GL/GLES context when the driver rejects robust-access contexts
+# with EGL_BAD_MATCH. Without this, wgpu's GL backend can't create a context on
+# Mesa's crocus driver (Intel Gen7, e.g. HD 4000), so the app falls back to
+# software rendering. See vendor/wgpu-hal/src/gles/egl.rs.
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }

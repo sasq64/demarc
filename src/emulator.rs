@@ -7,7 +7,7 @@ use bevy::{image::Image, prelude::*};
 
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::audio::AudioSink;
+use crate::audio::{AudioOutput, AudioResampler};
 use crate::libretro;
 use crate::retro::create_core;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
@@ -62,7 +62,13 @@ pub(crate) struct Emulator {
     pub(crate) show_info: bool,
     pub(crate) match_frames: usize,
     pub(crate) tags: HashMap<String, String>,
-    pub(crate) sink: AudioSink,
+    /// This emulator's resampler (core rate -> device rate). Built lazily while
+    /// [`Self::audio_on`] and torn down when it goes silent. Its output is mixed
+    /// into the shared [`AudioOutput`], not into a per-emulator stream.
+    pub(crate) resampler: Option<AudioResampler>,
+    /// Whether this emulator should contribute audio to the shared output and
+    /// pace itself against the output buffer (the selected/all emulators).
+    pub(crate) audio_on: bool,
     pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
     /// Integral accumulator for the audio-buffer PI controller.
     pub(crate) audio_buf_integral: f64,
@@ -266,31 +272,53 @@ impl Emulator {
     }
 
     pub fn audio_active(&mut self, on: bool) {
-        if on && self.sink.stream.is_none() {
-            self.sink.activate();
-        } else if !on && self.sink.stream.is_some() {
-            self.sink.deactivate();
-        }
+        self.audio_on = on;
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, audio: &mut AudioOutput, now: f64) {
         let Emulator {
             core,
-            sink,
+            resampler,
             audio_rate_adjust,
+            audio_on,
             ..
         } = self;
         let Some(core) = core else {
             return;
         };
+        let from = core.sample_rate() as u32;
+
+        // Silent emulators still have to drain the core's audio queue (so it
+        // doesn't back up), but they contribute nothing and drop their
+        // resampler so it starts clean when they become audible again.
+        if !*audio_on {
+            core.with_audio(&mut |_| {});
+            *resampler = None;
+            return;
+        }
+
+        // Bring the shared output up lazily, now that an active emulator has
+        // audio to play (see `AudioOutput::ensure_stream`). Until it is ready
+        // (still opening, or disabled after a fault) just drain and stay silent
+        // so the core's audio queue doesn't back up.
+        audio.ensure_stream(now);
+        if !audio.is_ready() {
+            core.with_audio(&mut |_| {});
+            *resampler = None;
+            return;
+        }
+
+        let res = resampler.get_or_insert_with(|| {
+            AudioResampler::new(44100, audio.sample_rate as u32)
+                .expect("Failed to create audio resampler")
+        });
         // Apply the PI controller's drift correction to the resampler ratio.
-        sink.set_adjust(*audio_rate_adjust);
-        let from = core.sample_rate();
+        res.set_adjust(*audio_rate_adjust);
         core.with_audio(&mut |samples| {
             if samples.is_empty() {
                 return;
             }
-            sink.push_audio(from as f32, samples);
+            audio.mix_in(res, from, samples);
         });
     }
 
@@ -442,7 +470,7 @@ impl Emulator {
         self.paused = false;
     }
 
-    pub fn run(&mut self, time: &Time) -> bool {
+    pub fn run(&mut self, time: &Time, audio: &mut AudioOutput) -> bool {
         let delta = time.delta_secs_f64();
         let mut measured_fps = 60.0;
         if delta > 0.0 {
@@ -481,9 +509,14 @@ impl Emulator {
             1.0 / 60.0
         };
 
-        let occupied_len = self.sink.occupied_len();
-
-        //let p = self.producer.lock().unwrap();
+        // Only audio-active emulators pace themselves against the shared output
+        // buffer; the rest free-run on wall-clock time, so they see a neutral
+        // (on-target) fill that neither drops nor duplicates frames.
+        let occupied_len = if self.audio_on {
+            audio.occupied_len().unwrap_or(AUDIO_BUF_TARGET as usize)
+        } else {
+            AUDIO_BUF_TARGET as usize
+        };
 
         trace!(
             "FRAME FPS {}/{} = {} : t={} AUDIO {}",
@@ -532,7 +565,7 @@ impl Emulator {
             result &= core.run();
             warn!("Duplicating frame");
         }
-        self.update();
+        self.update(audio, time.elapsed_secs_f64());
         result
     }
 }

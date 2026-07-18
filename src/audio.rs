@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::Result;
 
@@ -181,7 +184,10 @@ pub struct SendStream(#[allow(dead_code)] cpal::Stream);
 unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
-pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
+pub fn init_audio_stream(
+    mut consumer: HeapCons<f32>,
+    errored: Arc<AtomicBool>,
+) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
@@ -197,14 +203,18 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
         .expect("no supported config");
     let sample_rate = target.min(supported.max_sample_rate());
 
-    // We continuously adjust the resample ratio based on how full the ring
-    // buffer is, so a small buffer is desirable for tight feedback. Prefer 2048
-    // frames, but clamp into the device's advertised range: if the smallest
-    // supported buffer is larger than 2048 we take that (the lowest supported),
-    // and if the range is unknown we let the backend choose. cpal's CoreAudio
-    // backend rejects out-of-range fixed sizes with `StreamConfigNotSupported`,
-    // so this clamp is what keeps macOS happy.
-    const PREFERRED_BUFFER: u32 = 2048;
+    // ALSA hardware buffer (cpal maps `Fixed(v)` to buffer=v, period≈v/4). It
+    // must be big enough that the audio thread — which runs at normal priority
+    // and competes with emulation + rendering — can always be scheduled before
+    // it drains, or ALSA reports an underrun (POLLERR) and the stream faults.
+    // Measured on Intel HD 4000 / dmix under full CPU load: 2048 (~43ms)
+    // underran repeatedly, 4096 (~85ms) was clean; 4096 keeps latency (and thus
+    // audio/video sync offset) low and stays below AUDIO_BUF_MIN so the ring
+    // tuning is unaffected. Note the drift controller measures the *ring* fill,
+    // not this buffer, so a larger value here doesn't loosen its feedback.
+    // Clamp into the device's advertised range (and cpal's CoreAudio backend
+    // rejects out-of-range fixed sizes, which is what keeps macOS happy).
+    const PREFERRED_BUFFER: u32 = 4096;
     let buffer_size = match supported.buffer_size() {
         cpal::SupportedBufferSize::Range { min, max } => {
             cpal::BufferSize::Fixed(PREFERRED_BUFFER.clamp(*min, *max))
@@ -229,7 +239,16 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
                 output.fill(0.0);
             }
         },
-        |err| eprintln!("audio stream error: {err}"),
+        move |err| {
+            // Flag the fault so the main loop drops and rebuilds this stream
+            // instead of letting cpal spin on a dead one. Only the first error
+            // of an episode is logged: an ALSA xrun surfaces here as a recurring
+            // `POLLERR` (errno -32 / -EPIPE), and printing every occurrence
+            // otherwise floods stderr with tens of thousands of identical lines.
+            if !errored.swap(true, Ordering::Relaxed) {
+                eprintln!("audio stream error: {err}");
+            }
+        },
         None,
     )?;
 
@@ -237,61 +256,174 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
     Ok((config.sample_rate.0 as f32, stream))
 }
 
-#[derive(Default)]
-pub struct AudioSink {
-    pub producer: Option<Mutex<HeapProd<f32>>>,
+/// Wall-clock seconds to wait before retrying a failed/faulted stream. Timed
+/// (not frame-counted) so that during a startup stall — when frames are tiny and
+/// many pass per second — retries still spread out enough to land *after* the
+/// stall instead of all refaulting inside it.
+const RETRY_COOLDOWN_SECS: f64 = 1.5;
+
+/// The single, process-wide audio output.
+///
+/// Rather than opening one ALSA stream per emulator — which on a machine with no
+/// sound server means several concurrent `dmix` clients fighting over the one
+/// card, and the resulting xruns/`POLLERR` flood — every active emulator mixes
+/// its resampled audio into [`Self::mix`] each frame, and [`flush`](Self::flush)
+/// pushes the summed result into the one output stream.
+///
+/// Each emulator keeps its *own* [`AudioResampler`] (its core has its own rate
+/// and clock drift); this resource owns only the shared device side.
+#[derive(Resource, Default)]
+pub struct AudioOutput {
+    /// Producer half of the SPSC ring the cpal callback drains. `None` until the
+    /// stream is built (or while a faulted stream is being rebuilt).
+    producer: Option<Mutex<HeapProd<f32>>>,
+    /// Output device sample rate; emulators build their resamplers against it.
     pub sample_rate: f32,
-    pub stream: Option<SendStream>,
-    pub resampler: Option<AudioResampler>,
+    stream: Option<SendStream>,
+    /// Interleaved stereo accumulator for the frame currently being assembled.
+    /// Active emulators add into it; `flush` drains and clears it.
+    mix: Vec<f32>,
+    /// Set by the cpal error callback when the stream faults.
+    errored: Arc<AtomicBool>,
+    /// Wall-clock time (secs since startup) before which a missing stream must
+    /// not be (re)opened — the post-fault / post-failure backoff.
+    retry_after: f64,
+    /// Faults since the last sustained-healthy stretch. Bounded retries let a
+    /// transient startup underrun (e.g. GPU shader warm-up stalling the main
+    /// thread) recover, while genuinely persistent starvation still gives up.
+    fault_count: u32,
+    /// Frames the current stream has run without faulting; resets `fault_count`
+    /// once it proves stable so occasional faults over a long run don't add up.
+    healthy_frames: u32,
+    /// Set once we stop retrying: audio is off for the rest of the run.
+    disabled: bool,
 }
 
-impl AudioSink {
-    pub fn activate(&mut self) {
-        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-        let Ok((sample_rate, stream)) = init_audio_stream(consumer) else {
-            error!("Could not init audio");
+/// Faults tolerated (with rebuilds) before audio is disabled for good.
+const MAX_AUDIO_FAULTS: u32 = 5;
+/// Healthy frames that mark a stream as stable and clear `fault_count`.
+const HEALTHY_RESET_FRAMES: u32 = 300;
+
+impl AudioOutput {
+    /// Builds the output stream if it isn't up yet. Call this only once there is
+    /// audio to play: a stream started against an empty buffer (before any
+    /// emulator is producing) faults immediately on ALSA `dmix`, whereas one
+    /// opened when samples are already flowing runs cleanly. `now` is seconds
+    /// since startup; a failed open (or a post-fault rebuild, see
+    /// [`maintain`](Self::maintain)) backs off [`RETRY_COOLDOWN_SECS`] before the
+    /// next attempt so it can't spam.
+    pub fn ensure_stream(&mut self, now: f64) {
+        if self.stream.is_some() || self.disabled || now < self.retry_after {
             return;
-        };
-
-        let resampler = AudioResampler::new(44100, sample_rate as u32)
-            .expect("Failed to create audio resampler");
-
-        self.stream = Some(SendStream(stream));
-        self.sample_rate = sample_rate;
-        self.producer = Some(Mutex::new(producer));
-        self.resampler = Some(resampler);
-    }
-
-    pub fn deactivate(&mut self) {
-        self.stream = None;
-        self.producer = None;
-        self.resampler = None;
-    }
-
-    pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
-        if let Some(resampler) = &mut self.resampler {
-            let res = resampler.process(from as u32, samples, |l, r| {
-                if let Some(producer) = &self.producer {
-                    producer.lock().unwrap().push_iter([l, r].into_iter());
-                }
-            });
-            if let Err(e) = res {
-                warn!("audio resample error: {e}");
+        }
+        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
+        self.errored.store(false, Ordering::Relaxed);
+        match init_audio_stream(consumer, self.errored.clone()) {
+            Ok((sample_rate, stream)) => {
+                self.sample_rate = sample_rate;
+                self.producer = Some(Mutex::new(producer));
+                self.stream = Some(SendStream(stream));
+            }
+            Err(e) => {
+                error!("Could not init audio: {e:#}");
+                self.retry_after = now + RETRY_COOLDOWN_SECS;
             }
         }
     }
 
-    pub(crate) fn set_adjust(&mut self, audio_rate_adjust: f64) {
-        if let Some(resampler) = &mut self.resampler {
-            resampler.set_adjust(audio_rate_adjust);
+    /// Whether the output is up and accepting samples. False before the stream
+    /// is first built and after it has been [disabled](Self::maintain).
+    pub fn is_ready(&self) -> bool {
+        self.producer.is_some()
+    }
+
+    /// Per-frame audio housekeeping: handle a faulted stream and track stability.
+    /// Call once per frame before mixing.
+    ///
+    /// On a fault we tear the stream down *without blocking the main thread* and
+    /// schedule a rebuild ([`ensure_stream`] does the actual reopen after a short
+    /// delay). After a `POLLERR` cpal's I/O thread busy-spins on the dead stream,
+    /// pegging a core, and dropping the stream *joins* that thread — which can
+    /// take a long time or never return — so the drop is handed to a detached
+    /// thread. We retry up to [`MAX_AUDIO_FAULTS`] times: a transient underrun
+    /// recovers, but a device that can't keep up (e.g. software rendering
+    /// starving the audio thread) is disabled instead of churning forever.
+    pub fn maintain(&mut self, now: f64) {
+        if self.disabled {
+            return;
+        }
+
+        // Only count a fault while a stream is actually up: `errored` stays set
+        // after tear-down until the next build clears it, and re-counting it each
+        // waiting frame would otherwise burn every retry in a single instant.
+        if self.stream.is_some() && self.errored.load(Ordering::Relaxed) {
+            self.healthy_frames = 0;
+            self.fault_count += 1;
+            self.producer = None;
+            self.mix.clear();
+            if let Some(stream) = self.stream.take() {
+                // SAFETY note carried by `SendStream`: safe to drop off-thread.
+                // That thread may block in the drop; the app does not.
+                std::thread::spawn(move || drop(stream));
+            }
+            if self.fault_count > MAX_AUDIO_FAULTS {
+                warn!("audio stream kept faulting (device starved); disabling audio");
+                self.disabled = true;
+                self.mix.shrink_to_fit();
+            } else {
+                warn!(
+                    "audio stream faulted; rebuilding in {RETRY_COOLDOWN_SECS}s (attempt {}/{})",
+                    self.fault_count, MAX_AUDIO_FAULTS
+                );
+                self.retry_after = now + RETRY_COOLDOWN_SECS;
+            }
+        } else if self.is_ready() {
+            // Stream is running clean; once it's proven stable, forgive earlier
+            // faults so a later isolated blip doesn't count toward the cap.
+            self.healthy_frames = self.healthy_frames.saturating_add(1);
+            if self.fault_count > 0 && self.healthy_frames >= HEALTHY_RESET_FRAMES {
+                self.fault_count = 0;
+            }
         }
     }
 
-    pub(crate) fn occupied_len(&self) -> usize {
-        if let Some(producer) = &self.producer {
-            producer.lock().unwrap().occupied_len()
-        } else {
-            6000
+    /// Resamples one emulator's captured `i16` samples (interleaved stereo at
+    /// `from` Hz) and *adds* them into the shared mix at the frame origin, so
+    /// concurrently-active emulators sum together.
+    pub fn mix_in(&mut self, resampler: &mut AudioResampler, from: u32, samples: &[i16]) {
+        let mix = &mut self.mix;
+        let mut i = 0usize;
+        let res = resampler.process(from, samples, |l, r| {
+            if i + 2 > mix.len() {
+                mix.resize(i + 2, 0.0);
+            }
+            mix[i] += l;
+            mix[i + 1] += r;
+            i += 2;
+        });
+        if let Err(e) = res {
+            warn!("audio resample error: {e}");
         }
+    }
+
+    /// Pushes the assembled frame into the output ring and clears the mix.
+    /// Samples are clamped to `[-1, 1]` since summing several sources can
+    /// overshoot. Call once per frame, after all emulators have mixed in.
+    pub fn flush(&mut self) {
+        if let Some(producer) = &self.producer {
+            producer
+                .lock()
+                .unwrap()
+                .push_iter(self.mix.iter().map(|s| s.clamp(-1.0, 1.0)));
+        }
+        self.mix.clear();
+    }
+
+    /// Current fill of the output ring, or `None` if no stream is up. Emulators
+    /// feed this into their drift controllers.
+    pub fn occupied_len(&self) -> Option<usize> {
+        self.producer
+            .as_ref()
+            .map(|p| p.lock().unwrap().occupied_len())
     }
 }

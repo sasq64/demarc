@@ -16,6 +16,7 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey, get_info_text};
+use crate::audio::AudioOutput;
 use crate::emulator::Emulator;
 use crate::hud::{HudLocation, SetHudText};
 use crate::post_process::PostProcess;
@@ -472,6 +473,7 @@ pub fn create_core(
 
 fn run_retro(
     mut emus: Query<&mut Emulator>,
+    mut audio: ResMut<AudioOutput>,
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -509,6 +511,10 @@ fn run_retro(
         settings.hotkey_pressed = 0.0;
         cmd_writer.write(CmdMessage(cmd, shift));
     }
+
+    // Per-frame audio housekeeping: recover a faulted stream (bounded retries)
+    // or, if the device can't keep up, disable audio so the demo keeps running.
+    audio.maintain(time.elapsed_secs_f64());
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         let Some(image) = images.get_mut(&emu.image) else {
@@ -559,7 +565,7 @@ fn run_retro(
         if (settings.all_emus || i == settings.current_emu) && cmd.is_none() {
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion);
         }
-        if !emu.run(&time) {
+        if !emu.run(&time, &mut audio) {
             writer.write(SetHudText {
                 location: HudLocation::TopRight,
                 ..Default::default()
@@ -619,10 +625,14 @@ fn run_retro(
             }
         }
     }
+
+    // Emit this frame's mixed audio (sum of all active emulators) in one push.
+    audio.flush();
 }
 
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<AudioOutput>();
         app.add_systems(
             Startup,
             (setup_retro, setup_ui_camera, fix_window, setup_gizmos),
