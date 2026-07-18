@@ -510,6 +510,17 @@ fn run_retro(
         cmd_writer.write(CmdMessage(cmd, shift));
     }
 
+    // Close streams on emulators that lost focus *before* opening one on the
+    // emulator that gained it. Doing both in a single pass means switching from
+    // a higher index to a lower one activates before it deactivates, leaving two
+    // streams open at once — which fails outright on a bare-ALSA device that
+    // only accepts a single stream.
+    for (i, mut emu) in &mut emus.iter_mut().enumerate() {
+        if !(settings.all_emus || i == settings.current_emu) {
+            emu.audio_active(false);
+        }
+    }
+
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         let Some(image) = images.get_mut(&emu.image) else {
             continue;

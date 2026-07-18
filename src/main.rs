@@ -343,6 +343,12 @@ fn main() {
             DefaultPlugins
                 .build()
                 .disable::<bevy::log::LogPlugin>()
+                // We drive audio ourselves through cpal in `audio.rs`; bevy_audio
+                // is unused but still opens a rodio output stream at startup.
+                // On Linux setups without a sound server (bare ALSA, no dmix or
+                // PipeWire) the device only accepts one stream, so that idle
+                // stream blocks the emulator's.
+                .disable::<bevy::audio::AudioPlugin>()
                 .set(WindowPlugin {
                     primary_window,
                     ..Default::default()

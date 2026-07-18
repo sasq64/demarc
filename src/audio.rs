@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use bevy::prelude::*;
 
@@ -183,7 +183,9 @@ unsafe impl Sync for SendStream {}
 
 pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
-    let device = host.default_output_device().unwrap();
+    let device = host
+        .default_output_device()
+        .context("no default audio output device")?;
 
     let target = SampleRate(48000);
 
@@ -194,7 +196,7 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
                 && c.sample_format() == SampleFormat::F32
                 && c.min_sample_rate() <= target
         })
-        .expect("no supported config");
+        .context("no supported stereo f32 output config")?;
     let sample_rate = target.min(supported.max_sample_rate());
 
     // We continuously adjust the resample ratio based on how full the ring
