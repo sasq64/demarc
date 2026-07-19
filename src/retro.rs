@@ -25,7 +25,7 @@ use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::text_input::TextInput;
-use crate::utils::SystemType;
+use crate::utils::{SystemType, is_psx_exe};
 use crate::{AppSettings, Args, CbmSystem, libloader};
 
 pub struct RetroPlugin {}
@@ -516,7 +516,10 @@ pub fn create_core(
         return Ok(Box::new(ImageEmu::new(game)?));
     }
     // Read before `set_var` borrows `tags` mutably for the rest of the function.
-    let psx_beetle = tags.get("psx_core").is_some_and(|c| c == "beetle");
+    // pcsx_rearmed refuses to load a raw PS-X EXE outright, so those always go
+    // to Beetle regardless of the disc-oriented default.
+    let psx_beetle = system_type == SystemType::Psx
+        && (tags.get("psx_core").is_some_and(|c| c == "beetle") || is_psx_exe(game));
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
             tags.insert(name.into(), val.into());
@@ -556,13 +559,16 @@ pub fn create_core(
         // Deterministic beats marginally-more-accurate here.
         set_var("pcsx_rearmed_bios", "HLE");
     } else if system_type == SystemType::Psx && psx_beetle {
-        // Only Beetle needs a BIOS. Its own failure is a bare load error with no
-        // hint about the cause, so name the files up front.
+        // Make the choice visible to `get_core`, which resolves the core name
+        // from the tags alone.
+        set_var("psx_core", "beetle");
+        // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
+        // a bare load error with no hint, so name the files up front.
         let dir = system_dir();
         if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
             bail!(
-                "Beetle PSX needs a BIOS: put one of {} in {:?}, or drop the \
-                 `psx_core=beetle` tag to use pcsx_rearmed's HLE BIOS",
+                "Beetle PSX needs a BIOS: put one of {} in {:?}. Beetle is \
+                 required here because pcsx_rearmed cannot load PS-X EXE files.",
                 PSX_BIOS.join(", "),
                 dir
             );

@@ -1669,6 +1669,28 @@ mod tests {
         }
     }
 
+    /// A raw PS-X EXE must resolve to Beetle — pcsx_rearmed fails to load one
+    /// outright — while a disc keeps the permissive default.
+    #[test]
+    fn psx_exe_routes_to_beetle() {
+        use crate::retro::get_core;
+        use crate::utils::SystemType;
+
+        let disc = get_core(SystemType::Psx, &HashMap::new()).unwrap();
+        assert!(
+            disc.to_string_lossy().contains("pcsx_rearmed"),
+            "discs should use pcsx_rearmed, got {disc:?}"
+        );
+
+        let mut tags = HashMap::new();
+        tags.insert("psx_core".to_string(), "beetle".to_string());
+        let exe = get_core(SystemType::Psx, &tags).unwrap();
+        assert!(
+            exe.to_string_lossy().contains("mednafen_psx"),
+            "the beetle tag should select Beetle, got {exe:?}"
+        );
+    }
+
     /// Boots a licence-stripped scene disc with an MP3 audio track — the shape
     /// Beetle can't handle, and the reason pcsx_rearmed is the default. No BIOS
     /// is installed here, so this also covers the HLE path.

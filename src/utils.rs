@@ -148,9 +148,8 @@ fn transcode_mp3_to_wav(src: &Path, dest: &Path) -> Result<()> {
         let spec = *decoded.spec();
         rate = spec.rate;
         channels = spec.channels.count();
-        let sbuf = buf.get_or_insert_with(|| {
-            SampleBuffer::<i16>::new(decoded.capacity() as u64, spec)
-        });
+        let sbuf =
+            buf.get_or_insert_with(|| SampleBuffer::<i16>::new(decoded.capacity() as u64, spec));
         sbuf.copy_interleaved_ref(decoded);
         pcm.extend_from_slice(sbuf.samples());
     }
@@ -209,6 +208,25 @@ fn write_wav(dest: &Path, pcm: &[i16]) -> Result<()> {
     Ok(())
 }
 
+/// Find `name` in `dir`, tolerating a mismatched case. Scene sheets are often
+/// written against an ISO9660 listing (upper case) while the files ship lower
+/// case — harmless on Windows, but the core can't open them on a case-sensitive
+/// filesystem.
+fn resolve_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
+    let direct = dir.join(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name))
+        })
+}
+
 /// Link `src` into `dest`, falling back to a copy across filesystems. Data
 /// tracks run to hundreds of megabytes, so a hard link is worth trying first.
 fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
@@ -229,28 +247,57 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
 /// linked, so the copy is nearly free.
 ///
 /// Returns the rewritten cue, or `None` if every track is already playable.
-fn transcode_cue_audio(cue_path: &Path) -> Result<Option<PathBuf>> {
+fn prepare_psx_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     let text = fs::read_to_string(cue_path)?;
     let files = parse_cue_files(&text);
-    if !files.iter().any(|f| f.kind.eq_ignore_ascii_case("MP3")) {
+    if files.is_empty() {
         return Ok(None);
     }
     let dir = cue_path.parent().unwrap_or(Path::new("."));
 
-    // Key the cache on what the sheet points at, so edits or a replaced track
-    // produce a fresh directory rather than stale audio.
+    // Resolve every referenced name first: the sheet's spelling may differ from
+    // the file's, and the rewrite has to use what's actually on disk.
+    let mut resolved = Vec::new();
+    for f in &files {
+        let Some(src) = resolve_ignoring_case(dir, &f.name) else {
+            bail!("cue references missing file {:?}", dir.join(&f.name));
+        };
+        let actual = src
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        resolved.push((f, src, actual));
+    }
+
+    let has_mp3 = files.iter().any(|f| f.kind.eq_ignore_ascii_case("MP3"));
+    let miscased = resolved.iter().any(|(f, _, actual)| f.name != *actual);
+    if !has_mp3 && !miscased {
+        return Ok(None);
+    }
+    if miscased {
+        debug!("Cue file names don't match on-disk case; rewriting {cue_path:?}");
+    }
+
+    // Key the cache on the disc's *contents* — never its path or mtime. A disc
+    // unpacked from a zip lands in a fresh temp dir each run and the extractor
+    // doesn't restore the archived timestamps, so either would miss the cache
+    // every launch and pile up another copy of the transcoded audio.
     let mut key = std::collections::hash_map::DefaultHasher::new();
     use std::hash::{Hash, Hasher};
-    cue_path.hash(&mut key);
     text.hash(&mut key);
-    for f in &files {
-        if let Ok(meta) = fs::metadata(dir.join(&f.name)) {
+    for (f, src, actual) in &resolved {
+        actual.hash(&mut key);
+        if let Ok(meta) = fs::metadata(src) {
             meta.len().hash(&mut key);
-            if let Ok(t) = meta.modified()
-                && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
-            {
-                d.as_secs().hash(&mut key);
-            }
+        }
+        // Size alone would let an edited track reuse stale audio. Hash the bytes
+        // of the tracks we actually decode; they're a few MB, unlike the data
+        // track, which can be most of a gigabyte.
+        if f.kind.eq_ignore_ascii_case("MP3")
+            && let Ok(bytes) = fs::read(src)
+        {
+            bytes.hash(&mut key);
         }
     }
     let stem = cue_path.file_stem().unwrap_or_default().to_string_lossy();
@@ -261,36 +308,38 @@ fn transcode_cue_audio(cue_path: &Path) -> Result<Option<PathBuf>> {
         .join(format!("{stem}-{:016x}", key.finish()));
     let out_cue = out_dir.join("disc.cue");
     if out_cue.is_file() {
-        debug!("Using cached transcoded disc {out_dir:?}");
+        debug!("Using cached disc {out_dir:?}");
         return Ok(Some(out_cue));
     }
     fs::create_dir_all(&out_dir)?;
 
     let mut new_text = text.clone();
-    for f in &files {
-        let src = dir.join(&f.name);
-        if !src.is_file() {
-            bail!("cue references missing file {src:?}");
-        }
+    for (f, src, actual) in &resolved {
         if f.kind.eq_ignore_ascii_case("MP3") {
             let wav_name = format!(
                 "{}.wav",
-                Path::new(&f.name)
+                Path::new(actual)
                     .file_stem()
                     .unwrap_or_default()
                     .to_string_lossy()
             );
-            info!("Transcoding CD audio track {:?} -> {wav_name}", f.name);
-            transcode_mp3_to_wav(&src, &out_dir.join(&wav_name))?;
+            info!("Transcoding CD audio track {actual:?} -> {wav_name}");
+            transcode_mp3_to_wav(src, &out_dir.join(&wav_name))?;
             new_text = new_text.replace(f.line, &format!("FILE \"{wav_name}\" WAVE"));
         } else {
-            link_or_copy(&src, &out_dir.join(&f.name))?;
-            // Normalize to a quoted name so bare names with no spaces still parse.
-            new_text = new_text.replace(f.line, &format!("FILE \"{}\" {}", f.name, f.kind));
+            link_or_copy(src, &out_dir.join(actual))?;
+            // Quote the name so bare names parse, and use the on-disk spelling.
+            new_text = new_text.replace(f.line, &format!("FILE \"{actual}\" {}", f.kind));
         }
     }
     fs::write(&out_cue, new_text)?;
     Ok(Some(out_cue))
+}
+
+/// True if `path` is a raw PlayStation executable rather than a disc image.
+/// These need a different core from a `.cue`/`.chd` — see `get_core`.
+pub fn is_psx_exe(path: &Path) -> bool {
+    read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
 
 /// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
@@ -345,7 +394,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "n64" | "v64" | "z64" => SystemType::N64,
         // CD-image containers. The sheet points at the bulk track data, so it —
         // not the `.bin` — is what gets loaded.
-        "chd" | "pbp" | "ccd" | "toc" => SystemType::Psx,
+        "chd" | "pbp" | "ccd" | "toc" | "psx" => SystemType::Psx,
         // A `.cue` is just as likely to be an audio-CD rip sitting in a music
         // library, so it only counts as PlayStation if it has a data track.
         "cue" if cue_has_data_track(path) => SystemType::Psx,
@@ -875,10 +924,10 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
     {
-        match transcode_cue_audio(&path) {
+        match prepare_psx_disc(&path) {
             Ok(Some(rewritten)) => path = rewritten,
             Ok(None) => {}
-            Err(err) => warn!("Could not transcode CD audio for {path:?}: {err}"),
+            Err(err) => warn!("Could not prepare PSX disc {path:?}: {err}"),
         }
     }
 
@@ -1043,7 +1092,10 @@ mod tests {
     /// reads the remainder as raw PCM.
     #[test]
     fn wav_header_is_cd_audio() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
         let path = dir.path().join("a.wav");
         write_wav(&path, &[0, 0, 1, -1]).unwrap();
         let d = fs::read(&path).unwrap();
@@ -1059,21 +1111,71 @@ mod tests {
         assert_eq!(d.len(), 44 + 8, "header + 4 samples");
     }
 
-    /// A cue with no compressed tracks must be left exactly as-is — no cache
-    /// directory, no rewrite.
+    /// A cue with no compressed tracks and matching case must be left exactly
+    /// as-is — no cache directory, no rewrite.
     #[test]
-    fn cue_without_mp3_is_not_transcoded() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+    fn cue_without_mp3_is_not_rewritten() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        fs::write(dir.path().join("d.bin"), [0u8; 16]).unwrap();
         let cue = dir.path().join("plain.cue");
         fs::write(&cue, "FILE \"d.bin\" BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
-        assert!(transcode_cue_audio(&cue).unwrap().is_none());
+        assert!(prepare_psx_disc(&cue).unwrap().is_none());
+    }
+
+    /// Scene sheets are often written in ISO9660 upper case while the files ship
+    /// lower case. That only breaks on a case-sensitive filesystem, so the disc
+    /// gets rewritten to the names actually on disk.
+    #[test]
+    fn miscased_cue_names_are_resolved() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        fs::write(dir.path().join("disc_t1.bin"), [0u8; 16]).unwrap();
+        let cue = dir.path().join("game.cue");
+        fs::write(&cue, "FILE DISC_T1.BIN BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
+
+        let out = prepare_psx_disc(&cue).unwrap().expect("should be rewritten");
+        let text = fs::read_to_string(&out).unwrap();
+        assert!(
+            text.contains("\"disc_t1.bin\""),
+            "cue should use the on-disk spelling, got: {text}"
+        );
+        assert!(out.parent().unwrap().join("disc_t1.bin").is_file());
+        let _ = fs::remove_dir_all(out.parent().unwrap());
+    }
+
+    /// The cache is keyed on disc contents, not location. A disc unpacked from a
+    /// zip gets a fresh temp dir every run, and keying on the path (or on mtime,
+    /// which extraction doesn't restore) would re-transcode it each launch.
+    #[test]
+    fn disc_cache_key_ignores_path_and_mtime() {
+        let mut seen = vec![];
+        for _ in 0..2 {
+            let dir = tempfile::Builder::new()
+                .prefix("demarc-")
+                .tempdir()
+                .unwrap();
+            fs::write(dir.path().join("t1.bin"), [7u8; 32]).unwrap();
+            let cue = dir.path().join("same.cue");
+            fs::write(&cue, "FILE T1.BIN BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
+            seen.push(prepare_psx_disc(&cue).unwrap().unwrap());
+        }
+        assert_eq!(seen[0], seen[1], "identical discs must share one cache entry");
+        let _ = fs::remove_dir_all(seen[0].parent().unwrap());
     }
 
     /// A game disc's cue sheet is PlayStation; an audio-CD rip of the same
     /// shape is not, so a music library doesn't get treated as a game.
     #[test]
     fn cue_data_track_distinguishes_discs_from_audio_rips() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
 
         let game = dir.path().join("game.cue");
         fs::write(
@@ -1095,7 +1197,10 @@ mod tests {
     /// Mixed-mode discs lead with a data track and follow it with CD audio.
     #[test]
     fn mixed_mode_cue_is_psx() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
         let cue = dir.path().join("mixed.cue");
         fs::write(
             &cue,
@@ -1107,12 +1212,22 @@ mod tests {
 
     #[test]
     fn psx_exe_is_detected_by_magic() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
         let exe = dir.path().join("demo.exe");
         let mut data = b"PS-X EXE".to_vec();
         data.resize(2048, 0);
         fs::write(&exe, &data).unwrap();
         assert_eq!(get_system_type(&exe), SystemType::Psx);
+        // Both halves matter: the type picks the system, `is_psx_exe` picks the
+        // core, because pcsx_rearmed can't load a raw executable.
+        assert!(is_psx_exe(&exe));
+
+        let disc = dir.path().join("disc.cue");
+        fs::write(&disc, "FILE \"d.bin\" BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
+        assert!(!is_psx_exe(&disc));
     }
 
     #[test]
