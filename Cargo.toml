@@ -38,6 +38,12 @@ librashader = { version = "0.11.3", default-features = false, features = [
     "presets",
 ] }
 tempfile = "3.27.0"
+# Offscreen OpenGL context for libretro cores that render through
+# RETRO_ENVIRONMENT_SET_HW_RENDER (e.g. mupen64plus_next/GLideN64). `khronos-egl`
+# loads libEGL at runtime so a missing EGL only fails those cores, not the binary;
+# `glow` supplies the handful of FBO/readback entry points in src/gl_context.rs.
+khronos-egl = { version = "6", features = ["dynamic"] }
+glow = "0.18"
 fatfs = "0.3.6"
 dirs = "6.0.0"
 ureq = "3"

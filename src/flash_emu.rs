@@ -237,7 +237,7 @@ impl RetroEmu for FlashEmu {
 
     // SWFs have no disks or joypads.
     fn set_disk(&mut self, _no: u32) {}
-    fn get_number_of_disks(&self) -> u32 {
+    fn get_number_of_disks(&mut self) -> u32 {
         0
     }
     fn set_joypad(&mut self, _port: u32, _id: u32, _down: bool) {}

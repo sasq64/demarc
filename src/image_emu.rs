@@ -195,7 +195,7 @@ impl RetroEmu for ImageEmu {
 
     // Everything below is inapplicable to a still image.
     fn set_disk(&mut self, _no: u32) {}
-    fn get_number_of_disks(&self) -> u32 {
+    fn get_number_of_disks(&mut self) -> u32 {
         0
     }
     fn reset(&mut self) {}

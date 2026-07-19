@@ -46,6 +46,21 @@ const CORE_NAME_TIC80: &str = "tic80";
 const CORE_NAME_PICO8: &str = "fake08";
 const CORE_NAME_GAMEBOY: &str = "gambatte";
 const CORE_NAME_GBA: &str = "mgba";
+/// Renders through OpenGL (GLideN64) rather than to a pixel buffer — see
+/// [`crate::gl_context`].
+const CORE_NAME_N64: &str = "mupen64plus_next";
+/// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
+/// default *here*: it faithfully enforces the BIOS licence check, and scene
+/// rips almost always ship with the "Sony Computer Entertainment" licence
+/// sectors blanked, so they drop to the BIOS CD player instead of booting. It
+/// also can't read the MP3 audio tracks scene releases like to use. pcsx_rearmed
+/// does neither check, and its HLE BIOS means no copyrighted image is needed at
+/// all. Set the `psx_core` tag to `beetle` for accuracy on a licenced disc.
+const CORE_NAME_PSX: &str = "pcsx_rearmed";
+const CORE_NAME_PSX_BEETLE: &str = "mednafen_psx";
+/// BIOS images Beetle looks for in the system dir, one per region. Unlike
+/// pcsx_rearmed it has no HLE fallback and won't boot without one.
+const PSX_BIOS: [&str; 3] = ["scph5500.bin", "scph5501.bin", "scph5502.bin"];
 
 const SYSTEM_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/system.zip"));
 
@@ -470,6 +485,11 @@ pub fn get_core(
         SystemType::Pico8 => CORE_NAME_PICO8,
         SystemType::Gameboy => CORE_NAME_GAMEBOY,
         SystemType::Gba => CORE_NAME_GBA,
+        SystemType::N64 => CORE_NAME_N64,
+        SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
+            CORE_NAME_PSX_BEETLE
+        }
+        SystemType::Psx => CORE_NAME_PSX,
         SystemType::Ilbm => return Err(""),
         SystemType::Flash => return Err(""),
         SystemType::Unknown => return Err(""),
@@ -516,6 +536,30 @@ pub fn create_core(
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
         set_var("hatari_video_crop_overscan", "false");
+    } else if system_type == SystemType::N64 {
+        // GLideN64 is the only mupen64plus_next renderer we can host: paraLLEl is
+        // Vulkan (no interface for it here) and angrylion is a CPU rasterizer that
+        // can't hit 60fps. See `crate::gl_context`.
+        set_var("mupen64plus-rdp-plugin", "gliden64");
+        set_var("mupen64plus-rsp-plugin", "hle");
+        // The threaded renderer moves GL calls onto a thread of the core's own,
+        // which our context — current on the `retro-emu` thread — would not be
+        // current on. Keep rendering on the thread that owns the context.
+        set_var("mupen64plus-ThreadedRenderer", "False");
+    } else if system_type == SystemType::Psx
+        && tags.get("psx_core").is_some_and(|c| c == "beetle")
+    {
+        // Only Beetle needs a BIOS. Its own failure is a bare load error with no
+        // hint about the cause, so name the files up front.
+        let dir = system_dir();
+        if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
+            bail!(
+                "Beetle PSX needs a BIOS: put one of {} in {:?}, or drop the \
+                 `psx_core=beetle` tag to use pcsx_rearmed's HLE BIOS",
+                PSX_BIOS.join(", "),
+                dir
+            );
+        }
     }
     match get_core(system_type, &tags) {
         Ok(core) => Ok(Box::new(RetroCoreThreaded::new(

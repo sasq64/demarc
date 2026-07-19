@@ -70,6 +70,10 @@ pub(crate) struct Emulator {
     /// Latest fractional sample-rate correction from the PI controller,
     /// applied to the resampler input rate in [`Emulator::update`].
     pub(crate) audio_rate_adjust: f64,
+    /// Whether the core has ever delivered audio samples. Gates the
+    /// audio-buffer-driven frame pacing, which is meaningless for a core that
+    /// produces no audio at all.
+    pub(crate) audio_seen: bool,
     pub(crate) disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
     /// `PostProcess` camera samples it (`PostProcess::source == image`).
@@ -291,6 +295,7 @@ impl Emulator {
             core,
             sink,
             audio_rate_adjust,
+            audio_seen,
             ..
         } = self;
         let Some(core) = core else {
@@ -303,6 +308,7 @@ impl Emulator {
             if samples.is_empty() {
                 return;
             }
+            *audio_seen = true;
             sink.push_audio(from as f32, samples);
         });
     }
@@ -410,8 +416,8 @@ impl Emulator {
         self.buttons = buttons;
     }
 
-    pub fn get_number_of_disks(&self) -> u32 {
-        self.core.as_ref().unwrap().get_number_of_disks()
+    pub fn get_number_of_disks(&mut self) -> u32 {
+        self.core.as_mut().unwrap().get_number_of_disks()
     }
 
     pub fn set_disk(&mut self, no: u32) {
@@ -437,6 +443,7 @@ impl Emulator {
             || t == SystemType::Atari2600
             || t == SystemType::Gameboy
             || t == SystemType::Gba
+            || t == SystemType::Psx
         {
             self.input_mode = InputMode::Joystick1;
         }
@@ -511,7 +518,13 @@ impl Emulator {
 
         // A core with no audio (e.g. a still image) never fills the audio sink,
         // so none of the audio-buffer-driven pacing below applies to it.
-        let has_audio = core.sample_rate() > 0.0;
+        //
+        // Keyed on samples actually arriving, not on the core advertising a
+        // sample rate: mupen64plus_next reports 44.1kHz but emits nothing at all
+        // for a silent ROM, and treating that as "has audio" makes the
+        // buffer-dry check below fire on every single frame, running the demo at
+        // double speed.
+        let has_audio = self.audio_seen;
         let occupied_len = self.sink.occupied_len();
 
         //let p = self.producer.lock().unwrap();

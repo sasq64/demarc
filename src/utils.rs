@@ -25,6 +25,8 @@ pub enum SystemType {
     Flash,
     Gameboy,
     Gba,
+    N64,
+    Psx,
     Ilbm,
     #[default]
     Unknown,
@@ -52,9 +54,42 @@ fn check_reset_vector(data: &[u8]) -> bool {
 pub fn is_disk_image(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();
-        return ["d64", "d81", "adf", "dms", "msa", "st", "atr", "xex"].contains(&ext.as_str());
+        return [
+            "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
+        ]
+        .contains(&ext.as_str());
     }
     false
+}
+
+/// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
+/// file is shorter.
+fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = vec![0u8; len];
+    let mut file = fs::File::open(path)?;
+    let mut got = 0;
+    while got < len {
+        match file.read(&mut buf[got..])? {
+            0 => break,
+            n => got += n,
+        }
+    }
+    buf.truncate(got);
+    Ok(buf)
+}
+
+/// True if a `.cue` sheet declares at least one non-audio track. Game discs
+/// carry their data in a `MODE1`/`MODE2` track; a pure audio-CD rip has only
+/// `TRACK nn AUDIO` entries.
+fn cue_has_data_track(path: &Path) -> bool {
+    let Ok(head) = read_header(path, 64 * 1024) else {
+        return false;
+    };
+    String::from_utf8_lossy(&head).lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("TRACK") && !line.ends_with("AUDIO")
+    })
 }
 
 pub fn get_system_type(path: &Path) -> SystemType {
@@ -76,6 +111,13 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "p8" => SystemType::Pico8,
         "gb" | "gbc" => SystemType::Gameboy,
         "gba" | "agb" => SystemType::Gba,
+        "n64" | "v64" | "z64" => SystemType::N64,
+        // CD-image containers. The sheet points at the bulk track data, so it —
+        // not the `.bin` — is what gets loaded.
+        "chd" | "pbp" | "ccd" | "toc" => SystemType::Psx,
+        // A `.cue` is just as likely to be an audio-CD rip sitting in a music
+        // library, so it only counts as PlayStation if it has a data track.
+        "cue" if cue_has_data_track(path) => SystemType::Psx,
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
         _ => SystemType::Unknown,
@@ -83,17 +125,31 @@ pub fn get_system_type(path: &Path) -> SystemType {
     if system_type == SystemType::Unknown {
         info!("Checking {:?}", path);
         if path.is_file() {
-            let Ok(data) = fs::read(path) else {
+            // Only the first 0x200 bytes are ever inspected; CD tracks and other
+            // bulk images are far too big to pull into memory just to sniff.
+            let Ok(data) = read_header(path, 0x200) else {
                 return SystemType::Unknown;
             };
-            let l = data.len();
+            let Ok(l) = fs::metadata(path).map(|m| m.len() as usize) else {
+                return SystemType::Unknown;
+            };
             if data.len() >= 4 {
-                if l >= 0x200
+                if data.len() >= 0x200
                     && std::str::from_utf8(&data[0x100..0x110])
                         .unwrap_or("")
                         .starts_with("SEGA ")
                 {
                     system_type = SystemType::Megadrive;
+                } else if matches!(
+                    &data[0..4],
+                    // N64 ROM header magic in each of the three byte orders that
+                    // dumps ship in: big-endian .z64, byte-swapped .v64 and
+                    // little-endian .n64. mupen64plus_next reorders internally.
+                    [0x80, 0x37, 0x12, 0x40] | [0x37, 0x80, 0x40, 0x12] | [0x40, 0x12, 0x37, 0x80]
+                ) {
+                    system_type = SystemType::N64;
+                } else if l >= 8 && &data[0..8] == b"PS-X EXE" {
+                    system_type = SystemType::Psx;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
                 } else if data[0..2] == [0x60, 0x1a] {
@@ -531,7 +587,9 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
     }
 
     if !path.is_dir() {
-        let data = fs::read(&path)?;
+        // Only the first four bytes are examined below; the Amiga branch works
+        // off `path`, not the contents.
+        let data = read_header(&path, 4)?;
         if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
             // GEMDOS executable: wrap it in a bootable Atari ST floppy image
             // with the program in the AUTO folder so it runs on boot.
@@ -606,7 +664,11 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
         year = t.clone();
     }
     for (key, val) in m3u.tags {
-        if key.starts_with("vice_") || key.starts_with("puae_") || key.starts_with("hatari_") {
+        if key.starts_with("vice_")
+            || key.starts_with("puae_")
+            || key.starts_with("hatari_")
+            || key.starts_with("mupen64plus-")
+        {
             tags.insert(key, val);
         }
     }
@@ -710,6 +772,52 @@ pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, many: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A game disc's cue sheet is PlayStation; an audio-CD rip of the same
+    /// shape is not, so a music library doesn't get treated as a game.
+    #[test]
+    fn cue_data_track_distinguishes_discs_from_audio_rips() {
+        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+
+        let game = dir.path().join("game.cue");
+        fs::write(
+            &game,
+            "FILE \"game.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n",
+        )
+        .unwrap();
+        assert_eq!(get_system_type(&game), SystemType::Psx);
+
+        let album = dir.path().join("album.cue");
+        fs::write(
+            &album,
+            "REM GENRE Electronic\nFILE \"01.wav\" WAVE\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n",
+        )
+        .unwrap();
+        assert_eq!(get_system_type(&album), SystemType::Unknown);
+    }
+
+    /// Mixed-mode discs lead with a data track and follow it with CD audio.
+    #[test]
+    fn mixed_mode_cue_is_psx() {
+        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let cue = dir.path().join("mixed.cue");
+        fs::write(
+            &cue,
+            "FILE \"d.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n  TRACK 02 AUDIO\n    INDEX 01 05:00:00\n",
+        )
+        .unwrap();
+        assert_eq!(get_system_type(&cue), SystemType::Psx);
+    }
+
+    #[test]
+    fn psx_exe_is_detected_by_magic() {
+        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let exe = dir.path().join("demo.exe");
+        let mut data = b"PS-X EXE".to_vec();
+        data.resize(2048, 0);
+        fs::write(&exe, &data).unwrap();
+        assert_eq!(get_system_type(&exe), SystemType::Psx);
+    }
 
     #[test]
     fn atari_exe() {

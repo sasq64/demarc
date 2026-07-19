@@ -38,19 +38,32 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, RETRO_ENVIRONMENT_GET_LANGUAGE,
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
-    RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
-    RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
-    RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, RETRO_ENVIRONMENT_SET_GEOMETRY,
+    RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
+    RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_VARIABLE,
+    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK,
+    RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_HW_RENDER,
     RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
     RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
-    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
-    retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
-    retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
+    RETRO_HW_CONTEXT_OPENGL_CORE, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
+    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
+    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
+    retro_frame_time_callback, retro_game_geometry, retro_game_info, retro_hw_context_reset_t,
+    retro_hw_context_type, retro_hw_render_callback, retro_input_poll_t, retro_input_state_t,
     retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
     retro_system_av_info, retro_variable, retro_video_refresh_t,
 };
+
+use crate::gl_context::{self, HwRenderConfig};
+
+/// Stack for the thread a core runs on. See the `stack_size` call in
+/// [`RetroCoreThreaded::new`] for why the default is not enough.
+const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+/// Sentinel `video_refresh` data pointer meaning "the frame is in the hardware
+/// framebuffer, not in memory". libretro defines it as `(void*)-1`; bindgen
+/// skips function-like and cast macros, so it is restated here.
+const RETRO_HW_FRAME_BUFFER_VALID: *const c_void = usize::MAX as *const c_void;
 
 /// Relative mouse movement accumulated since the last frame, plus button state.
 /// `dx`/`dy` accumulate as i32 to avoid overflow, then clamp to i16 when the core
@@ -87,7 +100,9 @@ impl<T> OptionInner for Option<T> {
 /// Abstract interface over a libretro emulator core.
 pub trait RetroEmu {
     fn set_disk(&mut self, no: u32);
-    fn get_number_of_disks(&self) -> u32;
+    /// Takes `&mut self` because the libretro implementation calls into the
+    /// core, which may issue environment callbacks while it does.
+    fn get_number_of_disks(&mut self) -> u32;
     /// Step the emulator by one presented frame
     fn run(&mut self) -> bool;
     fn reset(&mut self);
@@ -230,10 +245,27 @@ pub struct RetroCoreDirect {
     skip_frames: u32,
     retro_frame_time: Option<unsafe extern "C" fn(i64)>,
     time_reference: i64,
+    /// Set when the core renders through OpenGL rather than handing us a pixel
+    /// buffer. The context itself lives in `gl_context`'s thread-local, owned by
+    /// whichever thread drives `run`; only this plain description is stored here,
+    /// so `RetroCoreDirect` stays `Send`. See [`crate::gl_context`].
+    hw_render: Option<HwRenderConfig>,
+    /// The core's `context_reset` / `context_destroy`, called once our GL context
+    /// exists and again before we tear it down.
+    hw_context_reset: retro_hw_context_reset_t,
+    hw_context_destroy: retro_hw_context_reset_t,
+    /// Largest frame the core says it may render, from `retro_get_system_av_info`
+    /// and kept current by `SET_SYSTEM_AV_INFO`. The FBO is grown to this *before*
+    /// a frame rather than after: reallocating the attachments discards their
+    /// contents, so doing it at readback time would throw away the frame we came
+    /// to collect.
+    hw_max: (u32, u32),
 }
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
         if self.lib.is_some() {
+            let _guard = CurrentEmuGuard::enter(self);
+            self.destroy_hw_context();
             unsafe { (self.retro_deinit_fn)() }
         }
     }
@@ -243,12 +275,40 @@ thread_local! {
     static CURRENT_EMU: Cell<*mut RetroCoreDirect> = const { Cell::new(std::ptr::null_mut()) }
 }
 
+/// Points [`CURRENT_EMU`] at `emu` for the duration of a call into the core, so
+/// the C callbacks — which get no user-data pointer — can find their instance.
+///
+/// Every entry point into the core needs one: cores call the environment
+/// callback from `retro_reset` and `retro_deinit` as readily as from
+/// `retro_run`, and servicing those with a null `CURRENT_EMU` leaves the core
+/// holding an unfilled out-parameter. mupen64plus_next crashes exactly this way,
+/// dereferencing the system directory it asked for during reset.
+///
+/// Restores the previous value rather than clearing, so nested entry points
+/// (`init_hw_context` calling `context_reset`, say) compose correctly.
+struct CurrentEmuGuard(*mut RetroCoreDirect);
+
+impl CurrentEmuGuard {
+    fn enter(emu: &mut RetroCoreDirect) -> Self {
+        Self(CURRENT_EMU.with(|p| p.replace(emu as *mut _)))
+    }
+}
+
+impl Drop for CurrentEmuGuard {
+    fn drop(&mut self) {
+        CURRENT_EMU.with(|p| p.set(self.0));
+    }
+}
+
 impl RetroCoreDirect {
     pub fn unload(&mut self) {
+        let _guard = CurrentEmuGuard::enter(self);
+        self.destroy_hw_context();
         unsafe { (self.retro_deinit_fn)() }
         self.lib = None;
     }
     pub fn next_disk(&mut self) -> u32 {
+        let _guard = CurrentEmuGuard::enter(self);
         let cb = &self.disk_callback;
         unsafe {
             let count = (cb.get_num_images.unwrap())();
@@ -265,11 +325,13 @@ impl RetroCoreDirect {
         self.image_index
     }
 
-    pub fn get_number_of_disks(&self) -> u32 {
+    pub fn get_number_of_disks(&mut self) -> u32 {
+        let _guard = CurrentEmuGuard::enter(self);
         unsafe { self.disk_callback.get_num_images.map_or(0, |f| f()) }
     }
 
-    pub fn set_disk(&self, no: u32) {
+    pub fn set_disk(&mut self, no: u32) {
+        let _guard = CurrentEmuGuard::enter(self);
         let cb = &self.disk_callback;
         unsafe {
             cb.set_eject_state.map(|f| f(true));
@@ -385,14 +447,35 @@ impl RetroCoreDirect {
         }
         CURRENT_EMU.with(|p| {
             let ptr = p.get();
-            if !ptr.is_null() {
-                let ctx = unsafe { &mut *ptr };
-                let slice: &[u8] = unsafe {
-                    std::slice::from_raw_parts(data as *const u8, pitch * height as usize)
-                };
-                ctx.video_refresh(slice, width as usize, height as usize, pitch);
+            if ptr.is_null() {
+                return;
             }
+            let ctx = unsafe { &mut *ptr };
+            if data == RETRO_HW_FRAME_BUFFER_VALID {
+                // Hardware-rendered: nothing was written to memory, the frame is
+                // sitting in our FBO. `pitch` is meaningless here.
+                ctx.video_refresh_hw(width as usize, height as usize);
+                return;
+            }
+            let slice: &[u8] =
+                unsafe { std::slice::from_raw_parts(data as *const u8, pitch * height as usize) };
+            ctx.video_refresh(slice, width as usize, height as usize, pitch);
         });
+    }
+
+    /// Pull a hardware-rendered frame out of the GL framebuffer into
+    /// `state.frame`, so it reaches the rest of the frontend by the same route
+    /// as a software core's output.
+    fn video_refresh_hw(&mut self, width: usize, height: usize) {
+        let flip = self.hw_render.is_none_or(|cfg| cfg.bottom_left_origin);
+        let state = &mut self.state;
+        state.frame_width = width;
+        state.frame_height = height;
+        let needed = width * height;
+        if state.frame.len() != needed {
+            state.frame.resize(needed, 0);
+        }
+        gl_context::read_frame(&mut state.frame, width, height, flip);
     }
 
     fn video_refresh_dumb(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
@@ -449,7 +532,13 @@ impl RetroCoreDirect {
                 let ctx = unsafe { &mut *ptr };
                 ret = ctx.environment(cmd, data);
             } else {
-                error!("!! FAILED ENV {cmd}");
+                // No instance registered for this thread: the core called back
+                // from an entry point that forgot a `CurrentEmuGuard`, and is now
+                // about to read an out-parameter we never filled in.
+                error!(
+                    "!! FAILED ENV {cmd} on thread {:?}",
+                    std::thread::current().name()
+                );
             }
         });
         ret
@@ -470,6 +559,10 @@ impl RetroCoreDirect {
                     self.state.aspect_ratio = geometry_aspect(&avinfo.geometry);
                     self.state.sample_rate = avinfo.timing.sample_rate;
                     self.state.fps = avinfo.timing.fps;
+                    self.hw_max = (
+                        self.hw_max.0.max(avinfo.geometry.max_width),
+                        self.hw_max.1.max(avinfo.geometry.max_height),
+                    );
                     info!(
                         "Got AV_INFO FPS {} RATE {} ASPECT {}",
                         avinfo.timing.fps, avinfo.timing.sample_rate, self.state.aspect_ratio
@@ -575,10 +668,101 @@ impl RetroCoreDirect {
                     *(data as *mut c_uint) = 0;
                 }
                 RETRO_ENVIRONMENT_GET_INPUT_BITMASKS => {}
-                _ => handled = false,
+                RETRO_ENVIRONMENT_SET_HW_RENDER => {
+                    handled = self.set_hw_render(&mut *(data as *mut retro_hw_render_callback));
+                }
+                RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER => {
+                    // Steers multi-renderer cores (mupen64plus_next picks between
+                    // GLideN64, Vulkan paraLLEl and a software rasterizer) to the
+                    // one API we can actually host.
+                    *(data as *mut retro_hw_context_type) = RETRO_HW_CONTEXT_OPENGL_CORE;
+                }
+                _ => {
+                    debug!("unhandled ENV {cmd}");
+                    handled = false;
+                }
             }
         }
         handled
+    }
+
+    /// Accept (or decline) a core's request to render through a hardware API.
+    ///
+    /// Returning `false` is meaningful, not a failure: a core that asks for
+    /// Vulkan or D3D and is told no will fall back to its software renderer,
+    /// which is exactly what we want since we can only host OpenGL. On success
+    /// we fill in the two callbacks the core will use to reach our context; the
+    /// context itself isn't built until after `retro_load_game` returns, per the
+    /// libretro contract (see [`Self::init_hw_context`]).
+    fn set_hw_render(&mut self, cb: &mut retro_hw_render_callback) -> bool {
+        if !HwRenderConfig::is_supported(cb.context_type) {
+            info!(
+                "core requested unsupported hw render context type {}, declining",
+                cb.context_type
+            );
+            return false;
+        }
+        let cfg = HwRenderConfig {
+            context_type: cb.context_type,
+            version_major: cb.version_major,
+            version_minor: cb.version_minor,
+            depth: cb.depth,
+            stencil: cb.stencil,
+            bottom_left_origin: cb.bottom_left_origin,
+        };
+        info!(
+            "core requested hw render: type {} v{}.{} depth={} stencil={} bottom_left={}",
+            cfg.context_type,
+            cfg.version_major,
+            cfg.version_minor,
+            cfg.depth,
+            cfg.stencil,
+            cfg.bottom_left_origin
+        );
+        cb.get_current_framebuffer = Some(gl_context::get_current_framebuffer);
+        cb.get_proc_address = Some(gl_context::get_proc_address);
+        self.hw_context_reset = cb.context_reset;
+        self.hw_context_destroy = cb.context_destroy;
+        self.hw_render = Some(cfg);
+        true
+    }
+
+    /// Create the GL context the core asked for and hand it over.
+    ///
+    /// Must run on the thread that will call `retro_run`, and only after
+    /// `retro_load_game`: cores issue `SET_HW_RENDER` from inside load, and
+    /// libretro promises them a live context by the time `context_reset` fires —
+    /// which is where they compile shaders and bind entry points.
+    ///
+    /// `max_width`/`max_height` come from `retro_get_system_av_info` and bound
+    /// the largest frame the core will produce, so the FBO is sized once up front
+    /// instead of thrashing on the first few resolution changes.
+    fn init_hw_context(&mut self, max_width: u32, max_height: u32) -> Result<()> {
+        let Some(cfg) = self.hw_render else {
+            return Ok(());
+        };
+        gl_context::create(&cfg)?;
+        self.hw_max = (max_width, max_height);
+        gl_context::ensure_size(max_width, max_height);
+        if let Some(reset) = self.hw_context_reset {
+            info!("calling core context_reset()");
+            let _guard = CurrentEmuGuard::enter(self);
+            unsafe { reset() };
+        }
+        Ok(())
+    }
+
+    /// Let the core release its GL objects, then drop the context. Safe to call
+    /// when there is no hardware context; does nothing in that case.
+    fn destroy_hw_context(&mut self) {
+        if self.hw_render.is_none() || !gl_context::is_active() {
+            return;
+        }
+        if let Some(destroy) = self.hw_context_destroy {
+            let _guard = CurrentEmuGuard::enter(self);
+            unsafe { destroy() };
+        }
+        gl_context::destroy();
     }
 
     fn set_var(&mut self, name: &str, val: impl Into<String>) {
@@ -673,6 +857,10 @@ impl RetroCoreDirect {
                 skip_frames: 0,
                 retro_frame_time: None,
                 time_reference: 0,
+                hw_render: None,
+                hw_context_reset: None,
+                hw_context_destroy: None,
+                hw_max: (0, 0),
             };
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
@@ -711,12 +899,17 @@ impl RetroCoreDirect {
             retro_emu.state.fps = av_info.timing.fps;
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
             info!("avinfo: {:?}", av_info);
+
+            // The core may have asked for a GL context during load_game; build it
+            // now, before the first retro_run.
+            retro_emu.init_hw_context(av_info.geometry.max_width, av_info.geometry.max_height)?;
             retro_emu.lib = Some(lib);
             Ok(retro_emu)
         }
     }
 
     pub fn reset(&mut self) {
+        let _guard = CurrentEmuGuard::enter(self);
         unsafe { (self.retro_reset_fn)() }
     }
 
@@ -754,9 +947,14 @@ impl RetroCoreDirect {
         Ok(())
     }
     pub fn run(&mut self) {
-        CURRENT_EMU.with(|p| p.set(self as *mut _));
+        let _guard = CurrentEmuGuard::enter(self);
         if let Some(cb) = self.retro_frame_time {
             unsafe { cb(self.time_reference) }
+        }
+        if self.hw_render.is_some() {
+            // Cheap no-op unless the core has raised its max geometry since the
+            // last frame; must happen before it renders, not at readback.
+            gl_context::ensure_size(self.hw_max.0, self.hw_max.1);
         }
         unsafe { (self.retro_run_fn)() }
         // Relative motion has been consumed by the core this frame.
@@ -767,7 +965,6 @@ impl RetroCoreDirect {
         // callbacks. Some cores (e.g. atari800) re-run update_variables() inside
         // get_system_av_info, so polling it every frame triggers a costly
         // texture/option reinit on every frame.
-        CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
     }
 
     /// Display aspect ratio (width / height) the core wants, or 0.0 if unknown.
@@ -855,7 +1052,7 @@ impl RetroEmu for RetroCoreDirect {
     fn set_disk(&mut self, no: u32) {
         RetroCoreDirect::set_disk(self, no);
     }
-    fn get_number_of_disks(&self) -> u32 {
+    fn get_number_of_disks(&mut self) -> u32 {
         RetroCoreDirect::get_number_of_disks(self)
     }
 
@@ -1002,6 +1199,11 @@ impl RetroCoreThreaded {
         let worker_frames = Arc::clone(&frames);
         let handle = thread::Builder::new()
             .name("retro-emu".into())
+            // Well above the 2 MiB default. Cores recurse deeply on this thread —
+            // mupen64plus_next's dynarec and GLideN64's shader compiler together
+            // overflow the default and take the process down with a SIGSEGV that
+            // looks nothing like a stack overflow.
+            .stack_size(WORKER_STACK_SIZE)
             .spawn(move || {
                 let mut core = match RetroCoreDirect::new(
                     &core_path,
@@ -1009,7 +1211,7 @@ impl RetroCoreThreaded {
                     game.as_deref(),
                     settings,
                 ) {
-                    Ok(core) => {
+                    Ok(mut core) => {
                         let _ = setup_tx.send(Ok(SetupResult {
                             fps: core.fps(),
                             width: core.get_frame_size().0,
@@ -1169,7 +1371,7 @@ impl RetroEmu for RetroCoreThreaded {
         }
         true
     }
-    fn get_number_of_disks(&self) -> u32 {
+    fn get_number_of_disks(&mut self) -> u32 {
         self.disk_count
     }
     fn reset(&mut self) {
@@ -1322,6 +1524,55 @@ mod tests {
         retro_emu.save_png(Path::new("test_amiga_dir.png")).unwrap();
     }
 
+    /// Boot a core that renders through OpenGL rather than to a pixel buffer,
+    /// exercising the whole `gl_context` path: EGL context creation, the FBO the
+    /// core draws into, and the readback in `video_refresh_hw`.
+    ///
+    /// Asserts the frame has actual variety in it — a blank or single-colour
+    /// image is what a broken FBO attachment or a failed readback produces, and
+    /// a size check alone would not catch either.
+    #[test]
+    fn retro_n64_hw_render_works() {
+        // On its own thread with an explicit stack, for the reason given at
+        // `WORKER_STACK_SIZE`: libtest's threads get the 2 MiB default, which
+        // this core overflows.
+        let worker = thread::Builder::new()
+            .stack_size(WORKER_STACK_SIZE)
+            .spawn(|| {
+                let core_path = libloader::get_libretro("mupen64plus_next").unwrap();
+                let system_dir = Path::new("system");
+                let game_path = Path::new("intro.v64");
+
+                let mut settings = HashMap::new();
+                settings.insert("mupen64plus-rdp-plugin".into(), "gliden64".into());
+                settings.insert("mupen64plus-ThreadedRenderer".into(), "False".into());
+
+                let mut retro_emu =
+                    RetroCoreDirect::new(&core_path, system_dir, Some(game_path), settings)
+                        .unwrap();
+                assert!(
+                    retro_emu.hw_render.is_some(),
+                    "core did not negotiate a hardware render context"
+                );
+                for _ in 0..200 {
+                    retro_emu.run();
+                }
+                retro_emu.save_png(Path::new("test_n64.png")).unwrap();
+
+                let (w, h) = retro_emu.get_frame_size();
+                assert!(w > 0 && h > 0, "no frame produced");
+                let distinct = retro_emu
+                    .state
+                    .frame
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                assert!(distinct > 16, "frame looks blank: only {distinct} colours");
+            })
+            .unwrap();
+        worker.join().unwrap();
+    }
+
     #[test]
     fn retro_threaded_works() {
         let core_path = libloader::get_libretro("puae").unwrap();
@@ -1416,6 +1667,38 @@ mod tests {
             assert!(w > 0 && h > 0, "no frame produced by worker for {path}");
             emu.save_png(Path::new(path)).unwrap();
         }
+    }
+
+    /// Boots a licence-stripped scene disc with an MP3 audio track — the shape
+    /// Beetle can't handle, and the reason pcsx_rearmed is the default. No BIOS
+    /// is installed here, so this also covers the HLE path.
+    #[test]
+    fn retro_psx_works() {
+        let core_path = libloader::get_libretro("pcsx_rearmed").unwrap();
+        // A temp dir, not `system/`: PSX needs nothing from it, and the core
+        // writes memory-card files into the system dir — which `build.rs` would
+        // then pack into the embedded `system.zip`.
+        let system_dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let game_path = Path::new("Pawlov/Pawlov.cue");
+
+        let mut emu =
+            RetroCoreDirect::new(&core_path, system_dir.path(), Some(game_path), HashMap::new())
+                .unwrap();
+        // This demo spends ~20s on a loader before it draws anything.
+        for _ in 0..1500 {
+            emu.run();
+        }
+        emu.save_png(Path::new("test_psx.png")).unwrap();
+
+        let (w, h) = emu.get_frame_size();
+        assert!(w > 0 && h > 0, "no frame produced");
+        let distinct = emu
+            .state
+            .frame
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(distinct > 16, "frame looks blank: only {distinct} colours");
     }
 
     #[test]

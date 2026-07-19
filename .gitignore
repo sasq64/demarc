@@ -1,3 +1,10 @@
 /target
 /system/WHD*
 /libretro/
+
+# Console BIOS images and core-written save data. Anything under system/ is
+# packed into the embedded system.zip by build.rs, so these must never land
+# there — keep BIOS files in ~/.cache/demarc/system instead.
+/system/scph*.bin
+/system/*.mcd
+/system/*.srm
