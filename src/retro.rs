@@ -542,26 +542,15 @@ pub fn create_core(
         set_var("hatari_fastboot", "true");
         set_var("hatari_video_crop_overscan", "false");
     } else if system_type == SystemType::N64 {
-        // GLideN64 is the only mupen64plus_next renderer we can host: paraLLEl is
-        // Vulkan (no interface for it here) and angrylion is a CPU rasterizer that
-        // can't hit 60fps. See `crate::gl_context`.
         set_var("mupen64plus-rdp-plugin", "gliden64");
         set_var("mupen64plus-rsp-plugin", "hle");
-        // The threaded renderer moves GL calls onto a thread of the core's own,
-        // which our context — current on the `retro-emu` thread — would not be
-        // current on. Keep rendering on the thread that owns the context.
         set_var("mupen64plus-ThreadedRenderer", "False");
     } else if system_type == SystemType::Psx && !psx_beetle {
-        // Force HLE rather than letting the core's `auto` pick up whatever BIOS
-        // happens to sit in the system dir. A real BIOS enforces the licence
-        // check, and scene rips have the licence sectors blanked, so `auto`
-        // silently turns into a black screen the moment a BIOS is present.
-        // Deterministic beats marginally-more-accurate here.
         set_var("pcsx_rearmed_bios", "HLE");
+        set_var("pcsx_rearmed_region", "PAL");
     } else if system_type == SystemType::Psx && psx_beetle {
-        // Make the choice visible to `get_core`, which resolves the core name
-        // from the tags alone.
         set_var("psx_core", "beetle");
+        set_var("beetle_psx_region", "pal");
         // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
         // a bare load error with no hint, so name the files up front.
         let dir = system_dir();

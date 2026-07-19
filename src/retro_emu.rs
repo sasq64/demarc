@@ -1694,6 +1694,9 @@ mod tests {
     /// Boots a licence-stripped scene disc with an MP3 audio track — the shape
     /// Beetle can't handle, and the reason pcsx_rearmed is the default. No BIOS
     /// is installed here, so this also covers the HLE path.
+    ///
+    /// Runs under the PAL region `create_core` now pins, since forcing a region
+    /// is the one way this default could break a disc that booted on `auto`.
     #[test]
     fn retro_psx_works() {
         let core_path = libloader::get_libretro("pcsx_rearmed").unwrap();
@@ -1703,9 +1706,12 @@ mod tests {
         let system_dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
         let game_path = Path::new("Pawlov/Pawlov.cue");
 
+        let mut tags = HashMap::new();
+        tags.insert("pcsx_rearmed_region".to_string(), "PAL".to_string());
+        tags.insert("pcsx_rearmed_bios".to_string(), "HLE".to_string());
+
         let mut emu =
-            RetroCoreDirect::new(&core_path, system_dir.path(), Some(game_path), HashMap::new())
-                .unwrap();
+            RetroCoreDirect::new(&core_path, system_dir.path(), Some(game_path), tags).unwrap();
         // This demo spends ~20s on a loader before it draws anything.
         for _ in 0..1500 {
             emu.run();
