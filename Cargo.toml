@@ -48,6 +48,11 @@ fatfs = "0.3.6"
 dirs = "6.0.0"
 ureq = "3"
 delharc = "0.6.1"
+# Decodes MP3 audio tracks referenced by PSX `.cue` sheets. No libretro PSX core
+# decodes them — they read the compressed bytes as PCM and play noise — so the
+# track is transcoded to WAV before the core ever sees it. Pure Rust, so the
+# Windows cross-build needs no external tooling.
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
 # Flash (SWF) support via Ruffle, gated behind the `flash` feature
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above

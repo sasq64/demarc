@@ -515,6 +515,8 @@ pub fn create_core(
     if system_type == SystemType::Ilbm {
         return Ok(Box::new(ImageEmu::new(game)?));
     }
+    // Read before `set_var` borrows `tags` mutably for the rest of the function.
+    let psx_beetle = tags.get("psx_core").is_some_and(|c| c == "beetle");
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
             tags.insert(name.into(), val.into());
@@ -546,9 +548,14 @@ pub fn create_core(
         // which our context — current on the `retro-emu` thread — would not be
         // current on. Keep rendering on the thread that owns the context.
         set_var("mupen64plus-ThreadedRenderer", "False");
-    } else if system_type == SystemType::Psx
-        && tags.get("psx_core").is_some_and(|c| c == "beetle")
-    {
+    } else if system_type == SystemType::Psx && !psx_beetle {
+        // Force HLE rather than letting the core's `auto` pick up whatever BIOS
+        // happens to sit in the system dir. A real BIOS enforces the licence
+        // check, and scene rips have the licence sectors blanked, so `auto`
+        // silently turns into a black screen the moment a BIOS is present.
+        // Deterministic beats marginally-more-accurate here.
+        set_var("pcsx_rearmed_bios", "HLE");
+    } else if system_type == SystemType::Psx && psx_beetle {
         // Only Beetle needs a BIOS. Its own failure is a bare load error with no
         // hint about the cause, so name the files up front.
         let dir = system_dir();
