@@ -43,7 +43,7 @@ use ruffle_render_wgpu::wgpu;
 
 use std::sync::Arc;
 
-use crate::retro_emu::RetroEmu;
+use crate::retro_emu::Backend;
 
 /// Audio output rate handed to the frontend. Matches the other cores so the
 /// existing [`crate::audio::AudioResampler`] converts to the device rate.
@@ -167,7 +167,7 @@ impl FlashEmu {
     }
 }
 
-impl RetroEmu for FlashEmu {
+impl Backend for FlashEmu {
     fn run(&mut self) -> bool {
         // Consume exactly one frame per call, like `RetroCoreThreaded::run`: the
         // frontend (`Emulator::run`) paces `run()` at the movie's fps and assumes
@@ -415,8 +415,8 @@ fn build_player(
     // target's buffer itself (bypassing Ruffle's `capture_frame`, which spends
     // most of its time un-premultiplying alpha we don't need — see
     // `capture_frame_fast`).
-    let renderer = WgpuRenderBackend::new(descriptors.clone(), target)
-        .map_err(|e| anyhow!(e.to_string()))?;
+    let renderer =
+        WgpuRenderBackend::new(descriptors.clone(), target).map_err(|e| anyhow!(e.to_string()))?;
 
     let mixer = AudioMixer::new(2, SAMPLE_RATE);
     let proxy = mixer.proxy();
@@ -488,7 +488,8 @@ fn capture_frame(player: &PlayerHandle) -> Option<Vec<u8>> {
 fn capture_frame_fast(player: &PlayerHandle, descriptors: &Descriptors, out: &mut Vec<u8>) -> bool {
     let mut guard = player.lock().unwrap();
     let renderer = guard.renderer_mut();
-    let Some(backend) = <dyn Any>::downcast_mut::<WgpuRenderBackend<TextureTarget>>(renderer) else {
+    let Some(backend) = <dyn Any>::downcast_mut::<WgpuRenderBackend<TextureTarget>>(renderer)
+    else {
         return false;
     };
     let Some(info) = &backend.target().buffer else {

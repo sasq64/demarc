@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Result, bail};
-
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
@@ -17,14 +15,10 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey};
 use crate::emulator::Emulator;
-#[cfg(feature = "flash")]
-use crate::flash_emu::FlashEmu;
 use crate::hud::{HudLocation, SetHudText};
-use crate::image_emu::ImageEmu;
 use crate::post_process::PostProcess;
-use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::systems::{SystemType, get_core, get_info_text, tags_for_system, tags_from_args};
+use crate::systems::{SystemType, get_info_text, tags_from_args};
 use crate::text_input::TextInput;
 use crate::{AppSettings, Args};
 
@@ -369,40 +363,6 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
-pub fn create_core(
-    system_type: SystemType,
-    game: &Path,
-    mut tags: HashMap<String, String>,
-    speed_test: bool,
-) -> Result<Box<dyn RetroEmu + Send + Sync>> {
-    if system_type == SystemType::Flash {
-        #[cfg(feature = "flash")]
-        return Ok(Box::new(FlashEmu::new(game, tags)?));
-        #[cfg(not(feature = "flash"))]
-        return Err(anyhow::anyhow!(
-            "Flash (SWF) support is not enabled; rebuild with --features flash"
-        ));
-    }
-    if system_type == SystemType::Ilbm {
-        return Ok(Box::new(ImageEmu::new(game)?));
-    }
-
-    tags_for_system(system_type, &mut tags);
-
-    match get_core(system_type, &tags) {
-        Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
-            Path::new(&core),
-            system_dir(),
-            Some(game),
-            tags,
-            speed_test,
-        )?)),
-        Err(name) => {
-            bail!("Can not find core '{name}' for '{game:?}'");
-        }
-    }
-}
-
 fn run_retro(
     mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
@@ -626,84 +586,6 @@ fn run_retro(
     }
 }
 
-/// Tracks the `--speed-test` measurement window across frames.
-#[derive(Default)]
-struct SpeedTestState {
-    /// App time of the first tick, used for the boot-time-grace fallback.
-    first_tick: Option<f64>,
-    /// App time at which frames first started flowing, marking the start of the
-    /// warm-up period.
-    frames_started: Option<f64>,
-    /// (start time, baseline frame count) once the measurement window opens.
-    window_start: Option<(f64, u64)>,
-    /// Set once the result has been reported, to avoid printing/exiting twice.
-    done: bool,
-}
-
-/// Wall-clock seconds to keep running after frames first appear before opening
-/// the measurement window, so one-time setup (core boot, render-pipeline/shader
-/// compilation, first-frame allocations) is excluded from the measured rate.
-const SPEED_TEST_WARMUP: f64 = 1.0;
-/// Length of the measured window, in wall-clock seconds.
-const SPEED_TEST_MEASURE: f64 = 2.0;
-
-/// Benchmark driver for `--speed-test`: once the emulator is stepping frames,
-/// warms up briefly to get past all one-time setup, then measures a fixed
-/// window of unthrottled emulation, prints the frame count, and requests app
-/// exit.
-fn speed_test_monitor(
-    settings: Res<AppSettings>,
-    emus: Query<&Emulator>,
-    time: Res<Time>,
-    mut state: Local<SpeedTestState>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if !settings.speed_test || state.done {
-        return;
-    }
-    let now = time.elapsed_secs_f64();
-    let first = *state.first_tick.get_or_insert(now);
-    let total: u64 = emus
-        .iter()
-        .filter_map(|e| e.core.as_ref())
-        .map(|c| c.frames_stepped())
-        .sum();
-
-    // Phase 1: wait for the core to actually start stepping frames (excludes
-    // core creation and boot-to-first-frame), or fall back after a grace period
-    // for cores that never report a frame count.
-    let Some(warmup_start) = state.frames_started else {
-        if total > 0 || now - first > 10.0 {
-            state.frames_started = Some(now);
-        }
-        return;
-    };
-
-    // Phase 2: warm up for a bit so render-pipeline/shader compilation and other
-    // one-time setup finish before the clock starts.
-    let (start_t, base) = match state.window_start {
-        Some(v) => v,
-        None => {
-            if now - warmup_start >= SPEED_TEST_WARMUP {
-                state.window_start = Some((now, total));
-            }
-            return;
-        }
-    };
-
-    // Phase 3: measure the fixed window.
-    let secs = now - start_t;
-    if secs >= SPEED_TEST_MEASURE {
-        let stepped = total - base;
-        println!(
-            "Speed test: {stepped} frames in {secs:.2}s = {:.1} fps",
-            stepped as f64 / secs
-        );
-        state.done = true;
-        exit.write(AppExit::Success);
-    }
-}
-
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
@@ -712,12 +594,7 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (
-                run_retro,
-                update_grid_viewports,
-                draw_current_emu_outline,
-                speed_test_monitor,
-            ),
+            (run_retro, update_grid_viewports, draw_current_emu_outline),
         );
     }
 }

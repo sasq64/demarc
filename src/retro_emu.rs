@@ -89,7 +89,7 @@ impl<T> OptionInner for Option<T> {
 }
 
 /// Abstract interface over a libretro emulator core.
-pub trait RetroEmu {
+pub trait Backend {
     fn set_disk(&mut self, no: u32);
     /// Takes `&mut self` because the libretro implementation calls into the
     /// core, which may issue environment callbacks while it does.
@@ -890,7 +890,7 @@ impl RetroCoreDirect {
 /// Thin delegation to [`RetroCore`]'s inherent methods. Fully-qualified calls
 /// (`RetroCore::method(self, ..)`) are used so the inherent method is selected
 /// rather than recursing into the trait method of the same name.
-impl RetroEmu for RetroCoreDirect {
+impl Backend for RetroCoreDirect {
     fn run(&mut self) -> bool {
         RetroCoreDirect::run(self);
         true
@@ -1201,7 +1201,7 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
     false
 }
 
-impl RetroEmu for RetroCoreThreaded {
+impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
             if update.frame.is_empty() && update.audio.is_empty() {
@@ -1322,7 +1322,7 @@ mod tests {
     /// The threaded `run()` is non-blocking, so the main loop must give the
     /// worker thread time to boot and deliver frames. Drive `emu` until it has
     /// produced its first frame, or panic after `timeout`.
-    fn run_until_frame(emu: &mut dyn RetroEmu, timeout: Duration) {
+    fn run_until_frame(emu: &mut dyn Backend, timeout: Duration) {
         let start = Instant::now();
         while emu.get_frame_size().0 == 0 {
             emu.run();
@@ -1385,7 +1385,7 @@ mod tests {
             RetroCoreThreaded::new(&core_path, system_dir, Some(game_path), settings, false)
                 .unwrap();
         // Object-safety / interchangeability check.
-        let emu: &mut dyn RetroEmu = &mut emu;
+        let emu: &mut dyn Backend = &mut emu;
 
         // Pace the loop so the worker keeps up and the demo advances.
         for _ in 0..200 {
@@ -1453,7 +1453,7 @@ mod tests {
         // Pace the loop so the workers keep up and the demos advance.
         for _ in 0..200 {
             for (_, emu) in emus.iter_mut() {
-                let emu: &mut dyn RetroEmu = emu;
+                let emu: &mut dyn Backend = emu;
                 emu.run();
             }
             std::thread::sleep(Duration::from_millis(2));

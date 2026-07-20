@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    retro::system_dir,
+    frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
 };
 

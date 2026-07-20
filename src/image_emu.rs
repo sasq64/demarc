@@ -18,7 +18,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::ilbm::{self, CycleRange};
-use crate::retro_emu::RetroEmu;
+use crate::retro_emu::Backend;
 
 /// The CRNG `rate` value that corresponds to 60 cycle steps per second.
 const CRNG_RATE_60HZ: f64 = 16384.0;
@@ -139,7 +139,7 @@ impl ImageEmu {
     }
 }
 
-impl RetroEmu for ImageEmu {
+impl Backend for ImageEmu {
     // Advance the colour-cycling animation. A static image (no active ranges)
     // leaves the frame untouched; otherwise the frame is only rebuilt when the
     // rotation has actually moved.

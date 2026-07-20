@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use anyhow::{Result, bail};
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::{image::Image, prelude::*};
@@ -8,11 +9,48 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
+#[cfg(feature = "flash")]
+use crate::flash_emu::FlashEmu;
+use crate::frontend::system_dir;
+use crate::image_emu::ImageEmu;
 use crate::libretro;
-use crate::retro::create_core;
-use crate::retro_emu::RetroEmu;
-use crate::systems::{SystemType, WorkingFile};
+use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
 use crate::utils::handle_file;
+
+pub fn create_core(
+    system_type: SystemType,
+    game: &Path,
+    mut tags: HashMap<String, String>,
+    speed_test: bool,
+) -> Result<Box<dyn Backend + Send + Sync>> {
+    if system_type == SystemType::Flash {
+        #[cfg(feature = "flash")]
+        return Ok(Box::new(FlashEmu::new(game, tags)?));
+        #[cfg(not(feature = "flash"))]
+        return Err(anyhow::anyhow!(
+            "Flash (SWF) support is not enabled; rebuild with --features flash"
+        ));
+    }
+    if system_type == SystemType::Ilbm {
+        return Ok(Box::new(ImageEmu::new(game)?));
+    }
+
+    tags_for_system(system_type, &mut tags);
+
+    match get_core(system_type, &tags) {
+        Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
+            Path::new(&core),
+            system_dir(),
+            Some(game),
+            tags,
+            speed_test,
+        )?)),
+        Err(name) => {
+            bail!("Can not find core '{name}' for '{game:?}'");
+        }
+    }
+}
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
 /// In [`InputMode::Keyboard`] (the default) they map to the corresponding
@@ -52,7 +90,7 @@ impl InputMode {
 /// `PostProcess` camera (matched via [`Self::image`]).
 #[derive(Component, Default)]
 pub(crate) struct Emulator {
-    pub(crate) core: Option<Box<dyn RetroEmu + Send + Sync>>,
+    pub(crate) core: Option<Box<dyn Backend + Send + Sync>>,
     pub(crate) work_file: WorkingFile,
     pub(crate) run_next: bool,
     pub(crate) run_prev: bool,

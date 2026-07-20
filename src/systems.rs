@@ -8,8 +8,9 @@ use anyhow::{Context, Result, bail};
 use tracing::{debug, info, warn};
 
 use crate::{
-    Args, CbmSystem, libloader,
-    retro::system_dir,
+    Args, CbmSystem,
+    frontend::system_dir,
+    libloader,
     utils::{cue_has_data_track, read_header},
 };
 

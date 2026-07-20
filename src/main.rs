@@ -16,24 +16,26 @@ mod commands;
 mod emulator;
 #[cfg(feature = "flash")]
 mod flash_emu;
+mod frontend;
 mod hud;
 mod ilbm;
 mod image_emu;
 mod libloader;
 mod media_keys;
 mod post_process;
-mod retro;
 mod retro_emu;
 mod screensaver;
+mod speed_test;
 mod systems;
 mod text_input;
 mod utils;
 
 use commands::CommandPlugin;
+use frontend::{RetroPlugin, system_dir};
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
-use retro::{RetroPlugin, system_dir};
 use screensaver::ScreenSaverPlugin;
+use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
@@ -600,6 +602,7 @@ fn main() {
             HudPlugin,
             TextInputPlugin,
             ScreenSaverPlugin,
+            SpeedTestPlugin,
         ));
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
