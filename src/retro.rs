@@ -34,6 +34,8 @@ const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
 const CORE_NAME_VICE_64: &str = "vice_x64";
 const CORE_NAME_VICE_DTV: &str = "vice_x64dtv";
 const CORE_NAME_VICE_128: &str = "vice_x128";
+const CORE_NAME_VICE_C16: &str = "vice_xplus4";
+const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
 const CORE_NAME_UAE: &str = "puae";
 const CORE_NAME_AMSTRAD: &str = "cap32";
 const CORE_NAME_ATARI: &str = "hatari";
@@ -204,6 +206,8 @@ fn setup_retro(world: &mut World) {
             CbmSystem::C64 => "c64",
             CbmSystem::C128 => "c128",
             CbmSystem::Dtv => "dtv",
+            CbmSystem::C16 => "c16",
+            CbmSystem::VIC20 => "vic20",
         },
     );
     if args.aga {
@@ -472,6 +476,8 @@ pub fn get_core(
         SystemType::C64 if cv == "dtv" => CORE_NAME_VICE_DTV,
         SystemType::C64 if cv == "c128" => CORE_NAME_VICE_128,
         SystemType::C64 if cv == "c64_fast" => CORE_NAME_VICE_64,
+        SystemType::C64 if cv == "c16" => CORE_NAME_VICE_C16,
+        SystemType::C64 if cv == "vic20" => CORE_NAME_VICE_VIC20,
         SystemType::C64 => CORE_NAME_VICE_64SC,
         SystemType::Amiga => CORE_NAME_UAE,
         SystemType::Amstrad => CORE_NAME_AMSTRAD,

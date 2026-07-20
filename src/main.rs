@@ -273,6 +273,10 @@ enum CbmSystem {
     C128,
     /// C64 DTV Stick
     Dtv,
+    /// C16/Plus4
+    C16,
+    /// VIC 20
+    VIC20,
 }
 
 impl From<ScaleModeArg> for ScaleMode {
@@ -458,7 +462,11 @@ fn main() {
     // route tracing to a dup of the original stdout, unless `--no-silence` asks
     // us to leave them alone (for debugging core output).
     #[cfg(unix)]
-    match if args.no_silence { None } else { silence_stdout().ok() } {
+    match if args.no_silence {
+        None
+    } else {
+        silence_stdout().ok()
+    } {
         Some(writer) => builder.with_writer(move || writer).init(),
         // Silencing disabled or redirect failed: use the default stdout writer.
         None => builder.init(),
