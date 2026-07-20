@@ -27,34 +27,20 @@ zip = { version = "8", default-features = false, features = [
 # Matches the wgpu version Bevy 0.19 uses; only needed to name `SamplerBorderColor`,
 # which Bevy doesn't re-export.
 wgpu = "29"
-# Native libretro `.slangp` shader chains, rendered on Bevy's own wgpu device.
-# 0.11.3 targets wgpu ^29.0.3 — the same major as Bevy 0.19 — so the runtime
-# shares Bevy's `RenderDevice`/`RenderQueue` and source textures directly.
-# Defaults pull in every runtime backend (incl. D3D/SEH, unbuildable on Linux),
-# so restrict to the wgpu runtime + the naga reflect backend.
 librashader = { version = "0.11.3", default-features = false, features = [
     "runtime-wgpu",
     "reflect-naga",
     "presets",
 ] }
 tempfile = "3.27.0"
-# Offscreen OpenGL context for libretro cores that render through
-# RETRO_ENVIRONMENT_SET_HW_RENDER (e.g. mupen64plus_next/GLideN64). `khronos-egl`
-# loads libEGL at runtime so a missing EGL only fails those cores, not the binary;
-# `glow` supplies the handful of FBO/readback entry points in src/gl_context.rs.
 khronos-egl = { version = "6", features = ["dynamic"] }
 glow = "0.18"
 fatfs = "0.3.6"
 dirs = "6.0.0"
 ureq = "3"
 delharc = "0.6.1"
-# Decodes MP3 audio tracks referenced by PSX `.cue` sheets. No libretro PSX core
-# decodes them — they read the compressed bytes as PCM and play noise — so the
-# track is transcoded to WAV before the core ever sees it. Pure Rust, so the
-# Windows cross-build needs no external tooling.
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
-# Flash (SWF) support via Ruffle, gated behind the `flash` feature
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above
 ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
     "audio",
