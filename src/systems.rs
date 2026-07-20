@@ -1,0 +1,456 @@
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, Result, bail};
+use tracing::{debug, info, warn};
+
+use crate::{
+    Args, CbmSystem, libloader,
+    retro::system_dir,
+    utils::{cue_has_data_track, read_header},
+};
+
+/// BIOS images Beetle looks for in the system dir, one per region. Unlike
+/// pcsx_rearmed it has no HLE fallback and won't boot without one.
+const PSX_BIOS: [&str; 3] = ["scph5500.bin", "scph5501.bin", "scph5502.bin"];
+
+const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
+const CORE_NAME_VICE_64: &str = "vice_x64";
+const CORE_NAME_VICE_DTV: &str = "vice_x64dtv";
+const CORE_NAME_VICE_128: &str = "vice_x128";
+const CORE_NAME_VICE_C16: &str = "vice_xplus4";
+const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
+const CORE_NAME_UAE: &str = "puae";
+const CORE_NAME_AMSTRAD: &str = "cap32";
+const CORE_NAME_ATARI: &str = "hatari";
+const CORE_NAME_MEGADRIVE: &str = "picodrive";
+const CORE_NAME_STELLA: &str = "stella";
+const CORE_NAME_SNES: &str = "bsnes";
+const CORE_NAME_SPECTRUM: &str = "fuse";
+const CORE_NAME_XL: &str = "atari800";
+const CORE_NAME_TIC80: &str = "tic80";
+const CORE_NAME_PICO8: &str = "fake08";
+const CORE_NAME_GAMEBOY: &str = "gambatte";
+const CORE_NAME_GBA: &str = "mgba";
+/// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
+/// default *here*: it faithfully enforces the BIOS licence check, and scene
+/// rips almost always ship with the "Sony Computer Entertainment" licence
+/// sectors blanked, so they drop to the BIOS CD player instead of booting. It
+/// also can't read the MP3 audio tracks scene releases like to use. pcsx_rearmed
+/// does neither check, and its HLE BIOS means no copyrighted image is needed at
+/// all. Set the `psx_core` tag to `beetle` for accuracy on a licenced disc.
+const CORE_NAME_PSX: &str = "pcsx_rearmed";
+const CORE_NAME_PSX_BEETLE: &str = "mednafen_psx";
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum SystemType {
+    C64,
+    Amiga,
+    Amstrad,
+    AtariST,
+    Megadrive,
+    Atari2600,
+    SuperNintendo,
+    ZXSpectrum,
+    AtariXL,
+    Tic80,
+    Pico8,
+    Flash,
+    Gameboy,
+    Gba,
+    Psx,
+    Ilbm,
+    #[default]
+    Unknown,
+}
+
+#[derive(Default, Debug)]
+pub struct GameInfo {
+    pub title: String,
+    pub group: String,
+    pub year: String,
+}
+
+#[derive(Debug, Default)]
+pub struct WorkingFile {
+    pub path: PathBuf,
+    pub system_type: SystemType,
+    pub settings: HashMap<String, String>,
+    pub game_info: GameInfo,
+    pub is_temp: bool,
+}
+
+impl Drop for WorkingFile {
+    fn drop(&mut self) {
+        if !self.is_temp {
+            return;
+        }
+        // `path` may be the temp dir itself (Amiga), a file inside it (Atari
+        // disk image), or a subdirectory of it (zip with a single top-level
+        // dir). Walk up to the `demarc-` temp root and remove the whole tree.
+        //
+        // Safety: every builder that sets `is_temp` roots `path` in a
+        // `demarc-` dir created under the system temp dir. Rather than trust
+        // that invariant, only ever remove a directory that (a) is itself
+        // named `demarc-*` and (b) lives under the system temp dir. If no such
+        // ancestor is found we bail out — never walk up to `/` and delete
+        // something we shouldn't.
+        let tmp_root = std::env::temp_dir();
+        let mut dir = self.path.as_path();
+        loop {
+            let is_demarc_root = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("demarc-"));
+            if is_demarc_root {
+                if dir.starts_with(&tmp_root) {
+                    _ = fs::remove_dir_all(dir);
+                } else {
+                    warn!("Refusing to remove temp dir outside {tmp_root:?}: {dir:?}");
+                }
+                return;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => {
+                    warn!(
+                        "Temp WorkingFile has no demarc- ancestor, not removing: {:?}",
+                        self.path
+                    );
+                    return;
+                }
+            }
+        }
+    }
+}
+
+pub fn get_memory(work_file: &WorkingFile) -> String {
+    let tags = &work_file.settings;
+    let reu = tags.get("vice_ram_expansion_unit");
+    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
+    let chip = tags
+        .get("puae_chipmem_size")
+        .map(|c| c.parse::<u32>().unwrap_or_default())
+        .unwrap_or(if a1200 { 4 } else { 1 })
+        * 512;
+
+    //let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
+    match work_file.system_type {
+        SystemType::C64 => {
+            if let Some(reu) = reu {
+                format!("64K + REU {}", reu)
+            } else {
+                "64K".to_string()
+            }
+        }
+        SystemType::Amiga => format!("CHIP:{}K", chip),
+        SystemType::Amstrad => "128K".to_string(),
+        SystemType::Megadrive => "64K + VRAM:64K".to_string(),
+        SystemType::ZXSpectrum => "128K".to_string(),
+        SystemType::AtariST => "".to_string(),
+        SystemType::Atari2600 => "128B".to_string(),
+        SystemType::SuperNintendo => "128K".to_string(),
+        SystemType::AtariXL => "Atari XL".to_string(),
+        SystemType::Tic80 => "272KB".to_string(),
+        SystemType::Pico8 => "?".to_string(),
+        SystemType::Flash => "?".to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+pub fn get_system_name(work_file: &WorkingFile) -> String {
+    let tags = &work_file.settings;
+    let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
+    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
+    let mut base = match work_file.system_type {
+        SystemType::C64 => "C64",
+        SystemType::Amiga => "Amiga",
+        SystemType::Amstrad => "Amstrad CPC",
+        SystemType::Megadrive => "Megadrive",
+        SystemType::ZXSpectrum => "ZX Spectrum",
+        SystemType::AtariST => {
+            if ste {
+                "Atari STE"
+            } else {
+                "Atari ST"
+            }
+        }
+        SystemType::Atari2600 => "Atari 2600",
+        SystemType::SuperNintendo => "SNES",
+        SystemType::AtariXL => "Atari XL",
+        SystemType::Tic80 => "Tic-80",
+        SystemType::Pico8 => "Pico8",
+        SystemType::Flash => "Flash",
+        SystemType::Gameboy => "Gameboy",
+        SystemType::Gba => "GBA",
+        SystemType::Psx => "PlayStation",
+        SystemType::Ilbm => "Amiga Gfx",
+        SystemType::Unknown => "Unknown",
+    }
+    .to_string();
+    if work_file.system_type == SystemType::Amiga {
+        if a1200 {
+            base += " (AGA)";
+        } else {
+            base += " 500";
+        }
+    }
+    base
+}
+
+pub fn get_full_info(work_file: &WorkingFile) -> String {
+    let system = get_system_name(work_file);
+    let ram = get_memory(work_file);
+    let len = fs::metadata(&work_file.path).unwrap().len();
+
+    let GameInfo { title, group, year } = &work_file.game_info;
+    let year = if year.is_empty() {
+        "".into()
+    } else {
+        format!(" ({year})")
+    };
+
+    format!("\"{title}\"\n{group}\n{system}{year}\nMem: {ram}\n Size: {len}")
+}
+
+pub fn get_info_text(work_file: &WorkingFile) -> String {
+    let system = get_system_name(work_file);
+    let GameInfo { title, group, year } = &work_file.game_info;
+    let year = if year.is_empty() {
+        "".into()
+    } else {
+        format!(" ({year})")
+    };
+
+    format!("\"{title}\"\n{group}\n{system}{year}")
+}
+
+pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Result<PathBuf> {
+    let cv = tags.get("cbm_variant").map_or("", |s| s.as_str());
+    info!("CBM VARIANT {cv}");
+    let core_name = match system_type {
+        SystemType::C64 if cv == "dtv" => CORE_NAME_VICE_DTV,
+        SystemType::C64 if cv == "c128" => CORE_NAME_VICE_128,
+        SystemType::C64 if cv == "c64_fast" => CORE_NAME_VICE_64,
+        SystemType::C64 if cv == "c16" => CORE_NAME_VICE_C16,
+        SystemType::C64 if cv == "vic20" => CORE_NAME_VICE_VIC20,
+        SystemType::C64 => CORE_NAME_VICE_64SC,
+        SystemType::Amiga => CORE_NAME_UAE,
+        SystemType::Amstrad => CORE_NAME_AMSTRAD,
+        SystemType::AtariST => CORE_NAME_ATARI,
+        SystemType::Megadrive => CORE_NAME_MEGADRIVE,
+        SystemType::Atari2600 => CORE_NAME_STELLA,
+        SystemType::SuperNintendo => CORE_NAME_SNES,
+        SystemType::ZXSpectrum => CORE_NAME_SPECTRUM,
+        SystemType::AtariXL => CORE_NAME_XL,
+        SystemType::Tic80 => CORE_NAME_TIC80,
+        SystemType::Pico8 => CORE_NAME_PICO8,
+        SystemType::Gameboy => CORE_NAME_GAMEBOY,
+        SystemType::Gba => CORE_NAME_GBA,
+        SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
+            CORE_NAME_PSX_BEETLE
+        }
+        SystemType::Psx => CORE_NAME_PSX,
+        SystemType::Ilbm => bail!(""),
+        SystemType::Flash => bail!(""),
+        SystemType::Unknown => bail!(""),
+    };
+    if core_name.contains("beetle") {
+        // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
+        // a bare load error with no hint, so name the files up front.
+        let dir = system_dir();
+        if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
+            bail!(
+                "Beetle PSX needs a BIOS: put one of {} in {:?}. Beetle is \
+                 required here because pcsx_rearmed cannot load PS-X EXE files.",
+                PSX_BIOS.join(", "),
+                dir
+            );
+        }
+    }
+
+    libloader::get_libretro(core_name)
+        .with_context(|| format!("Could not find libretro core '{core_name}'"))
+}
+
+pub fn get_system_type(path: &Path) -> SystemType {
+    let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+        ext.to_lowercase()
+    } else {
+        "".to_string()
+    };
+    let mut system_type = match ext.as_str() {
+        "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
+        "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
+        "dsk" => SystemType::Amstrad,
+        "msa" | "st" => SystemType::AtariST,
+        "a26" => SystemType::Atari2600,
+        "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
+        "smc" | "sfc" => SystemType::SuperNintendo,
+        "atr" | "xex" | "atx" => SystemType::AtariXL,
+        "tic80" | "tic" => SystemType::Tic80,
+        "p8" => SystemType::Pico8,
+        "gb" | "gbc" => SystemType::Gameboy,
+        "gba" | "agb" => SystemType::Gba,
+        // CD-image containers. The sheet points at the bulk track data, so it —
+        // not the `.bin` — is what gets loaded.
+        "chd" | "pbp" | "ccd" | "toc" | "psx" => SystemType::Psx,
+        // A `.cue` is just as likely to be an audio-CD rip sitting in a music
+        // library, so it only counts as PlayStation if it has a data track.
+        "cue" if cue_has_data_track(path) => SystemType::Psx,
+        "swf" => SystemType::Flash,
+        "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
+        _ => SystemType::Unknown,
+    };
+    if system_type == SystemType::Unknown {
+        info!("Checking {:?}", path);
+        if path.is_file() {
+            // Only the first 0x200 bytes are ever inspected; CD tracks and other
+            // bulk images are far too big to pull into memory just to sniff.
+            let Ok(data) = read_header(path, 0x200) else {
+                return SystemType::Unknown;
+            };
+            let Ok(l) = fs::metadata(path).map(|m| m.len() as usize) else {
+                return SystemType::Unknown;
+            };
+            if data.len() >= 4 {
+                if data.len() >= 0x200
+                    && std::str::from_utf8(&data[0x100..0x110])
+                        .unwrap_or("")
+                        .starts_with("SEGA ")
+                {
+                    system_type = SystemType::Megadrive;
+                } else if l >= 8 && &data[0..8] == b"PS-X EXE" {
+                    system_type = SystemType::Psx;
+                } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
+                    system_type = SystemType::Atari2600;
+                } else if data[0..2] == [0x60, 0x1a] {
+                    system_type = SystemType::AtariST;
+                } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
+                    system_type = SystemType::Amiga;
+                } else if l >= 12 && &data[0..4] == b"FORM" && &data[8..12] == b"ILBM" {
+                    system_type = SystemType::Ilbm;
+                } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
+                    // Flash SWF signatures: uncompressed / zlib / LZMA.
+                    system_type = SystemType::Flash;
+                } else if (0x0400..=0x0801).contains(&u16::from_le_bytes(
+                    data[..2].try_into().unwrap_or_default(),
+                )) && ext == "prg"
+                {
+                    system_type = SystemType::C64;
+                }
+            }
+        }
+    }
+    debug!("Found {system_type:?}");
+    system_type
+}
+
+/// True if `path` is a raw PlayStation executable rather than a disc image.
+/// These need a different core from a `.cue`/`.chd` — see `get_core`.
+fn is_psx_exe(path: &Path) -> bool {
+    read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
+}
+
+pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, String>) {
+    // Read before `set_var` borrows `tags` mutably for the rest of the function.
+    // pcsx_rearmed refuses to load a raw PS-X EXE outright, so those always go
+    // to Beetle regardless of the disc-oriented default.
+    let mut set_var = |name: &str, val: &str| {
+        if !tags.contains_key(name) {
+            tags.insert(name.into(), val.into());
+        }
+    };
+    if system_type == SystemType::Amiga {
+        set_var("puae_model", "A500");
+        //set_var("puae_crop_mode", "4:3");
+        set_var("puae_crop", "smaller");
+        set_var("puae_horizontal_pos", "-5");
+    } else if system_type == SystemType::C64 {
+        set_var("vice_sid_extra", "none");
+        set_var("vice_sid_model", "8580");
+        set_var("vice_sound_sample_rate", "44100");
+    } else if system_type == SystemType::Amstrad {
+        set_var("cap32_statusbar", "disabled");
+    } else if system_type == SystemType::AtariST {
+        set_var("hatari_forcerefresh", "2");
+        set_var("hatari_start_in_mouse_mode", "false");
+        set_var("hatari_fastboot", "true");
+        set_var("hatari_video_crop_overscan", "false");
+    } else if system_type == SystemType::Psx {
+        set_var("pcsx_rearmed_bios", "HLE");
+        set_var("pcsx_rearmed_region", "PAL");
+        set_var("beetle_psx_region", "pal");
+    }
+}
+
+pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
+    let mut tags = HashMap::new();
+    let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
+
+    set_var("latency", &args.latency.to_string());
+    set_var("fuse_machine", "Spectrum 128K");
+    set_var("atari800_ntscpal", "PAL");
+    //set_var("atari800_system", "Modern XL/XE(576K)");
+    set_var("atari800_system", "Modern XL/XE(1088K)");
+    set_var(
+        "cbm_variant",
+        match args.cbm_variant {
+            CbmSystem::C64 => "c64",
+            CbmSystem::C128 => "c128",
+            CbmSystem::Dtv => "dtv",
+            CbmSystem::C16 => "c16",
+            CbmSystem::VIC20 => "vic20",
+        },
+    );
+    if args.aga {
+        set_var("puae_model", "A1200");
+    }
+    if args.ste {
+        set_var("hatari_machinetype", "ste");
+        set_var("hatari_ramsize", "2");
+    }
+
+    if args.xmem {
+        set_var("hatari_ramsize", "8");
+        set_var("puae_z3mem_size", "128");
+        set_var("puae_chipmem_size", "4");
+        set_var("puae_fastmem_size", "8");
+    }
+    if args.fast {
+        set_var("hatari_ramsize", "8");
+        set_var("puae_z3mem_size", "128");
+        set_var("puae_fpu_model", "68882");
+        set_var("puae_cpu_model", "68030");
+        // set_var("puae_cpu_throttle", "10000");
+        set_var("puae_cpu_compatibility", "exact");
+    }
+
+    if args.silent_drive {
+        set_var("puae_floppy_sound", "100");
+        set_var("vice_drive_sound_emulation", "disabled");
+        set_var("cap32_floppy_sound", "disabled");
+    }
+
+    if args.fast_load {
+        set_var("vice_jiffydos", "enabled");
+        set_var("puae_floppy_speed", "0");
+    }
+
+    if args.reu {
+        set_var("vice_ram_expansion_unit", "16384kB");
+    }
+
+    if args.color_cycle {
+        set_var("color_cycle", "enabled");
+    }
+    for opt in &args.extra_options {
+        if let Some((key, val)) = opt.split_once("=") {
+            set_var(key.trim(), val.trim());
+        }
+    }
+    tags
+}

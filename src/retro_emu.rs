@@ -40,16 +40,16 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
     RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK,
-    RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
-    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
-    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
-    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
-    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
-    retro_frame_time_callback, retro_game_geometry, retro_game_info, retro_input_poll_t,
-    retro_input_state_t, retro_keyboard_callback, retro_log_callback, retro_log_level,
-    retro_pixel_format, retro_system_av_info, retro_variable, retro_video_refresh_t,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
+    RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, RETRO_ENVIRONMENT_SET_GEOMETRY,
+    RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+    RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
+    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
+    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
+    retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
+    retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
+    retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
+    retro_system_av_info, retro_variable, retro_video_refresh_t,
 };
 
 /// Stack for the thread a core runs on. See the `stack_size` call in
@@ -1472,8 +1472,8 @@ mod tests {
     /// outright — while a disc keeps the permissive default.
     #[test]
     fn psx_exe_routes_to_beetle() {
-        use crate::retro::get_core;
-        use crate::utils::SystemType;
+        use crate::systems::SystemType;
+        use crate::systems::get_core;
 
         let disc = get_core(SystemType::Psx, &HashMap::new()).unwrap();
         assert!(
@@ -1498,21 +1498,29 @@ mod tests {
     /// is the one way this default could break a disc that booted on `auto`.
     #[test]
     fn retro_psx_works() {
-        let core_path = libloader::get_libretro("pcsx_rearmed").unwrap();
+        let core_path = libloader::get_libretro("mednafen_psx").unwrap();
         // A temp dir, not `system/`: PSX needs nothing from it, and the core
         // writes memory-card files into the system dir — which `build.rs` would
         // then pack into the embedded `system.zip`.
-        let system_dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
-        let game_path = Path::new("Pawlov/Pawlov.cue");
+        let system_dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        let game_path = Path::new("demos/pdx-dlcm.psx");
 
         let mut tags = HashMap::new();
-        tags.insert("pcsx_rearmed_region".to_string(), "PAL".to_string());
-        tags.insert("pcsx_rearmed_bios".to_string(), "HLE".to_string());
-
+        tags.insert("beetle_psx_region".to_string(), "pal".to_string());
+        for f in [
+            "scph5500.bin",
+            "scph5501.bin",
+            "scph5502.bin",
+            "scph5552.bin",
+        ] {
+            std::fs::copy(Path::new("system").join(f), system_dir.path().join(f)).unwrap();
+        }
         let mut emu =
             RetroCoreDirect::new(&core_path, system_dir.path(), Some(game_path), tags).unwrap();
-        // This demo spends ~20s on a loader before it draws anything.
-        for _ in 0..1500 {
+        for _ in 0..150 {
             emu.run();
         }
         emu.save_png(Path::new("test_psx.png")).unwrap();

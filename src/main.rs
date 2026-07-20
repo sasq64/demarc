@@ -25,6 +25,7 @@ mod post_process;
 mod retro;
 mod retro_emu;
 mod screensaver;
+mod systems;
 mod text_input;
 mod utils;
 
@@ -513,11 +514,12 @@ fn main() {
     let primary_window = Some(window);
 
     let shader =
-        args.shader
-            .unwrap_or_else(|| match files.first().map(|g| utils::get_system_type(g)) {
-                Some(utils::SystemType::Gameboy | utils::SystemType::Gba) => ShaderArg::Lcd,
+        args.shader.unwrap_or_else(
+            || match files.first().map(|g| systems::get_system_type(g)) {
+                Some(systems::SystemType::Gameboy | systems::SystemType::Gba) => ShaderArg::Lcd,
                 _ => ShaderArg::Lottes,
-            });
+            },
+        );
     // A user-supplied `--preset` wins; otherwise resolve the bundled preset by
     // name. Both resolve to an absolute `.slangp` path; the passthrough
     // (`stock.slangp`) is always the bundled one.

@@ -1,4 +1,3 @@
-use std::fs;
 use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -14,7 +13,8 @@ use crate::emulator::{Emulator, InputMode};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::utils::{GameInfo, SystemType, WorkingFile};
+use crate::systems::SystemType;
+use crate::systems::get_info_text;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -190,107 +190,6 @@ fn handle_textlist(
     {
         commands.entity(e).despawn();
     }
-}
-
-fn get_memory(work_file: &WorkingFile) -> String {
-    let tags = &work_file.settings;
-    let reu = tags.get("vice_ram_expansion_unit");
-    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let chip = tags
-        .get("puae_chipmem_size")
-        .map(|c| c.parse::<u32>().unwrap_or_default())
-        .unwrap_or(if a1200 { 4 } else { 1 })
-        * 512;
-
-    //let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
-    match work_file.system_type {
-        SystemType::C64 => {
-            if let Some(reu) = reu {
-                format!("64K + REU {}", reu)
-            } else {
-                "64K".to_string()
-            }
-        }
-        SystemType::Amiga => format!("CHIP:{}K", chip),
-        SystemType::Amstrad => "128K".to_string(),
-        SystemType::Megadrive => "64K + VRAM:64K".to_string(),
-        SystemType::ZXSpectrum => "128K".to_string(),
-        SystemType::AtariST => "".to_string(),
-        SystemType::Atari2600 => "128B".to_string(),
-        SystemType::SuperNintendo => "128K".to_string(),
-        SystemType::AtariXL => "Atari XL".to_string(),
-        SystemType::Tic80 => "272KB".to_string(),
-        SystemType::Pico8 => "?".to_string(),
-        SystemType::Flash => "?".to_string(),
-        _ => "?".to_string(),
-    }
-}
-
-fn get_system_name(work_file: &WorkingFile) -> String {
-    let tags = &work_file.settings;
-    let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
-    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let mut base = match work_file.system_type {
-        SystemType::C64 => "C64",
-        SystemType::Amiga => "Amiga",
-        SystemType::Amstrad => "Amstrad CPC",
-        SystemType::Megadrive => "Megadrive",
-        SystemType::ZXSpectrum => "ZX Spectrum",
-        SystemType::AtariST => {
-            if ste {
-                "Atari STE"
-            } else {
-                "Atari ST"
-            }
-        }
-        SystemType::Atari2600 => "Atari 2600",
-        SystemType::SuperNintendo => "SNES",
-        SystemType::AtariXL => "Atari XL",
-        SystemType::Tic80 => "Tic-80",
-        SystemType::Pico8 => "Pico8",
-        SystemType::Flash => "Flash",
-        SystemType::Gameboy => "Gameboy",
-        SystemType::Gba => "GBA",
-        SystemType::Psx => "PlayStation",
-        SystemType::Ilbm => "Amiga Gfx",
-        SystemType::Unknown => "Unknown",
-    }
-    .to_string();
-    if work_file.system_type == SystemType::Amiga {
-        if a1200 {
-            base += " (AGA)";
-        } else {
-            base += " 500";
-        }
-    }
-    base
-}
-
-pub fn get_full_info(work_file: &WorkingFile) -> String {
-    let system = get_system_name(work_file);
-    let ram = get_memory(work_file);
-    let len = fs::metadata(&work_file.path).unwrap().len();
-
-    let GameInfo { title, group, year } = &work_file.game_info;
-    let year = if year.is_empty() {
-        "".into()
-    } else {
-        format!(" ({year})")
-    };
-
-    format!("\"{title}\"\n{group}\n{system}{year}\nMem: {ram}\n Size: {len}")
-}
-
-pub fn get_info_text(work_file: &WorkingFile) -> String {
-    let system = get_system_name(work_file);
-    let GameInfo { title, group, year } = &work_file.game_info;
-    let year = if year.is_empty() {
-        "".into()
-    } else {
-        format!(" ({year})")
-    };
-
-    format!("\"{title}\"\n{group}\n{system}{year}")
 }
 
 fn handle_cmd(

@@ -11,7 +11,8 @@ use crate::audio::AudioSink;
 use crate::libretro;
 use crate::retro::create_core;
 use crate::retro_emu::RetroEmu;
-use crate::utils::{SystemType, WorkingFile, handle_file};
+use crate::systems::{SystemType, WorkingFile};
+use crate::utils::handle_file;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
 /// In [`InputMode::Keyboard`] (the default) they map to the corresponding

@@ -15,7 +15,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use crate::commands::{CmdMessage, check_hotkey, get_info_text};
+use crate::commands::{CmdMessage, check_hotkey};
 use crate::emulator::Emulator;
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
@@ -24,42 +24,11 @@ use crate::image_emu::ImageEmu;
 use crate::post_process::PostProcess;
 use crate::retro_emu::{RetroCoreThreaded, RetroEmu};
 use crate::screensaver::ScreenSaverInhibitor;
+use crate::systems::{SystemType, get_core, get_info_text, tags_for_system, tags_from_args};
 use crate::text_input::TextInput;
-use crate::utils::{SystemType, is_psx_exe};
-use crate::{AppSettings, Args, CbmSystem, libloader};
+use crate::{AppSettings, Args};
 
 pub struct RetroPlugin {}
-
-const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
-const CORE_NAME_VICE_64: &str = "vice_x64";
-const CORE_NAME_VICE_DTV: &str = "vice_x64dtv";
-const CORE_NAME_VICE_128: &str = "vice_x128";
-const CORE_NAME_VICE_C16: &str = "vice_xplus4";
-const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
-const CORE_NAME_UAE: &str = "puae";
-const CORE_NAME_AMSTRAD: &str = "cap32";
-const CORE_NAME_ATARI: &str = "hatari";
-const CORE_NAME_MEGADRIVE: &str = "picodrive";
-const CORE_NAME_STELLA: &str = "stella";
-const CORE_NAME_SNES: &str = "bsnes";
-const CORE_NAME_SPECTRUM: &str = "fuse";
-const CORE_NAME_XL: &str = "atari800";
-const CORE_NAME_TIC80: &str = "tic80";
-const CORE_NAME_PICO8: &str = "fake08";
-const CORE_NAME_GAMEBOY: &str = "gambatte";
-const CORE_NAME_GBA: &str = "mgba";
-/// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
-/// default *here*: it faithfully enforces the BIOS licence check, and scene
-/// rips almost always ship with the "Sony Computer Entertainment" licence
-/// sectors blanked, so they drop to the BIOS CD player instead of booting. It
-/// also can't read the MP3 audio tracks scene releases like to use. pcsx_rearmed
-/// does neither check, and its HLE BIOS means no copyrighted image is needed at
-/// all. Set the `psx_core` tag to `beetle` for accuracy on a licenced disc.
-const CORE_NAME_PSX: &str = "pcsx_rearmed";
-const CORE_NAME_PSX_BEETLE: &str = "mednafen_psx";
-/// BIOS images Beetle looks for in the system dir, one per region. Unlike
-/// pcsx_rearmed it has no HLE fallback and won't boot without one.
-const PSX_BIOS: [&str; 3] = ["scph5500.bin", "scph5501.bin", "scph5502.bin"];
 
 const SYSTEM_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/system.zip"));
 
@@ -189,71 +158,8 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
-    let mut tags = HashMap::new();
-    let mut set_var = |name: &str, val: &str| tags.insert(name.into(), val.into());
 
-    set_var("latency", &args.latency.to_string());
-    set_var("fuse_machine", "Spectrum 128K");
-    set_var("atari800_ntscpal", "PAL");
-    //set_var("atari800_system", "Modern XL/XE(576K)");
-    set_var("atari800_system", "Modern XL/XE(1088K)");
-    set_var(
-        "cbm_variant",
-        match args.cbm_variant {
-            CbmSystem::C64 => "c64",
-            CbmSystem::C128 => "c128",
-            CbmSystem::Dtv => "dtv",
-            CbmSystem::C16 => "c16",
-            CbmSystem::VIC20 => "vic20",
-        },
-    );
-    if args.aga {
-        set_var("puae_model", "A1200");
-    }
-    if args.ste {
-        set_var("hatari_machinetype", "ste");
-        set_var("hatari_ramsize", "2");
-    }
-
-    if args.xmem {
-        set_var("hatari_ramsize", "8");
-        set_var("puae_z3mem_size", "128");
-        set_var("puae_chipmem_size", "4");
-        set_var("puae_fastmem_size", "8");
-    }
-    if args.fast {
-        set_var("hatari_ramsize", "8");
-        set_var("puae_z3mem_size", "128");
-        set_var("puae_fpu_model", "68882");
-        set_var("puae_cpu_model", "68030");
-        // set_var("puae_cpu_throttle", "10000");
-        set_var("puae_cpu_compatibility", "exact");
-    }
-
-    if args.silent_drive {
-        set_var("puae_floppy_sound", "100");
-        set_var("vice_drive_sound_emulation", "disabled");
-        set_var("cap32_floppy_sound", "disabled");
-    }
-
-    if args.fast_load {
-        set_var("vice_jiffydos", "enabled");
-        set_var("puae_floppy_speed", "0");
-    }
-
-    if args.reu {
-        set_var("vice_ram_expansion_unit", "16384kB");
-    }
-
-    if args.color_cycle {
-        set_var("color_cycle", "enabled");
-    }
-
-    for opt in &args.extra_options {
-        if let Some((key, val)) = opt.split_once("=") {
-            set_var(key.trim(), val.trim());
-        }
-    }
+    let tags = tags_from_args(args);
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
@@ -463,43 +369,6 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
-pub fn get_core(
-    system_type: SystemType,
-    tags: &HashMap<String, String>,
-) -> Result<PathBuf, &'static str> {
-    let cv = tags.get("cbm_variant").map_or("", |s| s.as_str());
-    info!("CBM VARIANT {cv}");
-    let core_name = match system_type {
-        SystemType::C64 if cv == "dtv" => CORE_NAME_VICE_DTV,
-        SystemType::C64 if cv == "c128" => CORE_NAME_VICE_128,
-        SystemType::C64 if cv == "c64_fast" => CORE_NAME_VICE_64,
-        SystemType::C64 if cv == "c16" => CORE_NAME_VICE_C16,
-        SystemType::C64 if cv == "vic20" => CORE_NAME_VICE_VIC20,
-        SystemType::C64 => CORE_NAME_VICE_64SC,
-        SystemType::Amiga => CORE_NAME_UAE,
-        SystemType::Amstrad => CORE_NAME_AMSTRAD,
-        SystemType::AtariST => CORE_NAME_ATARI,
-        SystemType::Megadrive => CORE_NAME_MEGADRIVE,
-        SystemType::Atari2600 => CORE_NAME_STELLA,
-        SystemType::SuperNintendo => CORE_NAME_SNES,
-        SystemType::ZXSpectrum => CORE_NAME_SPECTRUM,
-        SystemType::AtariXL => CORE_NAME_XL,
-        SystemType::Tic80 => CORE_NAME_TIC80,
-        SystemType::Pico8 => CORE_NAME_PICO8,
-        SystemType::Gameboy => CORE_NAME_GAMEBOY,
-        SystemType::Gba => CORE_NAME_GBA,
-        SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
-            CORE_NAME_PSX_BEETLE
-        }
-        SystemType::Psx => CORE_NAME_PSX,
-        SystemType::Ilbm => return Err(""),
-        SystemType::Flash => return Err(""),
-        SystemType::Unknown => return Err(""),
-    };
-
-    libloader::get_libretro(core_name).ok_or(core_name)
-}
-
 pub fn create_core(
     system_type: SystemType,
     game: &Path,
@@ -517,50 +386,9 @@ pub fn create_core(
     if system_type == SystemType::Ilbm {
         return Ok(Box::new(ImageEmu::new(game)?));
     }
-    // Read before `set_var` borrows `tags` mutably for the rest of the function.
-    // pcsx_rearmed refuses to load a raw PS-X EXE outright, so those always go
-    // to Beetle regardless of the disc-oriented default.
-    let psx_beetle = system_type == SystemType::Psx
-        && (tags.get("psx_core").is_some_and(|c| c == "beetle") || is_psx_exe(game));
-    let mut set_var = |name: &str, val: &str| {
-        if !tags.contains_key(name) {
-            tags.insert(name.into(), val.into());
-        }
-    };
-    if system_type == SystemType::Amiga {
-        set_var("puae_model", "A500");
-        //set_var("puae_crop_mode", "4:3");
-        set_var("puae_crop", "smaller");
-        set_var("puae_horizontal_pos", "-5");
-    } else if system_type == SystemType::C64 {
-        set_var("vice_sid_extra", "none");
-        set_var("vice_sid_model", "8580");
-        set_var("vice_sound_sample_rate", "44100");
-    } else if system_type == SystemType::Amstrad {
-        set_var("cap32_statusbar", "disabled");
-    } else if system_type == SystemType::AtariST {
-        set_var("hatari_forcerefresh", "2");
-        set_var("hatari_start_in_mouse_mode", "false");
-        set_var("hatari_fastboot", "true");
-        set_var("hatari_video_crop_overscan", "false");
-    } else if system_type == SystemType::Psx && !psx_beetle {
-        set_var("pcsx_rearmed_bios", "HLE");
-        set_var("pcsx_rearmed_region", "PAL");
-    } else if system_type == SystemType::Psx && psx_beetle {
-        set_var("psx_core", "beetle");
-        set_var("beetle_psx_region", "pal");
-        // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
-        // a bare load error with no hint, so name the files up front.
-        let dir = system_dir();
-        if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
-            bail!(
-                "Beetle PSX needs a BIOS: put one of {} in {:?}. Beetle is \
-                 required here because pcsx_rearmed cannot load PS-X EXE files.",
-                PSX_BIOS.join(", "),
-                dir
-            );
-        }
-    }
+
+    tags_for_system(system_type, &mut tags);
+
     match get_core(system_type, &tags) {
         Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
             Path::new(&core),

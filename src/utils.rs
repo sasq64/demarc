@@ -7,29 +7,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::retro::system_dir;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub enum SystemType {
-    C64,
-    Amiga,
-    Amstrad,
-    AtariST,
-    Megadrive,
-    Atari2600,
-    SuperNintendo,
-    ZXSpectrum,
-    AtariXL,
-    Tic80,
-    Pico8,
-    Flash,
-    Gameboy,
-    Gba,
-    Psx,
-    Ilbm,
-    #[default]
-    Unknown,
-}
+use crate::{
+    retro::system_dir,
+    systems::{GameInfo, SystemType, WorkingFile, get_system_type},
+};
 
 fn check_reset_vector(data: &[u8]) -> bool {
     let len = data.len();
@@ -343,7 +324,7 @@ pub fn is_psx_exe(path: &Path) -> bool {
 
 /// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
 /// file is shorter.
-fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
+pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let mut buf = vec![0u8; len];
     let mut file = fs::File::open(path)?;
@@ -361,7 +342,7 @@ fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
 /// True if a `.cue` sheet declares at least one non-audio track. Game discs
 /// carry their data in a `MODE1`/`MODE2` track; a pure audio-CD rip has only
 /// `TRACK nn AUDIO` entries.
-fn cue_has_data_track(path: &Path) -> bool {
+pub fn cue_has_data_track(path: &Path) -> bool {
     let Ok(head) = read_header(path, 64 * 1024) else {
         return false;
     };
@@ -369,132 +350,6 @@ fn cue_has_data_track(path: &Path) -> bool {
         let line = line.trim();
         line.starts_with("TRACK") && !line.ends_with("AUDIO")
     })
-}
-
-pub fn get_system_type(path: &Path) -> SystemType {
-    let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
-        ext.to_lowercase()
-    } else {
-        "".to_string()
-    };
-    let mut system_type = match ext.as_str() {
-        "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
-        "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
-        "dsk" => SystemType::Amstrad,
-        "msa" | "st" => SystemType::AtariST,
-        "a26" => SystemType::Atari2600,
-        "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
-        "smc" | "sfc" => SystemType::SuperNintendo,
-        "atr" | "xex" | "atx" => SystemType::AtariXL,
-        "tic80" | "tic" => SystemType::Tic80,
-        "p8" => SystemType::Pico8,
-        "gb" | "gbc" => SystemType::Gameboy,
-        "gba" | "agb" => SystemType::Gba,
-        // CD-image containers. The sheet points at the bulk track data, so it —
-        // not the `.bin` — is what gets loaded.
-        "chd" | "pbp" | "ccd" | "toc" | "psx" => SystemType::Psx,
-        // A `.cue` is just as likely to be an audio-CD rip sitting in a music
-        // library, so it only counts as PlayStation if it has a data track.
-        "cue" if cue_has_data_track(path) => SystemType::Psx,
-        "swf" => SystemType::Flash,
-        "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
-        _ => SystemType::Unknown,
-    };
-    if system_type == SystemType::Unknown {
-        info!("Checking {:?}", path);
-        if path.is_file() {
-            // Only the first 0x200 bytes are ever inspected; CD tracks and other
-            // bulk images are far too big to pull into memory just to sniff.
-            let Ok(data) = read_header(path, 0x200) else {
-                return SystemType::Unknown;
-            };
-            let Ok(l) = fs::metadata(path).map(|m| m.len() as usize) else {
-                return SystemType::Unknown;
-            };
-            if data.len() >= 4 {
-                if data.len() >= 0x200
-                    && std::str::from_utf8(&data[0x100..0x110])
-                        .unwrap_or("")
-                        .starts_with("SEGA ")
-                {
-                    system_type = SystemType::Megadrive;
-                } else if l >= 8 && &data[0..8] == b"PS-X EXE" {
-                    system_type = SystemType::Psx;
-                } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
-                    system_type = SystemType::Atari2600;
-                } else if data[0..2] == [0x60, 0x1a] {
-                    system_type = SystemType::AtariST;
-                } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
-                    system_type = SystemType::Amiga;
-                } else if l >= 12 && &data[0..4] == b"FORM" && &data[8..12] == b"ILBM" {
-                    system_type = SystemType::Ilbm;
-                } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
-                    // Flash SWF signatures: uncompressed / zlib / LZMA.
-                    system_type = SystemType::Flash;
-                } else if (0x0400..=0x0801).contains(&u16::from_le_bytes(
-                    data[..2].try_into().unwrap_or_default(),
-                )) && ext == "prg"
-                {
-                    system_type = SystemType::C64;
-                }
-            }
-        }
-    }
-    debug!("Found {system_type:?}");
-    system_type
-}
-
-#[derive(Debug, Default)]
-pub struct WorkingFile {
-    pub path: PathBuf,
-    pub system_type: SystemType,
-    pub settings: HashMap<String, String>,
-    pub game_info: GameInfo,
-    is_temp: bool,
-}
-
-impl Drop for WorkingFile {
-    fn drop(&mut self) {
-        if !self.is_temp {
-            return;
-        }
-        // `path` may be the temp dir itself (Amiga), a file inside it (Atari
-        // disk image), or a subdirectory of it (zip with a single top-level
-        // dir). Walk up to the `demarc-` temp root and remove the whole tree.
-        //
-        // Safety: every builder that sets `is_temp` roots `path` in a
-        // `demarc-` dir created under the system temp dir. Rather than trust
-        // that invariant, only ever remove a directory that (a) is itself
-        // named `demarc-*` and (b) lives under the system temp dir. If no such
-        // ancestor is found we bail out — never walk up to `/` and delete
-        // something we shouldn't.
-        let tmp_root = std::env::temp_dir();
-        let mut dir = self.path.as_path();
-        loop {
-            let is_demarc_root = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("demarc-"));
-            if is_demarc_root {
-                if dir.starts_with(&tmp_root) {
-                    _ = fs::remove_dir_all(dir);
-                } else {
-                    warn!("Refusing to remove temp dir outside {tmp_root:?}: {dir:?}");
-                }
-                return;
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => {
-                    warn!(
-                        "Temp WorkingFile has no demarc- ancestor, not removing: {:?}",
-                        self.path
-                    );
-                    return;
-                }
-            }
-        }
-    }
 }
 
 struct M3u {
@@ -533,13 +388,6 @@ fn parse_m3u(path: &Path) -> Result<M3u> {
         }
     }
     Ok(M3u { tags, files })
-}
-
-#[derive(Default, Debug)]
-pub struct GameInfo {
-    pub title: String,
-    pub group: String,
-    pub year: String,
 }
 
 fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -857,6 +705,10 @@ fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<Work
     }
 
     if !path.is_dir() {
+        if is_psx_exe(&path) {
+            tags.insert("psx_core".into(), "beetle".into());
+        }
+
         // Only the first four bytes are examined below; the Amiga branch works
         // off `path`, not the contents.
         let data = read_header(&path, 4)?;
@@ -949,10 +801,7 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
         year = t.clone();
     }
     for (key, val) in m3u.tags {
-        if key.starts_with("vice_")
-            || key.starts_with("puae_")
-            || key.starts_with("hatari_")
-        {
+        if key.starts_with("vice_") || key.starts_with("puae_") || key.starts_with("hatari_") {
             tags.insert(key, val);
         }
     }
@@ -1127,7 +976,9 @@ mod tests {
         let cue = dir.path().join("game.cue");
         fs::write(&cue, "FILE DISC_T1.BIN BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
 
-        let out = prepare_psx_disc(&cue).unwrap().expect("should be rewritten");
+        let out = prepare_psx_disc(&cue)
+            .unwrap()
+            .expect("should be rewritten");
         let text = fs::read_to_string(&out).unwrap();
         assert!(
             text.contains("\"disc_t1.bin\""),
@@ -1153,7 +1004,10 @@ mod tests {
             fs::write(&cue, "FILE T1.BIN BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
             seen.push(prepare_psx_disc(&cue).unwrap().unwrap());
         }
-        assert_eq!(seen[0], seen[1], "identical discs must share one cache entry");
+        assert_eq!(
+            seen[0], seen[1],
+            "identical discs must share one cache entry"
+        );
         let _ = fs::remove_dir_all(seen[0].parent().unwrap());
     }
 
@@ -1306,6 +1160,6 @@ mod tests {
         let mut out = vec![];
         collect_files(&assets, &mut out, false);
         println!("{:?}", out);
-        assert_eq!(out.len(), 8);
+        assert_eq!(out.len(), 9);
     }
 }
