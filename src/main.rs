@@ -16,7 +16,6 @@ mod commands;
 mod emulator;
 #[cfg(feature = "flash")]
 mod flash_emu;
-mod gl_context;
 mod hud;
 mod ilbm;
 mod image_emu;

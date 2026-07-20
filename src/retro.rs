@@ -48,9 +48,6 @@ const CORE_NAME_TIC80: &str = "tic80";
 const CORE_NAME_PICO8: &str = "fake08";
 const CORE_NAME_GAMEBOY: &str = "gambatte";
 const CORE_NAME_GBA: &str = "mgba";
-/// Renders through OpenGL (GLideN64) rather than to a pixel buffer — see
-/// [`crate::gl_context`].
-const CORE_NAME_N64: &str = "mupen64plus_next";
 /// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
 /// default *here*: it faithfully enforces the BIOS licence check, and scene
 /// rips almost always ship with the "Sony Computer Entertainment" licence
@@ -491,7 +488,6 @@ pub fn get_core(
         SystemType::Pico8 => CORE_NAME_PICO8,
         SystemType::Gameboy => CORE_NAME_GAMEBOY,
         SystemType::Gba => CORE_NAME_GBA,
-        SystemType::N64 => CORE_NAME_N64,
         SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
             CORE_NAME_PSX_BEETLE
         }
@@ -547,10 +543,6 @@ pub fn create_core(
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
         set_var("hatari_video_crop_overscan", "false");
-    } else if system_type == SystemType::N64 {
-        set_var("mupen64plus-rdp-plugin", "gliden64");
-        set_var("mupen64plus-rsp-plugin", "hle");
-        set_var("mupen64plus-ThreadedRenderer", "False");
     } else if system_type == SystemType::Psx && !psx_beetle {
         set_var("pcsx_rearmed_bios", "HLE");
         set_var("pcsx_rearmed_region", "PAL");

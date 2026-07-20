@@ -251,7 +251,6 @@ fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Flash => "Flash",
         SystemType::Gameboy => "Gameboy",
         SystemType::Gba => "GBA",
-        SystemType::N64 => "Nintendo 64",
         SystemType::Psx => "PlayStation",
         SystemType::Ilbm => "Amiga Gfx",
         SystemType::Unknown => "Unknown",

@@ -25,7 +25,6 @@ pub enum SystemType {
     Flash,
     Gameboy,
     Gba,
-    N64,
     Psx,
     Ilbm,
     #[default]
@@ -391,7 +390,6 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "p8" => SystemType::Pico8,
         "gb" | "gbc" => SystemType::Gameboy,
         "gba" | "agb" => SystemType::Gba,
-        "n64" | "v64" | "z64" => SystemType::N64,
         // CD-image containers. The sheet points at the bulk track data, so it —
         // not the `.bin` — is what gets loaded.
         "chd" | "pbp" | "ccd" | "toc" | "psx" => SystemType::Psx,
@@ -420,14 +418,6 @@ pub fn get_system_type(path: &Path) -> SystemType {
                         .starts_with("SEGA ")
                 {
                     system_type = SystemType::Megadrive;
-                } else if matches!(
-                    &data[0..4],
-                    // N64 ROM header magic in each of the three byte orders that
-                    // dumps ship in: big-endian .z64, byte-swapped .v64 and
-                    // little-endian .n64. mupen64plus_next reorders internally.
-                    [0x80, 0x37, 0x12, 0x40] | [0x37, 0x80, 0x40, 0x12] | [0x40, 0x12, 0x37, 0x80]
-                ) {
-                    system_type = SystemType::N64;
                 } else if l >= 8 && &data[0..8] == b"PS-X EXE" {
                     system_type = SystemType::Psx;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
@@ -962,7 +952,6 @@ fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingF
         if key.starts_with("vice_")
             || key.starts_with("puae_")
             || key.starts_with("hatari_")
-            || key.starts_with("mupen64plus-")
         {
             tags.insert(key, val);
         }

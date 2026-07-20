@@ -522,10 +522,9 @@ impl Emulator {
         // so none of the audio-buffer-driven pacing below applies to it.
         //
         // Keyed on samples actually arriving, not on the core advertising a
-        // sample rate: mupen64plus_next reports 44.1kHz but emits nothing at all
-        // for a silent ROM, and treating that as "has audio" makes the
-        // buffer-dry check below fire on every single frame, running the demo at
-        // double speed.
+        // sample rate: a core can report 44.1kHz yet emit nothing at all for a
+        // silent ROM, and treating that as "has audio" makes the buffer-dry check
+        // below fire on every single frame, running the demo at double speed.
         let has_audio = self.audio_seen;
         let occupied_len = self.sink.occupied_len();
 
