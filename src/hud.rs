@@ -227,11 +227,15 @@ fn spawn_toast(
 }
 
 #[derive(Message)]
-pub struct TextListSelect(pub usize);
+pub struct TextListSelect {
+    pub id: usize,
+    pub index: usize,
+}
 
 /// A scrollable list of strings rendered inside a semi-transparent bordered box.
 #[derive(Default, Component)]
 pub struct TextList {
+    pub id: usize,
     pub items: Vec<String>,
     pub scroll_position: usize,
     pub visible_count: usize,
@@ -251,6 +255,7 @@ impl TextList {
     ///
     /// The caller can insert/override the [`Node`] on the returned entity to position it.
     pub fn spawn(
+        id: usize,
         commands: &mut Commands,
         font: Handle<Font>,
         items: Vec<String>,
@@ -285,6 +290,7 @@ impl TextList {
                         BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
                         BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
                         TextList {
+                            id,
                             items,
                             visible_count,
                             controlled: true,
@@ -325,7 +331,10 @@ impl TextList {
                     list.selected += 1;
                 }
                 if input.just_pressed(KeyCode::Enter) {
-                    writer.write(TextListSelect(list.selected));
+                    writer.write(TextListSelect {
+                        id: list.id,
+                        index: list.selected,
+                    });
                 }
             }
         }

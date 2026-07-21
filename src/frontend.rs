@@ -15,7 +15,7 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey};
 use crate::emulator::Emulator;
-use crate::hud::{HudLocation, SetHudText};
+use crate::hud::{HudLocation, SetHudText, TextListSelect};
 use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::systems::{SystemType, get_info_text, tags_from_args};
@@ -174,6 +174,21 @@ fn setup_retro(world: &mut World) {
                 speed_test,
                 Some((i, cell)),
             );
+        }
+    }
+}
+
+fn handle_textlist(
+    mut commands: Commands,
+    mut settings: ResMut<AppSettings>,
+    mut reader: MessageReader<TextListSelect>,
+) {
+    for &TextListSelect { id, index } in reader.read() {
+        if id == 1 {
+            println!("START {index}");
+            if let Some(e) = settings.file_list.take() {
+                commands.entity(e).despawn();
+            }
         }
     }
 }
@@ -594,7 +609,12 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (run_retro, update_grid_viewports, draw_current_emu_outline),
+            (
+                run_retro,
+                update_grid_viewports,
+                draw_current_emu_outline,
+                handle_textlist,
+            ),
         );
     }
 }

@@ -40,6 +40,8 @@ pub enum Cmd {
     PrevEmu,
     Maximize,
     NextFileAll,
+    OpenFile,
+    Reload,
 }
 
 #[derive(Message)]
@@ -103,6 +105,7 @@ const HOTKEYS: &[KeyMapping] = &[
         "Toggle Joystick/Keyboard cursor keys",
         Cmd::ToggleInput,
     ),
+    KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
@@ -149,13 +152,21 @@ fn handle_textlist(
     mut writer: MessageWriter<CmdMessage>,
     time: Res<Time>,
 ) {
-    for index in reader.read() {
-        if index.0 < HOTKEYS.len() {
-            let cmd = HOTKEYS[index.0].cmd;
+    for &TextListSelect { id, index } in reader.read() {
+        if id == 0 && index < HOTKEYS.len() {
+            let cmd = HOTKEYS[index].cmd;
             writer.write(CmdMessage(cmd, false));
             if let Some(e) = settings.text_list.take() {
                 commands.entity(e).despawn();
             }
+        }
+        if id == 1 {
+            debug!("START {index}");
+            if let Some(e) = settings.file_list.take() {
+                commands.entity(e).despawn();
+            }
+            settings.current_game = index as isize;
+            writer.write(CmdMessage(Cmd::Reload, false));
         }
     }
     let hot_key_pressed =
@@ -181,7 +192,7 @@ fn handle_textlist(
                         }
                     })
                     .collect::<Vec<_>>();
-                let entity = TextList::spawn(&mut commands, font, lines, 8, 580.0);
+                let entity = TextList::spawn(0, &mut commands, font, lines, 8, 580.0);
                 settings.text_list = Some(entity);
             }
         }
@@ -196,6 +207,7 @@ fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut commands: Commands,
     mut emus: Query<&mut Emulator>,
+    asset_server: Res<AssetServer>,
     mut settings: ResMut<AppSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
@@ -279,6 +291,22 @@ fn handle_cmd(
                     });
                 }
             }
+            Cmd::OpenFile => {
+                let mut names = Vec::new();
+                for file in &settings.files {
+                    //let info = get_info(game).unwrap_or_default();
+                    names.push(
+                        file.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                    //
+                }
+                let font: Handle<Font> = asset_server.load("font.ttf");
+                let entity = TextList::spawn(1, &mut commands, font, names, 10, 350.0);
+                settings.file_list = Some(entity);
+            }
             _ => {}
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
@@ -309,6 +337,10 @@ fn handle_cmd(
                             duration: Duration::from_secs(1),
                             location: HudLocation::BottomLeft,
                         });
+                    }
+                    Cmd::Reload => {
+                        settings.current_game -= 1;
+                        emu.run_next = true;
                     }
                     Cmd::PauseResume => {
                         emu.paused = !emu.paused;

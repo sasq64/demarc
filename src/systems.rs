@@ -68,14 +68,14 @@ pub enum SystemType {
     Unknown,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct GameInfo {
     pub title: String,
     pub group: String,
     pub year: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct WorkingFile {
     pub path: PathBuf,
     pub system_type: SystemType,

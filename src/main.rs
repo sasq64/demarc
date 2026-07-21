@@ -353,6 +353,7 @@ struct AppSettings {
     all_emus: bool,
     last_draw: f64,
     text_list: Option<Entity>,
+    file_list: Option<Entity>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
