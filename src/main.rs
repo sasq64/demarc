@@ -1,5 +1,5 @@
 #![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -43,7 +43,7 @@ use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
-use crate::files::{EmuFile, collect_file, collect_files};
+use crate::files::{EmuFile, collect_db, collect_file, collect_files};
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -75,6 +75,10 @@ demarc --grid=3x3 gfx/*.prg
 struct Args {
     /// Path to the files to load, or an http(s):// URL to download and run
     files: Vec<PathBuf>,
+
+    /// Demo database file to load
+    #[arg(long)]
+    db: Option<String>,
 
     /// Treat disk images in same dir as separate files
     #[arg(long)]
@@ -488,6 +492,13 @@ fn main() {
 
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
+
+    // Load entries from a tab-separated demo database (id, title, group, date,
+    // party, type, tags, url). Each URL is fetched on demand when loaded.
+    if let Some(db) = &args.db {
+        collect_db(Path::new(db), &mut files).unwrap();
+    }
+
     for file in std::mem::take(&mut args.files) {
         // Download HTTP(S) URLs to the local cache and continue with the file,
         // so demarc can be launched directly with a link from a browser.

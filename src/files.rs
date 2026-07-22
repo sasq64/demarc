@@ -79,6 +79,59 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     })
 }
 
+/// Parse a tab-separated demo database file into `EmuFile` entries appended to
+/// `out`.
+///
+/// Each non-blank line holds the fields `id, title, group, date, party, type,
+/// tags, url` separated by tabs. The `url` becomes the entry's path and is
+/// downloaded on demand the first time it's loaded (see [`prepare_file`]); the
+/// year is the first `-`/`/`/`.`-delimited part of `date`. The remaining scene
+/// metadata (`party`, `type`, `tags`) is kept under matching keys. Lines with
+/// no URL are skipped.
+pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
+    };
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let _id = fields.next().unwrap_or_default();
+        let title = fields.next().unwrap_or_default().to_string();
+        let group = fields.next().unwrap_or_default().to_string();
+        let date = fields.next().unwrap_or_default();
+        let party = fields.next().unwrap_or_default();
+        let demo_type = fields.next().unwrap_or_default();
+        let tag_list = fields.next().unwrap_or_default();
+        let url = fields.next().unwrap_or_default().trim();
+        if url.is_empty() {
+            continue;
+        }
+
+        let year = date
+            .split(['-', '/', '.'])
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let mut tags = HashMap::new();
+        for (key, val) in [("party", party), ("type", demo_type), ("tags", tag_list)] {
+            if !val.is_empty() {
+                tags.insert(key.to_string(), val.to_string());
+            }
+        }
+
+        out.push(EmuFile {
+            path: PathBuf::from(url),
+            system_type: get_system_type(Path::new(url)),
+            tags,
+            game_info: GameInfo { title, group, year },
+        });
+    }
+    Ok(())
+}
+
 pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
     if in_path
         .extension()
@@ -172,6 +225,14 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
         game_info,
     } = emu_file.clone();
     let mut is_temp = false;
+
+    // Entries whose path is an http(s):// URL (e.g. from a `--db` list) are
+    // downloaded to the local cache on first load, then handled like any other
+    // local file. The cache means later loads of the same URL are free.
+    if let Some(url) = path.to_str().filter(|s| crate::fetch::is_url(s)) {
+        path = crate::fetch::fetch_url(url)?;
+        system_type = get_system_type(&path);
+    }
 
     if path.is_file() && is_zip_file(&path) {
         debug!("FMT: zip archive");
@@ -491,6 +552,42 @@ mod tests {
         let wf = prepare("testdata/test.iff");
         assert_eq!(wf.system_type, SystemType::Ilbm);
         assert_eq!(wf.path, root.join("testdata/test.iff"));
+    }
+
+    /// A tab-separated db line becomes an `EmuFile` whose path is the URL and
+    /// whose metadata is split out of the fields (year from the date, scene tags
+    /// preserved). Blank lines and URL-less lines are skipped.
+    #[test]
+    fn collect_db_parses_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("demos.txt");
+        fs::write(
+            &db,
+            "1\tEdge of Disgrace\tBooze Design\t2008-04-01\tBreakpoint\tdemo\tc64,fav\thttps://example.com/eod.d64\n\
+             \n\
+             2\tNo URL\tGroup\t1994\tParty\tintro\t\t\n\
+             3\tNexus 7\tAndromeda\t1994/12/30\t\t\t\thttps://example.com/nexus7.zip\n",
+        )
+        .unwrap();
+
+        let mut out = vec![];
+        collect_db(&db, &mut out).unwrap();
+        assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
+
+        let eod = &out[0];
+        assert_eq!(eod.path, PathBuf::from("https://example.com/eod.d64"));
+        assert_eq!(eod.system_type, SystemType::C64);
+        assert_eq!(eod.game_info.title, "Edge of Disgrace");
+        assert_eq!(eod.game_info.group, "Booze Design");
+        assert_eq!(eod.game_info.year, "2008");
+        assert_eq!(eod.tags.get("party").unwrap(), "Breakpoint");
+        assert_eq!(eod.tags.get("type").unwrap(), "demo");
+        assert_eq!(eod.tags.get("tags").unwrap(), "c64,fav");
+
+        let nexus = &out[1];
+        assert_eq!(nexus.game_info.title, "Nexus 7");
+        assert_eq!(nexus.game_info.year, "1994");
+        assert!(nexus.tags.is_empty(), "empty scene fields left out");
     }
 
     /// A directory of `.prg`s mixed with `.png` previews: every program is
