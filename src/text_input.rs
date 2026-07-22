@@ -18,6 +18,10 @@ pub struct TextInputSubmitted {
 pub struct TextInput {
     pub text: String,
     pub showing: bool,
+    /// When true, the Enter key is left untouched for another system to handle
+    /// instead of submitting and clearing the input. Used when the input is
+    /// embedded in a larger widget (e.g. `FuzzyList`) that owns Enter itself.
+    pub ignore_enter: bool,
 }
 
 #[derive(Debug, Default, Component)]
@@ -30,14 +34,17 @@ struct Cursor;
 
 impl TextInput {
     fn was_added(mut commands: Commands, query: Query<(&TextInput, Entity), Added<TextInput>>) {
-        let cursor_x = 50.0;
         let line_height = 20.0;
         for (text_input, entity) in query {
             commands.entity(entity).with_children(|parent| {
+                // The text flows normally (not absolute) so the parent's padding
+                // insets it equally on every side — the box centers it. Reserve a
+                // line of height so an empty field keeps the same size (and stays
+                // centered) as a filled one instead of collapsing to zero.
                 parent.spawn((
                     Node {
-                        position_type: PositionType::Absolute,
                         width: Val::Auto,
+                        min_height: Val::Px(line_height + 4.0),
                         ..default()
                     },
                     Text::new(&text_input.text),
@@ -48,10 +55,14 @@ impl TextInput {
                     },
                     TextBuffer::default(),
                 ));
+                // The cursor overlays the text. It's an absolute sibling (a
+                // direct child of the box, not of the `Text` node — `Text`
+                // treats children as spans), positioned each frame in
+                // `update_cursor` by the box's padding plus the caret's glyph x.
                 parent.spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(cursor_x),
+                        left: Val::Px(0.0),
                         top: Val::Px(0.0),
                         width: Val::Px(2.0),
                         height: Val::Px(line_height),
@@ -93,16 +104,24 @@ impl TextInput {
         mut buffer: Query<(&mut Text, &mut TextBuffer, &ChildOf)>,
         mut submitted: MessageWriter<TextInputSubmitted>,
     ) {
+        // Drain the reader once, up front. The same keystrokes are applied to
+        // whichever input is currently visible. Reading here rather than inside
+        // the entity loop is essential once more than one `TextInput` exists
+        // (e.g. a `FuzzyList` search box plus the hidden standalone input): a
+        // `MessageReader` shares a single cursor, so the first entity to call
+        // `read()` would otherwise consume every event and leave the rest with
+        // nothing.
+        let keys: Vec<KeyboardInput> = messages.read().cloned().collect();
+
         for (mut node, mut text_input, entity) in query {
             if node.display == Display::None {
-                messages.clear();
                 continue;
             }
             for (mut text, mut b, child_of) in &mut buffer {
                 if entity != child_of.parent() {
                     continue;
                 }
-                for key in messages.read() {
+                for key in &keys {
                     if matches!(key.state, ButtonState::Pressed) {
                         let pos = b.pos;
                         info!("{:?}", key);
@@ -128,14 +147,18 @@ impl TextInput {
                                 }
                             }
                             Key::Enter => {
-                                node.display = Display::None;
-                                text_input.showing = false;
-                                submitted.write(TextInputSubmitted {
-                                    text: b.buffer.join(""),
-                                });
-                                b.buffer.clear();
-                                b.pos = 0;
-                                text_input.text.clear();
+                                // When embedded, let the owning widget handle
+                                // Enter (selection) rather than submitting here.
+                                if !text_input.ignore_enter {
+                                    node.display = Display::None;
+                                    text_input.showing = false;
+                                    submitted.write(TextInputSubmitted {
+                                        text: b.buffer.join(""),
+                                    });
+                                    b.buffer.clear();
+                                    b.pos = 0;
+                                    text_input.text.clear();
+                                }
                             }
                             Key::Tab => {}
                             _ => {
@@ -156,17 +179,31 @@ impl TextInput {
     }
     fn update_cursor(
         buffer: Query<(&TextLayoutInfo, &TextBuffer, &ChildOf), Changed<TextLayoutInfo>>,
+        boxes: Query<&ComputedNode>,
         mut cursor: Query<(&mut Node, &ChildOf), With<Cursor>>,
     ) {
-        for (layout, buffer, child_of) in buffer {
-            let x = if layout.glyphs.len() > buffer.pos {
-                layout.glyphs[buffer.pos].position.x / layout.scale_factor - 5.0
+        for (layout, b, child_of) in buffer {
+            // The text and cursor are absolute siblings inside the input box, but
+            // the in-flow text sits at the box's content origin (inset by its
+            // padding) while an absolute cursor sits at the padding-box edge.
+            // Add the box's resolved padding so the cursor lines up with the text.
+            let (pad_left, pad_top) = boxes
+                .get(child_of.parent())
+                .map(|c| {
+                    let s = c.inverse_scale_factor();
+                    (c.padding().min_inset.x * s, c.padding().min_inset.y * s)
+                })
+                .unwrap_or((0.0, 0.0));
+
+            let x = if layout.glyphs.len() > b.pos {
+                layout.glyphs[b.pos].position.x / layout.scale_factor - 5.0
             } else {
                 layout.size.x
             };
-            for (mut node, child_of2) in cursor.iter_mut() {
-                if child_of.parent() == child_of2.parent() {
-                    node.left = Val::Px(x);
+            for (mut node, cursor_child_of) in cursor.iter_mut() {
+                if child_of.parent() == cursor_child_of.parent() {
+                    node.left = Val::Px(pad_left + x);
+                    node.top = Val::Px(pad_top);
                 }
             }
         }
@@ -240,6 +277,7 @@ mod tests {
                 TextInput {
                     text: String::new(),
                     showing: true,
+                    ignore_enter: false,
                 },
                 Node::default(),
             ))
@@ -426,6 +464,35 @@ mod tests {
         send(&mut app, [press_char("h"), press_char("i")]);
 
         assert_eq!(buffer_text(&mut app, entity), "");
+    }
+
+    /// A hidden input must not swallow keystrokes meant for a visible one.
+    /// This is the multi-`TextInput` case a `FuzzyList` creates (its visible
+    /// search box coexists with the hidden standalone input): a shared
+    /// `MessageReader` cursor used to let whichever entity ran first drain the
+    /// events, starving the rest.
+    #[test]
+    fn visible_input_reads_keys_alongside_a_hidden_one() {
+        let mut app = setup();
+
+        // Hidden input.
+        app.world_mut().spawn((
+            TextInput {
+                text: String::new(),
+                showing: false,
+                ignore_enter: false,
+            },
+            Node {
+                display: Display::None,
+                ..default()
+            },
+        ));
+        // Visible input.
+        let visible = spawn_input(&mut app);
+
+        send(&mut app, [press_char("h"), press_char("i")]);
+
+        assert_eq!(buffer_text(&mut app, visible), "hi");
     }
 
     #[test]

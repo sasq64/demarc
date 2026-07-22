@@ -15,7 +15,8 @@ use bevy::{
 
 use crate::commands::{CmdMessage, check_hotkey};
 use crate::emulator::Emulator;
-use crate::hud::{HudLocation, SetHudText, TextListSelect};
+use crate::fuzzy_list::FuzzyListSelect;
+use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::systems::{SystemType, get_info_text, tags_from_args};
@@ -158,6 +159,7 @@ fn setup_retro(world: &mut World) {
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
     let speed_test = args.speed_test;
+    let select = args.select;
 
     let cells = grid_layout(args);
 
@@ -176,16 +178,26 @@ fn setup_retro(world: &mut World) {
             );
         }
     }
+
+    // With `--select` the user picks a file from the selector before anything
+    // runs, so clear the default `run_next` that would otherwise auto-load the
+    // first file. `open_select_menu` opens the selector on the first frame.
+    if select {
+        let mut emus = world.query::<&mut Emulator>();
+        for mut emu in emus.iter_mut(world) {
+            emu.run_next = false;
+        }
+    }
 }
 
 fn handle_textlist(
     mut commands: Commands,
     mut settings: ResMut<AppSettings>,
-    mut reader: MessageReader<TextListSelect>,
+    mut reader: MessageReader<FuzzyListSelect>,
 ) {
-    for &TextListSelect { id, index } in reader.read() {
+    for &FuzzyListSelect { id, item, .. } in reader.read() {
         if id == 1 {
-            println!("START {index}");
+            println!("START {item}");
             if let Some(e) = settings.file_list.take() {
                 commands.entity(e).despawn();
             }
@@ -381,6 +393,7 @@ const fn config_line_width() -> f32 {
 fn run_retro(
     mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
+    lists: Query<&TextList>,
     mut settings: ResMut<AppSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
@@ -392,6 +405,9 @@ fn run_retro(
     mut cameras: Query<(&EmuView, &Camera, &mut PostProcess)>,
 ) {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
+    // A controlled TextList is capturing keyboard navigation; while it is open,
+    // swallow all keys so they don't also reach the emulated machine.
+    let modal = lists.iter().any(|l| l.controlled);
     let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
     if hot_key {
         settings.last_draw = time.elapsed_secs_f64();
@@ -486,7 +502,7 @@ fn run_retro(
             let game = settings.files[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
-                    let text = format!("{:?}: {e:?}", game.file_name().unwrap_or_default());
+                    let text = format!("{:?}: {e:?}", game.path.file_name().unwrap_or_default());
                     writer.write(SetHudText {
                         text,
                         delay: Duration::from_secs(0),
@@ -530,7 +546,7 @@ fn run_retro(
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu) && cmd.is_none() {
+        if (settings.all_emus || i == settings.current_emu) && cmd.is_none() && !modal {
             let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }

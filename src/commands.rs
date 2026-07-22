@@ -10,6 +10,7 @@ use bevy::{
 
 use crate::AppSettings;
 use crate::emulator::{Emulator, InputMode};
+use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, SubstringSource};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
@@ -149,6 +150,7 @@ fn handle_textlist(
     asset_server: Res<AssetServer>,
     input: Res<ButtonInput<KeyCode>>,
     mut reader: MessageReader<TextListSelect>,
+    mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
     time: Res<Time>,
 ) {
@@ -160,12 +162,16 @@ fn handle_textlist(
                 commands.entity(e).despawn();
             }
         }
+    }
+    // The file picker is a `FuzzyList`; `item` is the stable index into
+    // `settings.files`, independent of the current search filter.
+    for &FuzzyListSelect { id, item, .. } in file_reader.read() {
         if id == 1 {
-            debug!("START {index}");
+            debug!("START {item}");
             if let Some(e) = settings.file_list.take() {
                 commands.entity(e).despawn();
             }
-            settings.current_game = index as isize;
+            settings.current_game = item as isize;
             writer.write(CmdMessage(Cmd::Reload, false));
         }
     }
@@ -196,10 +202,13 @@ fn handle_textlist(
                 settings.text_list = Some(entity);
             }
         }
-    } else if input.just_pressed(KeyCode::Escape)
-        && let Some(e) = settings.text_list.take()
-    {
-        commands.entity(e).despawn();
+    } else if input.just_pressed(KeyCode::Escape) {
+        if let Some(e) = settings.text_list.take() {
+            commands.entity(e).despawn();
+        }
+        if let Some(e) = settings.file_list.take() {
+            commands.entity(e).despawn();
+        }
     }
 }
 
@@ -295,16 +304,29 @@ fn handle_cmd(
                 let mut names = Vec::new();
                 for file in &settings.files {
                     //let info = get_info(game).unwrap_or_default();
-                    names.push(
-                        file.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string(),
-                    );
+                    if !file.game_info.title.is_empty() {
+                        if file.game_info.group.is_empty() {
+                            names.push(file.game_info.title.to_string());
+                        } else {
+                            names.push(format!(
+                                "{} / {}",
+                                file.game_info.title, file.game_info.group
+                            ));
+                        }
+                    } else {
+                        names.push("???".into());
+                    }
                     //
                 }
                 let font: Handle<Font> = asset_server.load("font.ttf");
-                let entity = TextList::spawn(1, &mut commands, font, names, 10, 350.0);
+                let entity = FuzzyList::spawn(
+                    1,
+                    &mut commands,
+                    font,
+                    SubstringSource::new(names),
+                    10,
+                    650.0,
+                );
                 settings.file_list = Some(entity);
             }
             _ => {}
@@ -489,6 +511,22 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
 
 pub struct CommandPlugin;
 
+/// When `--select` is passed, open the file-open selector once on the first
+/// frame. `setup_retro` has already suppressed the default auto-load, so the
+/// emulators stay idle until the user picks a file from the selector.
+fn open_select_menu(
+    args: Res<crate::Args>,
+    mut writer: MessageWriter<CmdMessage>,
+    mut done: Local<bool>,
+) {
+    if !*done {
+        *done = true;
+        if args.select {
+            writer.write(CmdMessage(Cmd::OpenFile, false));
+        }
+    }
+}
+
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>();
@@ -496,6 +534,7 @@ impl Plugin for CommandPlugin {
         app.add_systems(
             Update,
             (
+                open_select_menu,
                 handle_textlist,
                 handle_media_keys,
                 handle_cmd.run_if(on_message::<CmdMessage>),

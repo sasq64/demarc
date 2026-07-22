@@ -7,9 +7,9 @@
 //! platforms the plugin compiles to a no-op.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, Monitor, PrimaryWindow, WindowPosition};
 #[cfg(not(target_os = "linux"))]
 use bevy::window::WindowMode;
+use bevy::window::{CursorOptions, Monitor, PrimaryWindow, WindowPosition};
 
 pub struct ScreenSaverPlugin;
 

@@ -75,7 +75,7 @@ pub struct GameInfo {
     pub year: String,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct WorkingFile {
     pub path: PathBuf,
     pub system_type: SystemType,

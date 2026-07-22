@@ -15,3 +15,12 @@ HUD for Warp, Pause, Shader,Border,Screenshot
 * Select menu for shortcuts and files
 
 
+STEPS
+
+Populate Info at startup.
+
+* meta data from m3u
+
+LOAD does not need m3u
+
+

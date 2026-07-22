@@ -15,9 +15,11 @@ mod audio;
 mod commands;
 mod emulator;
 mod fetch;
+mod files;
 #[cfg(feature = "flash")]
 mod flash_emu;
 mod frontend;
+mod fuzzy_list;
 mod hud;
 mod ilbm;
 mod image_emu;
@@ -33,6 +35,7 @@ mod utils;
 
 use commands::CommandPlugin;
 use frontend::{RetroPlugin, system_dir};
+use fuzzy_list::FuzzyListPlugin;
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
 use screensaver::ScreenSaverPlugin;
@@ -40,7 +43,7 @@ use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
-use crate::utils::collect_files;
+use crate::files::{EmuFile, collect_file, collect_files};
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -76,6 +79,11 @@ struct Args {
     /// Treat disk images in same dir as separate files
     #[arg(long)]
     many: bool,
+
+    /// Start with the file-open selector showing and load nothing automatically.
+    /// Any files/dirs given are still collected and become the selector's list.
+    #[arg(long)]
+    select: bool,
 
     /// How to map emulator screen onto window: `stretch`, `fit`, `zoom`, or a
     /// scale factor like `2` or `2.5` (fractional allowed).
@@ -345,7 +353,7 @@ struct AppSettings {
     scale_mode: ScaleMode,
     crt_effect: bool,
     show_info: bool,
-    files: Vec<PathBuf>,
+    files: Vec<EmuFile>,
     current_game: isize,
     max_time: Option<usize>,
     current_emu: usize,
@@ -495,12 +503,12 @@ fn main() {
         };
         if file.is_dir() {
             let len = files.len();
-            collect_files(&file, &mut files, args.many);
+            collect_files(&file, &mut files, args.many).unwrap();
             if len == files.len() {
-                files.push(file);
+                files.push(collect_file(&file).unwrap());
             }
         } else {
-            files.push(file);
+            files.push(collect_file(&file).unwrap());
         }
     }
     if args.shuffle {
@@ -529,13 +537,12 @@ fn main() {
     }
     let primary_window = Some(window);
 
-    let shader =
-        args.shader.unwrap_or_else(
-            || match files.first().map(|g| systems::get_system_type(g)) {
-                Some(systems::SystemType::Gameboy | systems::SystemType::Gba) => ShaderArg::Lcd,
-                _ => ShaderArg::Lottes,
-            },
-        );
+    let shader = args.shader.unwrap_or(ShaderArg::Lottes);
+    //     || match files.first().map(|g| systems::get_system_type(g)) {
+    //         Some(systems::SystemType::Gameboy | systems::SystemType::Gba) => ShaderArg::Lcd,
+    //         _ => ShaderArg::Lottes,
+    //     },
+    // );
     // A user-supplied `--preset` wins; otherwise resolve the bundled preset by
     // name. Both resolve to an absolute `.slangp` path; the passthrough
     // (`stock.slangp`) is always the bundled one.
@@ -615,6 +622,7 @@ fn main() {
             },
             HudPlugin,
             TextInputPlugin,
+            FuzzyListPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,
         ));

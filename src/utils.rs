@@ -7,10 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    frontend::system_dir,
-    systems::{GameInfo, SystemType, WorkingFile, get_system_type},
-};
+use crate::systems::{SystemType, get_system_type};
 
 fn check_reset_vector(data: &[u8]) -> bool {
     let len = data.len();
@@ -227,7 +224,7 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
 /// linked, so the copy is nearly free.
 ///
 /// Returns the rewritten cue, or `None` if every track is already playable.
-fn prepare_psx_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
+pub fn prepare_psx_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     let text = fs::read_to_string(cue_path)?;
     let files = parse_cue_files(&text);
     if files.is_empty() {
@@ -352,12 +349,12 @@ pub fn cue_has_data_track(path: &Path) -> bool {
     })
 }
 
-struct M3u {
-    tags: HashMap<String, String>,
-    files: Vec<PathBuf>,
+pub struct M3u {
+    pub tags: HashMap<String, String>,
+    pub files: Vec<PathBuf>,
 }
 
-fn parse_m3u(path: &Path) -> Result<M3u> {
+pub fn parse_m3u(path: &Path) -> Result<M3u> {
     let contents = std::fs::read_to_string(path)?;
     let mut tags = HashMap::new();
     let mut files: Vec<PathBuf> = vec![];
@@ -390,7 +387,7 @@ fn parse_m3u(path: &Path) -> Result<M3u> {
     Ok(M3u { tags, files })
 }
 
-fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
+pub fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
         let path = e.path();
         let matches = path
@@ -413,14 +410,14 @@ fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// True if `game` is a directory containing an `s/startup-sequence` boot script,
-fn is_self_booting_dir(game: &Path) -> bool {
+pub fn is_self_booting_dir(game: &Path) -> bool {
     find_child(game, "s").is_some_and(|s_dir| find_child(&s_dir, "startup-sequence").is_some())
 }
 /// Build a bootable Atari ST FAT12 floppy image containing an `AUTO` directory
 /// with `data` (a GEMDOS executable from `src`) copied into it, so it runs
 /// automatically when the disk boots. Returns the path to the `.st` image,
 /// which lives inside a fresh temp directory.
-fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
+pub fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
     use std::io::Write;
 
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
@@ -465,7 +462,7 @@ fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
 /// Copy `files` into a fresh temp directory and write a `demo.m3u` that
 /// references each copied file by name. Returns the path to the `.m3u`, which
 /// lives inside the temp directory alongside the copied files.
-fn build_m3u(files: &[PathBuf]) -> Result<PathBuf> {
+pub fn build_m3u(files: &[PathBuf]) -> Result<PathBuf> {
     use std::io::Write;
 
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
@@ -495,7 +492,7 @@ fn build_m3u(files: &[PathBuf]) -> Result<PathBuf> {
 /// 3. Files with no digit at all come last, e.g. `anything.d64`.
 ///
 /// Within each group files are ordered by name for a stable, predictable result.
-fn sort_disks(files: &mut [PathBuf]) {
+pub fn sort_disks(files: &mut [PathBuf]) {
     fn rank(path: &Path) -> u8 {
         let stem = path
             .file_stem()
@@ -519,7 +516,7 @@ fn sort_disks(files: &mut [PathBuf]) {
 
 /// True if `path` is a regular file beginning with the ZIP local-file-header
 /// magic (`PK\x03\x04`).
-fn is_zip_file(path: &Path) -> bool {
+pub fn is_zip_file(path: &Path) -> bool {
     let Ok(mut file) = fs::File::open(path) else {
         return false;
     };
@@ -530,7 +527,7 @@ fn is_zip_file(path: &Path) -> bool {
 
 /// True if `path` is a regular file whose LHA/LZH method id (`-lhX-`, `-lzX-`)
 /// sits at offset 2, as in every LHA archive header.
-fn is_lha_file(path: &Path) -> bool {
+pub fn is_lha_file(path: &Path) -> bool {
     let Ok(mut file) = fs::File::open(path) else {
         return false;
     };
@@ -541,7 +538,7 @@ fn is_lha_file(path: &Path) -> bool {
 
 /// Extract `path` (a zip archive) into a fresh temp directory and return that
 /// directory.
-fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
+pub fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
     archive.extract(&target_dir)?;
@@ -550,7 +547,7 @@ fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
 
 /// Extract `path` (an LHA/LZH archive) into a fresh temp directory and return
 /// that directory.
-fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
+pub fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
     use std::io::Read;
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     let mut reader = delharc::parse_file(path)?;
@@ -576,7 +573,7 @@ fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
     Ok(target_dir)
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -591,19 +588,19 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
 }
 
 /// Result of recursively scanning a release directory.
-struct ScannedDir {
+pub struct ScannedDir {
     /// Disk images (`.d64`, `.adf`, `.atr`) found anywhere under the directory.
-    disk_images: Vec<PathBuf>,
+    pub disk_images: Vec<PathBuf>,
     /// The first recognized file of any type encountered during the walk.
-    first_file: Option<PathBuf>,
+    pub first_file: Option<PathBuf>,
     /// System type of the last disk image found, or of the first recognized
     /// file when no disk images were present. `Unknown` if nothing matched.
-    system_type: SystemType,
+    pub system_type: SystemType,
 }
 
 /// Recursively scan `dir`, collecting disk images and remembering the first
 /// recognized file along with the system type that should be used.
-fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
+pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
     let mut disk_images = vec![];
     let mut first_file = None;
     let mut system_type = SystemType::Unknown;
@@ -649,259 +646,6 @@ fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
         system_type,
     })
 }
-
-fn handle_release(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
-    let mut system_type = get_system_type(in_path);
-    let mut path = in_path.to_owned();
-    let mut tags = tags.clone();
-    let mut is_temp = false;
-    let game_info = GameInfo {
-        title: path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string(),
-        ..Default::default()
-    };
-
-    if path.is_file() && is_zip_file(&path) {
-        debug!("FMT: zip archive");
-        path = unzip_to_temp(&path)?;
-        is_temp = true;
-        system_type = get_system_type(&path);
-    } else if path.is_file() && is_lha_file(&path) {
-        debug!("FMT: lha archive");
-        path = unlha_to_temp(&path)?;
-        is_temp = true;
-        system_type = get_system_type(&path);
-    }
-    let mut copy_all = false;
-
-    if path.is_dir() {
-        if is_self_booting_dir(&path) {
-            debug!("FMT: Amiga self-booting");
-            system_type = SystemType::Amiga;
-            tags.insert("puae_use_whdload".into(), "disabled".into());
-        } else if has_matching(&path, ".slave").is_some() {
-            debug!("FMT: Amiga WHDLoad");
-            system_type = SystemType::Amiga;
-            tags.insert("puae_model".into(), "A1200".into());
-            tags.insert("puae_use_whdload".into(), "enabled".into());
-        } else {
-            let scan = scan_release_dir(&path)?;
-            if scan.system_type != SystemType::Unknown {
-                system_type = scan.system_type;
-            }
-            let mut files = scan.disk_images;
-            if files.len() > 1 {
-                sort_disks(&mut files);
-                path = build_m3u(&files)?;
-                is_temp = true;
-            } else if let Some(f) = scan.first_file {
-                path = f;
-                copy_all = true;
-            }
-        }
-    }
-
-    if !path.is_dir() {
-        if is_psx_exe(&path) {
-            tags.insert("psx_core".into(), "beetle".into());
-        }
-
-        // Only the first four bytes are examined below; the Amiga branch works
-        // off `path`, not the contents.
-        let data = read_header(&path, 4)?;
-        if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
-            // GEMDOS executable: wrap it in a bootable Atari ST floppy image
-            // with the program in the AUTO folder so it runs on boot.
-            path = build_atari_auto_disk(&data)?;
-            is_temp = true;
-            system_type = SystemType::AtariST;
-        } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
-            system_type = SystemType::C64;
-        } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
-            debug!("FMT: Amiga exe: {path:?}");
-            if std::fs::metadata(&path)?.len() > 850 * 1024 {
-                tags.insert("puae_model".into(), "A1200".into());
-            }
-            let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-            let s_dir = target_dir.join("s");
-            fs::create_dir(&s_dir)?;
-            let c_dir = target_dir.join("c");
-            fs::create_dir(&c_dir)?;
-            fs::copy(system_dir().join("c").join("echo"), c_dir.join("echo"))?;
-            let mut text: String = "".into();
-            let model = tags.get("puae_model").map_or("", |s| s.as_str());
-            if model == "A1200" || model == "A4000" {
-                fs::copy(
-                    system_dir().join("c").join("SetPatch"),
-                    c_dir.join("SetPatch"),
-                )?;
-                text += "SetPatch QUIET\n";
-            }
-            if copy_all {
-                let name = path.file_name().unwrap().to_str().unwrap();
-                text += &format!("echo \"Loading...\"\n{name}\n");
-            } else {
-                text += "echo \"Loading...\"\namiga_file\n";
-            }
-            fs::write(s_dir.join("startup-sequence"), text)?;
-            if copy_all {
-                copy_dir_all(path.parent().unwrap(), &target_dir)?;
-            } else {
-                fs::copy(&path, target_dir.join("amiga_file"))?;
-            }
-            path = target_dir;
-            is_temp = true;
-            tags.insert("puae_use_whdload".into(), "disabled".into());
-            system_type = SystemType::Amiga;
-        }
-    };
-
-    // The rewritten disc lives in the cache and is reused across runs, so it is
-    // deliberately not marked temp — `WorkingFile`'s drop must not delete it.
-    if system_type == SystemType::Psx
-        && path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
-    {
-        match prepare_psx_disc(&path) {
-            Ok(Some(rewritten)) => path = rewritten,
-            Ok(None) => {}
-            Err(err) => warn!("Could not prepare PSX disc {path:?}: {err}"),
-        }
-    }
-
-    Ok(WorkingFile {
-        system_type,
-        path,
-        settings: tags,
-        game_info,
-        is_temp,
-    })
-}
-
-fn handle_m3u(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
-    let mut title: String = "".into();
-    let mut group: String = "".into();
-    let mut year: String = "".into();
-    let mut system_type = SystemType::Unknown;
-    let mut tags = tags.clone();
-
-    let m3u = parse_m3u(in_path)?;
-    info!("{:?}", m3u.tags);
-    if let Some(t) = m3u.tags.get("title") {
-        title = t.clone();
-    }
-    if let Some(t) = m3u.tags.get("group") {
-        group = t.clone();
-    }
-    if let Some(t) = m3u.tags.get("year") {
-        year = t.clone();
-    }
-    for (key, val) in m3u.tags {
-        if key.starts_with("vice_") || key.starts_with("puae_") || key.starts_with("hatari_") {
-            tags.insert(key, val);
-        }
-    }
-
-    if m3u.files.is_empty() {
-        debug!("FMT: M3U metadata only");
-        let mut wf = handle_release(in_path.parent().unwrap(), &tags)?;
-        wf.game_info.title = title;
-        wf.game_info.group = group;
-        wf.game_info.year = year;
-        return Ok(wf);
-    }
-
-    if let Some(path) = m3u.files.first() {
-        let real_path = in_path.parent().unwrap().join(path);
-        system_type = get_system_type(&real_path);
-        debug!("FMT: M3U {system_type:?}");
-    }
-    if !tags.contains_key("vice_jiffydos") {
-        tags.insert("vice_jiffydos".into(), "enabled".into());
-    }
-
-    let game_info = GameInfo { title, group, year };
-
-    Ok(WorkingFile {
-        system_type,
-        path: in_path.to_owned(),
-        settings: tags,
-        game_info,
-        is_temp: false,
-    })
-}
-
-/// Options
-/// - Vaild M3u (for System) with tags
-/// - Metadata only M3U (Unknown system) with tags-> Redirect to parent
-/// - Direct file, no meta data, with tags
-pub fn handle_file(in_path: &Path, tags: &HashMap<String, String>) -> Result<WorkingFile> {
-    info!("Handle {in_path:?}");
-    if let Some(ext) = in_path.extension()
-        && ext == "m3u"
-    {
-        handle_m3u(in_path, tags)
-    } else {
-        handle_release(in_path, tags)
-    }
-}
-
-/// Recursively collect all detected emulator files under `dir` into `out`.
-pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, many: bool) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            warn!("Failed to read directory {}: {err}", dir.display());
-            return;
-        }
-    };
-    let mut files = vec![];
-    let mut dirs = vec![];
-    let mut found_type = SystemType::Unknown;
-    let mut mixed = many;
-    let mut disk_images = true;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            dirs.push(path);
-        } else if path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("m3u"))
-        {
-            out.push(path);
-            return;
-        } else {
-            let t = get_system_type(&path);
-            if t != SystemType::Unknown {
-                if found_type != SystemType::Unknown && found_type != t {
-                    mixed = true;
-                }
-                if !is_disk_image(&path) {
-                    disk_images = false;
-                }
-                found_type = t;
-                files.push(path);
-            }
-        }
-    }
-
-    // Mixed types in directory, add every valid file one by one
-    // Amiga: Always add parent dir (to get data files)
-    if mixed || ((!disk_images) && found_type != SystemType::Amiga) {
-        out.extend(files.iter().map(|f| f.into()));
-    } else if found_type != SystemType::Unknown {
-        out.push(dir.to_owned());
-        return;
-    }
-    for dir in dirs {
-        collect_files(&dir, out, many);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1071,95 +815,5 @@ mod tests {
         let disc = dir.path().join("disc.cue");
         fs::write(&disc, "FILE \"d.bin\" BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
         assert!(!is_psx_exe(&disc));
-    }
-
-    #[test]
-    fn atari_exe() {
-        let assets = Path::new("demos").to_owned();
-        let wf = handle_file(&assets.join("natrium.prg"), &HashMap::new()).unwrap();
-        assert_eq!(wf.system_type, SystemType::AtariST);
-        println!("{:?}", wf);
-    }
-
-    #[test]
-    fn amiga_m3u() {
-        let assets = Path::new("demos").to_owned();
-        let wf = handle_file(&assets.join("nexus7").join("demo.m3u"), &HashMap::new()).unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.settings.get("puae_model").unwrap(), "A1200");
-        assert_eq!(wf.system_type, SystemType::Amiga);
-    }
-
-    #[test]
-    fn amiga_exe() {
-        let assets = Path::new("demos").to_owned();
-        let wf = handle_file(&assets.join("o2-intro").join("o2intro"), &HashMap::new()).unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.system_type, SystemType::Amiga);
-        assert!(wf.path.join("s").exists());
-        assert!(wf.path.join("s/startup-sequence").exists());
-        assert!(wf.path.join("amiga_file").exists());
-    }
-
-    #[test]
-    fn amiga_lha() {
-        let assets = Path::new("testdata").to_owned();
-        let wf = handle_file(&assets.join("vS10-ami.lha"), &HashMap::new()).unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.system_type, SystemType::Amiga);
-        assert!(wf.path.join("s").exists());
-        assert!(wf.path.join("s/startup-sequence").exists());
-    }
-
-    #[test]
-    fn zip_with_extra_files() {
-        let assets = Path::new("testdata").to_owned();
-        let wf = handle_file(
-            &assets.join("gigabates_Terrain-Spotting.zip"),
-            &HashMap::new(),
-        )
-        .unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.system_type, SystemType::Tic80);
-        assert!(wf.path.extension().unwrap_or_default().to_str() == Some("tic"));
-    }
-
-    #[test]
-    fn prg_dir() {
-        let assets = Path::new("testdata").to_owned();
-        let mut out = vec![];
-        collect_files(&assets.join("intros"), &mut out, true);
-        println!("{:?}", out);
-        assert_eq!(out.len(), 15);
-        let wf = handle_file(&out[0], &HashMap::new()).unwrap();
-        println!("{:?}", wf);
-        assert_eq!(wf.system_type, SystemType::C64);
-    }
-
-    #[test]
-    fn ilbm_file() {
-        // Detected both by the `.iff` extension and, for a hypothetical
-        // unrecognized extension, by the FORM/ILBM signature.
-        let wf = handle_file(Path::new("testdata/test.iff"), &HashMap::new()).unwrap();
-        assert_eq!(wf.system_type, SystemType::Ilbm);
-        assert_eq!(wf.path, Path::new("testdata/test.iff"));
-    }
-
-    #[test]
-    fn collect_amiga() {
-        let assets = Path::new("demos").to_owned();
-        let mut out = vec![];
-        collect_files(&assets.join("o2-intro"), &mut out, false);
-        println!("{:?}", out);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn all_demos() {
-        let assets = Path::new("demos").to_owned();
-        let mut out = vec![];
-        collect_files(&assets, &mut out, false);
-        println!("{:?}", out);
-        assert_eq!(out.len(), 9);
     }
 }

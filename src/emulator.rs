@@ -9,6 +9,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
+use crate::files::{EmuFile, prepare_file};
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
@@ -16,7 +17,6 @@ use crate::image_emu::ImageEmu;
 use crate::libretro;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
-use crate::utils::handle_file;
 
 pub fn create_core(
     system_type: SystemType,
@@ -37,6 +37,7 @@ pub fn create_core(
     }
 
     tags_for_system(system_type, &mut tags);
+    println!("TAGS: {tags:?}");
 
     match get_core(system_type, &tags) {
         Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
@@ -469,13 +470,17 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
-    pub fn load(&mut self, time: &Time, game: &Path) -> Result<()> {
-        let work_file = handle_file(game, &self.tags)?;
+    pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
+        let work_file = prepare_file(emu_file)?;
         self.core = None;
+        let mut tags = work_file.settings.clone();
+        for (key, val) in &self.tags {
+            tags.insert(key.clone(), val.clone());
+        }
         let core = create_core(
             work_file.system_type,
             &work_file.path,
-            work_file.settings.clone(),
+            tags,
             self.speed_test,
         )?;
         let t = work_file.system_type;

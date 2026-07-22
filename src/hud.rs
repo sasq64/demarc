@@ -264,8 +264,7 @@ impl TextList {
     ) -> Entity {
         // Full-screen container that centers the content-sized box; the returned
         // entity is the box itself (the one carrying `TextList`).
-        let mut box_entity = Entity::PLACEHOLDER;
-        commands
+        let overlay = commands
             .spawn(Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(0.0),
@@ -276,59 +275,93 @@ impl TextList {
                 align_items: AlignItems::Center,
                 ..default()
             })
-            .with_children(|parent| {
-                box_entity = parent
-                    .spawn((
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            width: Val::Px(width),
-                            padding: UiRect::all(Val::Px(16.0)),
-                            border: UiRect::all(Val::Px(2.0)),
-                            row_gap: Val::Px(4.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
-                        BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
-                        TextList {
-                            id,
-                            items,
-                            visible_count,
-                            controlled: true,
-                            ..Default::default()
-                        },
-                    ))
-                    .with_children(|box_node| {
-                        for i in 0..visible_count {
-                            box_node.spawn((
-                                Text::new(""),
-                                TextFont {
-                                    font: font.clone().into(),
-                                    font_size: FontSize::Px(22.0),
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                                BackgroundColor(Color::NONE),
-                                TextListRow(i),
-                            ));
-                        }
-                    })
-                    .id();
-            });
+            .id();
+        Self::spawn_box(commands, overlay, id, font, items, visible_count, width)
+    }
+
+    /// Spawns just the bordered list box (and its row text entities) as a child
+    /// of `parent`, returning the box entity carrying [`TextList`]. Shared by
+    /// [`TextList::spawn`] and other widgets (e.g. `FuzzyList`) that embed a
+    /// list inside their own layout.
+    pub fn spawn_box(
+        commands: &mut Commands,
+        parent: Entity,
+        id: usize,
+        font: Handle<Font>,
+        items: Vec<String>,
+        visible_count: usize,
+        width: f32,
+    ) -> Entity {
+        let mut box_entity = Entity::PLACEHOLDER;
+        commands.entity(parent).with_children(|parent| {
+            box_entity = parent
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        width: Val::Px(width),
+                        padding: UiRect::all(Val::Px(16.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
+                    //BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
+                    TextList {
+                        id,
+                        items,
+                        visible_count,
+                        controlled: true,
+                        ..Default::default()
+                    },
+                ))
+                .with_children(|box_node| {
+                    for i in 0..visible_count {
+                        box_node.spawn((
+                            Text::new(""),
+                            TextFont {
+                                font: font.clone().into(),
+                                font_size: FontSize::Px(22.0),
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                            BackgroundColor(Color::NONE),
+                            TextListRow(i),
+                        ));
+                    }
+                })
+                .id();
+        });
         box_entity
     }
-    fn update_keys(
+    pub(crate) fn update_keys(
         input: Res<ButtonInput<KeyCode>>,
         mut lists: Query<&mut TextList>,
         mut writer: MessageWriter<TextListSelect>,
     ) {
         for mut list in &mut lists {
             if list.controlled {
-                if input.just_pressed(KeyCode::ArrowUp) && list.selected > 0 {
-                    list.selected -= 1;
+                if list.items.is_empty() {
+                    continue;
                 }
-                if input.just_pressed(KeyCode::ArrowDown) && list.selected < (list.items.len() - 1)
-                {
-                    list.selected += 1;
+                let last = list.items.len() - 1;
+                let page = list.visible_count.max(1);
+                if input.just_pressed(KeyCode::ArrowUp) {
+                    list.selected = list.selected.saturating_sub(1);
+                }
+                if input.just_pressed(KeyCode::ArrowDown) {
+                    list.selected = (list.selected + 1).min(last);
+                }
+                if input.just_pressed(KeyCode::PageUp) {
+                    list.selected = list.selected.saturating_sub(page);
+                }
+                if input.just_pressed(KeyCode::PageDown) {
+                    list.selected = (list.selected + page).min(last);
+                }
+                if input.just_pressed(KeyCode::Home) {
+                    list.selected = 0;
+                }
+                if input.just_pressed(KeyCode::End) {
+                    list.selected = last;
                 }
                 if input.just_pressed(KeyCode::Enter) {
                     writer.write(TextListSelect {
