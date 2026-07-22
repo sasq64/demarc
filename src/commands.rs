@@ -8,7 +8,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
-use crate::AppSettings;
+use crate::{AppSettings, RenderSettings};
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyQueryStore, SubstringSource};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
@@ -218,6 +218,7 @@ fn handle_cmd(
     mut emus: Query<&mut Emulator>,
     asset_server: Res<AssetServer>,
     mut settings: ResMut<AppSettings>,
+    mut render: ResMut<RenderSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
@@ -230,9 +231,9 @@ fn handle_cmd(
         debug!("CMD: {:?}", cmd.0);
         match cmd.0 {
             Cmd::ToggleCrt => {
-                settings.crt_effect = !settings.crt_effect;
+                render.crt_effect = !render.crt_effect;
                 writer.write(SetHudText {
-                    text: (if settings.crt_effect {
+                    text: (if render.crt_effect {
                         "Filter on"
                     } else {
                         "Filter off"
@@ -244,14 +245,14 @@ fn handle_cmd(
                 });
             }
             Cmd::ToggleBorder => {
-                settings.border_mode = if settings.border_mode == BorderMode::Stretch {
+                render.border_mode = if render.border_mode == BorderMode::Stretch {
                     BorderMode::Black
                 } else {
                     BorderMode::Stretch
                 };
             }
             Cmd::ChangeScale => {
-                settings.scale_mode = match settings.scale_mode {
+                render.scale_mode = match render.scale_mode {
                     ScaleMode::Stretch => ScaleMode::Fit,
                     ScaleMode::Fit => ScaleMode::Zoom,
                     ScaleMode::Zoom => ScaleMode::Stretch,
@@ -260,7 +261,7 @@ fn handle_cmd(
                     ScaleMode::Fixed(_) => ScaleMode::Fit,
                 };
                 writer.write(SetHudText {
-                    text: format!("{:?}", settings.scale_mode),
+                    text: format!("{:?}", render.scale_mode),
                     delay: Duration::from_secs(0),
                     duration: Duration::from_secs(1),
                     location: HudLocation::TopLeft,

@@ -351,11 +351,20 @@ impl From<BorderModeArg> for BorderMode {
     }
 }
 
+/// The subset of settings the render world needs. This is the only resource
+/// that is [`ExtractResource`], so it is the only thing Bevy clones into the
+/// render world each frame — keeping the large [`AppSettings`] (and its `files`
+/// vec) off the per-frame extract path. Mutated directly by hotkeys in the main
+/// world (see `handle_cmd`); the extract copies the fresh values across.
 #[derive(Resource, Default, Clone, ExtractResource)]
-struct AppSettings {
+struct RenderSettings {
     border_mode: BorderMode,
     scale_mode: ScaleMode,
     crt_effect: bool,
+}
+
+#[derive(Resource, Default)]
+struct AppSettings {
     show_info: bool,
     files: Vec<EmuFile>,
     current_game: isize,
@@ -563,13 +572,15 @@ fn main() {
     };
     let passthrough_path = system_dir().join("shaders/slangp/stock.slangp");
 
-    let settings = AppSettings {
+    let render_settings = RenderSettings {
         border_mode: args.border.into(),
         scale_mode: args.scale.into(),
-        current_game: -1,
         // `--shader none` starts with the shaders disabled; an
         // explicit `--preset` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
+    };
+    let settings = AppSettings {
+        current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         files: files.clone(),
@@ -590,6 +601,7 @@ fn main() {
     }
     app.insert_resource(args)
         .insert_resource(settings)
+        .insert_resource(render_settings)
         .insert_resource(ClearColor(clear_color))
         .add_plugins((
             DefaultPlugins

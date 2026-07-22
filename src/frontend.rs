@@ -21,7 +21,7 @@ use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::systems::{SystemType, get_info_text, tags_from_args};
 use crate::text_input::TextInput;
-use crate::{AppSettings, Args};
+use crate::{AppSettings, Args, RenderSettings};
 
 pub struct RetroPlugin {}
 
@@ -395,6 +395,7 @@ fn run_retro(
     input: Res<ButtonInput<KeyCode>>,
     lists: Query<&TextList>,
     mut settings: ResMut<AppSettings>,
+    render: Res<RenderSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
@@ -467,7 +468,7 @@ fn run_retro(
                 src,
                 pp.aspect,
                 pp.aspect_tweak,
-                settings.scale_mode,
+                render.scale_mode,
             );
             let frame_uv = (screen_uv - uv_offset) / uv_scale;
             // Ignore hits in the letterbox bars, where the cursor is off-image.

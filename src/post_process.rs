@@ -37,7 +37,7 @@ use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use crate::AppSettings;
+use crate::RenderSettings;
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
@@ -64,7 +64,7 @@ pub struct PostProcessPlugin {
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            ExtractResourcePlugin::<AppSettings>::default(),
+            ExtractResourcePlugin::<RenderSettings>::default(),
             ExtractComponentPlugin::<PostProcess>::default(),
             ExtractComponentPlugin::<PostProcessUniform>::default(),
             ExtractComponentPlugin::<BorderScissor>::default(),
@@ -158,7 +158,7 @@ pub struct BorderScissor(pub Option<URect>);
 
 fn update_post_process_uniform(
     images: Res<Assets<Image>>,
-    settings: Res<AppSettings>,
+    settings: Res<RenderSettings>,
     mut commands: Commands,
     mut query: Query<(
         Entity,
@@ -185,7 +185,7 @@ fn update_post_process_uniform(
 /// viewport (`Stretch`/`Zoom` scaling), so we never scissor away visible pixels.
 fn compute_scissor(
     u: &PostProcessUniform,
-    settings: &AppSettings,
+    settings: &RenderSettings,
     camera: &Camera,
 ) -> Option<URect> {
     if !matches!(settings.border_mode, BorderMode::Black) {
@@ -210,7 +210,7 @@ fn compute_scissor(
 
 fn compute_uniform(
     pp: &PostProcess,
-    settings: &AppSettings,
+    settings: &RenderSettings,
     camera: &Camera,
     images: &Assets<Image>,
 ) -> PostProcessUniform {
@@ -358,7 +358,7 @@ fn post_process_pass(
     pipeline_cache: Res<PipelineCache>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
-    settings: Res<AppSettings>,
+    settings: Res<RenderSettings>,
     chains: Option<ResMut<SlangChains>>,
     mut render_context: RenderContext,
 ) {
