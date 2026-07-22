@@ -10,7 +10,7 @@ use bevy::{
 
 use crate::AppSettings;
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, SubstringSource};
+use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyQueryStore, SubstringSource};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
@@ -221,6 +221,7 @@ fn handle_cmd(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
+    query_store: Res<FuzzyQueryStore>,
 ) {
     let mut show_info = false;
     let count = emus.iter().count();
@@ -326,6 +327,7 @@ fn handle_cmd(
                     SubstringSource::new(names),
                     10,
                     650.0,
+                    query_store.get(1),
                 );
                 settings.file_list = Some(entity);
             }

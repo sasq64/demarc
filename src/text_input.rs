@@ -53,7 +53,14 @@ impl TextInput {
                         justify: Justify::Left,
                         linebreak: LineBreak::NoWrap,
                     },
-                    TextBuffer::default(),
+                    // Seed the buffer from the initial text so a pre-filled
+                    // input (e.g. a restored `FuzzyList` search) survives the
+                    // first keystroke — `on_input` rewrites `TextInput::text`
+                    // from this buffer, so an empty buffer would clear it.
+                    TextBuffer {
+                        buffer: text_input.text.chars().map(|c| c.to_string()).collect(),
+                        pos: text_input.text.chars().count(),
+                    },
                 ));
                 // The cursor overlays the text. It's an absolute sibling (a
                 // direct child of the box, not of the `Text` node — `Text`

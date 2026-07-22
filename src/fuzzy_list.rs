@@ -9,6 +9,8 @@
 //! fuzzy matcher (e.g. `nucleo` / `fuzzy-matcher`), or an external database and
 //! hand it to [`FuzzyList::spawn`]; nothing else changes.
 
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 
 use crate::hud::TextList;
@@ -93,6 +95,21 @@ pub struct FuzzyListSelect {
     pub text: String,
 }
 
+/// Remembers the last query typed into each [`FuzzyList`], keyed by its `id`,
+/// so a widget that is closed and re-opened comes back with the same search
+/// text (and therefore the same filtered view). [`FuzzyList::sync_filter`] keeps
+/// this up to date; pass the stored value to [`FuzzyList::spawn`] as the initial
+/// query to restore it.
+#[derive(Resource, Default)]
+pub struct FuzzyQueryStore(HashMap<usize, String>);
+
+impl FuzzyQueryStore {
+    /// The last query seen for `id`, or `""` if none has been recorded yet.
+    pub fn get(&self, id: usize) -> &str {
+        self.0.get(&id).map(String::as_str).unwrap_or("")
+    }
+}
+
 /// A searchable list: a [`TextInput`] search box above a filtered [`TextList`].
 ///
 /// Spawn with [`FuzzyList::spawn`]; despawn the returned (root) entity to close
@@ -125,6 +142,9 @@ impl FuzzyList {
     ///
     /// `source` is anything implementing [`FuzzySource`]; pass a
     /// `SubstringSource::from(items)` for the simple built-in behaviour.
+    /// `initial_query` pre-fills the search box and filters the initial view —
+    /// pass `""` for a fresh unfiltered list, or a value from
+    /// [`FuzzyQueryStore`] to restore a previously closed widget's search.
     pub fn spawn(
         id: usize,
         commands: &mut Commands,
@@ -132,6 +152,7 @@ impl FuzzyList {
         source: impl FuzzySource,
         visible_count: usize,
         width: f32,
+        initial_query: &str,
     ) -> Entity {
         let source: Box<dyn FuzzySource> = Box::new(source);
         let list_id = INNER_LIST_ID_BASE + id;
@@ -173,7 +194,7 @@ impl FuzzyList {
                 BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
                 //BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
                 TextInput {
-                    text: String::new(),
+                    text: initial_query.to_string(),
                     showing: true,
                     ignore_enter: true,
                 },
@@ -181,8 +202,9 @@ impl FuzzyList {
             .id();
         commands.entity(stack).add_child(input);
 
-        // Initial (unfiltered) results, and the list box to show them.
-        let shown = source.search("", DEFAULT_MAX_RESULTS);
+        // Initial results (filtered by `initial_query`, if any), and the list
+        // box to show them.
+        let shown = source.search(initial_query, DEFAULT_MAX_RESULTS);
         let items = shown.iter().map(|r| r.text.clone()).collect();
         let list = TextList::spawn_box(commands, stack, list_id, font, items, visible_count, width);
 
@@ -190,7 +212,7 @@ impl FuzzyList {
             id,
             source,
             shown,
-            last_query: String::new(),
+            last_query: initial_query.to_string(),
             input,
             list,
             list_id,
@@ -205,6 +227,7 @@ impl FuzzyList {
         mut lists: Query<&mut FuzzyList>,
         inputs: Query<&TextInput>,
         mut text_lists: Query<&mut TextList>,
+        mut store: ResMut<FuzzyQueryStore>,
     ) {
         for mut fuzzy in &mut lists {
             let Ok(input) = inputs.get(fuzzy.input) else {
@@ -221,6 +244,8 @@ impl FuzzyList {
                 list.selected = 0;
                 list.scroll_position = 0;
             }
+            // Remember the query so re-opening this widget restores it.
+            store.0.insert(fuzzy.id, query.clone());
             fuzzy.shown = results;
             fuzzy.last_query = query;
         }
@@ -254,7 +279,9 @@ pub struct FuzzyListPlugin;
 
 impl Plugin for FuzzyListPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<FuzzyListSelect>().add_systems(
+        app.add_message::<FuzzyListSelect>()
+            .init_resource::<FuzzyQueryStore>()
+            .add_systems(
             Update,
             (
                 FuzzyList::sync_filter,
@@ -308,6 +335,7 @@ mod tests {
             SubstringSource::new(items()),
             5,
             400.0,
+            "",
         );
         app.update();
         root
@@ -372,6 +400,37 @@ mod tests {
         type_query(&mut app, "ap");
         type_query(&mut app, "");
         assert_eq!(list_items(&mut app), items());
+    }
+
+    #[test]
+    fn query_survives_close_and_reopen() {
+        let mut app = setup();
+        let root = spawn(&mut app);
+
+        // Type a filter, then close the widget.
+        type_query(&mut app, "ap");
+        assert_eq!(list_items(&mut app), vec!["apple", "apricot", "grape"]);
+        app.world_mut().entity_mut(root).despawn();
+        app.update();
+
+        // Re-open, restoring the remembered query the way the real call site
+        // does, and confirm both the search text and the filtered view return.
+        let restored = app.world().resource::<FuzzyQueryStore>().get(7).to_string();
+        assert_eq!(restored, "ap");
+        FuzzyList::spawn(
+            7,
+            &mut app.world_mut().commands(),
+            Handle::<Font>::default(),
+            SubstringSource::new(items()),
+            5,
+            400.0,
+            &restored,
+        );
+        app.update();
+
+        let input = input_entity(&mut app);
+        assert_eq!(app.world().get::<TextInput>(input).unwrap().text, "ap");
+        assert_eq!(list_items(&mut app), vec!["apple", "apricot", "grape"]);
     }
 
     #[test]
