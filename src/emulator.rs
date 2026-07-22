@@ -477,6 +477,12 @@ impl Emulator {
         for (key, val) in &self.tags {
             tags.insert(key.clone(), val.clone());
         }
+        if let Some(t) = tags.get("tags") {
+            info!("TAGS {t}");
+            if t.contains("AGA Chipset") {
+                tags.insert("puae_model".into(), "A1200".into());
+            }
+        }
         let core = create_core(
             work_file.system_type,
             &work_file.path,
