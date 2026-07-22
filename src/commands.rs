@@ -8,14 +8,15 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
-use crate::{AppSettings, RenderSettings};
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyQueryStore, SubstringSource};
+use crate::fuzzy_list::AllWordsSource;
+use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyQueryStore};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::systems::SystemType;
 use crate::systems::get_info_text;
+use crate::{AppSettings, RenderSettings};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -325,7 +326,7 @@ fn handle_cmd(
                     1,
                     &mut commands,
                     font,
-                    SubstringSource::new(names),
+                    AllWordsSource::new(names),
                     10,
                     650.0,
                     query_store.get(1),

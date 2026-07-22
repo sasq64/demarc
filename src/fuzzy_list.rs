@@ -84,6 +84,46 @@ impl FuzzySource for SubstringSource {
     }
 }
 
+/// In-memory source that matches on all query words independently: the query is
+/// split on whitespace and an item matches only if it contains every word as a
+/// (case-insensitive) substring, in any order. So `"na an"` matches `"banana"`.
+/// Like [`SubstringSource`] it precomputes lowercased copies and scans linearly;
+/// good up to a few thousand entries.
+pub struct AllWordsSource {
+    items: Vec<String>,
+    lowercased: Vec<String>,
+}
+
+impl AllWordsSource {
+    pub fn new(items: Vec<String>) -> Self {
+        let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
+        Self { items, lowercased }
+    }
+}
+
+impl From<Vec<String>> for AllWordsSource {
+    fn from(items: Vec<String>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl FuzzySource for AllWordsSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+        let q = query.to_lowercase();
+        let words: Vec<&str> = q.split_whitespace().collect();
+        self.lowercased
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| words.iter().all(|w| s.contains(w)))
+            .take(limit)
+            .map(|(i, _)| FuzzyItem {
+                id: i,
+                text: self.items[i].clone(),
+            })
+            .collect()
+    }
+}
+
 /// Emitted when the user picks a row (Enter) in a [`FuzzyList`].
 #[derive(Message, Debug, Clone)]
 pub struct FuzzyListSelect {
@@ -431,6 +471,22 @@ mod tests {
         let input = input_entity(&mut app);
         assert_eq!(app.world().get::<TextInput>(input).unwrap().text, "ap");
         assert_eq!(list_items(&mut app), vec!["apple", "apricot", "grape"]);
+    }
+
+    #[test]
+    fn all_words_source_matches_every_word_in_any_order() {
+        let src = AllWordsSource::new(items());
+
+        // Empty query returns everything.
+        let all: Vec<String> = src.search("", 256).into_iter().map(|r| r.text).collect();
+        assert_eq!(all, items());
+
+        // Two words, out of order, both as substrings of the same item.
+        let hits: Vec<String> = src.search("na an", 256).into_iter().map(|r| r.text).collect();
+        assert_eq!(hits, vec!["banana"]);
+
+        // A word matching nothing filters the item out even if others match.
+        assert!(src.search("apple zzz", 256).is_empty());
     }
 
     #[test]
