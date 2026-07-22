@@ -497,6 +497,12 @@ impl Emulator {
             self.is_image = true;
             let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
             self.paused = !cycle_enabled;
+        } else {
+            // Loading a real emulator must clear any lingering still-image state
+            // from a previously opened ILBM, otherwise the fresh core inherits
+            // the image's paused flag and never runs.
+            self.is_image = false;
+            self.paused = false;
         }
 
         self.core = Some(core);
