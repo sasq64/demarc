@@ -360,6 +360,7 @@ fn post_process_pass(
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
     settings: Res<RenderSettings>,
     chains: Option<ResMut<SlangChains>>,
+    render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
     let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
@@ -417,16 +418,18 @@ fn post_process_pass(
         .max(UVec2::ONE);
 
     let device = render_context.render_device().clone();
-    chains.target(&device, source_id, inter_size);
-    // Split the borrow so the target (in `targets`) and the chosen chain
-    // (`effect`/`passthrough`) can be borrowed at once — they're disjoint fields.
-    let SlangChains {
+    // Each source has its own chains and target, loaded on first use; skip the
+    // source if its presets failed to load.
+    let Some(source_chains) = chains.source_chains(&device, &render_queue, source_id, inter_size)
+    else {
+        return;
+    };
+    let SourceChains {
         effect,
         passthrough,
+        target,
         frame_count,
-        targets,
-    } = &mut *chains;
-    let target = &targets[&source_id];
+    } = source_chains;
     let chain = if settings.crt_effect {
         effect
     } else {
@@ -547,102 +550,113 @@ struct IntermediateTarget {
     view: TextureView,
 }
 
-/// The two librashader filter chains plus per-emulator intermediate targets.
-///
-/// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
-/// so it lives as a render-world resource. `frame()` takes `&mut self`, and the
-/// targets are recreated on resize, so the whole thing is accessed via `ResMut`.
-#[derive(Resource)]
-struct SlangChains {
+/// Create an [`IntermediateTarget`] of `size`, into which librashader renders
+/// and which the composite blit then samples.
+fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some("slang_intermediate"),
+        size: Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TARGET_FORMAT,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&TextureViewDescriptor::default());
+    IntermediateTarget { size, texture, view }
+}
+
+/// One emulator's librashader state: its own effect and passthrough chains, its
+/// intermediate target, and its frame counter.
+struct SourceChains {
     /// The visible effect preset (CRT/LCD), selected on the command line.
     effect: FilterChain,
     /// Plain passthrough (`stock.slangp`), used when the effect is toggled off.
     passthrough: FilterChain,
+    /// Intermediate render target, recreated on resize.
+    target: IntermediateTarget,
     /// RetroArch-style frame counter fed to the shaders (feedback/animation).
     frame_count: usize,
-    /// One intermediate target per emulator, keyed by its source image.
-    targets: HashMap<AssetId<Image>, IntermediateTarget>,
+}
+
+/// Per-source librashader chains and intermediate targets.
+///
+/// The chains are deliberately **not** shared across sources. A single
+/// `FilterChain` keeps internal per-pass framebuffers sized to its last
+/// `frame()` call; feeding one differently-sized sources within a frame (as a
+/// grid of images with different resolutions does) latches the last size and
+/// resamples the next frame's other cells through it — e.g. an 18×18 brush in
+/// the grid blurs every other image. One chain per source keeps that state
+/// isolated. Presets are loaded lazily the first time a source is rendered.
+///
+/// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
+/// so this lives as a render-world resource, accessed via `ResMut`.
+#[derive(Resource)]
+struct SlangChains {
+    /// Path of the effect preset (`--shader`/`--slangp`), loaded per source.
+    effect_path: PathBuf,
+    /// Path of the passthrough preset (`stock.slangp`), loaded per source.
+    passthrough_path: PathBuf,
+    /// One set of chains + target per emulator, keyed by its source image.
+    sources: HashMap<AssetId<Image>, SourceChains>,
 }
 
 impl SlangChains {
-    /// Return the intermediate target for `source`, creating or resizing it to
-    /// `size` first. `size` is the display-resolution image rectangle.
-    fn target(
+    /// Return the per-source chains for `source`, loading its presets on first
+    /// use and (re)creating its intermediate target at `size`. Returns `None`
+    /// when a preset fails to load, so the caller skips rendering that source.
+    fn source_chains(
         &mut self,
         device: &RenderDevice,
+        queue: &RenderQueue,
         source: AssetId<Image>,
         size: UVec2,
-    ) -> &IntermediateTarget {
-        let entry = self.targets.entry(source);
-        let needs_build = !matches!(entry, std::collections::hash_map::Entry::Occupied(ref e) if e.get().size == size);
-        if needs_build {
-            let texture = device.create_texture(&TextureDescriptor {
-                label: Some("slang_intermediate"),
-                size: Extent3d {
-                    width: size.x,
-                    height: size.y,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format: TARGET_FORMAT,
-                // librashader renders into it; the composite blit samples it.
-                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&TextureViewDescriptor::default());
-            self.targets.insert(
-                source,
-                IntermediateTarget {
-                    size,
-                    texture,
-                    view,
-                },
-            );
+    ) -> Option<&mut SourceChains> {
+        use std::collections::hash_map::Entry;
+        match self.sources.entry(source) {
+            Entry::Occupied(e) => {
+                let sc = e.into_mut();
+                if sc.target.size != size {
+                    sc.target = build_target(device, size);
+                }
+                Some(sc)
+            }
+            Entry::Vacant(e) => {
+                let wdevice = device.wgpu_device();
+                let wqueue: &wgpu::Queue = queue;
+                let load = |path: &PathBuf| {
+                    FilterChain::load_from_path(path, ShaderFeatures::NONE, wdevice, wqueue, None)
+                };
+                let effect = load(&self.effect_path)
+                    .inspect_err(|err| error!("failed to load effect preset: {err}"))
+                    .ok()?;
+                let passthrough = load(&self.passthrough_path)
+                    .inspect_err(|err| error!("failed to load passthrough preset: {err}"))
+                    .ok()?;
+                Some(e.insert(SourceChains {
+                    effect,
+                    passthrough,
+                    target: build_target(device, size),
+                    frame_count: 0,
+                }))
+            }
         }
-        &self.targets[&source]
     }
 }
 
-/// Load both `.slangp` filter chains onto Bevy's own wgpu device/queue, so they
-/// share the emulator's source textures and the view target directly.
-fn init_filter_chains(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    shader_path: Res<ShaderPath>,
-) {
-    let device = render_device.wgpu_device();
-    let queue: &wgpu::Queue = &render_queue;
-    let load = |path: &PathBuf| {
-        FilterChain::load_from_path(path, ShaderFeatures::NONE, device, queue, None)
-    };
-    let effect = match load(&shader_path.effect) {
-        Ok(chain) => chain,
-        Err(err) => {
-            error!(
-                "failed to load shader preset {:?}: {err}",
-                shader_path.effect
-            );
-            return;
-        }
-    };
-    let passthrough = match load(&shader_path.passthrough) {
-        Ok(chain) => chain,
-        Err(err) => {
-            error!(
-                "failed to load passthrough preset {:?}: {err}",
-                shader_path.passthrough
-            );
-            return;
-        }
-    };
+/// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
+/// are loaded lazily, once per emulator source, on first render (see
+/// [`SlangChains::source_chains`]).
+fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     commands.insert_resource(SlangChains {
-        effect,
-        passthrough,
-        frame_count: 0,
-        targets: HashMap::new(),
+        effect_path: shader_path.effect.clone(),
+        passthrough_path: shader_path.passthrough.clone(),
+        sources: HashMap::new(),
     });
 }
 
