@@ -201,11 +201,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
             out.push(collect_file(&f)?);
         }
     } else if found_type != SystemType::Unknown {
-        out.push(EmuFile {
-            path: dir.to_owned(),
-            system_type: found_type,
-            ..Default::default()
-        });
+        out.push(collect_file(dir)?);
         return Ok(());
     }
     for dir in dirs {
