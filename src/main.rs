@@ -86,7 +86,7 @@ struct Args {
 
     /// Start with the file-open selector showing and load nothing automatically.
     /// Any files/dirs given are still collected and become the selector's list.
-    #[arg(long)]
+    #[arg(short, long)]
     select: bool,
 
     /// How to map emulator screen onto window: `stretch`, `fit`, `zoom`, or a
