@@ -477,6 +477,24 @@ impl Emulator {
         for (key, val) in &self.tags {
             tags.insert(key.clone(), val.clone());
         }
+
+        if let Some(m) = tags.get("puae_model")
+            && m == "date"
+        {
+            if let Ok(year) = emu_file.game_info.year.parse::<u32>() {
+                if year < 1990 {
+                    tags.insert("puae_kickstart".into(), "kick33180.A500".into());
+                }
+                if year <= 1990 {
+                    tags.insert("puae_model".into(), "A500".into());
+                } else if year >= 1993 {
+                    tags.insert("puae_model".into(), "A1200".into());
+                }
+            } else {
+                tags.insert("puae_model".into(), "A500".into());
+            }
+        }
+
         if let Some(t) = tags.get("tags") {
             info!("TAGS {t}");
             if t.contains("AGA Chipset") {

@@ -407,6 +407,9 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
             CbmSystem::VIC20 => "vic20",
         },
     );
+    if args.db.is_some() {
+        set_var("puae_model", "date");
+    }
     if args.aga {
         set_var("puae_model", "A1200");
     }
