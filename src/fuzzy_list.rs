@@ -232,7 +232,7 @@ impl FuzzyList {
                     ..default()
                 },
                 BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
-                //BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
+                BorderColor::all(Color::linear_rgba(1.0, 0.4, 0.2, 0.9)),
                 TextInput {
                     text: initial_query.to_string(),
                     showing: true,
@@ -322,13 +322,13 @@ impl Plugin for FuzzyListPlugin {
         app.add_message::<FuzzyListSelect>()
             .init_resource::<FuzzyQueryStore>()
             .add_systems(
-            Update,
-            (
-                FuzzyList::sync_filter,
-                // Runs after the inner TextList has produced its select message.
-                FuzzyList::relay_select.after(TextList::update_keys),
-            ),
-        );
+                Update,
+                (
+                    FuzzyList::sync_filter,
+                    // Runs after the inner TextList has produced its select message.
+                    FuzzyList::relay_select.after(TextList::update_keys),
+                ),
+            );
     }
 }
 
@@ -482,7 +482,11 @@ mod tests {
         assert_eq!(all, items());
 
         // Two words, out of order, both as substrings of the same item.
-        let hits: Vec<String> = src.search("na an", 256).into_iter().map(|r| r.text).collect();
+        let hits: Vec<String> = src
+            .search("na an", 256)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
         assert_eq!(hits, vec!["banana"]);
 
         // A word matching nothing filters the item out even if others match.

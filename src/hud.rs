@@ -305,7 +305,7 @@ impl TextList {
                         ..default()
                     },
                     BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
-                    //BorderColor::all(Color::linear_rgba(1.0, 1.0, 1.0, 0.9)),
+                    BorderColor::all(Color::linear_rgba(1.0, 0.4, 0.2, 0.9)),
                     TextList {
                         id,
                         items,
