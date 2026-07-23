@@ -409,12 +409,15 @@ fn run_retro(
     // A controlled TextList is capturing keyboard navigation; while it is open,
     // swallow all keys so they don't also reach the emulated machine.
     let modal = lists.iter().any(|l| l.controlled);
-    let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
-    if hot_key {
-        settings.last_draw = time.elapsed_secs_f64();
-    }
-
-    let cmd = if hot_key { check_hotkey(&input) } else { None };
+    let cmd = if !modal {
+        let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
+        if hot_key {
+            settings.last_draw = time.elapsed_secs_f64();
+        }
+        if hot_key { check_hotkey(&input) } else { None }
+    } else {
+        None
+    };
 
     let mut show_info = false;
     if mouse_buttons.just_pressed(MouseButton::Left)

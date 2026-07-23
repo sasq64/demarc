@@ -154,6 +154,7 @@ fn handle_textlist(
     mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
     time: Res<Time>,
+    lists: Query<&TextList>,
 ) {
     for &TextListSelect { id, index } in reader.read() {
         if id == 0 && index < HOTKEYS.len() {
@@ -184,6 +185,10 @@ fn handle_textlist(
     if hot_key_pressed {
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
+        let modal = lists.iter().any(|l| l.controlled);
+        if modal {
+            return;
+        }
         if time.elapsed_secs() - settings.hotkey_pressed < 0.35 {
             if let Some(e) = settings.text_list.take() {
                 commands.entity(e).despawn();
