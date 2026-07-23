@@ -1,3 +1,4 @@
+# Title Group Date Event Type Tags URL
 1	Zentro 4	Zenith	1992-12-27	The Party 1992	Demo		http://ftp.amigascne.org/pub/amiga/Groups/Z/Zenith/Zenith-Zentro4
 3	War!	Zenith	1991-03		Demo		http://ftp.amigascne.org/pub/amiga/Groups/Z/Zenith/ZENITH-War%21
 4	Mayday Resistance	Adict	1992-12-27	The Party 1992	Demo		http://ftp.amigascne.org/pub/amiga/Groups/A/Adict/Adict-MaydayResistance

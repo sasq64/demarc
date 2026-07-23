@@ -93,8 +93,10 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         Ok(text) => text,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
-    for line in text.lines() {
-        if line.trim().is_empty() {
+    for l in text.lines() {
+        let line = l.trim();
+
+        if line.is_empty() || line.chars().next().unwrap() == '#' {
             continue;
         }
         let mut fields = line.split('\t');
@@ -124,7 +126,7 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
 
         out.push(EmuFile {
             path: PathBuf::from(url),
-            system_type: get_system_type(Path::new(url)),
+            system_type: SystemType::Unknown, //get_system_type(Path::new(url)),
             tags,
             game_info: GameInfo { title, group, year },
         });
