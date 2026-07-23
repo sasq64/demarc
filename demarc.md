@@ -11,12 +11,15 @@ _Main goal_: Make it easy to watch oldschool (PAL) demos
 
 Supported systems:
 
-C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80
+C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Playstation, Gameboy Color, Gameboy Advance
 
 
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay
-* CRT shader (Lottes) for "authentic" look
+* CRT shaders (Lottes) for "authentic" look
+* Can load slangp retroarch shaders
+* Fuzzy search files on disk or from database file
+* Displays IFF images
 * Can load disk images and executables
 * Right-Alt/Ctrl hotkey for disk switch etc
 * Can run multiple files at once in a grid
@@ -78,12 +81,13 @@ _Right Alt_ or _Right Ctrl_ +
 
 ```
 D = Swap disk
-SPACE = Next file
+SPACE or N = Next file
+P = Previous file
 S = Change scaling
 B = Change border
 I = Toggle Info
 T = Screenshot
-P = Pause/Resume
+U = Pause/Resume
 R = Reset
 C = Toggle CRT filter
 W/SHIFT-W = Warp 10s/30s
@@ -115,16 +119,20 @@ Usage: demarc [OPTIONS] [FILES]...
 
 Arguments:
   [FILES]...
-          Path to the files to load
+          Path to the files to load, or an http(s):// URL to download and run
 
 Options:
-      --scale <SCALE>
-          How to map emulator screen onto window
+      --db <DB>
+          Demo database file to load
 
-          Possible values:
-          - stretch: Fill the window, distorting the aspect ratio
-          - fit:     Preserve aspect ratio, adding letterbox/pillarbox bars
-          - zoom:    Preserve aspect ratio, cropping top/bottom or left/right to fill
+      --many
+          Treat disk images in same dir as separate files
+
+  -s, --select
+          Start with the file-open selector showing and load nothing automatically. Any files/dirs given are still collected and become the selector's list
+
+      --scale <SCALE>
+          How to map emulator screen onto window: `stretch`, `fit`, `zoom`, or a scale factor like `2` or `2.5` (fractional allowed)
 
           [default: fit]
 
@@ -136,6 +144,19 @@ Options:
           - black:   Fill the border with background color
 
           [default: black]
+
+      --shader <SHADER>
+          Shader used to render the emulator screen. Defaults to the LCD shader for Game Boy / GBA titles and the Lottes CRT shader otherwise
+
+          Possible values:
+          - lottes:        Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems
+          - lottes-simple: Single-pass WGSL port of the Lottes CRT shader — the pre-librashader path, sampling the emulator framebuffer directly
+          - lcd:           cgwg dot-matrix LCD grid shader, for handheld LCD systems
+          - lcd-simple:    Lightweight single-pass LCD grid shader (zfast-lcd)
+          - none:          No post-process effect — render the raw emulator screen
+
+      --slangp <SLANGP>
+          Path to a libretro `.slangp` shader preset to use instead of `--shader`, e.g. any preset from the slang-shaders repo. Takes precedence over `--shader`
 
       --shuffle
           Shuffle the list of files into a random order
@@ -169,7 +190,7 @@ Options:
       --silent-drive
           Amiga,C64,Amstrad: Dont produce disk loading sound
 
-      --window
+  -w, --window
           Open windowed instead of full screen
 
       --max-time <MAX_TIME>
@@ -178,12 +199,15 @@ Options:
       --force-vsync
           Force vsync, slowing down or speeding up emulation to fit
 
+      --speed-test
+          Benchmark: run emulation unthrottled (no vsync, audio dropped) for two seconds, print the number of frames stepped, then exit
+
       --latency <LATENCY>
           Max queued frames. Lower values = better input response
 
           [default: 2]
 
-      --extra-options <EXTRA_OPTIONS>
+  -x, --extra-options <EXTRA_OPTIONS>
           Extra options to add to libretro
 
       --grid <GRID>
@@ -197,15 +221,23 @@ Options:
       --reu
           C64: Add ram expansion unit (16MB)
 
+  -C, --color-cycle
+          ILBM: Animate colour-cycling (CRNG) ranges. Off by default
+
       --cbm-variant <CBM_VARIANT>
           Commodore variant (Only C64 well supported)
 
           Possible values:
-          - c64:  Default Commodore C64
-          - c128: Commodore 128
-          - dtv:  C64 DTV Stick
+          - c64:   Default Commodore C64
+          - c128:  Commodore 128
+          - dtv:   C64 DTV Stick
+          - c16:   C16/Plus4
+          - vic20: VIC 20
 
           [default: c64]
+
+      --no-silence
+          Don't silence libretro cores' stdout/stderr (for debugging)
 
   -h, --help
           Print help (see a summary with '-h')
