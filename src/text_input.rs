@@ -168,6 +168,10 @@ impl TextInput {
                                 }
                             }
                             Key::Tab => {}
+                            Key::Escape => {
+                                b.buffer.clear();
+                                b.pos = 0;
+                            }
                             _ => {
                                 if let Some(text) = &key.text {
                                     info!("TEXT: {text}");
