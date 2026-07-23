@@ -309,12 +309,11 @@ impl From<ScaleModeArg> for ScaleMode {
 enum ShaderArg {
     /// Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems.
     Lottes,
-    /// Single-pass WGSL port of the Lottes CRT shader — the pre-librashader
-    /// path, sampling the emulator framebuffer directly.
+    /// Single-pass WGSL port of the Lottes CRT shader
     LottesSimple,
     /// cgwg dot-matrix LCD grid shader, for handheld LCD systems.
     Lcd,
-    /// Lightweight single-pass LCD grid shader (zfast-lcd).
+    /// Lightweight single-pass LCD grid shader.
     LcdSimple,
     /// No post-process effect — render the raw emulator screen.
     None,
@@ -330,7 +329,8 @@ impl ShaderArg {
             ShaderArg::Lottes => "shaders/slangp/crt/crt-lottes.slangp",
             ShaderArg::LottesSimple => "shaders/lottes.wgsl",
             ShaderArg::Lcd => "shaders/slangp/handheld/lcd-grid-v2.slangp",
-            ShaderArg::LcdSimple => "shaders/slangp/handheld/zfast-lcd.slangp",
+            //ShaderArg::LcdSimple => "shaders/slangp/handheld/zfast-lcd.slangp",
+            ShaderArg::LcdSimple => "shaders/lcd.wgsl",
             // `None` starts with the effect disabled (see `crt_effect`); the
             // path only matters if it's toggled on, so reuse the stock
             // passthrough preset.
