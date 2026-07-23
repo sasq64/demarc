@@ -1,5 +1,11 @@
 // PUBLIC DOMAIN CRT STYLED SCAN-LINE SHADER by Timothy Lottes
 // Ported from GLSL to WGSL.
+//
+// Runs as the single-pass composite on the `ShaderPath::Wgsl` backend,
+// sampling the emulator framebuffer directly. That framebuffer is Rgba8Unorm
+// (raw gamma-encoded libretro output — see blit.wgsl for the full story), so
+// `to_linear` in `fetch` is the input decode; the render target is sRGB and
+// encodes on write, so the output stays linear (no `to_srgb` at the end).
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 
@@ -208,13 +214,14 @@ fn mask(pos_in: vec2<f32>) -> vec3<f32> {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
 
-    // Plain passthrough when the CRT effect is disabled. An identity CRT filter
-    // round-trips to the raw sample (to_srgb(to_linear(s)) == s), so sampling
-    // directly keeps both paths consistent; out-of-range uv hits the border
-    // sampler, preserving letterbox/pillarbox bars.
+    // Plain passthrough when the CRT effect is disabled: linearize the raw
+    // gamma-encoded sample so the sRGB render target's encode restores it —
+    // the same decode `fetch` applies on the effect path, keeping both paths
+    // consistent. Out-of-range uv hits the border sampler, preserving
+    // letterbox/pillarbox bars.
     if settings.crt_enabled == 0u {
         let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-        return vec4<f32>(c, 1.0);
+        return vec4<f32>(to_linear(c), 1.0);
     }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));
@@ -228,5 +235,6 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         out_color = out_color * mask(in.position.xy * 1.000001);
     }
 
-    return vec4<f32>(to_srgb(out_color), 1.0);
+    // `out_color` is linear; the sRGB render target encodes on write.
+    return vec4<f32>(out_color, 1.0);
 }

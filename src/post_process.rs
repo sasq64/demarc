@@ -44,21 +44,24 @@ use crate::RenderSettings;
 /// `TextureFormat::bevy_default()`).
 const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
-/// Filesystem paths of the two `.slangp` presets loaded at runtime: the visible
-/// effect (selected on the command line) and a plain passthrough (`stock.slangp`)
-/// used when the CRT/LCD effect is toggled off. Absolute paths, resolved from
-/// the `system` dir (or a user-supplied `--preset`) in `main`.
+/// Which post-process backend to run, selected on the command line.
 #[derive(Resource, Clone)]
-pub struct ShaderPath {
-    pub effect: PathBuf,
-    pub passthrough: PathBuf,
+pub enum ShaderPath {
+    /// librashader `.slangp` filter chains: the visible effect plus a plain
+    /// passthrough (`stock.slangp`) used when the CRT/LCD effect is toggled
+    /// off. Absolute paths, resolved from the `system` dir (or a user-supplied
+    /// `--slangp`) in `main`.
+    Slangp { effect: PathBuf, passthrough: PathBuf },
+    /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
+    /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
+    /// and applies the effect in the composite pass itself. The
+    /// effect/passthrough toggle is handled in-shader via `crt_enabled`.
+    Wgsl { asset_path: String },
 }
 
 pub struct PostProcessPlugin {
-    /// Absolute path of the effect `.slangp` preset to run.
-    pub effect_path: PathBuf,
-    /// Absolute path of the passthrough `.slangp` preset (`stock.slangp`).
-    pub passthrough_path: PathBuf,
+    /// The backend (and shader/preset paths) to run.
+    pub shader: ShaderPath,
 }
 
 impl Plugin for PostProcessPlugin {
@@ -76,12 +79,9 @@ impl Plugin for PostProcessPlugin {
             return;
         };
 
-        // Hand the chosen preset paths to the render world so init can load them.
-        // A plain resource (not extracted) because they never change.
-        render_app.insert_resource(ShaderPath {
-            effect: self.effect_path.clone(),
-            passthrough: self.passthrough_path.clone(),
-        });
+        // Hand the chosen backend/paths to the render world so init can load
+        // them. A plain resource (not extracted) because they never change.
+        render_app.insert_resource(self.shader.clone());
 
         // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
         // render pass is just a system in the per-camera `Core2d` schedule. We run
@@ -337,11 +337,14 @@ pub fn scale_offset(
     )
 }
 
-/// Renders the current view in two stages: first the librashader `.slangp`
-/// filter chain turns the emulator framebuffer into an intermediate texture
-/// (the effect, at display resolution, preserving the source aspect ratio),
-/// then a passthrough blit composites that intermediate into the view target
-/// with the letterbox/pillarbox transform and border handling.
+/// Renders the current view. On the [`ShaderPath::Slangp`] backend this is two
+/// stages: first the librashader `.slangp` filter chain turns the emulator
+/// framebuffer into an intermediate texture (the effect, at display resolution,
+/// preserving the source aspect ratio), then a passthrough blit composites that
+/// intermediate into the view target with the letterbox/pillarbox transform and
+/// border handling. On the [`ShaderPath::Wgsl`] backend stage 1 is skipped: the
+/// single-pass WGSL shader samples the emulator framebuffer directly and
+/// applies the effect during the composite itself.
 ///
 /// As a `Core2d` render system this is invoked once per camera with
 /// [`CurrentView`](bevy::render::renderer::CurrentView) set; the [`ViewQuery`]
@@ -359,18 +362,14 @@ fn post_process_pass(
     gpu_images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
     settings: Res<RenderSettings>,
-    chains: Option<ResMut<SlangChains>>,
+    shader_path: Res<ShaderPath>,
+    mut chains: Option<ResMut<SlangChains>>,
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
     let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
 
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
-        return;
-    };
-
-    // Absent if the preset failed to load; skip rendering rather than panic.
-    let Some(mut chains) = chains else {
         return;
     };
 
@@ -382,7 +381,7 @@ fn post_process_pass(
         return;
     };
 
-    // --- Stage 1: run the librashader filter chain into an intermediate ---
+    // --- Stage 1 (slangp only): run the librashader chain into an intermediate ---
     //
     // Size the intermediate to the image's actual on-screen pixel extent under
     // the current scale mode, so the effect (scanlines/mask) is rendered at
@@ -399,92 +398,106 @@ fn post_process_pass(
     // Because the composite's `uv_scale`/`uv_offset` come from `scale_offset`
     // with the same mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands
     // on exact texel centres: one screen pixel per intermediate texel.
-    let source_id = post_process.source.id();
-    let src_size = UVec2::new(source_image.texture.width(), source_image.texture.height());
-    let viewport_size = camera
-        .physical_viewport_size
-        .or(camera.physical_target_size)
-        .unwrap_or(src_size);
-    let (image_scale, _) = scale_offset(
-        viewport_size,
-        src_size,
-        post_process.aspect,
-        post_process.aspect_tweak,
-        settings.scale_mode,
-    );
-    let inter_size = (viewport_size.as_vec2() * image_scale)
-        .round()
-        .as_uvec2()
-        .max(UVec2::ONE);
+    let composite_input: &TextureView = match &*shader_path {
+        // WGSL backend: the composite shader applies the effect itself while
+        // sampling the emulator framebuffer directly — nothing to prepare.
+        ShaderPath::Wgsl { .. } => &source_image.texture_view,
+        ShaderPath::Slangp { .. } => {
+            // Absent if the preset failed to load; skip rendering rather than panic.
+            let Some(chains) = chains.as_mut() else {
+                return;
+            };
+            let source_id = post_process.source.id();
+            let src_size =
+                UVec2::new(source_image.texture.width(), source_image.texture.height());
+            let viewport_size = camera
+                .physical_viewport_size
+                .or(camera.physical_target_size)
+                .unwrap_or(src_size);
+            let (image_scale, _) = scale_offset(
+                viewport_size,
+                src_size,
+                post_process.aspect,
+                post_process.aspect_tweak,
+                settings.scale_mode,
+            );
+            let inter_size = (viewport_size.as_vec2() * image_scale)
+                .round()
+                .as_uvec2()
+                .max(UVec2::ONE);
 
-    let device = render_context.render_device().clone();
-    // Each source has its own chains and target, loaded on first use; skip the
-    // source if its presets failed to load.
-    let Some(source_chains) = chains.source_chains(&device, &render_queue, source_id, inter_size)
-    else {
-        return;
-    };
-    let SourceChains {
-        effect,
-        passthrough,
-        target,
-        frame_count,
-    } = source_chains;
-    let chain = if settings.crt_effect {
-        effect
-    } else {
-        passthrough
-    };
-    // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
-    // 24px tiles). When render_width / tile_size is an even integer, a tile
-    // boundary lands exactly on the screen center, where the mask's manual
-    // frac() tiling has a coordinate discontinuity that duplicates a subpixel
-    // (a visible red vertical line). crt-royale's own fix (FIX_DISCONTINUITIES)
-    // uses ddx/ddy in a vertex-shared header and won't compile on the
-    // slang/glslang path. Instead, nudge the triad size a fraction so the
-    // center falls as far as possible from any tile boundary: pick the integer
-    // tile size near 24px whose center offset is furthest from a boundary. This
-    // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
-    // the seam off-center. No-op on presets without this parameter.
-    if settings.crt_effect {
-        use librashader::runtime::FilterChainParameters;
-        let width = inter_size.x as f32;
-        let mut best_tile = 24i32;
-        let mut best_dist = -1.0f32;
-        for tile in 22..=26 {
-            let center_coord = width / (2.0 * tile as f32);
-            let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
-            if dist > best_dist {
-                best_dist = dist;
-                best_tile = tile;
+            let device = render_context.render_device().clone();
+            // Each source has its own chains and target, loaded on first use; skip
+            // the source if its presets failed to load.
+            let Some(source_chains) =
+                chains.source_chains(&device, &render_queue, source_id, inter_size)
+            else {
+                return;
+            };
+            let SourceChains {
+                effect,
+                passthrough,
+                target,
+                frame_count,
+            } = source_chains;
+            let chain = if settings.crt_effect {
+                effect
+            } else {
+                passthrough
+            };
+            // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
+            // 24px tiles). When render_width / tile_size is an even integer, a tile
+            // boundary lands exactly on the screen center, where the mask's manual
+            // frac() tiling has a coordinate discontinuity that duplicates a subpixel
+            // (a visible red vertical line). crt-royale's own fix (FIX_DISCONTINUITIES)
+            // uses ddx/ddy in a vertex-shared header and won't compile on the
+            // slang/glslang path. Instead, nudge the triad size a fraction so the
+            // center falls as far as possible from any tile boundary: pick the integer
+            // tile size near 24px whose center offset is furthest from a boundary. This
+            // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
+            // the seam off-center. No-op on presets without this parameter.
+            if settings.crt_effect {
+                use librashader::runtime::FilterChainParameters;
+                let width = inter_size.x as f32;
+                let mut best_tile = 24i32;
+                let mut best_dist = -1.0f32;
+                for tile in 22..=26 {
+                    let center_coord = width / (2.0 * tile as f32);
+                    let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
+                    if dist > best_dist {
+                        best_dist = dist;
+                        best_tile = tile;
+                    }
+                }
+                chain
+                    .parameters()
+                    .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
             }
+            let lr_size = Size::new(inter_size.x, inter_size.y);
+            let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
+            let viewport = Viewport {
+                x: 0.0,
+                y: 0.0,
+                mvp: None,
+                output,
+                size: lr_size,
+            };
+            if let Err(err) = chain.frame(
+                &source_image.texture,
+                &viewport,
+                render_context.command_encoder(),
+                *frame_count,
+                None,
+            ) {
+                error!("librashader frame failed: {err}");
+                return;
+            }
+            *frame_count += 1;
+            &target.view
         }
-        chain
-            .parameters()
-            .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
-    }
-    let lr_size = Size::new(inter_size.x, inter_size.y);
-    let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
-    let viewport = Viewport {
-        x: 0.0,
-        y: 0.0,
-        mvp: None,
-        output,
-        size: lr_size,
     };
-    if let Err(err) = chain.frame(
-        &source_image.texture,
-        &viewport,
-        render_context.command_encoder(),
-        *frame_count,
-        None,
-    ) {
-        error!("librashader frame failed: {err}");
-        return;
-    }
-    *frame_count += 1;
 
-    // --- Stage 2: composite the intermediate into the view target ---
+    // --- Stage 2: composite into the view target ---
     let sampler = match settings.border_mode {
         BorderMode::Stretch => &pipeline_resource.sampler_stretch,
         BorderMode::Black => &pipeline_resource.sampler_black,
@@ -493,7 +506,7 @@ fn post_process_pass(
     let bind_group = render_context.render_device().create_bind_group(
         "lottes_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
-        &BindGroupEntries::sequential((&target.view, sampler, uniform_binding.clone())),
+        &BindGroupEntries::sequential((composite_input, sampler, uniform_binding.clone())),
     );
 
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -653,9 +666,14 @@ impl SlangChains {
 /// are loaded lazily, once per emulator source, on first render (see
 /// [`SlangChains::source_chains`]).
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
+    // The WGSL backend runs no filter chains; the single-pass shader loaded by
+    // `init_blit_pipeline` does everything.
+    let ShaderPath::Slangp { effect, passthrough } = &*shader_path else {
+        return;
+    };
     commands.insert_resource(SlangChains {
-        effect_path: shader_path.effect.clone(),
-        passthrough_path: shader_path.passthrough.clone(),
+        effect_path: effect.clone(),
+        passthrough_path: passthrough.clone(),
         sources: HashMap::new(),
     });
 }
@@ -666,6 +684,7 @@ fn init_blit_pipeline(
     asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
     pipeline_cache: Res<PipelineCache>,
+    shader_path: Res<ShaderPath>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
         "lottes_bind_group_layout",
@@ -700,9 +719,14 @@ fn init_blit_pipeline(
         );
         render_device.create_sampler(&SamplerDescriptor::default())
     };
-    // Passthrough composite blit; the CRT/LCD effect is applied upstream by the
-    // librashader filter chain into an intermediate texture that this samples.
-    let shader = asset_server.load("shaders/blit.wgsl");
+    // Slangp backend: passthrough composite blit — the CRT/LCD effect is
+    // applied upstream by the librashader filter chain into an intermediate
+    // texture that this samples. WGSL backend: the single-pass effect shader
+    // itself (same bindings/uniform layout), sampling the emulator framebuffer.
+    let shader = match &*shader_path {
+        ShaderPath::Slangp { .. } => asset_server.load("shaders/blit.wgsl"),
+        ShaderPath::Wgsl { asset_path } => asset_server.load(asset_path.clone()),
+    };
 
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("lottes_pipeline".into()),

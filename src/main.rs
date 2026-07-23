@@ -37,7 +37,7 @@ use commands::CommandPlugin;
 use frontend::{RetroPlugin, system_dir};
 use fuzzy_list::FuzzyListPlugin;
 use hud::HudPlugin;
-use post_process::{BorderMode, PostProcessPlugin, ScaleMode};
+use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
@@ -309,6 +309,9 @@ impl From<ScaleModeArg> for ScaleMode {
 enum ShaderArg {
     /// Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems.
     Lottes,
+    /// Single-pass WGSL port of the Lottes CRT shader — the pre-librashader
+    /// path, sampling the emulator framebuffer directly.
+    LottesSimple,
     /// cgwg dot-matrix LCD grid shader, for handheld LCD systems.
     Lcd,
     /// Lightweight single-pass LCD grid shader (zfast-lcd).
@@ -318,12 +321,14 @@ enum ShaderArg {
 }
 
 impl ShaderArg {
-    /// Path of the `.slangp` preset, relative to the `system` asset directory.
-    /// These are RetroArch libretro presets bundled under `shaders/slangp/`
-    /// (see `system/shaders/slangp/`) and run through librashader.
+    /// Path of the shader, relative to the `system` asset directory: either a
+    /// RetroArch libretro `.slangp` preset bundled under `shaders/slangp/`
+    /// (see `system/shaders/slangp/`) and run through librashader, or a plain
+    /// `.wgsl` shader loaded as a Bevy asset and run as a single pass.
     fn path(self) -> &'static str {
         match self {
             ShaderArg::Lottes => "shaders/slangp/crt/crt-lottes.slangp",
+            ShaderArg::LottesSimple => "shaders/lottes.wgsl",
             ShaderArg::Lcd => "shaders/slangp/handheld/lcd-grid-v2.slangp",
             ShaderArg::LcdSimple => "shaders/slangp/handheld/zfast-lcd.slangp",
             // `None` starts with the effect disabled (see `crt_effect`); the
@@ -563,14 +568,24 @@ fn main() {
     //         _ => ShaderArg::Lottes,
     //     },
     // );
-    // A user-supplied `--preset` wins; otherwise resolve the bundled preset by
-    // name. Both resolve to an absolute `.slangp` path; the passthrough
+    // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
+    // name — a `.wgsl` path selects the single-pass WGSL backend, anything
+    // else a `.slangp` preset run through librashader. The slangp passthrough
     // (`stock.slangp`) is always the bundled one.
-    let effect_path = match &args.slangp {
-        Some(path) => path.clone(),
-        None => system_dir().join(shader.path()),
+    let passthrough = system_dir().join("shaders/slangp/stock.slangp");
+    let shader_path = match &args.slangp {
+        Some(path) => ShaderPath::Slangp {
+            effect: path.clone(),
+            passthrough,
+        },
+        None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
+            asset_path: shader.path().into(),
+        },
+        None => ShaderPath::Slangp {
+            effect: system_dir().join(shader.path()),
+            passthrough,
+        },
     };
-    let passthrough_path = system_dir().join("shaders/slangp/stock.slangp");
 
     let render_settings = RenderSettings {
         border_mode: args.border.into(),
@@ -640,8 +655,7 @@ fn main() {
             RetroPlugin {},
             CommandPlugin,
             PostProcessPlugin {
-                effect_path,
-                passthrough_path,
+                shader: shader_path,
             },
             HudPlugin,
             TextInputPlugin,
