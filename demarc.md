@@ -13,7 +13,6 @@ Supported systems:
 
 C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Playstation, Gameboy Color, Gameboy Advance
 
-
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay
 * CRT shaders (Lottes) for "authentic" look
@@ -25,22 +24,21 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 * Can run multiple files at once in a grid
 * Linux: Pause screen blanker and handle media keys
 
-
 ## Install (Linux, Mac, Windows)
 
-You need [rust](https://rustup.rs).
+If you don't already have it, install [rust](https://rustup.rs).
+
+Then:
 
 `cargo install --git https://github.com/sasq64/demarc.git`
-
 
 ## Download (Windows)
 
 Pre-built windows binary [here](/dl/demarc.exe)
 
-*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system. 
+_IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
 
 (Another note to windows users; if you _really_ don't want to use the command line, you can drag and drop demos onto the demarc executable to run them).
-
 
 ## Prepare
 
@@ -56,24 +54,27 @@ Set your monitor to 50Hz if possible.
 
 `demarc --db bitworld.txt --select`
 
-*TIP:* Download all intros from [https://intros.c64.org](https://intros.c64.org/) and run
+_TIP:_ Download all intros from [https://intros.c64.org](https://intros.c64.org/) and run
 
 `demarc --grid=4x3 --shuffle intros_c64_org_12596_full`
 
 ## Demo Packs
 
 #### Bitworld database
+
 * [bitworld.txt](/dl/bitworld.txt) (7MB)
 
 #### Best of Amiga OCS (and some AGA)
+
 * [Amiga.7z](/dl/Amiga.7z) (55MB)
 
 #### Best of Atari ST/STE
+
 * [Atari.7z](/dl/Atari.7z) (9MB)
 
 #### Best of other (Amstrad, Spectrum, Consoles etc)
-* [Other.7z](/dl/Other.7z) (16MB)
 
+* [Other.7z](/dl/Other.7z) (16MB)
 
 #### CSDb Top demos
 
@@ -112,10 +113,10 @@ SHIFT+N = Next file in all emulators
 
 ### File collection Logic
 
-- Recurse all directories on the command line
-- If _demo.m3u_ file found, that directory is added and not recursed
-- If _disk images_ found in a directory, that directory is added and not recursed
-- If _executables_ found in a directory, each of the executables are added
+* Recurse all directories on the command line
+* If _demo.m3u_ file found, that directory is added and not recursed
+* If _disk images_ found in a directory, that directory is added and not recursed
+* If _executables_ found in a directory, each of the executables are added
 
 ### Command line arguments
 
