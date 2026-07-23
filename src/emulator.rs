@@ -406,7 +406,7 @@ impl Emulator {
         }
         let joypad_port = self.input_mode.joypad_port();
         for e in input.get_just_pressed() {
-            if *e == KeyCode::F12 {
+            if *e == KeyCode::F12 || *e == KeyCode::ControlRight || *e == KeyCode::AltRight {
                 continue;
             }
             if let Some(port) = joypad_port
@@ -418,7 +418,7 @@ impl Emulator {
             }
         }
         for e in input.get_just_released() {
-            if *e == KeyCode::F12 {
+            if *e == KeyCode::F12 || *e == KeyCode::ControlRight || *e == KeyCode::AltRight {
                 continue;
             }
             if let Some(port) = joypad_port

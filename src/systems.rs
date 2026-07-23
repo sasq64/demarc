@@ -370,6 +370,11 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
         //set_var("puae_crop_mode", "4:3");
         set_var("puae_crop", "smaller");
         set_var("puae_horizontal_pos", "-5");
+        // PUAE binds RightCtrl to its own joystick/mouse RetroPad toggle by
+        // default. RightCtrl is our command modifier and gets forwarded to the
+        // core as a key press, so every command flipped the core into (locked)
+        // mouse mode, silently killing joypad input. Unbind the hotkey.
+        set_var("puae_mapper_mouse_toggle", "---");
     } else if system_type == SystemType::C64 {
         set_var("vice_sid_extra", "none");
         set_var("vice_sid_model", "8580");
