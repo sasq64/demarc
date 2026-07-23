@@ -61,7 +61,7 @@ const EDGE_SOFTNESS: f32 = 0.13;
 // --- Grid & shadow ----------------------------------------------------------
 // Brightness of the inter-pixel gap relative to the pixel colour (0 = black
 // grid, 1 = no grid). Deriving the gap from the pixel keeps blacks black.
-const GAP_BRIGHTNESS: f32 = 0.75;
+const GAP_BRIGHTNESS: f32 = 0.5;
 // How strongly the drop shadow darkens the background behind the dot
 // (`shadow_opacity`).
 const SHADOW_OPACITY: f32 = 0.80;
@@ -74,6 +74,16 @@ const SHADOW_OFFSET: vec2<f32> = vec2<f32>(0.28, 0.28);
 // shadow reads as a cast shadow rather than a second grid line. Stands in for
 // the original's dedicated blur passes.
 const SHADOW_BLUR: f32 = 0.24;
+
+// Convert the raw gamma-encoded source sample to linear. The screen texture
+// holds display-ready sRGB values, and the render target is an sRGB texture
+// that encodes on write — writing without decoding first would gamma-encode
+// twice and wash the image out (see blit.wgsl for the full story).
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lower = c / 12.92;
+    let higher = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(higher, lower, c <= vec3<f32>(0.04045));
+}
 
 // Anti-aliased coverage of the dot centred in a cell, for a sample at fractional
 // position `f` (in 0..1) within that cell. `aa` is the edge softness per axis.
@@ -120,7 +130,9 @@ fn lcd(uv: vec2<f32>, source_size: vec2<f32>) -> vec3<f32> {
     let gap = col * GAP_BRIGHTNESS;
     let background = gap * (1.0 - shadow_cov * SHADOW_OPACITY);
     let out_color = mix(background, col, cov);
-    return out_color;
+    // Compositing runs in gamma space (like the libretro original); decode only
+    // at the end so the sRGB target's encode restores the original values.
+    return srgb_to_linear(out_color);
 }
 
 @fragment
@@ -131,7 +143,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // shaders behave identically with `crt_enabled == 0`.
     if settings.crt_enabled == 0u {
         let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-        return vec4<f32>(c, 1.0);
+        return vec4<f32>(srgb_to_linear(c), 1.0);
     }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));

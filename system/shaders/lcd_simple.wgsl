@@ -24,10 +24,20 @@ const GAP_WIDTH: f32 = 0.12;
 // Softness of the grid edge, in cell fractions. Larger = smoother gaps.
 const GAP_SOFTNESS: f32 = 0.06;
 // Brightness boost to compensate for the darkening introduced by the grid.
-const BRIGHT_BOOST: f32 = 1.12;
+const BRIGHT_BOOST: f32 = 1.0;
 // Subtle darkening towards the lower-right of each pixel, mimicking the shadow
 // cast by the raised cell wall on a real reflective LCD (0 = off).
 const SHADE_AMOUNT: f32 = 0.10;
+
+// Convert the raw gamma-encoded source sample to linear. The screen texture
+// holds display-ready sRGB values, and the render target is an sRGB texture
+// that encodes on write — writing without decoding first would gamma-encode
+// twice and wash the image out (see blit.wgsl for the full story).
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lower = c / 12.92;
+    let higher = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(higher, lower, c <= vec3<f32>(0.04045));
+}
 
 // Grid factor for one axis: ~1.0 in the pixel body, dropping towards 0 in the
 // gap between cells. `f` is the fractional position within the cell [0,1).
@@ -54,7 +64,9 @@ fn lcd(uv: vec2<f32>, source_size: vec2<f32>) -> vec3<f32> {
     // Soft directional shade across each pixel body for a bit of LCD relief.
     mask = mask * (1.0 - SHADE_AMOUNT * (f.x + f.y) * 0.5);
 
-    return color * mask * BRIGHT_BOOST;
+    // Grid/shade math runs in gamma space (like the libretro LCD shaders);
+    // decode only at the end so the sRGB target's encode restores the original.
+    return srgb_to_linear(color * mask * BRIGHT_BOOST);
 }
 
 @fragment
@@ -65,7 +77,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // two shaders behave identically with `crt_enabled == 0`.
     if settings.crt_enabled == 0u {
         let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-        return vec4<f32>(c, 1.0);
+        return vec4<f32>(srgb_to_linear(c), 1.0);
     }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));
