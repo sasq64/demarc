@@ -54,11 +54,16 @@ Set your monitor to 50Hz if possible.
 
 `demarc --aga --shuffle Amiga/`
 
+`demarc --db bitworld.txt --select`
+
 *TIP:* Download all intros from [https://intros.c64.org](https://intros.c64.org/) and run
 
 `demarc --grid=4x3 --shuffle intros_c64_org_12596_full`
 
 ## Demo Packs
+
+#### Bitworld database
+* [bitworld.txt](/dl/bitworld.txt) (7MB)
 
 #### Best of Amiga OCS (and some AGA)
 * [Amiga.7z](/dl/Amiga.7z) (55MB)
