@@ -1,6 +1,6 @@
 [package]
 name = "demarc"
-version = "0.1.0"
+version = "1.2"
 edition = "2024"
 
 [build-dependencies]
@@ -15,22 +15,26 @@ libloading = "0.9"
 cpal = "0.15.3"
 rubato = "0.16"
 tracing = "0.1.44"
-image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "jpeg"] }
+image = { version = "0.25.10", default-features = false, features = [
+  "png",
+  "bmp",
+  "jpeg",
+] }
 tracing-subscriber = "0.3.23"
 ringbuf = "0.5.0"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive", "color"] }
 zip = { version = "8", default-features = false, features = [
-    "deflate",
-    "deflate64",
+  "deflate",
+  "deflate64",
 ] }
 # Matches the wgpu version Bevy 0.19 uses; only needed to name `SamplerBorderColor`,
 # which Bevy doesn't re-export.
 wgpu = "29"
 librashader = { version = "0.11.3", default-features = false, features = [
-    "runtime-wgpu",
-    "reflect-naga",
-    "presets",
+  "runtime-wgpu",
+  "reflect-naga",
+  "presets",
 ] }
 tempfile = "3.27.0"
 fatfs = "0.3.6"
@@ -41,13 +45,13 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above
 ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
-    "audio",
-    "mp3",
-    "nellymoser",
-    "aac",
-    "lzma",
-    "default_font",
-    "default_compatibility_rules",
+  "audio",
+  "mp3",
+  "nellymoser",
+  "aac",
+  "lzma",
+  "default_font",
+  "default_compatibility_rules",
 ] }
 ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
@@ -58,11 +62,11 @@ pollster = { version = "0.4", optional = true }
 default = []
 # Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
 flash = [
-    "dep:ruffle_core",
-    "dep:ruffle_render",
-    "dep:ruffle_render_wgpu",
-    "dep:swf",
-    "dep:pollster",
+  "dep:ruffle_core",
+  "dep:ruffle_render",
+  "dep:ruffle_render_wgpu",
+  "dep:swf",
+  "dep:pollster",
 ]
 
 [target.'cfg(unix)'.dependencies]
