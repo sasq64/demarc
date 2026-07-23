@@ -5,7 +5,8 @@
 //! same pipeline as a libretro core or the Flash backend: it hands the frontend
 //! one RGBA frame via [`with_frame`](RetroEmu::with_frame) and reports its
 //! geometry, while every interactive method (input, disks, audio, reset) is a
-//! no-op. It decodes the Amiga ILBM/IFF format (see [`crate::ilbm`]).
+//! no-op. It decodes the Amiga ILBM/IFF format (see [`crate::ilbm`]) as well as
+//! the common still formats handled by the `image` crate (PNG, BMP, JPEG).
 //!
 //! ILBM images can define colour-cycling ranges (CRNG chunks). When cycling is
 //! enabled (opt-in via `--color-cycle`) the image is kept in its paletted form
@@ -27,6 +28,16 @@ const CRNG_RATE_60HZ: f64 = 16384.0;
 /// at. The colour-cycling animation advances one frame per call, so this is
 /// both the reported [`fps`](RetroEmu::fps) and the time base for cycling.
 const FRAME_RATE: f64 = 60.0;
+
+/// Decode a still image (PNG, BMP, JPEG, …) into an RGBA frame via the `image`
+/// crate. The format is sniffed from the file contents rather than trusting the
+/// extension, so a mis-named file still decodes.
+fn load_image(game: &Path) -> Result<image::RgbaImage> {
+    let img = image::ImageReader::open(game)?
+        .with_guessed_format()?
+        .decode()?;
+    Ok(img.into_rgba8())
+}
 
 /// Presents a single decoded image as a "frame". For colour-cycling images the
 /// frame is refreshed from a rotated palette on each [`run`](RetroEmu::run).
@@ -84,7 +95,10 @@ impl ImageEmu {
                 Ok(emu)
             }
             Err(_) => {
-                let img = ilbm::load(game)?;
+                // Not an indexed ILBM. Try the full IFF decoder (HAM, deep,
+                // dynamic-palette, …); if that also fails the file isn't IFF at
+                // all, so fall back to the `image` crate for PNG/BMP/JPEG.
+                let img = ilbm::load(game).or_else(|_| load_image(game))?;
                 let (w, h) = img.dimensions();
                 Ok(Self {
                     width: w as usize,
@@ -227,6 +241,37 @@ mod tests {
                 "presented frame is blank"
             );
         });
+    }
+
+    /// PNG/BMP/JPEG still images decode through the same path as ILBM, via the
+    /// `image` crate fallback. Each format is round-tripped through a temp file.
+    #[test]
+    fn image_emu_presents_still_formats() {
+        // A small non-flat gradient so a mis-decode (blank frame) is caught.
+        // RGB (not RGBA) so the same buffer can be saved as JPEG, which has no
+        // alpha channel.
+        let mut src = image::RgbImage::new(8, 6);
+        for (x, y, px) in src.enumerate_pixels_mut() {
+            *px = image::Rgb([(x * 32) as u8, (y * 40) as u8, 128]);
+        }
+        let dir = std::env::temp_dir();
+        for ext in ["png", "bmp", "jpg"] {
+            let path = dir.join(format!("image_emu_test.{ext}"));
+            src.save(&path).unwrap();
+            let mut emu = ImageEmu::new(&path).unwrap();
+            assert_eq!(emu.get_frame_size(), (8, 6), "wrong size for .{ext}");
+            assert!(emu.run());
+            emu.with_frame(&mut |w, h, frame| {
+                assert_eq!((w, h), (8, 6));
+                assert_eq!(frame.len(), w * h * 4);
+                let first = &frame[0..4];
+                assert!(
+                    frame.chunks_exact(4).any(|px| px != first),
+                    "presented .{ext} frame is blank"
+                );
+            });
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     #[test]
