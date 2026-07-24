@@ -35,7 +35,7 @@ mod utils;
 
 use commands::CommandPlugin;
 use frontend::{RetroPlugin, system_dir};
-use fuzzy_list::FuzzyListPlugin;
+use fuzzy_list::{FuzzyListPlugin, IndexedSource};
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
@@ -380,6 +380,10 @@ struct AppSettings {
     last_draw: f64,
     text_list: Option<Entity>,
     file_list: Option<Entity>,
+    /// The file picker's search index, built lazily from `files` on first open
+    /// and reused (cheap `Arc` clone) on every open after that — building the
+    /// trigram index over the whole list is the picker's expensive step.
+    file_source: Option<IndexedSource>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,

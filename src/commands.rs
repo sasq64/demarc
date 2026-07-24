@@ -9,7 +9,7 @@ use bevy::{
 };
 
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::AllWordsSource;
+use crate::fuzzy_list::IndexedSource;
 use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
@@ -309,29 +309,37 @@ fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                let mut names = Vec::new();
-                for file in &settings.files {
-                    //let info = get_info(game).unwrap_or_default();
-                    if !file.game_info.title.is_empty() {
-                        if file.game_info.group.is_empty() {
-                            names.push(file.game_info.title.to_string());
+                // Build the trigram index once, on first open, and reuse it on
+                // every open after that — `files` never changes, and indexing
+                // the whole list is what made reopening the picker slow. The
+                // clone below is a cheap `Arc` bump, not a re-index.
+                if settings.file_source.is_none() {
+                    let mut names = Vec::new();
+                    for file in &settings.files {
+                        //let info = get_info(game).unwrap_or_default();
+                        if !file.game_info.title.is_empty() {
+                            if file.game_info.group.is_empty() {
+                                names.push(file.game_info.title.to_string());
+                            } else {
+                                names.push(format!(
+                                    "{} / {}",
+                                    file.game_info.title, file.game_info.group
+                                ));
+                            }
                         } else {
-                            names.push(format!(
-                                "{} / {}",
-                                file.game_info.title, file.game_info.group
-                            ));
+                            names.push("???".into());
                         }
-                    } else {
-                        names.push("???".into());
+                        //
                     }
-                    //
+                    settings.file_source = Some(IndexedSource::new(names));
                 }
+                let source = settings.file_source.clone().unwrap();
                 let font: Handle<Font> = asset_server.load("font.ttf");
                 let entity = FuzzyList::spawn(
                     1,
                     &mut commands,
                     font,
-                    AllWordsSource::new(names),
+                    source,
                     10,
                     650.0,
                     &state_store.get(1),
