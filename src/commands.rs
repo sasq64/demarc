@@ -510,7 +510,8 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
             MediaKeyEvent::PlayPause | MediaKeyEvent::Play | MediaKeyEvent::Pause => {
                 Some(Cmd::PauseResume)
             }
-            MediaKeyEvent::Previous | MediaKeyEvent::Stop => None,
+            MediaKeyEvent::Previous => Some(Cmd::PrevFile),
+            MediaKeyEvent::Stop => None,
         };
         if let Some(cmd) = cmd {
             writer.write(CmdMessage(cmd, false));
@@ -520,30 +521,20 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
 
 pub struct CommandPlugin;
 
-/// When `--select` is passed, open the file-open selector once on the first
-/// frame. `setup_retro` has already suppressed the default auto-load, so the
-/// emulators stay idle until the user picks a file from the selector.
-fn open_select_menu(
-    args: Res<crate::Args>,
-    mut writer: MessageWriter<CmdMessage>,
-    mut done: Local<bool>,
-) {
-    if !*done {
-        *done = true;
-        if args.select {
-            writer.write(CmdMessage(Cmd::OpenFile, false));
-        }
+/// When `--select` is passed, open the file-open selector once on the first frame.
+fn open_select_menu(args: Res<crate::Args>, mut writer: MessageWriter<CmdMessage>) {
+    if args.select {
+        writer.write(CmdMessage(Cmd::OpenFile, false));
     }
 }
 
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>();
-        app.add_systems(Startup, init_media_keys);
+        app.add_systems(Startup, (init_media_keys, open_select_menu));
         app.add_systems(
             Update,
             (
-                open_select_menu,
                 handle_textlist,
                 handle_media_keys,
                 handle_cmd.run_if(on_message::<CmdMessage>),
