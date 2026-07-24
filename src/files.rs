@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
-    fetch::fetch_url,
+    fetch::{fetch_url, fetch_urls},
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
@@ -51,8 +51,20 @@ impl FileSource {
     /// [`fetch_url`]) the first time — and return the resulting local path. A
     /// [`FileSource::Path`] is returned as-is.
     fn resolve(&mut self) -> Result<&PathBuf> {
-        if let FileSource::Url(u) = self {
-            let p = fetch_url(u.first().unwrap().as_ref())?;
+        if let FileSource::Url(urls) = self {
+            // If any URL is a disk image, this is a multi-disk set: download
+            // every disk image so they sit together in one directory (built
+            // into an m3u later). Otherwise just grab the first entry.
+            let disk_urls: Vec<Url> = urls
+                .iter()
+                .filter(|u| is_disk_image(Path::new(u.path())))
+                .cloned()
+                .collect();
+            let p = if disk_urls.is_empty() {
+                fetch_url(urls.first().unwrap().as_ref())?
+            } else {
+                fetch_urls(&disk_urls)?
+            };
             *self = FileSource::Path(p);
         }
         match self {
@@ -647,7 +659,9 @@ mod tests {
             &*eod.path.as_path(),
             Path::new("https://example.com/eod.d64")
         );
-        assert_eq!(eod.system_type, SystemType::C64);
+        // The system type is only determined once the URL is fetched (see
+        // `prepare_file`), so collection leaves it Unknown.
+        assert_eq!(eod.system_type, SystemType::Unknown);
         assert_eq!(eod.game_info.title, "Edge of Disgrace");
         assert_eq!(eod.game_info.group, "Booze Design");
         assert_eq!(eod.game_info.year, "2008");

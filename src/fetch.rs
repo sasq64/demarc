@@ -3,7 +3,7 @@
 //! a local path.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use tracing::info;
@@ -65,13 +65,40 @@ pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
     }
 
     info!("Downloading {url}...");
-    let tmp = dir.join(format!(".{name}.part"));
+    download_to(url, &path)?;
+    Ok(path)
+}
+
+/// Gather several URLs into a single fresh temp directory and return that
+/// directory's path, so multi-disk sets end up side by side in one directory.
+///
+/// Each URL is fetched through [`fetch_url`], so it is cached individually; when
+/// they are all already cached this just copies the cached files across without
+/// re-downloading. Each file keeps its URL-derived name (see [`url_filename`]).
+pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
+    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    for url in urls {
+        let cached = fetch_url(url.as_ref())?;
+        let name = cached
+            .file_name()
+            .with_context(|| format!("cached download has no filename: {}", cached.display()))?;
+        std::fs::copy(&cached, dir.join(name))?;
+    }
+    Ok(dir)
+}
+
+/// Download `url` to `path`, writing first to a sibling `.part` file that is
+/// renamed into place on success so an interrupted transfer never leaves a
+/// truncated file masquerading as a complete one.
+fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("download");
+    let tmp = path.with_file_name(format!(".{name}.part"));
     let mut file = std::fs::File::create(&tmp)?;
     download(url, &mut file)?;
     file.flush()?;
     drop(file);
-    std::fs::rename(&tmp, &path)?;
-    Ok(path)
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 /// Download `url` (`http`, `https` or `ftp`) into `out`.
