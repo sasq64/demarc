@@ -12,6 +12,7 @@ use clap::{ColorChoice, Parser};
 mod libretro;
 
 mod audio;
+mod cbmconvert;
 mod commands;
 mod emulator;
 mod fetch;

@@ -1,0 +1,20 @@
+2003-08-29  Marko Mäkelä  <msmakela@nic.funet.fi>
+
+	* cbmconvert.html, main.c (main): version 2.1.2
+
+	* t64.c (ReadT64):
+	allow end address to wrap around
+	allow fileType to refer to any sequential disk type
+
+2002-06-16  Marko Mäkelä  <msmakela@nic.funet.fi>
+
+	* cbmconvert.html: renamed from README.html revised for version 2.1.1
+
+	* Makefile: split into Makefile.<platform> and Makefile
+
+	* TODO: mention plans on integrating cbmconvert with cbmlink
+	
+	* image.c (mapInode): tolerate partially unallocated inodes
+
+	* c2n.c (ReadC2N): tolerate nonsensial addresses in data header blocks
+
