@@ -185,11 +185,19 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         if url.is_empty() {
             continue;
         }
-        let paths = url.split(';').collect::<Vec<_>>();
-        let urls: Vec<Url> = paths
-            .iter()
-            .map(|p| Url::parse(p))
-            .collect::<Result<Vec<_>, _>>()?;
+        let urls: Vec<Url> = url
+            .split(';')
+            .filter_map(|p| match Url::parse(p) {
+                Ok(u) => Some(u),
+                Err(err) => {
+                    warn!("Skipping unparseable URL {p:?}: {err}");
+                    None
+                }
+            })
+            .collect();
+        if urls.is_empty() {
+            continue;
+        }
 
         let year = date
             .split(['-', '/', '.'])
