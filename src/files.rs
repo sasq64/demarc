@@ -115,6 +115,7 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         if url.is_empty() {
             continue;
         }
+        let url = url.split(';').next().unwrap_or_default().to_string();
 
         let year = date
             .split(['-', '/', '.'])
