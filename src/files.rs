@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
@@ -6,8 +7,10 @@ use std::{
 
 use anyhow::{Result, bail};
 use tracing::{debug, info, warn};
+use url::Url;
 
 use crate::{
+    fetch::fetch_url,
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
@@ -16,6 +19,61 @@ use crate::{
         scan_release_dir, sort_disks, unlha_to_temp, unzip_to_temp,
     },
 };
+
+/// Where an [`EmuFile`]'s data comes from: either an already-local path or one
+/// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).
+#[derive(Clone, Debug)]
+pub enum FileSource {
+    Url(Vec<Url>),
+    Path(PathBuf),
+}
+
+impl Default for FileSource {
+    fn default() -> Self {
+        FileSource::Path(PathBuf::new())
+    }
+}
+
+impl From<PathBuf> for FileSource {
+    fn from(path: PathBuf) -> Self {
+        FileSource::Path(path)
+    }
+}
+
+impl From<&Path> for FileSource {
+    fn from(path: &Path) -> Self {
+        FileSource::Path(path.to_owned())
+    }
+}
+
+impl FileSource {
+    /// Ensure the data is available locally — downloading the URL (cached, see
+    /// [`fetch_url`]) the first time — and return the resulting local path. A
+    /// [`FileSource::Path`] is returned as-is.
+    fn resolve(&mut self) -> Result<&PathBuf> {
+        if let FileSource::Url(u) = self {
+            let p = fetch_url(u.first().unwrap().as_ref())?;
+            *self = FileSource::Path(p);
+        }
+        match self {
+            FileSource::Path(p) => Ok(p),
+            FileSource::Url(_) => unreachable!("just converted to Path above"),
+        }
+    }
+
+    /// A cheap, read-only path view for extension checks or display names: the
+    /// local path directly, or a URL rendered as a path. The result may not
+    /// exist on disk — use [`resolve`](Self::resolve) to obtain a real local
+    /// file for a URL.
+    pub fn as_path(&self) -> Cow<'_, Path> {
+        match self {
+            FileSource::Path(p) => Cow::Borrowed(p),
+            FileSource::Url(u) => Cow::Owned(PathBuf::from(
+                u.first().map(Url::as_str).unwrap_or_default(),
+            )),
+        }
+    }
+}
 
 // EmuFile can be:
 // * Single PRG, ADF or other
@@ -28,7 +86,7 @@ use crate::{
 
 #[derive(Default, Clone, Debug)]
 pub struct EmuFile {
-    pub path: PathBuf,
+    pub path: FileSource,
     pub tags: HashMap<String, String>,
     pub system_type: SystemType,
     pub game_info: GameInfo,
@@ -72,7 +130,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         }
     }
     Ok(EmuFile {
-        path,
+        path: path.into(),
         system_type,
         tags,
         game_info: GameInfo { title, group, year },
@@ -115,7 +173,11 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         if url.is_empty() {
             continue;
         }
-        let url = url.split(';').next().unwrap_or_default().to_string();
+        let paths = url.split(';').collect::<Vec<_>>();
+        let urls: Vec<Url> = paths
+            .iter()
+            .map(|p| Url::parse(p))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let year = date
             .split(['-', '/', '.'])
@@ -130,8 +192,8 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         }
 
         out.push(EmuFile {
-            path: PathBuf::from(url),
-            system_type: SystemType::Unknown, //get_system_type(Path::new(url)),
+            path: FileSource::Url(urls),
+            system_type: SystemType::Unknown,
             tags,
             game_info: GameInfo { title, group, year },
         });
@@ -148,7 +210,7 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
     } else {
         let title = in_path.file_stem().unwrap().to_string_lossy().to_string();
         Ok(EmuFile {
-            path: in_path.to_owned(),
+            path: in_path.into(),
             system_type: get_system_type(in_path),
             game_info: GameInfo {
                 title,
@@ -223,17 +285,19 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
 pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
     let EmuFile {
         mut system_type,
-        mut path,
+        path: mut source,
         mut tags,
         game_info,
     } = emu_file.clone();
     let mut is_temp = false;
 
-    // Entries whose path is an http(s):// URL (e.g. from a `--db` list) are
-    // downloaded to the local cache on first load, then handled like any other
-    // local file. The cache means later loads of the same URL are free.
-    if let Some(url) = path.to_str().filter(|s| crate::fetch::is_url(s)) {
-        path = crate::fetch::fetch_url(url)?;
+    // Entries backed by a URL (e.g. from a `--db` list) are downloaded to the
+    // local cache on first load, then handled like any other local file. The
+    // cache means later loads of the same URL are free. Re-detect the system
+    // type once we have the real file, since collection only saw the URL.
+    let was_url = matches!(source, FileSource::Url(_));
+    let mut path = source.resolve()?.clone();
+    if was_url {
         system_type = get_system_type(&path);
     }
 
@@ -378,7 +442,8 @@ mod tests {
         let mut found: Vec<(String, SystemType)> = out
             .iter()
             .map(|f| {
-                let rel = f.path.strip_prefix(root).unwrap_or(&f.path);
+                let path = f.path.as_path();
+                let rel = path.strip_prefix(root).unwrap_or(&path);
                 (rel.to_string_lossy().into_owned(), f.system_type)
             })
             .collect();
@@ -578,7 +643,10 @@ mod tests {
         assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
 
         let eod = &out[0];
-        assert_eq!(eod.path, PathBuf::from("https://example.com/eod.d64"));
+        assert_eq!(
+            &*eod.path.as_path(),
+            Path::new("https://example.com/eod.d64")
+        );
         assert_eq!(eod.system_type, SystemType::C64);
         assert_eq!(eod.game_info.title, "Edge of Disgrace");
         assert_eq!(eod.game_info.group, "Booze Design");
@@ -601,9 +669,9 @@ mod tests {
         let mut out = vec![];
         collect_files(&root.join("testdata/intros"), &mut out, true).unwrap();
         assert_eq!(out.len(), 15);
-        out.sort_by(|a, b| a.path.cmp(&b.path));
+        out.sort_by(|a, b| a.path.as_path().cmp(&b.path.as_path()));
         let wf = prepare_file(&out[0]).unwrap();
         assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path, out[0].path);
+        assert_eq!(wf.path.as_path(), &*out[0].path.as_path());
     }
 }

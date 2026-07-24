@@ -506,7 +506,10 @@ fn run_retro(
             let game = settings.files[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
-                    let text = format!("{:?}: {e:?}", game.path.file_name().unwrap_or_default());
+                    let text = format!(
+                        "{:?}: {e:?}",
+                        game.path.as_path().file_name().unwrap_or_default()
+                    );
                     writer.write(SetHudText {
                         text,
                         delay: Duration::from_secs(0),
