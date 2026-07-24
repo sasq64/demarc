@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use unarc_rs::unified::ArchiveFormat;
+
 use crate::systems::{SystemType, get_system_type};
 
 fn check_reset_vector(data: &[u8]) -> bool {
@@ -514,63 +516,85 @@ pub fn sort_disks(files: &mut [PathBuf]) {
     });
 }
 
-/// True if `path` is a regular file beginning with the ZIP local-file-header
-/// magic (`PK\x03\x04`).
-pub fn is_zip_file(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
+/// Archive formats [`unpack_to_temp`] knows how to extract.
+fn is_supported_archive(format: ArchiveFormat) -> bool {
+    matches!(
+        format,
+        ArchiveFormat::Zip
+            | ArchiveFormat::SevenZ
+            | ArchiveFormat::Rar
+            | ArchiveFormat::Lha
+            | ArchiveFormat::Tar
+            | ArchiveFormat::Gz
+            | ArchiveFormat::Bz2
+            | ArchiveFormat::Z
+    )
+}
+
+/// If `path` is one of the supported archive formats — zip, 7z, rar, lha/lzh,
+/// tar, gz, bz2 or Unix compress (`.Z`) — extract it into a fresh temp
+/// directory and return that directory. The format is detected from the file
+/// contents (falling back to the extension), so mis-named archives still work.
+/// Returns `Ok(None)` when `path` is not a recognised archive.
+pub fn unpack_to_temp(path: &Path) -> Result<Option<PathBuf>> {
+    use std::{io::BufReader, path::Component};
+
+    let mut file = BufReader::new(fs::File::open(path)?);
+    let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
+        return Ok(None);
     };
-    use std::io::Read;
-    let mut magic = [0u8; 4];
-    file.read_exact(&mut magic).is_ok() && magic == [0x50, 0x4b, 0x03, 0x04]
-}
+    if !is_supported_archive(format) {
+        return Ok(None);
+    }
 
-/// True if `path` is a regular file whose LHA/LZH method id (`-lhX-`, `-lzX-`)
-/// sits at offset 2, as in every LHA archive header.
-pub fn is_lha_file(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
-    };
-    use std::io::Read;
-    let mut magic = [0u8; 7];
-    file.read_exact(&mut magic).is_ok() && magic[2] == b'-' && magic[3] == b'l' && magic[6] == b'-'
-}
+    let mut archive = format.open(file)?;
+    // Single-file compressors (.Z/.gz/.bz2) carry no name for their payload, so
+    // derive one from the archive's stem (e.g. `demo.tar.gz` -> `demo.tar`).
+    if matches!(
+        format,
+        ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
+    ) {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            archive.set_single_file_name(stem.to_string());
+        }
+    }
 
-/// Extract `path` (a zip archive) into a fresh temp directory and return that
-/// directory.
-pub fn unzip_to_temp(path: &Path) -> Result<PathBuf> {
     let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
-    archive.extract(&target_dir)?;
-    Ok(target_dir)
-}
-
-/// Extract `path` (an LHA/LZH archive) into a fresh temp directory and return
-/// that directory.
-pub fn unlha_to_temp(path: &Path) -> Result<PathBuf> {
-    use std::io::Read;
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    let mut reader = delharc::parse_file(path)?;
-    loop {
-        let header = reader.header();
-        let out_path = target_dir.join(header.parse_pathname());
-        if header.is_directory() {
+    while let Some(entry) = archive.next_entry()? {
+        let name = entry.name();
+        // Keep only normal path components so an absolute path or `..` in the
+        // archive can't write outside the temp directory.
+        let rel: PathBuf = Path::new(name)
+            .components()
+            .filter(|c| matches!(c, Component::Normal(_)))
+            .collect();
+        if rel.as_os_str().is_empty() {
+            // Unusable name (e.g. all `..`): nothing safe to write.
+            archive.skip(&entry)?;
+            continue;
+        }
+        let out_path = target_dir.join(&rel);
+        if name.ends_with('/') || name.ends_with('\\') {
+            // Explicit directory entry (zip, tar).
             fs::create_dir_all(&out_path)?;
-        } else if reader.is_decoder_supported() {
+            archive.skip(&entry)?;
+            continue;
+        }
+        // Some formats (e.g. rar) mark directories only in per-file metadata the
+        // unified reader doesn't expose, but always decompress them to nothing.
+        // Treating an empty entry as a directory both handles those and keeps a
+        // zero-length file from blocking a later `dir/child` from being created.
+        let data = archive.read(&entry)?;
+        if data.is_empty() {
+            fs::create_dir_all(&out_path)?;
+        } else {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let mut data = Vec::new();
-            reader.read_to_end(&mut data)?;
             fs::write(&out_path, &data)?;
-        } else {
-            warn!("Unsupported LHA compression for {out_path:?}");
-        }
-        if !reader.next_file().map_err(std::io::Error::from)? {
-            break;
         }
     }
-    Ok(target_dir)
+    Ok(Some(target_dir))
 }
 
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {

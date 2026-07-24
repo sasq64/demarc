@@ -11,6 +11,7 @@
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
+use std::path::Path;
 
 unsafe extern "C" {
     /// The renamed `main()` of cbmconvert. Same contract as the CLI: `argv[0]`
@@ -47,6 +48,21 @@ where
     unsafe { cbmconvert_main(owned.len() as c_int, argv.as_ptr()) }
 }
 
+/// Restores the previous working directory on drop so the CWD change made
+/// for a conversion doesn't leak into other tests.
+pub struct CwdGuard(pub std::path::PathBuf);
+impl CwdGuard {
+    pub fn enter(dir: &Path) -> Self {
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        CwdGuard(prev)
+    }
+}
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,21 +93,5 @@ mod tests {
         assert!(bytes.len() > 2, "prg is unexpectedly small");
         // Native .prg starts with a little-endian load address; BADALM is $0801.
         assert_eq!(&bytes[..2], &[0x01, 0x08], "unexpected load address");
-    }
-
-    /// Restores the previous working directory on drop so the CWD change made
-    /// for a conversion doesn't leak into other tests.
-    struct CwdGuard(std::path::PathBuf);
-    impl CwdGuard {
-        fn enter(dir: &Path) -> Self {
-            let prev = std::env::current_dir().unwrap();
-            std::env::set_current_dir(dir).unwrap();
-            CwdGuard(prev)
-        }
-    }
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.0);
-        }
     }
 }

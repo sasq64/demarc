@@ -10,13 +10,14 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
+    cbmconvert,
     fetch::{fetch_url, fetch_urls},
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
-        build_atari_auto_disk, build_m3u, copy_dir_all, has_matching, is_disk_image, is_lha_file,
-        is_psx_exe, is_self_booting_dir, is_zip_file, parse_m3u, prepare_psx_disc, read_header,
-        scan_release_dir, sort_disks, unlha_to_temp, unzip_to_temp,
+        build_atari_auto_disk, build_m3u, copy_dir_all, has_matching, is_disk_image, is_psx_exe,
+        is_self_booting_dir, parse_m3u, prepare_psx_disc, read_header, scan_release_dir,
+        sort_disks, unpack_to_temp,
     },
 };
 
@@ -299,6 +300,22 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     Ok(())
 }
 
+fn convert_dir(path: &Path) -> Result<()> {
+    for entry in fs::read_dir(path)? {
+        let entry_path = entry?.path();
+        let ext = entry_path
+            .extension()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if ext == "t64" {
+            let _guard = cbmconvert::CwdGuard::enter(path);
+            info!("Converting");
+            cbmconvert::run(["-t", "-N", entry_path.to_string_lossy().as_ref()]);
+        }
+    }
+    Ok(())
+}
+
 /// Prepare a file for loading into emulator. Unpack archives, parse
 /// binaries for more info, convert formats as needed.
 /// Also need to determine system_type if not done previously
@@ -321,20 +338,19 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
         system_type = get_system_type(&path);
     }
 
-    if path.is_file() && is_zip_file(&path) {
-        debug!("FMT: zip archive");
-        path = unzip_to_temp(&path)?;
-        is_temp = true;
-        system_type = get_system_type(&path);
-    } else if path.is_file() && is_lha_file(&path) {
-        debug!("FMT: lha archive");
-        path = unlha_to_temp(&path)?;
-        is_temp = true;
-        system_type = get_system_type(&path);
+    if path.is_file() {
+        if let Some(unpacked) = unpack_to_temp(&path)? {
+            debug!("FMT: unpacked archive {path:?} -> {unpacked:?}");
+            path = unpacked;
+            is_temp = true;
+            system_type = get_system_type(&path);
+        }
     }
     let mut copy_all = false;
 
     if path.is_dir() {
+        convert_dir(&path);
+
         if is_self_booting_dir(&path) {
             debug!("FMT: Amiga self-booting");
             system_type = SystemType::Amiga;
