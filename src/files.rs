@@ -96,16 +96,20 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
     for l in text.lines() {
         let line = l.trim();
 
-        if line.is_empty() || line.chars().next().unwrap() == '#' {
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let mut fields = line.split('\t');
-        let _id = fields.next().unwrap_or_default();
-        let title = fields.next().unwrap_or_default().to_string();
-        let group = fields.next().unwrap_or_default().to_string();
-        let date = fields.next().unwrap_or_default();
-        let party = fields.next().unwrap_or_default();
-        let demo_type = fields.next().unwrap_or_default();
+        let mut next = || fields.next().unwrap_or_default();
+        let _id = next();
+        let title = next().to_string();
+        let group = next().to_string();
+        let date = next();
+        let party = next();
+        let demo_type = next();
+        if demo_type.ends_with("disk") {
+            continue;
+        }
         let tag_list = fields.next().unwrap_or_default();
         let url = fields.next().unwrap_or_default().trim();
         if url.is_empty() {
