@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use tempfile::TempDir;
 use unarc_rs::unified::ArchiveFormat;
 
 use crate::systems::{SystemType, get_system_type};
@@ -417,13 +418,14 @@ pub fn is_self_booting_dir(game: &Path) -> bool {
 }
 /// Build a bootable Atari ST FAT12 floppy image containing an `AUTO` directory
 /// with `data` (a GEMDOS executable from `src`) copied into it, so it runs
-/// automatically when the disk boots. Returns the path to the `.st` image,
-/// which lives inside a fresh temp directory.
-pub fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
+/// automatically when the disk boots. Returns the path to the `.st` image and
+/// the fresh temp directory it lives in, which the caller has to keep alive for
+/// as long as the image is needed.
+pub fn build_atari_auto_disk(data: &[u8]) -> Result<(PathBuf, TempDir)> {
     use std::io::Write;
 
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    let img_path = target_dir.join("disk.st");
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+    let img_path = target_dir.path().join("disk.st");
 
     let img = fs::OpenOptions::new()
         .read(true)
@@ -458,33 +460,35 @@ pub fn build_atari_auto_disk(data: &[u8]) -> Result<PathBuf> {
     }
     fs.unmount()?;
 
-    Ok(img_path)
+    Ok((img_path, target_dir))
 }
 
 /// Copy `files` into a fresh temp directory and write a `demo.m3u` that
-/// references each copied file by name. Returns the path to the `.m3u`, which
-/// lives inside the temp directory alongside the copied files.
-pub fn build_m3u(files: &[PathBuf]) -> Result<PathBuf> {
+/// references each copied file by name. Returns the path to the `.m3u`,
+/// alongside the copies in the temp directory, and the directory itself — the
+/// caller has to keep it alive for as long as the playlist is needed. Since the
+/// files are copied, whatever they came from can go away right after.
+pub fn build_m3u(files: &[PathBuf]) -> Result<(PathBuf, TempDir)> {
     use std::io::Write;
 
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
 
     let mut contents = String::from("#EXTM3U\n");
     for file in files {
         let name = file
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {:?}", file))?;
-        fs::copy(file, target_dir.join(name))?;
+        fs::copy(file, target_dir.path().join(name))?;
         contents.push_str(&name.to_string_lossy());
         contents.push('\n');
     }
 
-    let m3u_path = target_dir.join("demo.m3u");
+    let m3u_path = target_dir.path().join("demo.m3u");
     let mut m3u = fs::File::create(&m3u_path)?;
     m3u.write_all(contents.as_bytes())?;
     m3u.flush()?;
 
-    Ok(m3u_path)
+    Ok((m3u_path, target_dir))
 }
 
 /// Sort disk images so that the most "main" disk comes first. Ordering rules:
@@ -535,17 +539,14 @@ fn is_supported_archive(format: ArchiveFormat) -> bool {
 /// tar, gz, bz2 or Unix compress (`.Z`) — extract it into a fresh temp
 /// directory and return that directory. The format is detected from the file
 /// contents (falling back to the extension), so mis-named archives still work.
-/// Returns `Ok(None)` when `path` is not a recognised archive.
-pub fn unpack_to_temp(path: &Path) -> Result<Option<PathBuf>> {
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    match unpack_into(path, &target_dir) {
+/// Returns `Ok(None)` when `path` is not a recognised archive — dropping the
+/// [`TempDir`] then takes the empty directory with it, and most files handed to
+/// this are not archives at all.
+pub fn unpack_to_temp(path: &Path) -> Result<Option<TempDir>> {
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+    match unpack_into(path, target_dir.path()) {
         Ok(true) => Ok(Some(target_dir)),
-        // Nothing was written, so don't leave an empty temp directory behind —
-        // most files handed to this are not archives at all.
-        other => {
-            _ = fs::remove_dir_all(&target_dir);
-            other.map(|_| None)
-        }
+        other => other.map(|_| None),
     }
 }
 

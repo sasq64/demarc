@@ -5,7 +5,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, info, warn};
+use tempfile::TempDir;
+use tracing::{debug, info};
 
 use crate::{
     Args, CbmSystem,
@@ -82,51 +83,12 @@ pub struct WorkingFile {
     pub system_type: SystemType,
     pub settings: HashMap<String, String>,
     pub game_info: GameInfo,
-    pub is_temp: bool,
-}
-
-impl Drop for WorkingFile {
-    fn drop(&mut self) {
-        if !self.is_temp {
-            return;
-        }
-        // `path` may be the temp dir itself (Amiga), a file inside it (Atari
-        // disk image), or a subdirectory of it (zip with a single top-level
-        // dir). Walk up to the `demarc-` temp root and remove the whole tree.
-        //
-        // Safety: every builder that sets `is_temp` roots `path` in a
-        // `demarc-` dir created under the system temp dir. Rather than trust
-        // that invariant, only ever remove a directory that (a) is itself
-        // named `demarc-*` and (b) lives under the system temp dir. If no such
-        // ancestor is found we bail out — never walk up to `/` and delete
-        // something we shouldn't.
-        let tmp_root = std::env::temp_dir();
-        let mut dir = self.path.as_path();
-        loop {
-            let is_demarc_root = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("demarc-"));
-            if is_demarc_root {
-                if dir.starts_with(&tmp_root) {
-                    _ = fs::remove_dir_all(dir);
-                } else {
-                    warn!("Refusing to remove temp dir outside {tmp_root:?}: {dir:?}");
-                }
-                return;
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => {
-                    warn!(
-                        "Temp WorkingFile has no demarc- ancestor, not removing: {:?}",
-                        self.path
-                    );
-                    return;
-                }
-            }
-        }
-    }
+    /// The temp directory `path` was built in, when it was built at all. `path`
+    /// may be the directory itself (Amiga), a file inside it (Atari disk image)
+    /// or a file in a subdirectory of it (zip with a single top-level dir); in
+    /// every case holding the [`TempDir`] here is what keeps it on disk, and
+    /// dropping the `WorkingFile` removes the whole tree.
+    pub temp_dir: Option<TempDir>,
 }
 
 pub fn get_memory(work_file: &WorkingFile) -> String {

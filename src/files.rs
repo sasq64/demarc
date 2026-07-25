@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Result, bail};
+use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -473,17 +474,17 @@ fn convert_files(dir: &Path) -> Result<()> {
 /// — a directory as a whole tree. An `already_temp` path is ours to write to
 /// and is converted in place. Returns `None` when there is nothing to convert,
 /// in which case the caller keeps using the path it has.
-fn stage_for_convert(path: &Path, already_temp: bool) -> Result<Option<PathBuf>> {
+fn stage_for_convert(path: &Path, already_temp: bool) -> Result<Option<TempDir>> {
     if already_temp || !has_convertible(path) {
         return Ok(None);
     }
-    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
     if path.is_dir() {
-        copy_dir_all(path, &dir)?;
+        copy_dir_all(path, dir.path())?;
     } else {
-        fs::copy(path, dir.join(path.file_name().unwrap()))?;
+        fs::copy(path, dir.path().join(path.file_name().unwrap()))?;
     }
-    debug!("FMT: staged {path:?} for conversion in {dir:?}");
+    debug!("FMT: staged {path:?} for conversion in {:?}", dir.path());
     Ok(Some(dir))
 }
 
@@ -527,7 +528,11 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
         mut tags,
         game_info,
     } = emu_file.clone();
-    let mut is_temp = false;
+    // Holds whichever temp directory `path` currently points into, so it lives
+    // exactly as long as the `WorkingFile` this returns. Each stage below that
+    // builds a new one first copies out what it needs from the old, so simply
+    // replacing this drops — and removes — the directory it is done with.
+    let mut temp_dir: Option<TempDir> = None;
 
     // Entries backed by a URL (e.g. from a `--db` list) are downloaded to the
     // local cache on first load, then handled like any other local file. The
@@ -541,9 +546,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
 
     if path.is_file() {
         if let Some(unpacked) = unpack_to_temp(&path)? {
-            debug!("FMT: unpacked archive {path:?} -> {unpacked:?}");
-            path = unpacked;
-            is_temp = true;
+            debug!("FMT: unpacked archive {path:?} -> {:?}", unpacked.path());
+            path = unpacked.path().to_path_buf();
+            temp_dir = Some(unpacked);
             system_type = get_system_type(&path);
         }
     }
@@ -551,9 +556,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
     // A file that needs converting becomes a temp directory holding just that
     // file, so from here on there is one route: convert the directory, then
     // pick the file back out of it below.
-    if let Some(staged) = stage_for_convert(&path, is_temp)? {
-        path = staged;
-        is_temp = true;
+    if let Some(staged) = stage_for_convert(&path, temp_dir.is_some())? {
+        path = staged.path().to_path_buf();
+        temp_dir = Some(staged);
     }
     let mut copy_all = false;
 
@@ -579,8 +584,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             let mut files = scan.disk_images;
             if files.len() > 1 {
                 sort_disks(&mut files);
-                path = build_m3u(&files)?;
-                is_temp = true;
+                let (m3u, dir) = build_m3u(&files)?;
+                path = m3u;
+                temp_dir = Some(dir);
             } else if let Some(f) = scan.first_file.or_else(|| only_file(&path)) {
                 path = f;
                 copy_all = true;
@@ -600,8 +606,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             // GEMDOS executable: wrap it in a bootable Atari ST floppy image
             // with the program in the AUTO folder so it runs on boot. The whole
             // executable goes on the disk, not just the header read above.
-            path = build_atari_auto_disk(&fs::read(&path)?)?;
-            is_temp = true;
+            let (img, dir) = build_atari_auto_disk(&fs::read(&path)?)?;
+            path = img;
+            temp_dir = Some(dir);
             system_type = SystemType::AtariST;
         } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
             system_type = SystemType::C64;
@@ -610,7 +617,8 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             if std::fs::metadata(&path)?.len() > 850 * 1024 {
                 tags.insert("puae_model".into(), "A1200".into());
             }
-            let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+            let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+            let target_dir = dir.path().to_path_buf();
             let s_dir = target_dir.join("s");
             fs::create_dir(&s_dir)?;
             let c_dir = target_dir.join("c");
@@ -638,14 +646,15 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
                 fs::copy(&path, target_dir.join("amiga_file"))?;
             }
             path = target_dir;
-            is_temp = true;
+            temp_dir = Some(dir);
             tags.insert("puae_use_whdload".into(), "disabled".into());
             system_type = SystemType::Amiga;
         }
     };
 
-    // The rewritten disc lives in the cache and is reused across runs, so it is
-    // deliberately not marked temp — `WorkingFile`'s drop must not delete it.
+    // The rewritten disc lives in the cache and is reused across runs, so it
+    // deliberately doesn't become the `temp_dir` — that would delete it. Any
+    // temp directory the cue itself came out of stays held either way.
     if system_type == SystemType::Psx
         && path
             .extension()
@@ -662,7 +671,7 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
         path,
         settings: tags,
         game_info,
-        is_temp,
+        temp_dir,
     })
 }
 
@@ -823,7 +832,7 @@ mod tests {
         let wf = prepare("demos/natrium.prg");
         assert_eq!(wf.system_type, SystemType::AtariST);
         assert_eq!(wf.path.extension().unwrap(), "st");
-        assert!(wf.is_temp);
+        assert!(wf.temp_dir.is_some());
     }
 
     /// The playlist's `#EXTINF` tags become emulator settings.
@@ -870,7 +879,7 @@ mod tests {
         let wf = prepare("testdata/BADALM.T64");
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path.extension().unwrap(), "prg");
-        assert!(wf.is_temp);
+        assert!(wf.temp_dir.is_some());
         assert!(!wf.path.starts_with(root), "converted next to the source");
         assert_eq!(fs::read_dir(root.join("testdata")).unwrap().count(), before);
     }
@@ -897,7 +906,7 @@ mod tests {
         let wf = prepare("testdata/Maniacs of Noise Logo.t64.gz");
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path.extension().unwrap(), "prg");
-        assert!(wf.is_temp);
+        assert!(wf.temp_dir.is_some());
     }
 
     /// Same for a directory holding one: it is copied before conversion, so
