@@ -73,6 +73,7 @@ pub struct GameInfo {
     pub title: String,
     pub group: String,
     pub year: String,
+    pub typ: String,
 }
 
 #[derive(Debug, Default)]
@@ -207,7 +208,12 @@ pub fn get_full_info(work_file: &WorkingFile) -> String {
     let ram = get_memory(work_file);
     let len = fs::metadata(&work_file.path).unwrap().len();
 
-    let GameInfo { title, group, year } = &work_file.game_info;
+    let GameInfo {
+        title,
+        group,
+        year,
+        typ: _,
+    } = &work_file.game_info;
     let year = if year.is_empty() {
         "".into()
     } else {
@@ -219,14 +225,20 @@ pub fn get_full_info(work_file: &WorkingFile) -> String {
 
 pub fn get_info_text(work_file: &WorkingFile) -> String {
     let system = get_system_name(work_file);
-    let GameInfo { title, group, year } = &work_file.game_info;
+    let GameInfo {
+        title,
+        group,
+        year,
+        typ,
+    } = &work_file.game_info;
     let year = if year.is_empty() {
         "".into()
     } else {
         format!(" ({year})")
     };
+    let desc = if typ.is_empty() { &system } else { typ };
 
-    format!("\"{title}\"\n{group}\n{system}{year}")
+    format!("\"{title}\"\n{group}\n{desc}{year}")
 }
 
 pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Result<PathBuf> {

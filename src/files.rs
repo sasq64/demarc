@@ -184,7 +184,12 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         path: path.into(),
         system_type,
         tags,
-        game_info: GameInfo { title, group, year },
+        game_info: GameInfo {
+            title,
+            group,
+            year,
+            typ: "".into(),
+        },
     })
 }
 
@@ -202,10 +207,14 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         Ok(text) => text,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
+
+    let mut is_bitworld = false;
+
     for l in text.lines() {
         let line = l.trim();
 
         if line.is_empty() || line.starts_with('#') {
+            is_bitworld = true;
             continue;
         }
         let mut fields = line.split('\t');
@@ -219,6 +228,11 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
         if demo_type.ends_with("disk") {
             continue;
         }
+        let demo_type = if is_bitworld {
+            format!("Amiga {demo_type}")
+        } else {
+            demo_type.to_string()
+        };
         let tag_list = fields.next().unwrap_or_default();
         let url = fields.next().unwrap_or_default().trim();
         if url.is_empty() {
@@ -244,7 +258,7 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
             .unwrap_or_default()
             .to_string();
         let mut tags = HashMap::new();
-        for (key, val) in [("party", party), ("type", demo_type), ("tags", tag_list)] {
+        for (key, val) in [("party", party), ("type", &demo_type), ("tags", tag_list)] {
             if !val.is_empty() {
                 tags.insert(key.to_string(), val.to_string());
             }
@@ -254,7 +268,12 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
             path: FileSource::Url(urls),
             system_type: SystemType::Unknown,
             tags,
-            game_info: GameInfo { title, group, year },
+            game_info: GameInfo {
+                title,
+                group,
+                year,
+                typ: demo_type,
+            },
         });
     }
     Ok(())

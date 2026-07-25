@@ -110,6 +110,12 @@ struct Args {
     #[arg(long)]
     slangp: Option<PathBuf>,
 
+    #[arg(short = 'T', long, default_value_t = "".into())]
+    include_types: String,
+
+    #[arg(short = 'X', long, default_value_t = "".into())]
+    exclude_types: String,
+
     /// Shuffle the list of files into a random order.
     #[arg(long)]
     shuffle: bool,
@@ -541,6 +547,14 @@ fn main() {
             files.push(collect_file(&file).unwrap());
         }
     }
+
+    if !args.include_types.is_empty() {
+        files.retain(|f| f.game_info.typ.contains(&args.include_types));
+    }
+    if !args.exclude_types.is_empty() {
+        files.retain(|f| !f.game_info.typ.contains(&args.exclude_types));
+    }
+
     if args.shuffle {
         use rand::seq::SliceRandom;
         files.shuffle(&mut rand::rng());
