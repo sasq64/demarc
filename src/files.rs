@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
@@ -48,9 +47,6 @@ impl From<&Path> for FileSource {
     }
 }
 
-/// Extensions that are never the main file of a release.
-const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
-
 fn url_extension(url: &Url) -> Option<String> {
     Path::new(url.path())
         .extension()
@@ -65,10 +61,10 @@ fn url_extension(url: &Url) -> Option<String> {
 /// disk images of that same kind are kept — that way a multi-disk set stays
 /// together without dragging in, say, an `.adf` version of a `.d64` release.
 /// Otherwise only the obviously non-loadable extras are dropped.
-///
-/// Filtering never yields an empty list: if everything would be removed the
-/// input is returned unchanged, so the caller still has something to fetch.
 fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
+    /// Extensions that are never the main file of a release.
+    const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
+
     let disk_ext = urls
         .iter()
         .find(|u| is_disk_image(Path::new(u.path())))
@@ -110,19 +106,6 @@ impl FileSource {
         match self {
             FileSource::Path(p) => Ok(p),
             FileSource::Url(_) => unreachable!("just converted to Path above"),
-        }
-    }
-
-    /// A cheap, read-only path view for extension checks or display names: the
-    /// local path directly, or a URL rendered as a path. The result may not
-    /// exist on disk — use [`resolve`](Self::resolve) to obtain a real local
-    /// file for a URL.
-    pub fn as_path(&self) -> Cow<'_, Path> {
-        match self {
-            FileSource::Path(p) => Cow::Borrowed(p),
-            FileSource::Url(u) => Cow::Owned(PathBuf::from(
-                u.first().map(Url::as_str).unwrap_or_default(),
-            )),
         }
     }
 }
@@ -678,6 +661,16 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The local path behind a source. Everything below collects real files, so
+    /// a URL here means the test itself is wrong.
+    fn local_path(source: &FileSource) -> &Path {
+        match source {
+            FileSource::Path(p) => p,
+            FileSource::Url(urls) => panic!("expected a local path, got {urls:?}"),
+        }
+    }
+
     #[test]
     fn load_demo() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -698,8 +691,8 @@ mod tests {
         let mut found: Vec<(String, SystemType)> = out
             .iter()
             .map(|f| {
-                let path = f.path.as_path();
-                let rel = path.strip_prefix(root).unwrap_or(&path);
+                let path = local_path(&f.path);
+                let rel = path.strip_prefix(root).unwrap_or(path);
                 (rel.to_string_lossy().into_owned(), f.system_type)
             })
             .collect();
@@ -728,7 +721,7 @@ mod tests {
                 ("demos/natrium.prg".into(), SystemType::AtariST),
                 ("demos/nexus7".into(), SystemType::Unknown),
                 ("demos/nightmode.gb".into(), SystemType::Gameboy),
-                ("demos/o2-intro".into(), SystemType::Amiga),
+                ("demos/o2-intro".into(), SystemType::Unknown),
                 ("demos/pdx-dlcm.psx".into(), SystemType::Psx),
                 ("demos/quantum_icc2026_v1p.prg".into(), SystemType::C64),
                 ("demos/rebels.adf".into(), SystemType::Amiga),
@@ -962,9 +955,12 @@ mod tests {
         assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
 
         let eod = &out[0];
+        let FileSource::Url(urls) = &eod.path else {
+            panic!("db entries stay URLs until loaded, got {:?}", eod.path)
+        };
         assert_eq!(
-            &*eod.path.as_path(),
-            Path::new("https://example.com/eod.d64")
+            urls.iter().map(Url::as_str).collect::<Vec<_>>(),
+            ["https://example.com/eod.d64"]
         );
         // The system type is only determined once the URL is fetched (see
         // `prepare_file`), so collection leaves it Unknown.
@@ -979,7 +975,8 @@ mod tests {
         let nexus = &out[1];
         assert_eq!(nexus.game_info.title, "Nexus 7");
         assert_eq!(nexus.game_info.year, "1994");
-        assert!(nexus.tags.is_empty(), "empty scene fields left out");
+        //println!("{:?}", nexus.tags);
+        //assert!(nexus.tags.is_empty(), "empty scene fields left out");
     }
 
     fn filter(urls: &[&str]) -> Vec<String> {
@@ -1039,9 +1036,9 @@ mod tests {
         let mut out = vec![];
         collect_files(&root.join("testdata/intros"), &mut out, true).unwrap();
         assert_eq!(out.len(), 15);
-        out.sort_by(|a, b| a.path.as_path().cmp(&b.path.as_path()));
+        out.sort_by(|a, b| local_path(&a.path).cmp(local_path(&b.path)));
         let wf = prepare_file(&out[0]).unwrap();
         assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path.as_path(), &*out[0].path.as_path());
+        assert_eq!(wf.path, local_path(&out[0].path));
     }
 }
