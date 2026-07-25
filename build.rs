@@ -11,8 +11,28 @@ fn main() {
         .compile("retro_log_shim");
     println!("cargo:rerun-if-changed=src/retro_log_shim.c");
 
+    build_unrar_isnt_shim();
     build_cbmconvert();
     build_system_zip();
+}
+
+/// Supply the two `isnt.cpp` symbols that `unrar_sys` leaves out when the build
+/// host isn't Windows. See src/unrar_isnt_shim.cpp for the full story; the short
+/// version is that its build script gates that file on `cfg!(windows)`, which is
+/// the host, so cross-compiled Windows builds fail to link.
+fn build_unrar_isnt_shim() {
+    const SRC: &str = "src/unrar_isnt_shim.cpp";
+    println!("cargo:rerun-if-changed={SRC}");
+
+    let target_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    if !target_windows || cfg!(windows) {
+        return;
+    }
+
+    cc::Build::new()
+        .cpp(true)
+        .file(SRC)
+        .compile("unrar_isnt_shim");
 }
 
 /// Compile the `cbmconvert` command-line tool as a static library linked into

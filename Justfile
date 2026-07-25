@@ -47,8 +47,15 @@ install:
 HOME := x'${HOME}'
 ZOLA := HOME / "projects/docs/minnberg"
 
+# `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
+# tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under
+# `#ifdef __GNUC__`, which clang-cl doesn't define, so clang rejects the
+# intrinsics unless the features are on for the whole translation unit. Both are
+# runtime-dispatched inside unrar; SSSE3/AES-NI are a 2006/2010 baseline.
+# scripts/prepare-xwin.sh patches the SDK cache -- see the comments there.
 win:
-    cargo xwin build --release --target x86_64-pc-windows-msvc
+    ./scripts/prepare-xwin.sh
+    CXXFLAGS="-mssse3 -maes" cargo xwin build --release --target x86_64-pc-windows-msvc
     cp target/x86_64-pc-windows-msvc/release/demarc.exe {{ZOLA}}/static/dl/
 
 site:
