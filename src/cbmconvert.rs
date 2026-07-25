@@ -11,7 +11,8 @@
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 unsafe extern "C" {
     /// The renamed `main()` of cbmconvert. Same contract as the CLI: `argv[0]`
@@ -48,19 +49,34 @@ where
     unsafe { cbmconvert_main(owned.len() as c_int, argv.as_ptr()) }
 }
 
-/// Restores the previous working directory on drop so the CWD change made
-/// for a conversion doesn't leak into other tests.
-pub struct CwdGuard(pub std::path::PathBuf);
+/// Serializes the working-directory switch below. The CWD is process-wide, so
+/// two conversions running at once would write their output into each other's
+/// directory. Holding the lock also keeps [`run`]'s file-scope state to one
+/// conversion at a time.
+static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+/// Switches the process-wide working directory for the duration of a
+/// conversion — the only way to tell cbmconvert where to put its output — and
+/// restores the previous one on drop.
+pub struct CwdGuard {
+    prev: PathBuf,
+    // Dropped after `prev` is restored, so the next conversion starts from a
+    // known directory.
+    _lock: MutexGuard<'static, ()>,
+}
 impl CwdGuard {
     pub fn enter(dir: &Path) -> Self {
+        // A conversion that panicked left the CWD restored by this same guard,
+        // so the poisoned state is fine to keep using.
+        let lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::current_dir().unwrap();
         std::env::set_current_dir(dir).unwrap();
-        CwdGuard(prev)
+        CwdGuard { prev, _lock: lock }
     }
 }
 impl Drop for CwdGuard {
     fn drop(&mut self) {
-        let _ = std::env::set_current_dir(&self.0);
+        let _ = std::env::set_current_dir(&self.prev);
     }
 }
 #[cfg(test)]

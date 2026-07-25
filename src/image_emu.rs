@@ -225,9 +225,16 @@ impl Backend for ImageEmu {
 mod tests {
     use super::*;
 
+    /// Paths here are rooted at the crate directory rather than left relative:
+    /// a conversion running in another test switches the process-wide working
+    /// directory for its duration (see `cbmconvert::CwdGuard`).
+    fn root(rel: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
     #[test]
     fn image_emu_presents_ilbm_frame() {
-        let mut emu = ImageEmu::new(Path::new("testdata/test.iff")).unwrap();
+        let mut emu = ImageEmu::new(&root("testdata/test.iff")).unwrap();
         assert_eq!(emu.get_frame_size(), (640, 512));
         // `run` always succeeds; the frame is ready immediately.
         assert!(emu.run());
@@ -277,7 +284,7 @@ mod tests {
     #[test]
     fn color_cycling_changes_the_frame() {
         // Cycling is opt-in, so enable it via the tag `--color-cycle` sets.
-        let mut emu = ImageEmu::new(Path::new("testdata/test.iff")).unwrap();
+        let mut emu = ImageEmu::new(&root("testdata/test.iff")).unwrap();
         // test.iff carries active CRNG chunks, so there is something to cycle.
         assert!(
             !emu.ranges.is_empty(),

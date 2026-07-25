@@ -1319,6 +1319,13 @@ mod tests {
 
     use super::*;
 
+    /// Paths here are rooted at the crate directory rather than left relative:
+    /// a conversion running in another test switches the process-wide working
+    /// directory for its duration (see `cbmconvert::CwdGuard`).
+    fn root(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
     /// The threaded `run()` is non-blocking, so the main loop must give the
     /// worker thread time to boot and deliver frames. Drive `emu` until it has
     /// produced its first frame, or panic after `timeout`.
@@ -1337,18 +1344,18 @@ mod tests {
     #[test]
     fn retro_amiga_works() {
         let core_path = libloader::get_libretro("puae").unwrap();
-        let system_dir = Path::new("system");
-        let game_path = Path::new("demos/rebels.adf");
+        let system_dir = &root("system");
+        let game_path = root("demos/rebels.adf");
 
         let settings = HashMap::new();
 
         let mut retro_emu =
-            RetroCoreDirect::new(&core_path, system_dir, Some(game_path), settings).unwrap();
+            RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), settings).unwrap();
         println!("## RUN");
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(Path::new("test_amiga.png")).unwrap();
+        retro_emu.save_png(&root("test_amiga.png")).unwrap();
     }
 
     /// Boot a self-booting directory under Kickstart 1.3 (A500). The WHDLoad
@@ -1357,32 +1364,32 @@ mod tests {
     #[test]
     fn retro_amiga_dir_works() {
         let core_path = libloader::get_libretro("puae").unwrap();
-        let system_dir = Path::new("system");
-        let game_path = Path::new("demos/o2-intro");
+        let system_dir = &root("system");
+        let game_path = root("demos/o2-intro");
 
         let mut settings = HashMap::new();
         settings.insert("puae_model".into(), "A500".into());
         settings.insert("puae_use_whdload".into(), "disabled".into());
 
         let mut retro_emu =
-            RetroCoreDirect::new(&core_path, system_dir, Some(game_path), settings).unwrap();
+            RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), settings).unwrap();
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(Path::new("test_amiga_dir.png")).unwrap();
+        retro_emu.save_png(&root("test_amiga_dir.png")).unwrap();
     }
 
     #[test]
     fn retro_threaded_works() {
         let core_path = libloader::get_libretro("puae").unwrap();
-        let system_dir = Path::new("system");
-        let game_path = Path::new("demos/rebels.adf");
+        let system_dir = &root("system");
+        let game_path = root("demos/rebels.adf");
 
         let mut settings = HashMap::new();
         settings.insert("puae_model".into(), "A500".into());
 
         let mut emu =
-            RetroCoreThreaded::new(&core_path, system_dir, Some(game_path), settings, false)
+            RetroCoreThreaded::new(&core_path, system_dir, Some(&game_path), settings, false)
                 .unwrap();
         // Object-safety / interchangeability check.
         let emu: &mut dyn Backend = &mut emu;
@@ -1394,7 +1401,7 @@ mod tests {
         }
         // The worker may still be a few frames behind; make sure we have one.
         run_until_frame(emu, Duration::from_secs(5));
-        emu.save_png(Path::new("test_amiga_threaded.png")).unwrap();
+        emu.save_png(&root("test_amiga_threaded.png")).unwrap();
         let (w, h) = emu.get_frame_size();
         assert!(w > 0 && h > 0, "no frame produced by worker");
     }
@@ -1403,9 +1410,9 @@ mod tests {
     fn retro_threaded_multi_works() {
         let uae_core = libloader::get_libretro("puae").unwrap();
         let vice_core = libloader::get_libretro("vice_x64").unwrap();
-        let system_dir = Path::new("system");
-        let uae_game = Path::new("demos/rebels.adf");
-        let vice_game = Path::new("demos/quantum_icc2026_v1p.prg");
+        let system_dir = &root("system");
+        let uae_game = root("demos/rebels.adf");
+        let vice_game = root("demos/quantum_icc2026_v1p.prg");
 
         let uae_settings = || {
             let mut s = HashMap::new();
@@ -1416,25 +1423,25 @@ mod tests {
         let cores = [
             (
                 &uae_core,
-                uae_game,
+                &uae_game,
                 uae_settings(),
                 "test_threaded_uae_0.png",
             ),
             (
                 &uae_core,
-                uae_game,
+                &uae_game,
                 uae_settings(),
                 "test_threaded_uae_1.png",
             ),
             (
                 &vice_core,
-                vice_game,
+                &vice_game,
                 HashMap::new(),
                 "test_threaded_vice_0.png",
             ),
             (
                 &vice_core,
-                vice_game,
+                &vice_game,
                 HashMap::new(),
                 "test_threaded_vice_1.png",
             ),
@@ -1506,7 +1513,7 @@ mod tests {
             .prefix("demarc-")
             .tempdir()
             .unwrap();
-        let game_path = Path::new("demos/pdx-dlcm.psx");
+        let game_path = root("demos/pdx-dlcm.psx");
 
         let mut tags = HashMap::new();
         tags.insert("beetle_psx_region".to_string(), "pal".to_string());
@@ -1516,14 +1523,14 @@ mod tests {
             "scph5502.bin",
             "scph5552.bin",
         ] {
-            std::fs::copy(Path::new("system").join(f), system_dir.path().join(f)).unwrap();
+            std::fs::copy(root("system").join(f), system_dir.path().join(f)).unwrap();
         }
         let mut emu =
-            RetroCoreDirect::new(&core_path, system_dir.path(), Some(game_path), tags).unwrap();
+            RetroCoreDirect::new(&core_path, system_dir.path(), Some(&game_path), tags).unwrap();
         for _ in 0..150 {
             emu.run();
         }
-        emu.save_png(Path::new("test_psx.png")).unwrap();
+        emu.save_png(&root("test_psx.png")).unwrap();
 
         let (w, h) = emu.get_frame_size();
         assert!(w > 0 && h > 0, "no frame produced");
@@ -1539,15 +1546,15 @@ mod tests {
     #[test]
     fn retro_vice_works() {
         let core_path = libloader::get_libretro("vice_x64").unwrap();
-        let system_dir = Path::new("system");
-        let game_path = Path::new("demos/quantum_icc2026_v1p.prg");
+        let system_dir = &root("system");
+        let game_path = root("demos/quantum_icc2026_v1p.prg");
 
         let mut retro_emu =
-            RetroCoreDirect::new(&core_path, system_dir, Some(game_path), HashMap::new()).unwrap();
+            RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), HashMap::new()).unwrap();
         println!("## RUN");
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(Path::new("test_d64.png")).unwrap();
+        retro_emu.save_png(&root("test_d64.png")).unwrap();
     }
 }

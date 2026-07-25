@@ -537,14 +537,31 @@ fn is_supported_archive(format: ArchiveFormat) -> bool {
 /// contents (falling back to the extension), so mis-named archives still work.
 /// Returns `Ok(None)` when `path` is not a recognised archive.
 pub fn unpack_to_temp(path: &Path) -> Result<Option<PathBuf>> {
+    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
+    match unpack_into(path, &target_dir) {
+        Ok(true) => Ok(Some(target_dir)),
+        // Nothing was written, so don't leave an empty temp directory behind —
+        // most files handed to this are not archives at all.
+        other => {
+            _ = fs::remove_dir_all(&target_dir);
+            other.map(|_| None)
+        }
+    }
+}
+
+/// Extract the archive at `path` into the existing directory `target_dir`,
+/// which is written into directly — see [`unpack_to_temp`] for the variant that
+/// makes a temp directory of its own. Returns `false`, having written nothing,
+/// when `path` is not a recognised archive.
+pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     use std::{io::BufReader, path::Component};
 
     let mut file = BufReader::new(fs::File::open(path)?);
     let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
-        return Ok(None);
+        return Ok(false);
     };
     if !is_supported_archive(format) {
-        return Ok(None);
+        return Ok(false);
     }
 
     let mut archive = format.open(file)?;
@@ -559,11 +576,10 @@ pub fn unpack_to_temp(path: &Path) -> Result<Option<PathBuf>> {
         }
     }
 
-    let target_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     while let Some(entry) = archive.next_entry()? {
         let name = entry.name();
         // Keep only normal path components so an absolute path or `..` in the
-        // archive can't write outside the temp directory.
+        // archive can't write outside the target directory.
         let rel: PathBuf = Path::new(name)
             .components()
             .filter(|c| matches!(c, Component::Normal(_)))
@@ -594,7 +610,7 @@ pub fn unpack_to_temp(path: &Path) -> Result<Option<PathBuf>> {
             fs::write(&out_path, &data)?;
         }
     }
-    Ok(Some(target_dir))
+    Ok(true)
 }
 
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {

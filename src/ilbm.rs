@@ -928,8 +928,15 @@ mod tests {
 
     use super::*;
 
+    /// Paths here are rooted at the crate directory rather than left relative:
+    /// a conversion running in another test switches the process-wide working
+    /// directory for its duration (see `cbmconvert::CwdGuard`).
+    fn root(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
     fn get_path(name: &str) -> PathBuf {
-        Path::new("testdata/iffILBM").join(name)
+        root("testdata/iffILBM").join(name)
     }
 
     /// Load a test image from the `iffILBM/` corpus and assert it decodes to the
@@ -948,7 +955,7 @@ mod tests {
 
     #[test]
     fn test_ilbm() {
-        let img = load("testdata/test.iff").unwrap();
+        let img = load(root("testdata/test.iff")).unwrap();
         assert_eq!(img.dimensions(), (640, 512));
         // The image must not be entirely one colour.
         let first = img.get_pixel(0, 0);
@@ -1083,15 +1090,15 @@ mod tests {
     /// path must reject them (callers then use the fixed-RGBA path).
     #[test]
     fn test_indexed_rejects_dynamic_palette() {
-        assert!(load_indexed(Path::new("testdata/iffILBM/amiga-ferrari.dhr")).is_err());
-        assert!(load_indexed(Path::new("testdata/iffILBM/Lake.mp")).is_err());
+        assert!(load_indexed(root("testdata/iffILBM/amiga-ferrari.dhr")).is_err());
+        assert!(load_indexed(root("testdata/iffILBM/Lake.mp")).is_err());
     }
 
     /// A dynamic-palette image should genuinely use more than its base 16
     /// colours: colours must vary between the top and bottom of the frame.
     #[test]
     fn test_ctbl_varies_down_screen() {
-        let img = load(Path::new("testdata/iffILBM/amiga-ferrari.dhr")).unwrap();
+        let img = load(root("testdata/iffILBM/amiga-ferrari.dhr")).unwrap();
         let top: std::collections::HashSet<_> =
             (0..img.width()).map(|x| img.get_pixel(x, 0).0).collect();
         let bottom: std::collections::HashSet<_> = (0..img.width())
