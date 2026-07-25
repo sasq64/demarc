@@ -571,10 +571,9 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     if matches!(
         format,
         ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
-    ) {
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            archive.set_single_file_name(stem.to_string());
-        }
+    ) && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+    {
+        archive.set_single_file_name(stem.to_string());
     }
 
     while let Some(entry) = archive.next_entry()? {

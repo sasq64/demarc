@@ -527,13 +527,13 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
         system_type = get_system_type(&path);
     }
 
-    if path.is_file() {
-        if let Some(unpacked) = unpack_to_temp(&path)? {
-            debug!("FMT: unpacked archive {path:?} -> {:?}", unpacked.path());
-            path = unpacked.path().to_path_buf();
-            temp_dir = Some(unpacked);
-            system_type = get_system_type(&path);
-        }
+    if path.is_file()
+        && let Some(unpacked) = unpack_to_temp(&path)?
+    {
+        debug!("FMT: unpacked archive {path:?} -> {:?}", unpacked.path());
+        path = unpacked.path().to_path_buf();
+        temp_dir = Some(unpacked);
+        system_type = get_system_type(&path);
     }
 
     // A file that needs converting becomes a temp directory holding just that

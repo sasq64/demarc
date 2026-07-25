@@ -51,7 +51,10 @@ pub enum ShaderPath {
     /// passthrough (`stock.slangp`) used when the CRT/LCD effect is toggled
     /// off. Absolute paths, resolved from the `system` dir (or a user-supplied
     /// `--slangp`) in `main`.
-    Slangp { effect: PathBuf, passthrough: PathBuf },
+    Slangp {
+        effect: PathBuf,
+        passthrough: PathBuf,
+    },
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
     /// and applies the effect in the composite pass itself. The
@@ -408,8 +411,7 @@ fn post_process_pass(
                 return;
             };
             let source_id = post_process.source.id();
-            let src_size =
-                UVec2::new(source_image.texture.width(), source_image.texture.height());
+            let src_size = UVec2::new(source_image.texture.width(), source_image.texture.height());
             let viewport_size = camera
                 .physical_viewport_size
                 .or(camera.physical_target_size)
@@ -581,7 +583,11 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
         view_formats: &[],
     });
     let view = texture.create_view(&TextureViewDescriptor::default());
-    IntermediateTarget { size, texture, view }
+    IntermediateTarget {
+        size,
+        texture,
+        view,
+    }
 }
 
 /// One emulator's librashader state: its own effect and passthrough chains, its
@@ -642,6 +648,7 @@ impl SlangChains {
             Entry::Vacant(e) => {
                 let wdevice = device.wgpu_device();
                 let wqueue: &wgpu::Queue = queue;
+                #[allow(clippy::result_large_err)]
                 let load = |path: &PathBuf| {
                     FilterChain::load_from_path(path, ShaderFeatures::NONE, wdevice, wqueue, None)
                 };
@@ -668,7 +675,11 @@ impl SlangChains {
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     // The WGSL backend runs no filter chains; the single-pass shader loaded by
     // `init_blit_pipeline` does everything.
-    let ShaderPath::Slangp { effect, passthrough } = &*shader_path else {
+    let ShaderPath::Slangp {
+        effect,
+        passthrough,
+    } = &*shader_path
+    else {
         return;
     };
     commands.insert_resource(SlangChains {
