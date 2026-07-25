@@ -245,6 +245,11 @@ pub struct TextList {
 }
 
 const SELECTED_ROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
+const ROW_FONT_SIZE: f32 = 22.0;
+/// Fixed height of every row, slightly above the natural line height for
+/// [`ROW_FONT_SIZE`]. Rows keep this height even when empty, so the box does not
+/// resize as the list is filtered or emptied.
+const ROW_HEIGHT: f32 = ROW_FONT_SIZE * 1.3;
 
 /// Marks a child text entity of a [`TextList`] and records which visible row it is.
 #[derive(Component)]
@@ -302,6 +307,11 @@ impl TextList {
                         padding: UiRect::all(Val::Px(16.0)),
                         border: UiRect::all(Val::Px(2.0)),
                         row_gap: Val::Px(4.0),
+                        // Rows lay their text out on a single line (`NoWrap`), so
+                        // anything too long spills sideways; clip it at the content
+                        // box (inside the padding) instead of letting it escape.
+                        overflow: Overflow::clip_x(),
+                        overflow_clip_margin: OverflowClipMargin::content_box(),
                         ..default()
                     },
                     BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
@@ -317,13 +327,26 @@ impl TextList {
                 .with_children(|box_node| {
                     for i in 0..visible_count {
                         box_node.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                // Without this the row would be sized to fit its
+                                // unwrapped (min-content) text and push past the box.
+                                min_width: Val::Px(0.0),
+                                height: Val::Px(ROW_HEIGHT),
+                                flex_shrink: 0.0,
+                                ..default()
+                            },
                             Text::new(""),
                             TextFont {
                                 font: font.clone().into(),
-                                font_size: FontSize::Px(22.0),
+                                font_size: FontSize::Px(ROW_FONT_SIZE),
                                 ..default()
                             },
                             TextColor(Color::WHITE),
+                            TextLayout {
+                                justify: Justify::Left,
+                                linebreak: LineBreak::NoWrap,
+                            },
                             BackgroundColor(Color::NONE),
                             TextListRow(i),
                         ));
