@@ -340,8 +340,8 @@ fn handle_cmd(
                     &mut commands,
                     font,
                     source,
-                    10,
-                    650.0,
+                    20,
+                    800.0,
                     &state_store.get(1),
                 );
                 settings.file_list = Some(entity);

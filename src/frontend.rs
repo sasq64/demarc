@@ -524,8 +524,8 @@ fn run_retro(
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
                             text: get_info_text(&emu.work_file),
-                            delay: Duration::from_secs(8),
-                            duration: Duration::from_secs(15),
+                            delay: Duration::from_secs(5),
+                            duration: Duration::from_secs(12),
                             location: HudLocation::InfoText,
                         });
                     }
