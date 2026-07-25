@@ -12,7 +12,7 @@ use crate::{
     Args, CbmSystem,
     frontend::system_dir,
     libloader,
-    utils::{cue_has_data_track, read_header},
+    utils::{cue_has_data_track, is_gba_rom, read_header},
 };
 
 /// BIOS images Beetle looks for in the system dir, one per region. Unlike
@@ -300,6 +300,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::Megadrive;
                 } else if l >= 8 && &data[0..8] == b"PS-X EXE" {
                     system_type = SystemType::Psx;
+                } else if is_gba_rom(&data) {
+                    system_type = SystemType::Gba;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
                 } else if data[0..2] == [0x60, 0x1a] {

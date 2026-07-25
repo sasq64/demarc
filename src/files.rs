@@ -15,9 +15,9 @@ use crate::{
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
-        build_atari_auto_disk, build_m3u, copy_dir_all, has_matching, is_disk_image, is_psx_exe,
-        is_self_booting_dir, parse_m3u, prepare_psx_disc, read_header, scan_release_dir,
-        sort_disks, unpack_into, unpack_to_temp,
+        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, has_matching,
+        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u, prepare_psx_disc,
+        read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
     },
 };
 
@@ -582,9 +582,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             tags.insert("psx_core".into(), "beetle".into());
         }
 
-        // Only the first four bytes are examined below; the Amiga branch works
-        // off `path`, not the contents.
-        let data = read_header(&path, 4)?;
+        // Only the header is examined below — the GBA check reaches furthest
+        // into it; the Amiga branch works off `path`, not the contents.
+        let data = read_header(&path, GBA_HEADER_LEN)?;
         if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
             // GEMDOS executable: wrap it in a bootable Atari ST floppy image
             // with the program in the AUTO folder so it runs on boot. The whole
@@ -595,6 +595,9 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             system_type = SystemType::AtariST;
         } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
             system_type = SystemType::C64;
+        } else if is_gba_rom(&data) {
+            debug!("FMT: GBA rom: {path:?}");
+            system_type = SystemType::Gba;
         } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
             debug!("FMT: Amiga exe: {path:?}");
             if std::fs::metadata(&path)?.len() > 850 * 1024 {
@@ -770,6 +773,7 @@ mod tests {
             SystemType::C64
         );
         assert_eq!(type_of(&found, "testdata/iffILBM/24.iff"), SystemType::Ilbm);
+        assert_eq!(type_of(&found, "testdata/fr018.bin"), SystemType::Gba);
 
         // Detection is by content as well as extension, so extension-less and
         // oddly-named IFFs still count.
@@ -923,6 +927,16 @@ mod tests {
         assert_eq!(wf.path.extension().unwrap(), "prg");
         assert!(!wf.path.starts_with(dir.path()));
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// A GBA rom is recognised by its header, not its name — this one is a
+    /// `.bin` — and is loaded as-is.
+    #[test]
+    fn gba_rom() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let wf = prepare("testdata/fr018.bin");
+        assert_eq!(wf.system_type, SystemType::Gba);
+        assert_eq!(wf.path, root.join("testdata/fr018.bin"));
     }
 
     /// An image needs no preparation at all — the path must survive untouched.

@@ -322,6 +322,27 @@ pub fn is_psx_exe(path: &Path) -> bool {
     read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
 
+/// How much of a file [`is_gba_rom`] needs to see: everything up to and
+/// including the fixed `0x96` byte of the cartridge header.
+pub const GBA_HEADER_LEN: usize = 0xb3;
+
+/// True if `header` — the start of a file, at least [`GBA_HEADER_LEN`] bytes of
+/// it — looks like a Game Boy Advance cartridge.
+///
+/// A GBA ROM opens with an unconditional ARM branch past the header, followed
+/// by the Nintendo logo the BIOS checks on boot and a fixed `0x96`. The logo is
+/// what makes this reliable — only its first bytes are compared, since a ROM
+/// that got that far is never anything else.
+pub fn is_gba_rom(header: &[u8]) -> bool {
+    /// Start of the 156-byte Nintendo logo at offset 0x04.
+    const LOGO: [u8; 8] = [0x24, 0xff, 0xae, 0x51, 0x69, 0x9a, 0xa2, 0x21];
+
+    header.len() >= GBA_HEADER_LEN
+        && header[3] == 0xea
+        && header[0x04..0x04 + LOGO.len()] == LOGO
+        && header[0xb2] == 0x96
+}
+
 /// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
 /// file is shorter.
 pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
