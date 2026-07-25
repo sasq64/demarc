@@ -22,6 +22,11 @@ pub struct TextInput {
     /// instead of submitting and clearing the input. Used when the input is
     /// embedded in a larger widget (e.g. `FuzzyList`) that owns Enter itself.
     pub ignore_enter: bool,
+    /// Face to render the text with. Leaving this at the default handle picks
+    /// Bevy's built-in `FiraMono-subset`, which only covers ASCII — anything
+    /// beyond that (åäö, é, …) silently renders as nothing. Callers should
+    /// hand over the app font so non-ASCII input is visible.
+    pub font: Handle<Font>,
 }
 
 #[derive(Debug, Default, Component)]
@@ -48,6 +53,11 @@ impl TextInput {
                         ..default()
                     },
                     Text::new(&text_input.text),
+                    TextFont {
+                        font: text_input.font.clone().into(),
+                        font_size: FontSize::Px(line_height),
+                        ..default()
+                    },
                     TextColor(Color::linear_rgb(0.5, 0.5, 1.0)),
                     TextLayout {
                         justify: Justify::Left,
@@ -95,7 +105,10 @@ impl TextInput {
                 if old_text != text_input.text {
                     b.buffer = text_input.text.chars().map(|c| c.to_string()).collect();
                     text.0 = text_input.text.clone();
-                    b.pos = text_input.text.len();
+                    // Chars, not bytes: `buffer` holds one entry per char, so a
+                    // byte length would put `pos` past its end for non-ASCII
+                    // text and panic on the next insert.
+                    b.pos = b.buffer.len();
                 }
                 node.display = if text_input.showing {
                     Display::Flex
@@ -286,9 +299,8 @@ mod tests {
             .world_mut()
             .spawn((
                 TextInput {
-                    text: String::new(),
                     showing: true,
-                    ignore_enter: false,
+                    ..default()
                 },
                 Node::default(),
             ))
@@ -488,11 +500,7 @@ mod tests {
 
         // Hidden input.
         app.world_mut().spawn((
-            TextInput {
-                text: String::new(),
-                showing: false,
-                ignore_enter: false,
-            },
+            TextInput::default(),
             Node {
                 display: Display::None,
                 ..default()
@@ -515,5 +523,26 @@ mod tests {
         app.update();
 
         assert_eq!(buffer_text(&mut app, entity), "preset");
+    }
+
+    /// `buffer` holds one entry per char, so syncing external text must place
+    /// the caret by char count. A byte length would leave `pos` past the end of
+    /// a non-ASCII preset and panic on the next insert.
+    #[test]
+    fn setting_non_ascii_text_externally_leaves_a_usable_caret() {
+        let mut app = setup();
+        let entity = spawn_input(&mut app);
+
+        app.world_mut().get_mut::<TextInput>(entity).unwrap().text = "åäö".to_string();
+        app.update();
+
+        assert_eq!(buffer_text(&mut app, entity), "åäö");
+        assert_eq!(buffer_pos(&mut app, entity), 3);
+
+        send(&mut app, [press_char("é")]);
+        assert_eq!(buffer_text(&mut app, entity), "åäöé");
+
+        send(&mut app, [press(Key::Backspace, None)]);
+        assert_eq!(buffer_text(&mut app, entity), "åäö");
     }
 }

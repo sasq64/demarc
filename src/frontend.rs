@@ -118,7 +118,7 @@ fn grid_layout(args: &Args) -> Vec<GridCell> {
     }
 }
 
-fn setup_ui_camera(mut commands: Commands, args: Res<Args>) {
+fn setup_ui_camera(mut commands: Commands, args: Res<Args>, asset_server: Res<AssetServer>) {
     // Camera for full res UI on top of screen. Its order must stay above every
     // emulator camera (grid mode gives each cell a distinct order, `0..n`) so
     // the HUD and the focus outline draw on top of all cells rather than being
@@ -143,7 +143,12 @@ fn setup_ui_camera(mut commands: Commands, args: Res<Args>) {
             left: px(15.0),
             ..default()
         },
-        TextInput::default(),
+        TextInput {
+            // The app font, not Bevy's ASCII-only built-in one, so typed
+            // non-ASCII characters actually have glyphs.
+            font: asset_server.load("font.ttf"),
+            ..default()
+        },
     ));
 }
 

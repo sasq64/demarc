@@ -476,6 +476,7 @@ impl FuzzyList {
                     text: initial_state.query.clone(),
                     showing: true,
                     ignore_enter: true,
+                    font: font.clone(),
                 },
             ))
             .id();
