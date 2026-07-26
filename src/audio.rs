@@ -269,11 +269,12 @@ impl AudioSink {
     }
 
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
-        if let Some(resampler) = &mut self.resampler {
+        if let Some(resampler) = &mut self.resampler
+            && let Some(producer) = &self.producer
+        {
+            let mut p = producer.lock().unwrap();
             let res = resampler.process(from as u32, samples, |l, r| {
-                if let Some(producer) = &self.producer {
-                    producer.lock().unwrap().push_iter([l, r].into_iter());
-                }
+                p.push_iter([l, r].into_iter());
             });
             if let Err(e) = res {
                 warn!("audio resample error: {e}");
