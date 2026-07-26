@@ -617,7 +617,7 @@ fn main() {
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
-        files: files.clone(),
+        files,
         max_time: args.max_time,
         maximized: args.grid.is_none(),
         speed_test: args.speed_test,
