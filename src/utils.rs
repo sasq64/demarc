@@ -23,7 +23,6 @@ fn check_reset_vector(data: &[u8]) -> bool {
     let reset_lo = data[len - 4 + 2] as u16;
     let reset_hi = data[len - 4 + 3] as u16;
     let reset_addr = (reset_hi << 8) | reset_lo;
-    println!("RESET {reset_addr:0x}");
 
     // Should point into the high ROM bank, typically $F000–$FFFF
     // (or $E000–$FFFF for 8KB, etc.)
@@ -682,7 +681,6 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
         }
 
         let t = get_system_type(&path);
-        println!("Checking {:?} => {:?}", path, t);
         if t == SystemType::Unknown {
             continue;
         }
@@ -695,7 +693,6 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         if ext == "d64" || ext == "adf" || ext == "atr" || ext == "msa" {
-            println!("Found {t:?}");
             disk_images.push(path);
             system_type = t;
         }
