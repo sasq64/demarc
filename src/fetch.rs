@@ -1,11 +1,9 @@
-//! Downloading of remote files so demarc can be launched with an `http(s)://`
-//! or `ftp://` URL (e.g. from a browser's "Open with" context menu) instead of
-//! a local path.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use sha2::{Digest, Sha256};
 use tracing::info;
 use url::Url;
 
@@ -46,17 +44,20 @@ pub fn translate_url(url: &str) -> String {
 
 /// Download the file at `url` into a local cache directory and return its path.
 ///
-/// Files are cached under `<cache>/demarc/downloads/`, keyed by the URL's final
-/// path segment, so re-opening the same link reuses the existing download. The
-/// download goes to a `.part` temp file that is renamed into place on success,
-/// so an interrupted transfer never leaves a truncated file masquerading as a
-/// valid cache hit.
+/// Files are cached under `<cache>/demarc/downloads/<url-hash>/<name>`, so
+/// re-opening the same link reuses the existing download. The hash covers the
+/// whole URL while the leaf keeps its readable, correctly-suffixed name (see
+/// [`url_hash`] and [`url_filename`]) — downstream dispatch keys on the file
+/// extension, so the extension has to survive. The download goes to a `.part`
+/// temp file that is renamed into place on success, so an interrupted transfer
+/// never leaves a truncated file masquerading as a valid cache hit.
 pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
     let name = url_filename(url);
     let dir = dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("demarc")
-        .join("downloads");
+        .join("downloads")
+        .join(url_hash(url));
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join(&name);
@@ -74,7 +75,10 @@ pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
 ///
 /// Each URL is fetched through [`fetch_url`], so it is cached individually; when
 /// they are all already cached this just copies the cached files across without
-/// re-downloading. Each file keeps its URL-derived name (see [`url_filename`]).
+/// re-downloading. Each file keeps its URL-derived name (see [`url_filename`]),
+/// which is what ends up in the generated m3u, so two disks of one set whose
+/// URLs differ only in a directory would land on the same name here — they stay
+/// apart in the cache, but the copy below still flattens them.
 pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
     let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     for url in urls {
@@ -91,7 +95,10 @@ pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
 /// renamed into place on success so an interrupted transfer never leaves a
 /// truncated file masquerading as a complete one.
 fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("download");
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download");
     let tmp = path.with_file_name(format!(".{name}.part"));
     let mut file = std::fs::File::create(&tmp)?;
     download(url, &mut file)?;
@@ -191,22 +198,38 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Hash the whole URL into a hex string used as its cache subdirectory.
+///
+/// The last path segment alone is not a safe cache key: `.../v1/game.zip` and
+/// `.../v2/game.zip` share one, so the second URL would silently be served the
+/// first one's bytes. Keying the *directory* on the full URL keeps downloads
+/// distinct while leaving the filename inside it readable and correctly
+/// suffixed. 16 hex chars (64 bits) is far past any plausible collision here,
+/// and SHA-256 keeps the mapping stable across toolchain upgrades so an
+/// existing cache stays valid.
+fn url_hash(url: &str) -> String {
+    Sha256::digest(url.as_bytes())
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Everything outside the URL-unreserved set gets percent-encoded, which also
+/// happens to be exactly the set of characters safe in a filename.
+const FILENAME_ESCAPE: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 /// Derive a filesystem-safe filename from a URL's final path segment, dropping
-/// any `?query` or `#fragment` and replacing anything that isn't an
-/// alphanumeric or `. _ -` so the result is safe to use as a cache key.
+/// any `?query` or `#fragment` and percent-encoding anything that isn't an
+/// unreserved character so the result is safe to use as a cache key.
 fn url_filename(url: &str) -> String {
-    let tail = url.rsplit('/').next().unwrap_or("download");
-    let tail = tail.split(['?', '#']).next().unwrap_or(tail);
-    let cleaned: String = tail
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    let tail = url.rsplit_once('/').map_or(url, |(_, tail)| tail);
+    let tail = &tail[..tail.find(['?', '#']).unwrap_or(tail.len())];
+    let cleaned = utf8_percent_encode(tail, FILENAME_ESCAPE).to_string();
     if cleaned.is_empty() || cleaned == "." {
         "download".to_string()
     } else {
@@ -254,10 +277,44 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "hits the network"]
+    fn caches_under_url_hash() {
+        let url = "https://files.scene.org/get/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip";
+        let path = fetch_url(url).unwrap();
+        assert_eq!(path.file_name().unwrap(), "dcs-nmod.zip");
+        assert_eq!(path.parent().unwrap().file_name().unwrap(), &*url_hash(url));
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 46596);
+        // Second call is a cache hit on the same path, no re-download.
+        assert_eq!(fetch_url(url).unwrap(), path);
+    }
+
+    #[test]
     fn extracts_filename() {
         assert_eq!(url_filename("https://x.com/path/foo.zip"), "foo.zip");
         assert_eq!(url_filename("https://x.com/path/foo.zip?a=b"), "foo.zip");
-        assert_eq!(url_filename("https://x.com/foo%20bar.d64"), "foo_20bar.d64");
+        // The `%` of an already-encoded segment is itself encoded, keeping the
+        // mapping from URL to cache name unambiguous.
+        assert_eq!(
+            url_filename("https://x.com/foo%20bar.d64"),
+            "foo%2520bar.d64"
+        );
+        assert_eq!(url_filename("https://x.com/a b&c.zip"), "a%20b%26c.zip");
         assert_eq!(url_filename("https://x.com/"), "download");
+        assert_eq!(url_filename("game.zip"), "game.zip");
+    }
+
+    #[test]
+    fn hashes_whole_url() {
+        // URLs sharing a final segment must not share a cache directory.
+        assert_ne!(
+            url_hash("https://x.com/v1/game.zip"),
+            url_hash("https://x.com/v2/game.zip")
+        );
+        // ...but the same URL must always land on the same one.
+        assert_eq!(
+            url_hash("https://x.com/v1/game.zip"),
+            url_hash("https://x.com/v1/game.zip")
+        );
+        assert_eq!(url_hash("https://x.com/v1/game.zip").len(), 16);
     }
 }
