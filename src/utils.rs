@@ -164,25 +164,34 @@ fn transcode_mp3_to_wav(src: &Path, dest: &Path) -> Result<()> {
 
 /// Write interleaved 16-bit stereo samples as a canonical 44-byte-header WAV.
 fn write_wav(dest: &Path, pcm: &[i16]) -> Result<()> {
+    const _: () = assert!(cfg!(target_endian = "little"), "write_wav assumes LE");
+
     use std::io::Write;
     let data_len = (pcm.len() * 2) as u32;
     let byte_rate = CDDA_RATE * 2 * 2;
-    let mut out = std::io::BufWriter::new(fs::File::create(dest)?);
-    out.write_all(b"RIFF")?;
-    out.write_all(&(36 + data_len).to_le_bytes())?;
-    out.write_all(b"WAVEfmt ")?;
-    out.write_all(&16u32.to_le_bytes())?; // PCM fmt chunk size
-    out.write_all(&1u16.to_le_bytes())?; // PCM
-    out.write_all(&2u16.to_le_bytes())?; // stereo
-    out.write_all(&CDDA_RATE.to_le_bytes())?;
-    out.write_all(&byte_rate.to_le_bytes())?;
-    out.write_all(&4u16.to_le_bytes())?; // block align
-    out.write_all(&16u16.to_le_bytes())?; // bits per sample
-    out.write_all(b"data")?;
-    out.write_all(&data_len.to_le_bytes())?;
-    for s in pcm {
-        out.write_all(&s.to_le_bytes())?;
-    }
+
+    let mut header = [0u8; 44];
+    let mut put = |at: usize, bytes: &[u8]| header[at..at + bytes.len()].copy_from_slice(bytes);
+    put(0, b"RIFF");
+    put(4, &(36 + data_len).to_le_bytes());
+    put(8, b"WAVEfmt ");
+    put(16, &16u32.to_le_bytes()); // PCM fmt chunk size
+    put(20, &1u16.to_le_bytes()); // PCM
+    put(22, &2u16.to_le_bytes()); // stereo
+    put(24, &CDDA_RATE.to_le_bytes());
+    put(28, &byte_rate.to_le_bytes());
+    put(32, &4u16.to_le_bytes()); // block align
+    put(34, &16u16.to_le_bytes()); // bits per sample
+    put(36, b"data");
+    put(40, &data_len.to_le_bytes());
+
+    // SAFETY: `i16` has no padding or invalid bit patterns, and `u8`'s alignment
+    // is weaker, so any `[i16]` is also a valid `[u8]` of twice the length.
+    let samples = unsafe { std::slice::from_raw_parts(pcm.as_ptr().cast::<u8>(), pcm.len() * 2) };
+
+    let mut out = fs::File::create(dest)?;
+    out.write_all(&header)?;
+    out.write_all(samples)?;
     out.flush()?;
     Ok(())
 }
