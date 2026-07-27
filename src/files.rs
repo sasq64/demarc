@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Result, bail};
+use regex::Regex;
 use tempfile::TempDir;
 use tracing::{debug, info, warn};
 use url::Url;
@@ -17,8 +18,8 @@ use crate::{
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
         GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, has_matching,
-        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
-        prepare_psx_disc, read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
+        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u, prepare_psx_disc,
+        read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
     },
 };
 
@@ -266,12 +267,17 @@ fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
 /// line below it, prefixes the type (`Demo` → `Amiga Demo`). A header line may
 /// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
 /// become tags on every entry below it — see [`parse_db_header`].
-pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
+///
+/// `filter`, if given, is matched against each raw line before it is parsed, so
+/// only matching entries are collected — the same thing piping the db through
+/// `grep` would do. Header comments are always read, so the platform and tags
+/// they set still apply to the lines that survive.
+pub fn collect_db(path: &Path, filter: Option<&Regex>, out: &mut Vec<EmuFile>) -> Result<()> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
-    collect_db_text(&text, out);
+    collect_db_text(&text, filter, out);
     Ok(())
 }
 
@@ -281,7 +287,7 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
 ///
 /// Does nothing when stdin is a terminal — there's nothing piped in then, and
 /// reading would just block waiting for the user to type a db.
-pub fn collect_db_stdin(out: &mut Vec<EmuFile>) -> Result<()> {
+pub fn collect_db_stdin(filter: Option<&Regex>, out: &mut Vec<EmuFile>) -> Result<()> {
     if io::stdin().is_terminal() {
         return Ok(());
     }
@@ -289,7 +295,7 @@ pub fn collect_db_stdin(out: &mut Vec<EmuFile>) -> Result<()> {
     if let Err(err) = io::stdin().read_to_string(&mut text) {
         bail!("Failed to read db from stdin: {err}");
     }
-    collect_db_text(&text, out);
+    collect_db_text(&text, filter, out);
     Ok(())
 }
 
@@ -325,7 +331,7 @@ fn parse_db_header<'a>(
 }
 
 /// Parse the contents of a db file — see [`collect_db`] for the format.
-pub(crate) fn collect_db_text(text: &str, out: &mut Vec<EmuFile>) {
+pub(crate) fn collect_db_text(text: &str, filter: Option<&Regex>, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&str> = None;
 
     // Tags from header comments, applied to every entry below them.
@@ -339,6 +345,9 @@ pub(crate) fn collect_db_text(text: &str, out: &mut Vec<EmuFile>) {
         }
         if let Some(comment) = line.strip_prefix('#') {
             parse_db_header(comment, &mut file_platform, &mut file_tags);
+            continue;
+        }
+        if filter.is_some_and(|re| !re.is_match(line)) {
             continue;
         }
         let rec = parse_named_db_line(line).unwrap_or_else(|| parse_positional_db_line(line));
@@ -1099,7 +1108,7 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, &mut out).unwrap();
+        collect_db(&db, None, &mut out).unwrap();
         assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
 
         let eod = &out[0];
@@ -1145,8 +1154,8 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, &mut out).unwrap();
-        assert_eq!(out.len(), 2, "blank, URL-less and disk lines skipped");
+        collect_db(&db, None, &mut out).unwrap();
+        assert_eq!(out.len(), 3, "blank, URL-less and disk lines skipped");
 
         let zentro = &out[0];
         let FileSource::Url(urls) = &zentro.path else {
@@ -1183,11 +1192,35 @@ mod tests {
         let mut out = vec![];
         collect_db_text(
             "id:9\ttitle:Speedball Demo\tauthor:Illusions\tdate:1990-04-07\tcategory:Demo\tdownload:http://example.com/speedball\n",
+            None,
             &mut out,
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].game_info.title, "Speedball Demo");
         assert_eq!(out[0].game_info.typ, "Demo");
+    }
+
+    /// `--filter` drops non-matching lines while collecting, but header
+    /// comments are still read so the platform they set reaches the survivors.
+    #[test]
+    fn collect_db_applies_filter() {
+        let mut out = vec![];
+        collect_db_text(
+            "# Platform:Amiga\n\
+             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
+             id:2\ttitle:Musicdisk\tcategory:Musicdisk\tdownload:http://example.com/md.dms\n\
+             id:3\ttitle:Nexus 7\tcategory:Demo\tdownload:http://example.com/nexus7.zip\n",
+            Some(&Regex::new("category:Demo").unwrap()),
+            &mut out,
+        );
+
+        assert_eq!(
+            out.iter()
+                .map(|f| f.game_info.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Zentro 4", "Nexus 7"]
+        );
+        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header still applies");
     }
 
     /// A `platform` field, or a `# Platform:` header covering the lines below
@@ -1205,7 +1238,7 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, &mut out).unwrap();
+        collect_db(&db, None, &mut out).unwrap();
         assert_eq!(out[0].game_info.typ, "Amiga Demo", "header applies");
         assert_eq!(out[1].game_info.typ, "C64 Demo", "line overrides header");
     }
@@ -1221,6 +1254,7 @@ mod tests {
              id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
              # puae_model:A1200\n\
              id:2\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n",
+            None,
             &mut out,
         );
 

@@ -61,6 +61,8 @@ ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e
 swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 pollster = { version = "0.4", optional = true }
 nucleo-matcher = "0.3"
+# `--filter`: matched against each raw db line while collecting (see collect_db).
+regex = "1"
 unarc-rs = "0.6.1"
 
 [features]

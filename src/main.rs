@@ -7,6 +7,7 @@ use bevy::{prelude::*, window::PresentMode};
 use clap::builder::styling::{AnsiColor, Style};
 use clap::builder::{Styles, styling};
 use clap::{ColorChoice, Parser};
+use regex::Regex;
 
 #[allow(warnings)]
 mod libretro;
@@ -110,11 +111,11 @@ struct Args {
     #[arg(long)]
     slangp: Option<PathBuf>,
 
-    #[arg(short = 'T', long, default_value_t = "".into())]
-    include_types: String,
-
-    #[arg(short = 'X', long, default_value_t = "".into())]
-    exclude_types: String,
+    /// Only load db entries whose line matches this regex, e.g.
+    /// `-T 'Amiga (Demo|Intro)'`. Matched against the raw db line, so it can
+    /// pick on any field.
+    #[arg(short = 'T', long, value_parser = Regex::new)]
+    filter: Option<Regex>,
 
     /// Shuffle the list of files into a random order.
     #[arg(long)]
@@ -525,10 +526,10 @@ fn main() {
     // party, category, tags, download — named or in that order). Each URL is
     // fetched on demand when loaded.
     if let Some(db) = &args.db {
-        collect_db(Path::new(db), &mut files).unwrap();
+        collect_db(Path::new(db), args.filter.as_ref(), &mut files).unwrap();
     }
     // Anything piped in is a db too, so it can be filtered before loading.
-    collect_db_stdin(&mut files).unwrap();
+    collect_db_stdin(args.filter.as_ref(), &mut files).unwrap();
 
     for file in std::mem::take(&mut args.files) {
         // Download HTTP(S) URLs to the local cache and continue with the file,
@@ -552,13 +553,6 @@ fn main() {
         } else {
             files.push(collect_file(&file).unwrap());
         }
-    }
-
-    if !args.include_types.is_empty() {
-        files.retain(|f| f.game_info.typ.contains(&args.include_types));
-    }
-    if !args.exclude_types.is_empty() {
-        files.retain(|f| !f.game_info.typ.contains(&args.exclude_types));
     }
 
     if args.shuffle {

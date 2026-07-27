@@ -706,6 +706,7 @@ mod tests {
         collect_db_text(
             "# Platform:Amiga puae_model:A500 puae_floppy_speed:100\n\
              id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n",
+            None,
             &mut out,
         );
         // What `prepare_file` passes on when it detects nothing itself: the
