@@ -672,7 +672,7 @@ impl Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::files::collect_db_text;
+    use crate::files::{DbFilter, collect_db_text};
     use crate::systems::GameInfo;
 
     /// A `WorkingFile` as `prepare_file` would hand it over: the entry's own
@@ -706,7 +706,7 @@ mod tests {
         collect_db_text(
             "# Platform:Amiga puae_model:A500 puae_floppy_speed:100\n\
              id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n",
-            None,
+            &DbFilter::default(),
             &mut out,
         );
         // What `prepare_file` passes on when it detects nothing itself: the

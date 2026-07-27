@@ -45,7 +45,7 @@ use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
-use crate::files::{EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
+use crate::files::{DbFilter, EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -112,10 +112,16 @@ struct Args {
     slangp: Option<PathBuf>,
 
     /// Only load db entries whose line matches this regex, e.g.
-    /// `-T 'Amiga (Demo|Intro)'`. Matched against the raw db line, so it can
+    /// `-I '(Demo|Intro)'`. Matched against the raw db line, so it can
     /// pick on any field.
-    #[arg(short = 'T', long, value_parser = Regex::new)]
-    filter: Option<Regex>,
+    #[arg(short = 'I', long, value_parser = Regex::new)]
+    include: Option<Regex>,
+
+    /// Exclude db entries matching regex. e.g.
+    /// `-X 'category:.*Disk'`. Matched against the raw db line, so it can
+    /// pick on any field.
+    #[arg(short = 'X', long, value_parser = Regex::new)]
+    exclude: Option<Regex>,
 
     /// Shuffle the list of files into a random order.
     #[arg(long)]
@@ -525,11 +531,15 @@ fn main() {
     // Load entries from a tab-separated demo database (id, title, author, date,
     // party, category, tags, download — named or in that order). Each URL is
     // fetched on demand when loaded.
+    let filter = DbFilter {
+        include: args.include.as_ref(),
+        exclude: args.exclude.as_ref(),
+    };
     if let Some(db) = &args.db {
-        collect_db(Path::new(db), args.filter.as_ref(), &mut files).unwrap();
+        collect_db(Path::new(db), &filter, &mut files).unwrap();
     }
     // Anything piped in is a db too, so it can be filtered before loading.
-    collect_db_stdin(args.filter.as_ref(), &mut files).unwrap();
+    collect_db_stdin(&filter, &mut files).unwrap();
 
     for file in std::mem::take(&mut args.files) {
         // Download HTTP(S) URLs to the local cache and continue with the file,

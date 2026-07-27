@@ -268,11 +268,8 @@ fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
 /// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
 /// become tags on every entry below it — see [`parse_db_header`].
 ///
-/// `filter`, if given, is matched against each raw line before it is parsed, so
-/// only matching entries are collected — the same thing piping the db through
-/// `grep` would do. Header comments are always read, so the platform and tags
-/// they set still apply to the lines that survive.
-pub fn collect_db(path: &Path, filter: Option<&Regex>, out: &mut Vec<EmuFile>) -> Result<()> {
+/// `filter` narrows down which lines are collected — see [`DbFilter`].
+pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
@@ -281,13 +278,33 @@ pub fn collect_db(path: &Path, filter: Option<&Regex>, out: &mut Vec<EmuFile>) -
     Ok(())
 }
 
+/// Which db lines to keep, as regexes matched against the raw line before it is
+/// parsed — the same thing piping the db through `grep`/`grep -v` would do, so
+/// a pattern can pick on any field (`category:Demo`, `author:Fairlight`).
+///
+/// A line has to match `include` (when given) and must not match `exclude`.
+/// Header comments are always read, so the platform and tags they set still
+/// apply to the lines that survive.
+#[derive(Default)]
+pub struct DbFilter<'a> {
+    pub include: Option<&'a Regex>,
+    pub exclude: Option<&'a Regex>,
+}
+
+impl DbFilter<'_> {
+    fn keeps(&self, line: &str) -> bool {
+        self.include.is_none_or(|re| re.is_match(line))
+            && self.exclude.is_none_or(|re| !re.is_match(line))
+    }
+}
+
 /// Load a db piped in on stdin, so entries can be filtered before they reach
 /// demarc (`grep Amiga bitworld.txt | demarc`). Anything on stdin is taken to
 /// be a db in the format [`collect_db`] describes.
 ///
 /// Does nothing when stdin is a terminal — there's nothing piped in then, and
 /// reading would just block waiting for the user to type a db.
-pub fn collect_db_stdin(filter: Option<&Regex>, out: &mut Vec<EmuFile>) -> Result<()> {
+pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
     if io::stdin().is_terminal() {
         return Ok(());
     }
@@ -331,7 +348,7 @@ fn parse_db_header<'a>(
 }
 
 /// Parse the contents of a db file — see [`collect_db`] for the format.
-pub(crate) fn collect_db_text(text: &str, filter: Option<&Regex>, out: &mut Vec<EmuFile>) {
+pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&str> = None;
 
     // Tags from header comments, applied to every entry below them.
@@ -347,7 +364,7 @@ pub(crate) fn collect_db_text(text: &str, filter: Option<&Regex>, out: &mut Vec<
             parse_db_header(comment, &mut file_platform, &mut file_tags);
             continue;
         }
-        if filter.is_some_and(|re| !re.is_match(line)) {
+        if !filter.keeps(line) {
             continue;
         }
         let rec = parse_named_db_line(line).unwrap_or_else(|| parse_positional_db_line(line));
@@ -1108,7 +1125,7 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, None, &mut out).unwrap();
+        collect_db(&db, &DbFilter::default(), &mut out).unwrap();
         assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
 
         let eod = &out[0];
@@ -1154,7 +1171,7 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, None, &mut out).unwrap();
+        collect_db(&db, &DbFilter::default(), &mut out).unwrap();
         assert_eq!(out.len(), 3, "blank, URL-less and disk lines skipped");
 
         let zentro = &out[0];
@@ -1192,7 +1209,7 @@ mod tests {
         let mut out = vec![];
         collect_db_text(
             "id:9\ttitle:Speedball Demo\tauthor:Illusions\tdate:1990-04-07\tcategory:Demo\tdownload:http://example.com/speedball\n",
-            None,
+            &DbFilter::default(),
             &mut out,
         );
         assert_eq!(out.len(), 1);
@@ -1200,27 +1217,49 @@ mod tests {
         assert_eq!(out[0].game_info.typ, "Demo");
     }
 
-    /// `--filter` drops non-matching lines while collecting, but header
-    /// comments are still read so the platform they set reaches the survivors.
+    /// `--include`/`--exclude` drop non-matching lines while collecting, but
+    /// header comments are still read so the platform they set reaches the
+    /// survivors.
     #[test]
     fn collect_db_applies_filter() {
-        let mut out = vec![];
-        collect_db_text(
-            "# Platform:Amiga\n\
+        const DB: &str = "# Platform:Amiga\n\
              id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
              id:2\ttitle:Musicdisk\tcategory:Musicdisk\tdownload:http://example.com/md.dms\n\
-             id:3\ttitle:Nexus 7\tcategory:Demo\tdownload:http://example.com/nexus7.zip\n",
-            Some(&Regex::new("category:Demo").unwrap()),
-            &mut out,
-        );
+             id:3\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n";
 
-        assert_eq!(
-            out.iter()
-                .map(|f| f.game_info.title.as_str())
-                .collect::<Vec<_>>(),
-            ["Zentro 4", "Nexus 7"]
-        );
+        let titles = |filter: &DbFilter| {
+            let mut out = vec![];
+            collect_db_text(DB, filter, &mut out);
+            (
+                out.iter()
+                    .map(|f| f.game_info.title.clone())
+                    .collect::<Vec<_>>(),
+                out,
+            )
+        };
+
+        let include = Regex::new("category:Demo").unwrap();
+        let (kept, out) = titles(&DbFilter {
+            include: Some(&include),
+            ..Default::default()
+        });
+        assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
         assert_eq!(out[0].game_info.typ, "Amiga Demo", "header still applies");
+
+        let exclude = Regex::new("category:Musicdisk").unwrap();
+        let (kept, _) = titles(&DbFilter {
+            exclude: Some(&exclude),
+            ..Default::default()
+        });
+        assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
+
+        // Both apply: a line has to match `include` and miss `exclude`.
+        let exclude = Regex::new("tags:aga").unwrap();
+        let (kept, _) = titles(&DbFilter {
+            include: Some(&include),
+            exclude: Some(&exclude),
+        });
+        assert_eq!(kept, ["Zentro 4"]);
     }
 
     /// A `platform` field, or a `# Platform:` header covering the lines below
@@ -1238,7 +1277,7 @@ mod tests {
         .unwrap();
 
         let mut out = vec![];
-        collect_db(&db, None, &mut out).unwrap();
+        collect_db(&db, &DbFilter::default(), &mut out).unwrap();
         assert_eq!(out[0].game_info.typ, "Amiga Demo", "header applies");
         assert_eq!(out[1].game_info.typ, "C64 Demo", "line overrides header");
     }
@@ -1254,7 +1293,7 @@ mod tests {
              id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
              # puae_model:A1200\n\
              id:2\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n",
-            None,
+            &DbFilter::default(),
             &mut out,
         );
 
