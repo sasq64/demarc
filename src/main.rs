@@ -486,6 +486,9 @@ fn main() {
     // Parse args before touching stdout/stderr so clap's help/errors are visible,
     // and so `--no-silence` can be honoured when setting up logging below.
     let mut args = Args::parse();
+    if cfg!(debug_assertions) {
+        args.no_silence = true;
+    }
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
