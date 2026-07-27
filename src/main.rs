@@ -44,7 +44,7 @@ use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
 use tracing_subscriber::EnvFilter;
 
-use crate::files::{EmuFile, collect_db, collect_file, collect_files};
+use crate::files::{EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -77,7 +77,7 @@ struct Args {
     /// Path to the files to load, or an http(s):// URL to download and run
     files: Vec<PathBuf>,
 
-    /// Demo database file to load
+    /// Demo database file to load. A db can also be piped in on stdin.
     #[arg(long)]
     db: Option<String>,
 
@@ -518,11 +518,14 @@ fn main() {
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
 
-    // Load entries from a tab-separated demo database (id, title, group, date,
-    // party, type, tags, url). Each URL is fetched on demand when loaded.
+    // Load entries from a tab-separated demo database (id, title, author, date,
+    // party, category, tags, download — named or in that order). Each URL is
+    // fetched on demand when loaded.
     if let Some(db) = &args.db {
         collect_db(Path::new(db), &mut files).unwrap();
     }
+    // Anything piped in is a db too, so it can be filtered before loading.
+    collect_db_stdin(&mut files).unwrap();
 
     for file in std::mem::take(&mut args.files) {
         // Download HTTP(S) URLs to the local cache and continue with the file,

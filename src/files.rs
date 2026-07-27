@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
+    io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
 };
 
@@ -16,8 +17,8 @@ use crate::{
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
         GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, has_matching,
-        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u, prepare_psx_disc,
-        read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
+        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
+        prepare_psx_disc, read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
     },
 };
 
@@ -177,48 +178,176 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     })
 }
 
+/// The scene metadata one db line carries, however the line spells it out.
+#[derive(Default)]
+struct DbRecord<'a> {
+    title: &'a str,
+    group: &'a str,
+    date: &'a str,
+    party: &'a str,
+    demo_type: &'a str,
+    tag_list: &'a str,
+    url: &'a str,
+    /// Platform prefixed to the type, when the line names one itself.
+    platform: Option<&'a str>,
+}
+
+/// Map a named field onto the [`DbRecord`] slot it fills, or `None` if the name
+/// isn't one we know (`id`, for instance, is parsed but unused).
+fn db_field<'a, 'r>(rec: &'r mut DbRecord<'a>, key: &str) -> Option<&'r mut &'a str> {
+    Some(match key {
+        "title" => &mut rec.title,
+        "author" | "group" => &mut rec.group,
+        "date" => &mut rec.date,
+        "party" => &mut rec.party,
+        "category" | "type" => &mut rec.demo_type,
+        "tags" => &mut rec.tag_list,
+        "download" | "url" => &mut rec.url,
+        _ => return None,
+    })
+}
+
+/// Parse a `key:value`-per-field line, e.g.
+/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`. Returns `None` when the line isn't
+/// in that format, so the caller can fall back to the positional one.
+///
+/// Only the first `:` splits a field, leaving values (URLs above all) intact,
+/// and fields may appear in any order.
+fn parse_named_db_line(line: &str) -> Option<DbRecord<'_>> {
+    let mut rec = DbRecord::default();
+    let mut named = false;
+    for field in line.split('\t') {
+        let Some((key, val)) = field.split_once(':') else {
+            continue;
+        };
+        if key == "platform" {
+            rec.platform = Some(val);
+            named = true;
+        } else if let Some(slot) = db_field(&mut rec, key) {
+            *slot = val;
+            named = true;
+        } else if key == "id" {
+            named = true;
+        }
+    }
+    named.then_some(rec)
+}
+
+/// Parse the older order-based line: `id, title, group, date, party, type,
+/// tags, url` separated by tabs.
+fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
+    let mut fields = line.split('\t');
+    let mut next = || fields.next().unwrap_or_default();
+    let _id = next();
+    DbRecord {
+        title: next(),
+        group: next(),
+        date: next(),
+        party: next(),
+        demo_type: next(),
+        tag_list: next(),
+        url: next(),
+        platform: None,
+    }
+}
+
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
 ///
-/// Each non-blank line holds the fields `id, title, group, date, party, type,
-/// tags, url` separated by tabs. The `url` becomes the entry's path and is
-/// downloaded on demand the first time it's loaded (see [`prepare_file`]); the
-/// year is the first `-`/`/`/`.`-delimited part of `date`. The remaining scene
-/// metadata (`party`, `type`, `tags`) is kept under matching keys. Lines with
-/// no URL are skipped.
+/// Each non-blank line holds the fields `id, title/author (group), date, party,
+/// category (type), tags, download (url)`, either prefixed with their names
+/// (`title:Zentro 4`, any order) or, in older db files, in that fixed order.
+/// The `url` becomes the entry's path and is downloaded on demand the first
+/// time it's loaded (see [`prepare_file`]); the year is the first `-`/`/`/`.`
+/// -delimited part of `date`. The remaining scene metadata (`party`, `type`,
+/// `tags`) is kept under matching keys. Lines with no URL are skipped.
+///
+/// A `platform` field, or a `# Platform:<name>` header line applying to every
+/// line below it, prefixes the type (`Demo` → `Amiga Demo`). A header line may
+/// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
+/// become tags on every entry below it — see [`parse_db_header`].
 pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
+    collect_db_text(&text, out);
+    Ok(())
+}
 
-    let mut is_bitworld = false;
+/// Load a db piped in on stdin, so entries can be filtered before they reach
+/// demarc (`grep Amiga bitworld.txt | demarc`). Anything on stdin is taken to
+/// be a db in the format [`collect_db`] describes.
+///
+/// Does nothing when stdin is a terminal — there's nothing piped in then, and
+/// reading would just block waiting for the user to type a db.
+pub fn collect_db_stdin(out: &mut Vec<EmuFile>) -> Result<()> {
+    if io::stdin().is_terminal() {
+        return Ok(());
+    }
+    let mut text = String::new();
+    if let Err(err) = io::stdin().read_to_string(&mut text) {
+        bail!("Failed to read db from stdin: {err}");
+    }
+    collect_db_text(&text, out);
+    Ok(())
+}
+
+/// Read a header comment such as `# Platform:Amiga puae_model:A500`, which
+/// applies to every line below it: `Platform` names the platform prefixed to
+/// the type, and every other pair becomes a tag merged into each entry (a
+/// db can this way set emulator settings for all its lines at once).
+///
+/// Only a comment made up entirely of `key:value` pairs is a header, so an
+/// ordinary prose comment never turns into tags.
+fn parse_db_header<'a>(
+    comment: &'a str,
+    platform: &mut Option<&'a str>,
+    tags: &mut HashMap<String, String>,
+) {
+    let Some(fields) = comment
+        .split_whitespace()
+        .map(|field| field.split_once(':'))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    if fields.is_empty() || fields.iter().any(|(k, v)| k.is_empty() || v.is_empty()) {
+        return;
+    }
+    for (key, val) in fields {
+        if key.eq_ignore_ascii_case("platform") {
+            *platform = Some(val);
+        } else {
+            tags.insert(key.to_string(), val.to_string());
+        }
+    }
+}
+
+/// Parse the contents of a db file — see [`collect_db`] for the format.
+pub(crate) fn collect_db_text(text: &str, out: &mut Vec<EmuFile>) {
+    let mut file_platform: Option<&str> = None;
+
+    // Tags from header comments, applied to every entry below them.
+    let mut file_tags = HashMap::<String, String>::new();
 
     for l in text.lines() {
         let line = l.trim();
 
-        if line.is_empty() || line.starts_with('#') {
-            is_bitworld = true;
+        if line.is_empty() {
             continue;
         }
-        let mut fields = line.split('\t');
-        let mut next = || fields.next().unwrap_or_default();
-        let _id = next();
-        let title = next().to_string();
-        let group = next().to_string();
-        let date = next();
-        let party = next();
-        let demo_type = next();
-        if demo_type.ends_with("disk") {
+        if let Some(comment) = line.strip_prefix('#') {
+            parse_db_header(comment, &mut file_platform, &mut file_tags);
             continue;
         }
-        let demo_type = if is_bitworld {
-            format!("Amiga {demo_type}")
-        } else {
-            demo_type.to_string()
+        let rec = parse_named_db_line(line).unwrap_or_else(|| parse_positional_db_line(line));
+
+        let demo_type = match rec.platform.or(file_platform) {
+            Some(platform) if !platform.is_empty() => format!("{platform} {}", rec.demo_type),
+            _ => rec.demo_type.to_string(),
         };
-        let tag_list = fields.next().unwrap_or_default();
-        let url = fields.next().unwrap_or_default().trim();
+        let url = rec.url.trim();
         if url.is_empty() {
             continue;
         }
@@ -236,13 +365,19 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
             continue;
         }
 
-        let year = date
+        let year = rec
+            .date
             .split(['-', '/', '.'])
             .next()
             .unwrap_or_default()
             .to_string();
-        let mut tags = HashMap::new();
-        for (key, val) in [("party", party), ("type", &demo_type), ("tags", tag_list)] {
+        // Header tags first, so anything the line itself names wins.
+        let mut tags = file_tags.clone();
+        for (key, val) in [
+            ("party", rec.party),
+            ("type", demo_type.as_str()),
+            ("tags", rec.tag_list),
+        ] {
             if !val.is_empty() {
                 tags.insert(key.to_string(), val.to_string());
             }
@@ -253,14 +388,13 @@ pub fn collect_db(path: &Path, out: &mut Vec<EmuFile>) -> Result<()> {
             system_type: SystemType::Unknown,
             tags,
             game_info: GameInfo {
-                title,
-                group,
+                title: rec.title.to_string(),
+                group: rec.group.to_string(),
                 year,
                 typ: demo_type,
             },
         });
     }
-    Ok(())
 }
 
 pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
@@ -991,6 +1125,115 @@ mod tests {
         assert_eq!(nexus.game_info.year, "1994");
         //println!("{:?}", nexus.tags);
         //assert!(nexus.tags.is_empty(), "empty scene fields left out");
+    }
+
+    /// The named format spells out each field, so order doesn't matter and a
+    /// value may hold `:` itself (every URL does). Field names line up with the
+    /// same metadata the positional format carries.
+    #[test]
+    fn collect_db_parses_named_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("demos.txt");
+        fs::write(
+            &db,
+            "id:1\ttitle:Zentro 4\tauthor:Zenith\tdate:1992-12-27\tparty:The Party 1992\tcategory:Demo\ttags:has effects\tdownload:http://example.com/zentro4;http://example.com/zentro4.dms\n\
+             \n\
+             download:https://example.com/nexus7.zip\tauthor:Andromeda\ttitle:Nexus 7\tdate:1994/12/30\n\
+             id:3\ttitle:No URL\tauthor:Group\tdate:1994\tparty:\tcategory:Intro\ttags:\tdownload:\n\
+             id:4\ttitle:Musicdisk\tauthor:Group\tdate:1992\tparty:\tcategory:Musicdisk\ttags:\tdownload:http://example.com/md.dms\n",
+        )
+        .unwrap();
+
+        let mut out = vec![];
+        collect_db(&db, &mut out).unwrap();
+        assert_eq!(out.len(), 2, "blank, URL-less and disk lines skipped");
+
+        let zentro = &out[0];
+        let FileSource::Url(urls) = &zentro.path else {
+            panic!("db entries stay URLs until loaded, got {:?}", zentro.path)
+        };
+        assert_eq!(
+            urls.iter().map(Url::as_str).collect::<Vec<_>>(),
+            [
+                "http://example.com/zentro4",
+                "http://example.com/zentro4.dms"
+            ]
+        );
+        assert_eq!(zentro.game_info.title, "Zentro 4");
+        assert_eq!(zentro.game_info.group, "Zenith");
+        assert_eq!(zentro.game_info.year, "1992");
+        assert_eq!(zentro.game_info.typ, "Demo");
+        assert_eq!(zentro.tags.get("party").unwrap(), "The Party 1992");
+        assert_eq!(zentro.tags.get("type").unwrap(), "Demo");
+        assert_eq!(zentro.tags.get("tags").unwrap(), "has effects");
+
+        // Fields in any order, missing ones simply left empty.
+        let nexus = &out[1];
+        assert_eq!(nexus.game_info.title, "Nexus 7");
+        assert_eq!(nexus.game_info.group, "Andromeda");
+        assert_eq!(nexus.game_info.year, "1994");
+        assert!(!nexus.tags.contains_key("party"));
+    }
+
+    /// A db piped in has usually been filtered line by line, so the header that
+    /// carried the platform may be gone and only some lines survive — each line
+    /// still stands on its own.
+    #[test]
+    fn collect_db_parses_filtered_lines() {
+        let mut out = vec![];
+        collect_db_text(
+            "id:9\ttitle:Speedball Demo\tauthor:Illusions\tdate:1990-04-07\tcategory:Demo\tdownload:http://example.com/speedball\n",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].game_info.title, "Speedball Demo");
+        assert_eq!(out[0].game_info.typ, "Demo");
+    }
+
+    /// A `platform` field, or a `# Platform:` header covering the lines below
+    /// it, prefixes the type so entries from different scenes stay apart.
+    #[test]
+    fn collect_db_prefixes_platform() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("demos.txt");
+        fs::write(
+            &db,
+            "# Platform:Amiga\n\
+             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
+             id:2\ttitle:Embryo\tcategory:Demo\tplatform:C64\tdownload:http://example.com/embryo.zip\n",
+        )
+        .unwrap();
+
+        let mut out = vec![];
+        collect_db(&db, &mut out).unwrap();
+        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header applies");
+        assert_eq!(out[1].game_info.typ, "C64 Demo", "line overrides header");
+    }
+
+    /// The other pairs of a header line become tags on every entry below it,
+    /// while a plain prose comment is left alone.
+    #[test]
+    fn collect_db_applies_header_tags() {
+        let mut out = vec![];
+        collect_db_text(
+            "# Platform:Amiga puae_model:A500\n\
+             # Just a comment: nothing to see here\n\
+             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
+             # puae_model:A1200\n\
+             id:2\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n",
+            &mut out,
+        );
+
+        assert_eq!(out[0].game_info.typ, "Amiga Demo");
+        assert_eq!(out[0].tags.get("puae_model").unwrap(), "A500");
+        assert!(!out[0].tags.contains_key("Just"));
+        assert!(!out[0].tags.contains_key("comment"));
+
+        // A later header overrides, and the platform from the first one still
+        // applies.
+        assert_eq!(out[1].tags.get("puae_model").unwrap(), "A1200");
+        assert_eq!(out[1].tags.get("tags").unwrap(), "aga");
+        assert_eq!(out[1].game_info.typ, "Amiga Demo");
     }
 
     fn filter(urls: &[&str]) -> Vec<String> {
