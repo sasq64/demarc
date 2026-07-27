@@ -627,10 +627,36 @@ fn is_supported_archive(format: ArchiveFormat) -> bool {
             | ArchiveFormat::Rar
             | ArchiveFormat::Lha
             | ArchiveFormat::Tar
-            | ArchiveFormat::Gz
-            | ArchiveFormat::Bz2
-            | ArchiveFormat::Z
+    ) || is_single_file_compressor(format)
+}
+
+/// Formats that compress one unnamed payload rather than holding a set of named
+/// files, so the payload's name has to come from the archive's own (see
+/// [`unpack_into`]) and the whole thing can be unpacked straight to bytes (see
+/// [`unpack_if_packed`]).
+fn is_single_file_compressor(format: ArchiveFormat) -> bool {
+    matches!(
+        format,
+        ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
     )
+}
+
+/// Decompress `data` when it is a gzip, bzip2 or Unix-compress stream, and
+/// return it unchanged otherwise. For data files that are packed on their own
+/// instead of bundled in an archive — a gzipped db — where the point is the
+/// bytes, not files on disk as with [`unpack_into`].
+pub fn unpack_if_packed(data: Vec<u8>) -> Result<Vec<u8>> {
+    let Some(format) = ArchiveFormat::detect_from_bytes(&data) else {
+        return Ok(data);
+    };
+    if !is_single_file_compressor(format) {
+        return Ok(data);
+    }
+    let mut archive = format.open(std::io::Cursor::new(&data[..]))?;
+    let Some(entry) = archive.next_entry()? else {
+        bail!("{} stream holds nothing", format.name());
+    };
+    Ok(archive.read(&entry)?)
 }
 
 /// If `path` is one of the supported archive formats — zip, 7z, rar, lha/lzh,
@@ -666,10 +692,8 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     let mut archive = format.open(file)?;
     // Single-file compressors (.Z/.gz/.bz2) carry no name for their payload, so
     // derive one from the archive's stem (e.g. `demo.tar.gz` -> `demo.tar`).
-    if matches!(
-        format,
-        ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
-    ) && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+    if is_single_file_compressor(format)
+        && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
     {
         archive.set_single_file_name(stem.to_string());
     }

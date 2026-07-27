@@ -20,7 +20,7 @@ use crate::{
         GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, fix_psx_text_size,
         has_matching, is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
         prepare_psx_disc, psx_needs_text_fix, read_header, scan_release_dir, sort_disks,
-        unpack_into, unpack_to_temp,
+        unpack_if_packed, unpack_into, unpack_to_temp,
     },
 };
 
@@ -269,14 +269,31 @@ fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
 /// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
 /// become tags on every entry below it — see [`parse_db_header`].
 ///
+/// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
+/// first, so it can be loaded exactly like the plain text file.
+///
 /// `filter` narrows down which lines are collected — see [`DbFilter`].
 pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
+    let data = match fs::read(path) {
+        Ok(data) => data,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
+    let text = db_text(data, &format!("db file {}", path.display()))?;
     collect_db_text(&text, filter, out);
     Ok(())
+}
+
+/// Turn the raw bytes of a db into its text, unpacking it first when it is a
+/// packed file (see [`unpack_if_packed`]). `what` names the source for errors.
+fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
+    let data = match unpack_if_packed(data) {
+        Ok(data) => data,
+        Err(err) => bail!("Failed to unpack {what}: {err}"),
+    };
+    match String::from_utf8(data) {
+        Ok(text) => Ok(text),
+        Err(err) => bail!("Failed to read {what}: {err}"),
+    }
 }
 
 /// Which db lines to keep, as regexes matched against the raw line before it is
@@ -301,7 +318,8 @@ impl DbFilter<'_> {
 
 /// Load a db piped in on stdin, so entries can be filtered before they reach
 /// demarc (`grep Amiga bitworld.txt | demarc`). Anything on stdin is taken to
-/// be a db in the format [`collect_db`] describes.
+/// be a db in the format [`collect_db`] describes, packed (`demarc < csdb.txt.gz`)
+/// or not.
 ///
 /// Does nothing when stdin is a terminal — there's nothing piped in then, and
 /// reading would just block waiting for the user to type a db.
@@ -309,10 +327,11 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
     if io::stdin().is_terminal() {
         return Ok(());
     }
-    let mut text = String::new();
-    if let Err(err) = io::stdin().read_to_string(&mut text) {
+    let mut data = Vec::new();
+    if let Err(err) = io::stdin().read_to_end(&mut data) {
         bail!("Failed to read db from stdin: {err}");
     }
+    let text = db_text(data, "db from stdin")?;
     collect_db_text(&text, filter, out);
     Ok(())
 }
@@ -1249,6 +1268,35 @@ mod tests {
         assert_eq!(nexus.game_info.group, "Andromeda");
         assert_eq!(nexus.game_info.year, "1994");
         assert!(!nexus.tags.contains_key("party"));
+    }
+
+    /// A packed db loads exactly like the plain text one it was made from — the
+    /// dbs are big and ship compressed, so both gzip and bzip2 are unpacked on
+    /// the way in.
+    #[test]
+    fn collect_db_reads_packed_dbs() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for packed in ["testdata/demos.txt.gz", "testdata/demos.txt.bz2"] {
+            let mut out = vec![];
+            collect_db(&root.join(packed), &DbFilter::default(), &mut out).unwrap();
+            assert_eq!(out.len(), 2, "{packed}");
+
+            let eod = &out[0];
+            assert_eq!(eod.game_info.title, "Edge of Disgrace", "{packed}");
+            assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
+            assert_eq!(eod.game_info.year, "2008", "{packed}");
+            // The `# Platform:C64` header applies just as it does unpacked.
+            assert_eq!(eod.game_info.typ, "C64 demo", "{packed}");
+            let FileSource::Url(urls) = &eod.path else {
+                panic!("db entries stay URLs until loaded, got {:?}", eod.path)
+            };
+            assert_eq!(
+                urls.iter().map(Url::as_str).collect::<Vec<_>>(),
+                ["https://example.com/eod.d64"],
+                "{packed}"
+            );
+            assert_eq!(out[1].game_info.title, "Nexus 7", "{packed}");
+        }
     }
 
     /// A db piped in has usually been filtered line by line, so the header that

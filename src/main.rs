@@ -78,7 +78,8 @@ struct Args {
     /// Path to the files to load, or an http(s):// URL to download and run
     files: Vec<PathBuf>,
 
-    /// Demo database file to load. A db can also be piped in on stdin.
+    /// Demo database file to load, optionally gz/bz2 packed. A db can also be
+    /// piped in on stdin.
     #[arg(long)]
     db: Option<String>,
 
