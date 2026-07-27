@@ -365,7 +365,7 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
     } else if system_type == SystemType::Psx {
         set_var("pcsx_rearmed_bios", "HLE");
         set_var("pcsx_rearmed_region", "PAL");
-        set_var("beetle_psx_region", "pal");
+        set_var("beetle_psx_region", "ntsc-u");
     }
 }
 
