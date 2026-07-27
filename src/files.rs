@@ -17,9 +17,10 @@ use crate::{
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
-        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, has_matching,
-        is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u, prepare_psx_disc,
-        read_header, scan_release_dir, sort_disks, unpack_into, unpack_to_temp,
+        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, fix_psx_text_size,
+        has_matching, is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
+        prepare_psx_disc, psx_needs_text_fix, read_header, scan_release_dir, sort_disks,
+        unpack_into, unpack_to_temp,
     },
 };
 
@@ -740,6 +741,22 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
     if !path.is_dir() {
         if is_psx_exe(&path) {
             tags.insert("psx_core".into(), "beetle".into());
+            // A scene exe whose header undercounts its text section doesn't
+            // load at all, so patch the header before the core sees it. The
+            // file we were handed isn't ours to write to unless it already
+            // came out of a temp directory, so anything else is copied first.
+            if psx_needs_text_fix(&path) {
+                if temp_dir.is_none() {
+                    // TODO: temp file leek? Better to wire this in convert_dir()
+                    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+                    let copy = dir.path().join(path.file_name().unwrap());
+                    fs::copy(&path, &copy)?;
+                    path = copy;
+                    temp_dir = Some(dir);
+                }
+                debug!("FMT: patching short PSX text section in {path:?}");
+                fix_psx_text_size(&path)?;
+            }
         }
 
         // Only the header is examined below — the GBA check reaches furthest
@@ -1087,6 +1104,39 @@ mod tests {
         assert_eq!(wf.path.extension().unwrap(), "prg");
         assert!(!wf.path.starts_with(dir.path()));
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// A PSX executable that undercounts its text section is patched on the way
+    /// to the core — which refuses to load it otherwise — and the file we were
+    /// handed keeps the header it came with, since it isn't ours to write to.
+    #[test]
+    fn short_psx_exe_is_patched_on_a_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("demo.psx");
+        let mut data = b"PS-X EXE".to_vec();
+        data.resize(0x18, 0);
+        data.extend_from_slice(&0x8001_0000u32.to_le_bytes()); // t_addr
+        data.extend_from_slice(&0x800u32.to_le_bytes()); // t_size, way short
+        data.resize(0x800 + 0x4000, 0);
+        fs::write(&exe, &data).unwrap();
+
+        let wf = prepare_file(&EmuFile {
+            path: exe.as_path().into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let t_size = |p: &Path| {
+            let header = read_header(p, 0x20).unwrap();
+            u32::from_le_bytes(header[0x1c..0x20].try_into().unwrap())
+        };
+        assert_ne!(wf.path, exe, "the original must not be the one loaded");
+        assert_eq!(t_size(&wf.path), 0x4000);
+        assert_eq!(t_size(&exe), 0x800);
+        assert_eq!(
+            wf.settings.get("psx_core").map(String::as_str),
+            Some("beetle")
+        );
     }
 
     /// A GBA rom is recognised by its header, not its name — this one is a
