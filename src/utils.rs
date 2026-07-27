@@ -359,7 +359,10 @@ fn psx_text_size_fix(path: &Path) -> Option<u32> {
     }
     let field = |off: usize| u32::from_le_bytes(header[off..off + 4].try_into().unwrap());
 
-    let available = fs::metadata(path).ok()?.len().saturating_sub(PSX_HEADER_LEN);
+    let available = fs::metadata(path)
+        .ok()?
+        .len()
+        .saturating_sub(PSX_HEADER_LEN);
     // Loading is mirrored into RAM, so only the address' offset within it says
     // how much room the text section has left before running off the end.
     let room = PSX_RAM_SIZE - (field(0x18) & (PSX_RAM_SIZE - 1));
@@ -755,11 +758,7 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
             first_file = Some(path.clone());
             system_type = t;
         }
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if ext == "d64" || ext == "adf" || ext == "atr" || ext == "msa" {
+        if is_disk_image(&path) {
             disk_images.push(path);
             system_type = t;
         }
