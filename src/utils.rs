@@ -330,6 +330,64 @@ pub fn is_psx_exe(path: &Path) -> bool {
     read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
 
+/// The fixed size of a PSX executable's header. Everything after it is the
+/// text section.
+const PSX_HEADER_LEN: u64 = 0x800;
+
+/// Offset of the text section's size (`t_size`) in that header, right after the
+/// address it loads to (`t_addr`) at `0x18`.
+const PSX_TEXT_SIZE_OFFSET: usize = 0x1c;
+
+/// The PlayStation's 2MB of main RAM, which the text section has to fit into.
+const PSX_RAM_SIZE: u32 = 0x20_0000;
+
+/// The text size the PSX executable at `path` should be recording, or `None`
+/// when it isn't one, or already accounts for everything in the file.
+///
+/// Scene releases regularly ship an executable whose `t_size` covers only part
+/// of the file — the demo's data was appended after the code without the header
+/// being updated to match. The core refuses to load those at all ("Text section
+/// recorded size is smaller than data available in file"), so the fix is to
+/// record the size the file really has.
+///
+/// A size *larger* than the file is left alone: a header counting its own 0x800
+/// bytes looks like that, and the core clamps it by itself.
+fn psx_text_size_fix(path: &Path) -> Option<u32> {
+    let header = read_header(path, PSX_TEXT_SIZE_OFFSET + 4).ok()?;
+    if header.len() < PSX_TEXT_SIZE_OFFSET + 4 || header[0..8] != *b"PS-X EXE" {
+        return None;
+    }
+    let field = |off: usize| u32::from_le_bytes(header[off..off + 4].try_into().unwrap());
+
+    let available = fs::metadata(path).ok()?.len().saturating_sub(PSX_HEADER_LEN);
+    // Loading is mirrored into RAM, so only the address' offset within it says
+    // how much room the text section has left before running off the end.
+    let room = PSX_RAM_SIZE - (field(0x18) & (PSX_RAM_SIZE - 1));
+    let available = u32::try_from(available).unwrap_or(u32::MAX).min(room);
+
+    (available > field(PSX_TEXT_SIZE_OFFSET)).then_some(available)
+}
+
+/// True if [`fix_psx_text_size`] would rewrite `path`.
+pub fn psx_needs_text_fix(path: &Path) -> bool {
+    psx_text_size_fix(path).is_some()
+}
+
+/// Rewrite the text section size of the PSX executable at `path` so it covers
+/// the whole file — see [`psx_text_size_fix`] for when that is needed. Returns
+/// whether the file was changed.
+pub fn fix_psx_text_size(path: &Path) -> Result<bool> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let Some(size) = psx_text_size_fix(path) else {
+        return Ok(false);
+    };
+    let mut file = fs::OpenOptions::new().write(true).open(path)?;
+    file.seek(SeekFrom::Start(PSX_TEXT_SIZE_OFFSET as u64))?;
+    file.write_all(&size.to_le_bytes())?;
+    Ok(true)
+}
+
 /// How much of a file [`is_gba_rom`] needs to see: everything up to and
 /// including the fixed `0x96` byte of the cartridge header.
 pub const GBA_HEADER_LEN: usize = 0xb3;
@@ -882,5 +940,82 @@ mod tests {
         let disc = dir.path().join("disc.cue");
         fs::write(&disc, "FILE \"d.bin\" BINARY\n  TRACK 01 MODE2/2352\n").unwrap();
         assert!(!is_psx_exe(&disc));
+    }
+
+    /// Build a PSX executable loading to `t_addr`, recording `t_size`, and
+    /// holding `data_len` bytes after its 0x800 byte header.
+    fn write_psx_exe(path: &Path, t_addr: u32, t_size: u32, data_len: usize) {
+        let mut data = b"PS-X EXE".to_vec();
+        data.resize(0x18, 0);
+        data.extend_from_slice(&t_addr.to_le_bytes());
+        data.extend_from_slice(&t_size.to_le_bytes());
+        data.resize(0x800 + data_len, 0);
+        fs::write(path, &data).unwrap();
+    }
+
+    fn text_size(path: &Path) -> u32 {
+        let header = read_header(path, 0x20).unwrap();
+        u32::from_le_bytes(header[0x1c..0x20].try_into().unwrap())
+    }
+
+    /// A header that undercounts the file is rewritten to the whole of it, and
+    /// only that field changes.
+    #[test]
+    fn short_psx_text_size_is_patched() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        let exe = dir.path().join("demo.psx");
+        write_psx_exe(&exe, 0x8001_0000, 0x800, 0x4000);
+
+        assert!(psx_needs_text_fix(&exe));
+        assert!(fix_psx_text_size(&exe).unwrap());
+        assert_eq!(text_size(&exe), 0x4000);
+        assert_eq!(fs::metadata(&exe).unwrap().len(), 0x800 + 0x4000);
+
+        // Nothing left to do the second time around.
+        assert!(!psx_needs_text_fix(&exe));
+        assert!(!fix_psx_text_size(&exe).unwrap());
+    }
+
+    /// A size the core can handle on its own is left as it is: one that already
+    /// covers the file, and one counting the header too (larger than the file),
+    /// which the core clamps itself.
+    #[test]
+    fn sound_psx_text_size_is_left_alone() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+
+        let exact = dir.path().join("exact.psx");
+        write_psx_exe(&exact, 0x8001_0000, 0x4000, 0x4000);
+        assert!(!psx_needs_text_fix(&exact));
+
+        let over = dir.path().join("over.psx");
+        write_psx_exe(&over, 0x8001_0000, 0x4800, 0x4000);
+        assert!(!psx_needs_text_fix(&over));
+
+        let not_an_exe = dir.path().join("plain.bin");
+        fs::write(&not_an_exe, [0u8; 0x1000]).unwrap();
+        assert!(!psx_needs_text_fix(&not_an_exe));
+    }
+
+    /// The text section can't be grown past the end of the 2MB of main RAM it
+    /// loads into, however much data the file holds.
+    #[test]
+    fn psx_text_size_stops_at_end_of_ram() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+
+        // Loading 0x10000 below the top of RAM leaves room for that much only,
+        // even though the file has twice as much in it.
+        let exe = dir.path().join("high.psx");
+        write_psx_exe(&exe, 0x801f_0000, 0x800, 0x20000);
+        assert!(fix_psx_text_size(&exe).unwrap());
+        assert_eq!(text_size(&exe), 0x10000);
     }
 }
