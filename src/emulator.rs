@@ -18,6 +18,44 @@ use crate::libretro;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
 
+/// The tags one load hands to the core, in increasing order of precedence:
+///
+/// 1. what the entry itself carries — a db header line (`# Platform:Amiga
+///    puae_model:date`), a db line's own fields or an `.m3u` — together with
+///    whatever [`prepare_file`] worked out from the file (WHDLoad install, a
+///    large Amiga executable, a PS-X EXE, ...). Both are already merged into
+///    [`WorkingFile::settings`], detection last, since it saw the real file.
+/// 2. the tags from the command line, which the user asked for just now.
+///
+/// Two Amiga values name a release rather than a machine and are resolved here
+/// once everything is merged: `puae_model:date` picks the model from the year,
+/// and an `AGA Chipset` scene tag means A1200 whatever the year says.
+fn load_tags(
+    work_file: &WorkingFile,
+    cli_tags: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut tags = work_file.settings.clone();
+    for (key, val) in cli_tags {
+        tags.insert(key.clone(), val.clone());
+    }
+
+    if tags.get("puae_model").is_some_and(|m| m == "date") {
+        tags.insert("puae_model".into(), "A500".into());
+        if let Ok(year) = work_file.game_info.year.parse::<u32>() {
+            if year < 1990 {
+                tags.insert("puae_kickstart".into(), "kick33180.A500".into());
+            } else if year >= 1993 {
+                tags.insert("puae_model".into(), "A1200".into());
+            }
+        }
+    }
+
+    if tags.get("tags").is_some_and(|t| t.contains("AGA Chipset")) {
+        tags.insert("puae_model".into(), "A1200".into());
+    }
+    tags
+}
+
 pub fn create_core(
     system_type: SystemType,
     game: &Path,
@@ -473,30 +511,7 @@ impl Emulator {
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
         let work_file = prepare_file(emu_file)?;
         self.core = None;
-        let mut tags = work_file.settings.clone();
-        for (key, val) in &self.tags {
-            tags.insert(key.clone(), val.clone());
-        }
-
-        if let Some(m) = tags.get("puae_model")
-            && m == "date"
-        {
-            tags.insert("puae_model".into(), "A500".into());
-            if let Ok(year) = emu_file.game_info.year.parse::<u32>() {
-                if year < 1990 {
-                    tags.insert("puae_kickstart".into(), "kick33180.A500".into());
-                } else if year >= 1993 {
-                    tags.insert("puae_model".into(), "A1200".into());
-                }
-            }
-        }
-
-        if let Some(t) = tags.get("tags") {
-            info!("TAGS {t}");
-            if t.contains("AGA Chipset") {
-                tags.insert("puae_model".into(), "A1200".into());
-            }
-        }
+        let tags = load_tags(&work_file, &self.tags);
         let core = create_core(
             work_file.system_type,
             &work_file.path,
@@ -651,5 +666,107 @@ impl Emulator {
         }
         self.update();
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::files::collect_db_text;
+    use crate::systems::GameInfo;
+
+    /// A `WorkingFile` as `prepare_file` would hand it over: the entry's own
+    /// tags plus anything detection added, and the release year.
+    fn work_file(year: &str, settings: &[(&str, &str)]) -> WorkingFile {
+        WorkingFile {
+            settings: settings
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            game_info: GameInfo {
+                year: year.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn cli(tags: &[(&str, &str)]) -> HashMap<String, String> {
+        tags.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// Tags a db carries — here from its `# Platform:Amiga puae_model:A500`
+    /// header — are what the core gets, and anything the command line names
+    /// still overrides them.
+    #[test]
+    fn db_tags_reach_the_core() {
+        let mut out = vec![];
+        collect_db_text(
+            "# Platform:Amiga puae_model:A500 puae_floppy_speed:100\n\
+             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n",
+            &mut out,
+        );
+        // What `prepare_file` passes on when it detects nothing itself: the
+        // entry's tags, unchanged.
+        let mut wf = work_file("1992", &[]);
+        wf.settings = out[0].tags.clone();
+
+        let tags = load_tags(&wf, &HashMap::new());
+        assert_eq!(tags.get("puae_model").unwrap(), "A500");
+        assert_eq!(tags.get("puae_floppy_speed").unwrap(), "100");
+
+        let tags = load_tags(&wf, &cli([("puae_model", "A1200")].as_slice()));
+        assert_eq!(tags.get("puae_model").unwrap(), "A1200", "--aga wins");
+    }
+
+    /// `puae_model:date` isn't a machine but an instruction: pick one from the
+    /// year of the release.
+    #[test]
+    fn date_picks_the_model() {
+        let by_year = |year: &str| {
+            let tags = load_tags(&work_file(year, &[("puae_model", "date")]), &HashMap::new());
+            (
+                tags.get("puae_model").cloned().unwrap_or_default(),
+                tags.contains_key("puae_kickstart"),
+            )
+        };
+        assert_eq!(by_year("1988"), ("A500".into(), true), "1.3 Kickstart");
+        assert_eq!(by_year("1991"), ("A500".into(), false));
+        assert_eq!(by_year("1996"), ("A1200".into(), false));
+        // No year at all leaves the plain A500 the sentinel resolves to.
+        assert_eq!(by_year(""), ("A500".into(), false));
+    }
+
+    /// An AGA release needs an A1200 whatever the year, and whatever the db
+    /// header said.
+    #[test]
+    fn aga_scene_tag_forces_a1200() {
+        let wf = work_file(
+            "1992",
+            &[
+                ("puae_model", "A500"),
+                ("tags", "Multiple Parts,AGA Chipset"),
+            ],
+        );
+        assert_eq!(
+            load_tags(&wf, &HashMap::new()).get("puae_model").unwrap(),
+            "A1200"
+        );
+    }
+
+    /// What `prepare_file` reads out of the file itself — a WHDLoad install
+    /// here — is more specific than a db header covering thousands of lines,
+    /// so it is already merged over it by the time `load_tags` runs.
+    #[test]
+    fn detection_outranks_the_db_header() {
+        let wf = work_file(
+            "1992",
+            &[("puae_model", "A1200"), ("puae_use_whdload", "enabled")],
+        );
+        let tags = load_tags(&wf, &HashMap::new());
+        assert_eq!(tags.get("puae_model").unwrap(), "A1200");
+        assert_eq!(tags.get("puae_use_whdload").unwrap(), "enabled");
     }
 }
