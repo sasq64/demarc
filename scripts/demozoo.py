@@ -85,6 +85,13 @@ PLATFORM_NAMES = {
 # URL resolution.  A Demozoo productionlink stores a link_class plus a
 # parameter; the real URL is reconstructed from a per-class template.  We
 # implement the common ones.  `{p}` is the (stripped) parameter.
+#
+# One productionlink table holds both lists a Demozoo prod page shows: the
+# download links and the external links (Pouet/csdb/Youtube/Bandcamp pages).
+# demarc fetches the exported url and tries to *run* it, so only the former
+# belong in `download:` — a prod whose only links are info pages exports an
+# empty download rather than a web page demarc cannot load.  Hence only file
+# classes are listed here; everything else resolves to None and is dropped.
 # ---------------------------------------------------------------------------
 URL_TEMPLATES = {
     "BaseUrl": "{p}",
@@ -97,34 +104,16 @@ URL_TEMPLATES = {
     "Defacto2File": "https://defacto2.net/f/{p}",
     "ModarchiveModule": "https://modarchive.org/module.php?{p}",
     "SixteenColorsPack": "https://16colo.rs/pack/{p}",
-    "PouetProduction": "https://www.pouet.net/prod.php?which={p}",
-    "CsdbRelease": "https://csdb.dk/release/?id={p}",
-    "CsdbMusic": "https://csdb.dk/release/?id={p}",
-    "ZxdemoItem": "https://zxdemo.org/item.php?id={p}",
-    "KestraBitworldRelease": "http://janeway.exotica.org.uk/release.php?id={p}",
-    "YoutubeVideo": "https://www.youtube.com/watch?v={p}",
-    "VimeoVideo": "https://vimeo.com/{p}",
-    "NectarineSong": "https://scenestream.net/demovibes/song/{p}/",
-    "SoundcloudTrack": "https://soundcloud.com/{p}",
-    "BandcampTrack": "https://{p}",
-    "GithubRepo": "https://github.com/{p}",
-    "InternetArchivePage": "https://archive.org/details/{p}",
-    "SpotifyTrack": "https://open.spotify.com/track/{p}",
-    "Tic80Cart": "https://tic80.com/play?cart={p}",
 }
 
 # Order in which link classes are preferred when choosing THE url for a row.
-# Downloadable file archives first (matches bitworld, which points at files),
-# then production pages, then media/streaming links.
+# The dedicated file archives first (matches bitworld, which points at files);
+# BaseUrl last, since it is the catch-all class and its is_download_link flag
+# is the only thing telling a file apart from a home page.
 URL_PRIORITY = [
     "AmigascneFile", "SceneOrgFile", "ModlandFile", "FujiologyFile",
     "UntergrundFile", "PaduaOrgFile", "Defacto2File", "ModarchiveModule",
     "SixteenColorsPack", "BaseUrl",
-    "PouetProduction", "CsdbRelease", "CsdbMusic", "ZxdemoItem",
-    "KestraBitworldRelease",
-    "YoutubeVideo", "VimeoVideo", "NectarineSong", "SoundcloudTrack",
-    "BandcampTrack", "GithubRepo", "InternetArchivePage", "SpotifyTrack",
-    "Tic80Cart",
 ]
 URL_RANK = {cls: i for i, cls in enumerate(URL_PRIORITY)}
 
@@ -355,12 +344,13 @@ def export(conn, out_path):
     for prod_id, link_class, parameter, is_dl in cur.execute(
             "SELECT production_id, link_class, parameter, is_download_link "
             "FROM productions_productionlink"):
+        # Skip the external-link half of the table: those are pages about the
+        # release (Pouet, csdb, Youtube, ...), not the release itself.
+        if is_dl != "t":
+            continue
         rank = URL_RANK.get(link_class)
         if rank is None:
             continue
-        # Prefer download links: bias their rank ahead of non-download ones.
-        if is_dl != "t":
-            rank += 1000
         url = resolve_url(link_class, parameter)
         if url:
             prod_links.setdefault(prod_id, []).append((rank, url))
