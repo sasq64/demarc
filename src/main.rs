@@ -588,11 +588,7 @@ fn main() {
     let primary_window = Some(window);
 
     let shader = args.shader.unwrap_or(ShaderArg::Lottes);
-    //     || match files.first().map(|g| systems::get_system_type(g)) {
-    //         Some(systems::SystemType::Gameboy | systems::SystemType::Gba) => ShaderArg::Lcd,
-    //         _ => ShaderArg::Lottes,
-    //     },
-    // );
+
     // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
     // name — a `.wgsl` path selects the single-pass WGSL backend, anything
     // else a `.slangp` preset run through librashader. The slangp passthrough
@@ -616,7 +612,7 @@ fn main() {
         border_mode: args.border.into(),
         scale_mode: args.scale.into(),
         // `--shader none` starts with the shaders disabled; an
-        // explicit `--preset` always enables it.
+        // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
     let settings = AppSettings {
@@ -690,10 +686,7 @@ fn main() {
         ));
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
-    // this restores the actually-requested fullscreen mode afterward. Needed
-    // on every platform `fix_window` runs on — previously gated to
-    // Windows/Linux only, which left macOS permanently stuck in `Windowed`
-    // after Startup even though `!win` asked for fullscreen.
+    // this restores the actually-requested fullscreen mode afterward.
     if !win {
         app.add_systems(PostStartup, enter_fullscreen);
     }

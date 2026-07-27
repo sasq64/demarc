@@ -821,7 +821,11 @@ mod tests {
 
         // Case-insensitive, and two out-of-order words both as substrings of one
         // item (the `AllWordsSource` semantics), via the < 3-char fallback path.
-        let banana: Vec<String> = src.search("NA an", 256).into_iter().map(|r| r.text).collect();
+        let banana: Vec<String> = src
+            .search("NA an", 256)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
         assert_eq!(banana, vec!["banana"]);
 
         // A word matching nothing filters the item out.
@@ -830,7 +834,10 @@ mod tests {
         // Ranking puts the closest match first: an exact/prefix hit outranks a
         // mid-word one for the same query.
         let ranked: Vec<String> = src.search("ap", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(ranked[0], "apple", "prefix match should rank ahead of 'grape'");
+        assert_eq!(
+            ranked[0], "apple",
+            "prefix match should rank ahead of 'grape'"
+        );
     }
 
     /// Guards the headline claim: on a large list, [`IndexedSource`] filters at
@@ -911,22 +918,31 @@ mod tests {
             let n_old = old.search(q, 256).len();
             let t_old = {
                 let s = Instant::now();
-                for _ in 0..50 { std::hint::black_box(old.search(q, 256)); }
+                for _ in 0..50 {
+                    std::hint::black_box(old.search(q, 256));
+                }
                 s.elapsed() / 50
             };
             let t_idx = {
                 let s = Instant::now();
-                for _ in 0..50 { std::hint::black_box(idx.search(q, 256)); }
+                for _ in 0..50 {
+                    std::hint::black_box(idx.search(q, 256));
+                }
                 s.elapsed() / 50
             };
-            println!("  {q:24} hits={n_old:5}  old={t_old:>10.3?}  idx={t_idx:>10.3?}  ({:.1}x)",
-                t_old.as_secs_f64() / t_idx.as_secs_f64().max(1e-12));
+            println!(
+                "  {q:24} hits={n_old:5}  old={t_old:>10.3?}  idx={t_idx:>10.3?}  ({:.1}x)",
+                t_old.as_secs_f64() / t_idx.as_secs_f64().max(1e-12)
+            );
         }
 
         let old_t = time(&old);
         let idx_t = time(&idx);
         println!("AllWordsSource (linear): {old_t:?}");
-        println!("IndexedSource  (trigram+nucleo): {idx_t:?} ({:.1}x)", old_t.as_secs_f64() / idx_t.as_secs_f64());
+        println!(
+            "IndexedSource  (trigram+nucleo): {idx_t:?} ({:.1}x)",
+            old_t.as_secs_f64() / idx_t.as_secs_f64()
+        );
         let speedup = old_t.as_secs_f64() / idx_t.as_secs_f64();
         assert!(
             speedup >= 10.0,

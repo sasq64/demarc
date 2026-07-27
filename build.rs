@@ -45,8 +45,17 @@ fn build_cbmconvert() {
     const DIR: &str = "cbmconvert";
     // The source set the upstream Makefile links into the `cbmconvert` binary.
     const SRCS: &[&str] = &[
-        "main.c", "util.c", "read.c", "write.c", "lynx.c", "unark.c", "unarc.c", "t64.c", "c2n.c",
-        "image.c", "archive.c",
+        "main.c",
+        "util.c",
+        "read.c",
+        "write.c",
+        "lynx.c",
+        "unark.c",
+        "unarc.c",
+        "t64.c",
+        "c2n.c",
+        "image.c",
+        "archive.c",
     ];
 
     let mut build = cc::Build::new();
