@@ -587,7 +587,13 @@ impl RetroCoreDirect {
                                 // Format: "Description; default|opt2|opt3|..."
                                 if let Some((_, opts)) = value.split_once("; ") {
                                     let default = opts.split('|').next().unwrap_or("").trim();
-                                    self.set_var(&key, default);
+                                    // Only fills the gaps: a value we were given
+                                    // for this option is the frontend's answer
+                                    // and outranks the core's default, whenever
+                                    // the core gets around to announcing it.
+                                    if !self.vars.contains_key(&key) {
+                                        self.set_var(&key, default);
+                                    }
                                 }
                             }
                             p = p.add(1);
@@ -719,6 +725,14 @@ impl RetroCoreDirect {
                 retro_frame_time: None,
                 time_reference: 0,
             };
+            // Our options go in before the core is told anything, so they are
+            // already there whenever it announces its own defaults (usually
+            // from within `retro_set_environment` below, but atari800 and
+            // friends do it later) and whenever it reads them back.
+            for (key, val) in settings.iter() {
+                retro_emu.set_var(key, val);
+            }
+
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
             retro_set_video_refresh(Self::video_refresh_cb);
@@ -726,10 +740,6 @@ impl RetroCoreDirect {
             retro_set_audio_sample_batch(Self::audio_sample_batch_cb);
             retro_set_input_poll(Self::input_poll_cb);
             retro_set_input_state(Self::input_state_cb);
-
-            for (key, val) in settings.iter() {
-                retro_emu.set_var(key, val);
-            }
 
             info!("retro_init()");
             retro_init();
@@ -1556,5 +1566,37 @@ mod tests {
             retro_emu.run();
         }
         retro_emu.save_png(&root("test_d64.png")).unwrap();
+    }
+
+    /// The settings handed to a core — a db header's `puae_model:A1200`, in the
+    /// end — must be the values it reads back, not the defaults it announces
+    /// through `SET_VARIABLES`. The untouched option checks the other half: the
+    /// core's own defaults still fill in everything we didn't name.
+    #[test]
+    fn settings_reach_the_core() {
+        let core_path = libloader::get_libretro("puae").unwrap();
+        let system_dir = &root("system");
+        let game_path = root("demos/rebels.adf");
+
+        let mut settings = HashMap::new();
+        settings.insert("puae_model".into(), "A1200".into());
+        settings.insert("puae_video_standard".into(), "NTSC".into());
+
+        let retro_emu =
+            RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), settings).unwrap();
+
+        let var = |key: &str| {
+            retro_emu
+                .vars
+                .get(key)
+                .unwrap_or_else(|| panic!("core never saw {key}, has {:?}", retro_emu.vars))
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(var("puae_model"), "A1200");
+        assert_eq!(var("puae_video_standard"), "NTSC");
+        // Announced by the core, never set by us, so it must have kept its
+        // default — this is what proves the core did announce its options.
+        assert!(!var("puae_floppy_speed").is_empty());
     }
 }
