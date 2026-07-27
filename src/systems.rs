@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tempfile::TempDir;
 use tracing::{debug, info};
 
@@ -229,26 +229,37 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
             CORE_NAME_PSX_BEETLE
         }
         SystemType::Psx => CORE_NAME_PSX,
-        SystemType::Ilbm => bail!(""),
-        SystemType::Flash => bail!(""),
-        SystemType::Unknown => bail!(""),
+        // Ilbm and Flash are handled by their own backends before `get_core` is
+        // reached, so arriving here with one means the file type was never
+        // resolved to something loadable.
+        SystemType::Ilbm | SystemType::Flash | SystemType::Unknown => {
+            return Err(crate::load_error::UnknownSystem.into());
+        }
     };
     if core_name.contains("beetle") {
         // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
         // a bare load error with no hint, so name the files up front.
         let dir = system_dir();
         if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
-            bail!(
-                "Beetle PSX needs a BIOS: put one of {} in {:?}. Beetle is \
-                 required here because pcsx_rearmed cannot load PS-X EXE files.",
-                PSX_BIOS.join(", "),
-                dir
-            );
+            return Err(crate::load_error::MissingBios {
+                core: "Beetle PSX".into(),
+                candidates: PSX_BIOS.iter().map(|b| b.to_string()).collect(),
+                dir: dir.display().to_string(),
+                note: Some(
+                    "Beetle is required here because pcsx_rearmed cannot load PS-X EXE files."
+                        .into(),
+                ),
+            }
+            .into());
         }
     }
 
-    libloader::get_libretro(core_name)
-        .with_context(|| format!("Could not find libretro core '{core_name}'"))
+    // `NoCore` goes on as *context*, which anyhow keeps downcastable, so the
+    // loader's own explanation stays in the chain underneath it.
+    libloader::get_libretro(core_name).context(crate::load_error::NoCore {
+        name: core_name.to_string(),
+        system: system_type,
+    })
 }
 
 pub fn get_system_type(path: &Path) -> SystemType {

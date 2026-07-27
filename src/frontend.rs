@@ -511,7 +511,11 @@ fn run_retro(
             let game = settings.files[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
-                    let text = format!("{:?}: {e:?}", game.path);
+                    let text = format!(
+                        "Could not load {}: {}",
+                        game.game_info.title,
+                        crate::load_error::classify(&e).reason()
+                    );
                     writer.write(SetHudText {
                         text,
                         delay: Duration::from_secs(0),

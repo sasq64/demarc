@@ -44,6 +44,7 @@ suppaftp = "10"
 url = "2"
 percent-encoding = "2"
 sha2 = "0.11"
+thiserror = "2"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above

@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Context;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -9,6 +10,19 @@ use url::Url;
 
 /// Give up after this many HTTP redirects, matching typical browser limits.
 const MAX_REDIRECTS: usize = 10;
+
+/// How long to wait for name resolution plus a connection before giving up on a
+/// host. A scene archive that is up answers well inside this; one that is down
+/// otherwise leaves the connect hanging until the OS gives up minutes later.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait for the server to start answering once connected — for HTTP
+/// that is the response head, for FTP a reply on the control connection.
+///
+/// This deliberately does *not* bound the transfer itself: large demo archives
+/// off a slow mirror are normal and must not be cut off mid-download. It only
+/// bounds the part where a wedged server has told us nothing at all.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// True if `s` looks like a remote URL demarc should download rather than treat
 /// as a local path.
@@ -23,10 +37,16 @@ pub fn is_url(s: &str) -> bool {
 /// The scene.org rule turns a `/get/` link — which 302-redirects to a slow FTP
 /// mirror — into its `/get:de-https/` variant, which serves the file directly
 /// over HTTPS.
-const URL_REWRITES: &[(&str, &str)] = &[(
-    "https://files.scene.org/get/*",
-    "https://files.scene.org/get:de-https/*",
-)];
+const URL_REWRITES: &[(&str, &str)] = &[
+    (
+        "https://files.scene.org/get/*",
+        "https://files.scene.org/get:de-https/*",
+    ),
+    (
+        "https://ftp.untergrund.net/users/ltk_tscl/fujiology/*",
+        "https://fujiology.org/*",
+    ),
+];
 
 /// Rewrite `url` according to the first matching rule in [`URL_REWRITES`],
 /// returning it unchanged if no rule applies.
@@ -126,6 +146,9 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
         let response = ureq::get(&current)
             .config()
             .max_redirects(0)
+            .timeout_resolve(Some(CONNECT_TIMEOUT))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_recv_response(Some(RESPONSE_TIMEOUT))
             .build()
             .call()?;
         if response.status().is_redirection() {
@@ -158,6 +181,8 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
 /// logs in anonymously. Transfers are done in binary mode so files aren't
 /// corrupted by line-ending translation.
 fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
+    use std::net::ToSocketAddrs;
+
     use suppaftp::FtpStream;
     use suppaftp::types::FileType;
 
@@ -185,8 +210,21 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
         format!("{host_port}:21")
     };
 
-    let mut ftp = FtpStream::connect(&host_port)
+    // Connect with an explicit timeout rather than `FtpStream::connect`, which
+    // has none and so hangs for the OS default on a dead host. That needs a
+    // resolved `SocketAddr`, so do the DNS lookup here and take the first
+    // address the resolver hands back.
+    let addr = host_port
+        .to_socket_addrs()
+        .with_context(|| format!("failed to resolve {host_port}"))?
+        .next()
+        .with_context(|| format!("{host_port} resolved to no addresses"))?;
+    let mut ftp = FtpStream::connect_timeout(addr, CONNECT_TIMEOUT)
         .with_context(|| format!("failed to connect to {host_port}"))?;
+    // Bound waits on the *control* connection only; the data connection used by
+    // `retr` below is a separate socket, so a large slow transfer is unaffected.
+    let _ = ftp.get_ref().set_read_timeout(Some(RESPONSE_TIMEOUT));
+    let _ = ftp.get_ref().set_write_timeout(Some(RESPONSE_TIMEOUT));
     ftp.login(&user, &pass).context("FTP login failed")?;
     ftp.transfer_type(FileType::Binary)?;
     ftp.retr(path, |reader| {

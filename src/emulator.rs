@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result};
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::{image::Image, prelude::*};
@@ -77,18 +77,19 @@ pub fn create_core(
     tags_for_system(system_type, &mut tags);
     println!("TAGS: {tags:?}");
 
-    match get_core(system_type, &tags) {
-        Ok(core) => Ok(Box::new(RetroCoreThreaded::new(
-            Path::new(&core),
-            system_dir(),
-            Some(game),
-            tags,
-            speed_test,
-        )?)),
-        Err(name) => {
-            bail!("Can not find core '{name}' for '{game:?}'");
-        }
-    }
+    // Propagate with `?` rather than re-`bail!`ing the message: formatting the
+    // error into a new string would drop the typed cause underneath it, which
+    // is what `load_error::classify` reads to tell "no core" from "missing
+    // BIOS" from "unknown file type".
+    let core = get_core(system_type, &tags)
+        .with_context(|| format!("could not pick a core for {game:?}"))?;
+    Ok(Box::new(RetroCoreThreaded::new(
+        Path::new(&core),
+        system_dir(),
+        Some(game),
+        tags,
+        speed_test,
+    )?))
 }
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].

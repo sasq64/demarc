@@ -26,6 +26,7 @@ mod hud;
 mod ilbm;
 mod image_emu;
 mod libloader;
+mod load_error;
 mod media_keys;
 mod post_process;
 mod retro_emu;
