@@ -19,6 +19,7 @@ image = { version = "0.25.10", default-features = false, features = [
     "png",
     "bmp",
     "jpeg",
+    "gif",
 ] }
 tracing-subscriber = "0.3.23"
 ringbuf = "0.5.0"
