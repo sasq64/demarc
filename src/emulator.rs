@@ -369,7 +369,10 @@ impl Emulator {
         }
     }
 
-    pub fn update(&mut self) {
+    /// Hands the core's pending audio to the sink. Returns whether any samples
+    /// actually arrived, which is what [`Emulator::run`] reads to tell that a
+    /// frame skip has run its course.
+    pub fn update(&mut self) -> bool {
         let Emulator {
             core,
             sink,
@@ -378,18 +381,21 @@ impl Emulator {
             ..
         } = self;
         let Some(core) = core else {
-            return;
+            return false;
         };
         // Apply the PI controller's drift correction to the resampler ratio.
         sink.set_adjust(*audio_rate_adjust);
         let from = core.sample_rate();
+        let mut got_audio = false;
         core.with_audio(&mut |samples| {
             if samples.is_empty() {
                 return;
             }
             *audio_seen = true;
+            got_audio = true;
             sink.push_audio(from as f32, samples);
         });
+        got_audio
     }
 
     /// Map the cursor keys and Enter to a `RETRO_DEVICE_ID_JOYPAD_*` button.
@@ -665,7 +671,21 @@ impl Emulator {
             result &= core.run();
             warn!("Duplicating frame");
         }
-        self.update();
+        let got_audio = self.update();
+
+        // A skip delivers no audio at all while it runs — the worker discards
+        // it and sends no updates — so the first samples to arrive afterwards
+        // mark its end. Clearing the flag here re-arms the buffer-dry catch-up
+        // above, which is the only thing that refills the ring buffer the skip
+        // drained; left latched (as it was), the deficit is never repaid and
+        // the audio callback underruns from here on. Meanwhile the integral has
+        // wound down to its clamp against an emptiness the controller had no
+        // say over, so reset it rather than let it unwind against real audio.
+        if self.skipping && got_audio {
+            self.skipping = false;
+            self.audio_buf_integral = 0.0;
+            self.audio_rate_adjust = 0.0;
+        }
         result
     }
 }

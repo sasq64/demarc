@@ -227,6 +227,8 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
             let count = consumer.pop_slice(output);
             if count == 0 {
                 output.fill(0.0);
+            } else if count < output.len() {
+                debug!("Audio drop");
             }
         },
         |err| eprintln!("audio stream error: {err}"),
