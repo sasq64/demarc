@@ -70,7 +70,7 @@ pub fn create_core(
             "Flash (SWF) support is not enabled; rebuild with --features flash"
         ));
     }
-    if system_type == SystemType::Ilbm {
+    if system_type == SystemType::Ilbm || system_type == SystemType::Gfx {
         return Ok(Box::new(ImageEmu::new(game)?));
     }
 

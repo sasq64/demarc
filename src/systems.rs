@@ -65,6 +65,7 @@ pub enum SystemType {
     Gba,
     Psx,
     Ilbm,
+    Gfx,
     #[default]
     Unknown,
 }
@@ -152,6 +153,7 @@ pub fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Gba => "GBA",
         SystemType::Psx => "PlayStation",
         SystemType::Ilbm => "Amiga Gfx",
+        SystemType::Gfx => "Gfx",
         SystemType::Unknown => "Unknown",
     }
     .to_string();
@@ -232,7 +234,7 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
         // Ilbm and Flash are handled by their own backends before `get_core` is
         // reached, so arriving here with one means the file type was never
         // resolved to something loadable.
-        SystemType::Ilbm | SystemType::Flash | SystemType::Unknown => {
+        SystemType::Gfx | SystemType::Ilbm | SystemType::Flash | SystemType::Unknown => {
             return Err(crate::load_error::UnknownSystem.into());
         }
     };
@@ -290,6 +292,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "cue" if cue_has_data_track(path) => SystemType::Psx,
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
+        "gif" | "png" | "bmp" | "jpg" | "jpeg" => SystemType::Gfx,
         _ => SystemType::Unknown,
     };
     if system_type == SystemType::Unknown {
