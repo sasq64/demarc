@@ -60,9 +60,11 @@ _TIP:_ Download all intros from [https://intros.c64.org](https://intros.c64.org/
 
 ## Demo Packs
 
-#### Bitworld database
+#### Databases
 
-* [bitworld.txt](/dl/bitworld.txt) (7MB)
+* [bitworld.txt.gz](/dl/bitworld.txt.gz) (1.8MB)
+* [csdb.txt.gz](/dl/csdb.txt.gz) (8MB)
+* [demozoo.txt.gz](/dl/demozoo.txt.gz) (13MB)
 
 #### Best of Amiga OCS (and some AGA)
 
@@ -86,6 +88,7 @@ _TIP:_ Download all intros from [https://intros.c64.org](https://intros.c64.org/
 _Right Alt_ or _Right Ctrl_ +
 
 ```
+O = Open fuzzy search
 D = Swap disk
 SPACE or N = Next file
 P = Previous file
