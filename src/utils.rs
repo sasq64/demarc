@@ -445,12 +445,95 @@ pub fn is_gba_rom(header: &[u8]) -> bool {
     (0xc0..=0x0200_0000).contains(&entry) && reserved_zero && header[0xbd] == complement
 }
 
+/// The header a ROM copier — a Super Wild Card and its clones — writes in front
+/// of the dump it made. Emulators skip it, but it is worth recognising: a scene
+/// release that has had its cartridge header blanked may have nothing else left
+/// to identify it by.
+const COPIER_HEADER_LEN: u64 = 0x200;
+
+/// The copier header's signature at offset 8, with the machine it dumped in the
+/// third byte — `0x04` is Super Nintendo, `0x06` the Megadrive.
+const COPIER_MAGIC_SNES: [u8; 3] = [0xaa, 0xbb, 0x04];
+
+/// Where a Super Nintendo cartridge keeps its 64-byte internal header, measured
+/// from the start of the ROM data: the last page of the first bank on a LoROM,
+/// of the second bank on a HiROM, and 4MB in on the rare ExHiROM.
+const SNES_HEADER_OFFSETS: [u64; 3] = [0x7fc0, 0xffc0, 0x40_ffc0];
+
+/// The unit a Super Nintendo ROM is always a whole number of: one bank.
+const SNES_BANK_SIZE: u64 = 0x8000;
+
+/// True if `header` — 64 bytes read from one of [`SNES_HEADER_OFFSETS`] — is a
+/// Super Nintendo cartridge header.
+///
+/// Everything else in it is advisory: scene releases routinely leave the title
+/// blank, the map mode zero and the ROM size field describing some other cart.
+/// The two fields that still have to hold are the checksum at 0x1e and its
+/// complement at 0x1c, which add up to 0xffff, and the emulation-mode reset
+/// vector at 0x3c, which has to point at the ROM half of a bank. A ROM with a
+/// zeroed header fails this and is caught by the copier header instead.
+fn is_snes_header(header: &[u8]) -> bool {
+    if header.len() < 0x40 {
+        return false;
+    }
+    let word = |o: usize| u16::from_le_bytes([header[o], header[o + 1]]);
+    // A pair adding up to 0xffff is exactly a pair that is each other's
+    // complement, and xor says so without worrying about the carry. A checksum
+    // of zero passes that test against 0xffff but describes an empty ROM, so
+    // it is the one value ruled out.
+    word(0x1c) ^ word(0x1e) == 0xffff && word(0x1e) != 0 && word(0x3c) >= 0x8000
+}
+
+/// True if `path` is a Super Nintendo ROM image.
+///
+/// A ROM is a whole number of 32K banks, optionally behind a copier header, and
+/// is recognised either by that header's signature or by a cartridge header at
+/// one of the three places the machine looks for one. Both paths are needed:
+/// the copier header is the only thing left in a dump whose cartridge header
+/// was blanked, and plenty of ROMs ship without a copier header at all.
+pub fn is_snes_rom(path: &Path) -> bool {
+    /// Past this a file is some other kind of image: no cartridge ever shipped
+    /// with more than 8MB in it, ExHiROM ones included.
+    const MAX_ROM_SIZE: u64 = 16 * 1024 * 1024;
+
+    let Ok(len) = fs::metadata(path).map(|m| m.len()) else {
+        return false;
+    };
+    let copier = match len % SNES_BANK_SIZE {
+        0 => 0,
+        COPIER_HEADER_LEN => COPIER_HEADER_LEN,
+        _ => return false,
+    };
+    let rom_size = len - copier;
+    if rom_size == 0 || len > MAX_ROM_SIZE {
+        return false;
+    }
+    if copier != 0
+        && read_at(path, 8, COPIER_MAGIC_SNES.len()).is_ok_and(|m| m == COPIER_MAGIC_SNES)
+    {
+        return true;
+    }
+    SNES_HEADER_OFFSETS
+        .iter()
+        .filter(|&&offset| offset + 0x40 <= rom_size)
+        .any(|&offset| read_at(path, copier + offset, 0x40).is_ok_and(|h| is_snes_header(&h)))
+}
+
 /// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
 /// file is shorter.
 pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
+    read_at(path, 0, len)
+}
+
+/// Read up to `len` bytes of `path` starting at `offset`. Returns fewer bytes
+/// if the file ends first.
+fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
     let mut buf = vec![0u8; len];
     let mut file = fs::File::open(path)?;
+    if offset != 0 {
+        file.seek(SeekFrom::Start(offset))?;
+    }
     let mut got = 0;
     while got < len {
         match file.read(&mut buf[got..])? {
@@ -898,6 +981,106 @@ mod tests {
                 ("Pawlov.bin", "BINARY"),
             ]
         );
+    }
+
+    /// A ROM of `banks` 32K banks, with a cartridge header written at `offset`
+    /// unless that is `None`, optionally behind a copier header.
+    fn snes_rom(
+        dir: &Path,
+        name: &str,
+        banks: usize,
+        copier: bool,
+        offset: Option<usize>,
+    ) -> PathBuf {
+        let mut rom = vec![0u8; banks * SNES_BANK_SIZE as usize];
+        if let Some(offset) = offset {
+            rom[offset..offset + 21].copy_from_slice(b"DEMO                 ");
+            // Checksum 0x1234 with its complement, then a reset vector.
+            rom[offset + 0x1c..offset + 0x20].copy_from_slice(&[0xcb, 0xed, 0x34, 0x12]);
+            rom[offset + 0x3c..offset + 0x3e].copy_from_slice(&[0x00, 0x80]);
+        }
+        if copier {
+            let mut header = vec![0u8; COPIER_HEADER_LEN as usize];
+            header[8..11].copy_from_slice(&COPIER_MAGIC_SNES);
+            header.extend_from_slice(&rom);
+            rom = header;
+        }
+        let path = dir.join(name);
+        fs::write(&path, &rom).unwrap();
+        path
+    }
+
+    /// The cartridge header sits in a different bank on each mapping, and a
+    /// broken checksum pair is not a ROM.
+    #[test]
+    fn snes_rom_detected_by_cartridge_header() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        // LoROM, HiROM, and the same two behind a copier header.
+        assert!(is_snes_rom(&snes_rom(
+            dir.path(),
+            "lo",
+            2,
+            false,
+            Some(0x7fc0)
+        )));
+        assert!(is_snes_rom(&snes_rom(
+            dir.path(),
+            "hi",
+            4,
+            false,
+            Some(0xffc0)
+        )));
+        assert!(is_snes_rom(&snes_rom(
+            dir.path(),
+            "lo.hdr",
+            2,
+            true,
+            Some(0x7fc0)
+        )));
+
+        // Nothing at either place, and no copier header to fall back on.
+        assert!(!is_snes_rom(&snes_rom(dir.path(), "empty", 2, false, None)));
+
+        // A header whose checksum and complement don't agree.
+        let path = snes_rom(dir.path(), "bad.sum", 2, false, Some(0x7fc0));
+        let mut rom = fs::read(&path).unwrap();
+        rom[0x7fc0 + 0x1e] = 0x35;
+        fs::write(&path, &rom).unwrap();
+        assert!(!is_snes_rom(&path));
+
+        // A header pointing its reset vector at RAM rather than ROM.
+        let path = snes_rom(dir.path(), "bad.vector", 2, false, Some(0x7fc0));
+        let mut rom = fs::read(&path).unwrap();
+        rom[0x7fc0 + 0x3d] = 0x1f;
+        fs::write(&path, &rom).unwrap();
+        assert!(!is_snes_rom(&path));
+    }
+
+    /// Cracked releases hand out ROMs with the cartridge header wiped, so the
+    /// copier header in front of them is all that is left to go on.
+    #[test]
+    fn snes_rom_detected_by_copier_header() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        let path = snes_rom(dir.path(), "blanked", 1, true, None);
+        assert!(is_snes_rom(&path));
+
+        // The same header, from a Megadrive copier.
+        let mut rom = fs::read(&path).unwrap();
+        rom[10] = 0x06;
+        fs::write(&path, &rom).unwrap();
+        assert!(!is_snes_rom(&path));
+
+        // Copier header, but the rest is not a whole number of banks.
+        rom.truncate(rom.len() - 1);
+        let path = dir.path().join("short");
+        fs::write(&path, &rom).unwrap();
+        assert!(!is_snes_rom(&path));
     }
 
     /// The WAV must be exactly CD audio, since the core skips the header and

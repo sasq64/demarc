@@ -12,7 +12,7 @@ use crate::{
     Args, CbmSystem,
     frontend::system_dir,
     libloader,
-    utils::{cue_has_data_track, is_gba_rom, read_header},
+    utils::{cue_has_data_track, is_gba_rom, is_snes_rom, read_header},
 };
 
 /// BIOS images Beetle looks for in the system dir, one per region. Unlike
@@ -275,7 +275,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "msa" | "st" => SystemType::AtariST,
         "a26" => SystemType::Atari2600,
         "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
-        "smc" | "sfc" => SystemType::SuperNintendo,
+        // `.swc`/`.fig` are copier dumps — same ROM behind a 512-byte header.
+        "smc" | "sfc" | "swc" | "fig" => SystemType::SuperNintendo,
         "atr" | "xex" | "atx" => SystemType::AtariXL,
         "tic80" | "tic" => SystemType::Tic80,
         "p8" => SystemType::Pico8,
@@ -313,6 +314,10 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::Psx;
                 } else if is_gba_rom(&data) {
                     system_type = SystemType::Gba;
+                } else if is_snes_rom(path) {
+                    // Before the 2600, since a headerless 32K ROM is the size
+                    // of a big cartridge for that machine too.
+                    system_type = SystemType::SuperNintendo;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
                 } else if data[0..2] == [0x60, 0x1a] {
