@@ -216,4 +216,3 @@ mod tests {
         assert_eq!(classify(&err), LoadFailure::Other);
     }
 }
-

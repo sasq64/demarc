@@ -435,9 +435,8 @@ pub fn is_gba_rom(header: &[u8]) -> bool {
     let entry = 8 + i64::from(offset) * 4;
     // 0xb3 main unit code and 0xb4 device type are 0 on everything but
     // Nintendo's own debug hardware; 0xb5..=0xbb and 0xbe..=0xbf are reserved.
-    let reserved_zero = header[0xb3..0xbc].iter().all(|&b| b == 0)
-        && header[0xbe] == 0
-        && header[0xbf] == 0;
+    let reserved_zero =
+        header[0xb3..0xbc].iter().all(|&b| b == 0) && header[0xbe] == 0 && header[0xbf] == 0;
     let sum = header[0xa0..=0xbc]
         .iter()
         .fold(0u8, |acc, &b| acc.wrapping_add(b));
@@ -861,7 +860,10 @@ mod tests {
         ] {
             let mut broken = header.clone();
             broken[offset] = value;
-            assert!(!is_gba_rom(&broken), "accepted with {offset:#x} = {value:#x}");
+            assert!(
+                !is_gba_rom(&broken),
+                "accepted with {offset:#x} = {value:#x}"
+            );
         }
     }
 
