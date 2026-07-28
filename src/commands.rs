@@ -185,6 +185,7 @@ fn handle_textlist(
     if hot_key_pressed {
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
+        // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
         let modal = lists.iter().any(|l| l.controlled);
         if modal {
             return;
