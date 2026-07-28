@@ -115,15 +115,15 @@ struct Args {
 
     /// Only load db entries whose line matches this regex, e.g.
     /// `-I '(Demo|Intro)'`. Matched against the raw db line, so it can
-    /// pick on any field.
+    /// pick on any field. Repeatable; all patterns must match.
     #[arg(short = 'I', long, value_parser = Regex::new)]
-    include: Option<Regex>,
+    include: Vec<Regex>,
 
     /// Exclude db entries matching regex. e.g.
     /// `-X 'category:.*Disk'`. Matched against the raw db line, so it can
-    /// pick on any field.
+    /// pick on any field. Repeatable; a match on any pattern excludes.
     #[arg(short = 'X', long, value_parser = Regex::new)]
-    exclude: Option<Regex>,
+    exclude: Vec<Regex>,
 
     /// Shuffle the list of files into a random order.
     #[arg(long)]
@@ -534,8 +534,8 @@ fn main() {
     // party, category, tags, download — named or in that order). Each URL is
     // fetched on demand when loaded.
     let filter = DbFilter {
-        include: args.include.as_ref(),
-        exclude: args.exclude.as_ref(),
+        include: &args.include,
+        exclude: &args.exclude,
     };
     if let Some(db) = &args.db {
         collect_db(Path::new(db), &filter, &mut files).unwrap();

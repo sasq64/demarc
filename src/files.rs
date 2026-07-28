@@ -300,19 +300,20 @@ fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
 /// parsed — the same thing piping the db through `grep`/`grep -v` would do, so
 /// a pattern can pick on any field (`category:Demo`, `author:Fairlight`).
 ///
-/// A line has to match `include` (when given) and must not match `exclude`.
-/// Header comments are always read, so the platform and tags they set still
-/// apply to the lines that survive.
+/// A line has to match *every* `include` pattern and must not match *any*
+/// `exclude` pattern, so repeating `-I` narrows the selection down while
+/// repeating `-X` widens what is thrown away. Header comments are always read,
+/// so the platform and tags they set still apply to the lines that survive.
 #[derive(Default)]
 pub struct DbFilter<'a> {
-    pub include: Option<&'a Regex>,
-    pub exclude: Option<&'a Regex>,
+    pub include: &'a [Regex],
+    pub exclude: &'a [Regex],
 }
 
 impl DbFilter<'_> {
     fn keeps(&self, line: &str) -> bool {
-        self.include.is_none_or(|re| re.is_match(line))
-            && self.exclude.is_none_or(|re| !re.is_match(line))
+        self.include.iter().all(|re| re.is_match(line))
+            && !self.exclude.iter().any(|re| re.is_match(line))
     }
 }
 
@@ -1336,26 +1337,50 @@ mod tests {
             )
         };
 
-        let include = Regex::new("category:Demo").unwrap();
+        let re = |p: &str| [Regex::new(p).unwrap()];
+
+        let include = re("category:Demo");
         let (kept, out) = titles(&DbFilter {
-            include: Some(&include),
+            include: &include,
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
         assert_eq!(out[0].game_info.typ, "Amiga Demo", "header still applies");
 
-        let exclude = Regex::new("category:Musicdisk").unwrap();
+        let exclude = re("category:Musicdisk");
         let (kept, _) = titles(&DbFilter {
-            exclude: Some(&exclude),
+            exclude: &exclude,
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
 
         // Both apply: a line has to match `include` and miss `exclude`.
-        let exclude = Regex::new("tags:aga").unwrap();
+        let exclude = re("tags:aga");
         let (kept, _) = titles(&DbFilter {
-            include: Some(&include),
-            exclude: Some(&exclude),
+            include: &include,
+            exclude: &exclude,
+        });
+        assert_eq!(kept, ["Zentro 4"]);
+
+        // Several includes are AND:ed — only the line matching both survives.
+        let include = [
+            Regex::new("category:Demo").unwrap(),
+            Regex::new("aga").unwrap(),
+        ];
+        let (kept, _) = titles(&DbFilter {
+            include: &include,
+            ..Default::default()
+        });
+        assert_eq!(kept, ["Nexus 7"]);
+
+        // Several excludes are OR:ed — matching either one drops the line.
+        let exclude = [
+            Regex::new("category:Musicdisk").unwrap(),
+            Regex::new("tags:aga").unwrap(),
+        ];
+        let (kept, _) = titles(&DbFilter {
+            exclude: &exclude,
+            ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4"]);
     }
