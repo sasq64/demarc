@@ -811,7 +811,8 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
         if t == SystemType::Unknown {
             continue;
         }
-        if first_file.is_none() {
+        // Avoid showing screenshots instead of playing actual demo
+        if first_file.is_none() || system_type == SystemType::Gfx {
             first_file = Some(path.clone());
             system_type = t;
         }
