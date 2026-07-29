@@ -1231,6 +1231,8 @@ impl Backend for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
+        } else {
+            warn!("Starving");
         }
         true
     }
