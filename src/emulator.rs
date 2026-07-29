@@ -536,6 +536,7 @@ impl Emulator {
         self.core = Some(core);
         self.work_file = work_file;
         self.run_next = false;
+        self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();
         self.start_time = time.elapsed_secs_f64();
         trace!("FRAME START");
