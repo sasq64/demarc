@@ -206,6 +206,10 @@ struct Args {
     /// Don't silence libretro cores' stdout/stderr (for debugging)
     #[arg(long)]
     no_silence: bool,
+
+    /// Skip bad files and go to next
+    #[arg(long)]
+    skip_bad: bool,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -403,6 +407,7 @@ struct AppSettings {
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
+    skip_bad: bool,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -629,6 +634,7 @@ fn main() {
         max_time: args.max_time,
         maximized: args.grid.is_none(),
         speed_test: args.speed_test,
+        skip_bad: args.skip_bad,
         ..Default::default()
     };
 

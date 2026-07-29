@@ -498,10 +498,8 @@ fn run_retro(
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
 
         let d = if emu.run_next && settings.current_game < (settings.files.len() as isize) - 1 {
-            emu.run_next = false;
             1
         } else if emu.run_prev && settings.current_game > 0 {
-            emu.run_prev = false;
             -1
         } else {
             0
@@ -516,15 +514,22 @@ fn run_retro(
                         game.game_info.title,
                         crate::load_error::classify(&e).reason()
                     );
-                    writer.write(SetHudText {
-                        text,
-                        delay: Duration::from_secs(0),
-                        duration: Duration::from_secs(4),
-                        location: HudLocation::Error,
-                    });
+
+                    if !settings.skip_bad {
+                        emu.run_next = false;
+                        emu.run_prev = false;
+                        writer.write(SetHudText {
+                            text,
+                            delay: Duration::from_secs(0),
+                            duration: Duration::from_secs(4),
+                            location: HudLocation::Error,
+                        });
+                    }
                     error!("{e:?}");
                 }
                 Ok(()) => {
+                    emu.run_next = false;
+                    emu.run_prev = false;
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
                             text: get_info_text(&emu.work_file),
