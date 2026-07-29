@@ -365,9 +365,14 @@ def export(conn, out_path):
                 urls.append(url)
         prod_urls[prod_id] = ";".join(urls)
 
+    def join_names(names):
+        # de-dupe, keep order; joined with ' & ' like bitworld bylines.
+        seen = set()
+        return " & ".join(n for n in names if not (n in seen or seen.add(n)))
+
     def group_string(prod_id):
         # Prefer explicit affiliation groups; otherwise author nicks that are
-        # themselves groups.  Joined with ' & ' like bitworld bylines.
+        # themselves groups.
         names = []
         for nid in affil_nicks.get(prod_id, []):
             nm = nick_name.get(nid)
@@ -380,10 +385,27 @@ def export(conn, out_path):
                     nm = nick_name.get(nid)
                     if nm:
                         names.append(nm)
-        # de-dupe, keep order
-        seen = set()
-        uniq = [n for n in names if not (n in seen or seen.add(n))]
-        return " & ".join(uniq)
+        return join_names(names)
+
+    def person_string(prod_id):
+        # Author nicks belonging to a scener rather than a group.
+        names = []
+        for nid in author_nicks.get(prod_id, []):
+            rel = nick_releaser.get(nid)
+            if rel is not None and is_group.get(rel):
+                continue
+            nm = nick_name.get(nid)
+            if nm:
+                names.append(nm)
+        return join_names(names)
+
+    def author_string(prod_id, supertype):
+        # A graphics entry is the work of the artist who drew it, so credit
+        # them; demos and music keep the group byline.  An entry credited to
+        # a group alone still falls back to that group.
+        if supertype == "graphics":
+            return person_string(prod_id) or group_string(prod_id)
+        return group_string(prod_id)
 
     n = 0
     with open(out_path, "w", encoding="utf-8") as out:
@@ -397,7 +419,7 @@ def export(conn, out_path):
             fields = [
                 ("id", str(prod_id)),
                 ("title", title or ""),
-                ("author", group_string(prod_id)),
+                ("author", author_string(prod_id, supertype)),
                 ("date", fmt_date(date, precision)),
                 ("party", party_name.get(prod_party.get(prod_id), "") or ""),
                 ("platform", ";".join(
