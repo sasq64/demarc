@@ -144,14 +144,7 @@ pub(crate) struct Emulator {
     pub(crate) tags: HashMap<String, String>,
     pub(crate) sink: AudioSink,
     pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
-    /// Integral accumulator for the audio-buffer PI controller.
-    pub(crate) audio_buf_integral: f64,
-    /// Latest fractional sample-rate correction from the PI controller,
-    /// applied to the resampler input rate in [`Emulator::update`].
     pub(crate) audio_rate_adjust: f64,
-    /// Whether the core has ever delivered audio samples. Gates the
-    /// audio-buffer-driven frame pacing, which is meaningless for a core that
-    /// produces no audio at all.
     pub(crate) audio_seen: bool,
     pub(crate) disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
@@ -176,13 +169,6 @@ pub(crate) struct Emulator {
 const AUDIO_BUF_MIN: usize = 3000;
 const AUDIO_BUF_TARGET: f64 = 8000.0;
 const AUDIO_BUF_MAX: usize = 15000;
-/// Proportional / integral gains for the audio-buffer controller. Error is
-/// normalized by [`AUDIO_BUF_TARGET`], so these are dimensionless.
-const AUDIO_PI_KP: f64 = 0.002 * 2.0;
-const AUDIO_PI_KI: f64 = 0.0005 * 2.0;
-/// Largest fractional sample-rate correction the controller may request
-/// (±0.5%), enough to absorb display/audio clock drift without audible pitch.
-const AUDIO_RATE_MAX_ADJUST: f64 = 0.005;
 
 impl Emulator {
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
@@ -567,9 +553,8 @@ impl Emulator {
 
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
-        let mut measured_fps = 60.0;
         if delta > 0.0 {
-            measured_fps = 1.0 / delta;
+            let measured_fps = 1.0 / delta;
             if self.display_fps == 0.0 {
                 if measured_fps > 40.0 && measured_fps < 500.0 {
                     self.display_fps = measured_fps;
@@ -622,36 +607,13 @@ impl Emulator {
 
         //let p = self.producer.lock().unwrap();
 
-        trace!(
-            "FRAME FPS {}/{} = {} : t={} AUDIO {}",
-            measured_fps,
-            self.display_fps,
-            ratio,
-            time.delta_secs(),
-            occupied_len
-        );
+        trace!("DELTA {delta} vs {}", self.display_fps,);
+
         if occupied_len > AUDIO_BUF_MAX {
             warn!("Dropping frame");
             self.next_frame += frame_time;
             return true;
         }
-
-        // PI controller on audio-buffer fill. Output is a fractional
-        // sample-rate correction (positive => buffer too full => speed input
-        // up so the resampler emits fewer samples and the buffer drains;
-        // negative => buffer draining too quickly => slow input down so the
-        // resampler emits more samples and the buffer refills). Applied to the
-        // resampler input rate in `Emulator::update`.
-        let fill = occupied_len as f64;
-        let error = (fill - AUDIO_BUF_TARGET) / AUDIO_BUF_TARGET;
-        self.audio_buf_integral += error * delta;
-        // Anti-windup: keep the integral term within the output clamp.
-        let i_max = AUDIO_RATE_MAX_ADJUST / AUDIO_PI_KI;
-        self.audio_buf_integral = self.audio_buf_integral.clamp(-i_max, i_max);
-        let adjust = (AUDIO_PI_KP * error + AUDIO_PI_KI * self.audio_buf_integral)
-            .clamp(-AUDIO_RATE_MAX_ADJUST, AUDIO_RATE_MAX_ADJUST);
-        self.audio_rate_adjust = adjust;
-        //info!("audio buf fill={fill:.0} err={error:+.3} adjust={adjust:+.5}");
 
         let mut result = true;
         if self.match_fps {
@@ -683,7 +645,6 @@ impl Emulator {
         // say over, so reset it rather than let it unwind against real audio.
         if self.skipping && got_audio {
             self.skipping = false;
-            self.audio_buf_integral = 0.0;
             self.audio_rate_adjust = 0.0;
         }
         result
