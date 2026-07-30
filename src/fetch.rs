@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -23,6 +23,12 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// off a slow mirror are normal and must not be cut off mid-download. It only
 /// bounds the part where a wedged server has told us nothing at all.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How large the download cache is allowed to grow before [`prune_cache`]
+/// starts evicting from it. Demo and game archives are small individually but
+/// unbounded in number, so without a cap a long-running collection browse just
+/// keeps filling the disk.
+const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
 /// True if `s` looks like a remote URL demarc should download rather than treat
 /// as a local path.
@@ -73,15 +79,14 @@ pub fn translate_url(url: &str) -> String {
 /// never leaves a truncated file masquerading as a valid cache hit.
 pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
     let name = url_filename(url);
-    let dir = dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("demarc")
-        .join("downloads")
-        .join(url_hash(url));
+    let dir = downloads_dir().join(url_hash(url));
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join(&name);
     if path.is_file() {
+        // Mark the hit as recent so [`prune_cache`] evicts genuinely unused
+        // downloads rather than merely old ones.
+        touch(&path);
         return Ok(path);
     }
 
@@ -109,6 +114,115 @@ pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
         std::fs::copy(&cached, dir.join(name))?;
     }
     Ok(dir)
+}
+
+/// Root of the download cache: one subdirectory per URL hash, each holding the
+/// downloaded file under its URL-derived name.
+fn downloads_dir() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("demarc")
+        .join("downloads")
+}
+
+/// Set `path`'s access and modification times to now, recording it as recently
+/// used for [`prune_cache`].
+///
+/// Failures are ignored: a cache entry we can't touch is not worth failing a
+/// download over, it just risks being evicted earlier than it should be.
+fn touch(path: &Path) {
+    let now = SystemTime::now();
+    let times = std::fs::FileTimes::new().set_accessed(now).set_modified(now);
+    // Opening for write, not read: on Windows `set_times` needs write access,
+    // and on Unix futimens wants a handle we're allowed to modify.
+    if let Ok(file) = std::fs::File::options().write(true).open(path) {
+        let _ = file.set_times(times);
+    }
+}
+
+/// Delete least-recently-used entries from the download cache until its total
+/// size is back under [`CACHE_LIMIT`]. Intended to run once at startup, when
+/// nothing is holding a path into the cache yet.
+///
+/// Eviction is per URL-hash directory — the unit a [`fetch_url`] cache hit is
+/// keyed on — using the newest mtime inside it as its last-use time, which
+/// [`fetch_url`] refreshes on every hit. Errors are logged and skipped rather
+/// than propagated: a cache that can't be pruned is a disk-space problem, not a
+/// reason to refuse to start.
+pub fn prune_cache() {
+    prune_dir(&downloads_dir(), CACHE_LIMIT);
+}
+
+/// [`prune_cache`] against an explicit directory and limit.
+fn prune_dir(dir: &Path, limit: u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        // No cache directory yet — nothing to prune.
+        return;
+    };
+
+    let mut total = 0u64;
+    let mut items: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let (size, used) = entry_stats(&path);
+        total += size;
+        items.push((used, size, path));
+    }
+    if total <= limit {
+        return;
+    }
+
+    // Oldest first, so the entries nobody has opened in the longest go first.
+    items.sort_by_key(|(used, ..)| *used);
+    let mut freed = 0u64;
+    let mut removed = 0usize;
+    for (_, size, path) in items {
+        if total <= limit {
+            break;
+        }
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match result {
+            Ok(()) => {
+                total -= size;
+                freed += size;
+                removed += 1;
+            }
+            Err(e) => tracing::warn!("Failed to prune {}: {e}", path.display()),
+        }
+    }
+    if removed > 0 {
+        info!(
+            "Pruned {removed} cached download(s), freeing {} MB",
+            freed / (1024 * 1024)
+        );
+    }
+}
+
+/// Total size of `path` and the time it was last used, taken as the newest
+/// mtime found within it. A path we can't stat counts as zero-sized and
+/// last used at the epoch, so a broken entry is evicted first.
+fn entry_stats(path: &Path) -> (u64, SystemTime) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return (0, SystemTime::UNIX_EPOCH);
+    };
+    if !meta.is_dir() {
+        return (meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return (0, SystemTime::UNIX_EPOCH);
+    };
+    let mut size = 0;
+    let mut used = SystemTime::UNIX_EPOCH;
+    for entry in entries.flatten() {
+        let (child_size, child_used) = entry_stats(&entry.path());
+        size += child_size;
+        used = used.max(child_used);
+    }
+    (size, used)
 }
 
 /// Download `url` to `path`, writing first to a sibling `.part` file that is
@@ -339,6 +453,73 @@ mod tests {
         assert_eq!(url_filename("https://x.com/a b&c.zip"), "a%20b%26c.zip");
         assert_eq!(url_filename("https://x.com/"), "download");
         assert_eq!(url_filename("game.zip"), "game.zip");
+    }
+
+    #[test]
+    fn sums_size_and_newest_mtime_of_an_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("abc123");
+        std::fs::create_dir(&entry).unwrap();
+        std::fs::write(entry.join("a.zip"), vec![0u8; 100]).unwrap();
+        std::fs::write(entry.join("b.zip"), vec![0u8; 200]).unwrap();
+
+        // Age one file; the entry's last-use time must follow the *newest*
+        // file in it, which `touch` here makes `b.zip`.
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        let file = std::fs::File::options()
+            .write(true)
+            .open(entry.join("a.zip"))
+            .unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        touch(&entry.join("b.zip"));
+
+        let (size, used) = entry_stats(&entry);
+        assert_eq!(size, 300);
+        assert!(used > old);
+    }
+
+    #[test]
+    fn prunes_least_recently_used_until_under_limit() {
+        let cache = tempfile::tempdir().unwrap();
+        // Three 100-byte entries, aged 3h / 2h / 1h ago.
+        for (name, hours) in [("old", 3), ("mid", 2), ("new", 1)] {
+            let entry = cache.path().join(name);
+            std::fs::create_dir(&entry).unwrap();
+            let path = entry.join("a.zip");
+            std::fs::write(&path, vec![0u8; 100]).unwrap();
+            let when = SystemTime::now() - Duration::from_secs(hours * 3600);
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_times(std::fs::FileTimes::new().set_modified(when))
+                .unwrap();
+        }
+
+        // Under the limit: nothing is touched.
+        prune_dir(cache.path(), 300);
+        assert!(cache.path().join("old").exists());
+
+        // Over it: evict oldest first, and stop as soon as we're back under.
+        prune_dir(cache.path(), 150);
+        assert!(!cache.path().join("old").exists());
+        assert!(!cache.path().join("mid").exists());
+        assert!(cache.path().join("new").exists());
+    }
+
+    #[test]
+    fn touch_marks_a_file_as_recently_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.zip");
+        std::fs::write(&path, b"x").unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        drop(file);
+
+        let (_, before) = entry_stats(&path);
+        touch(&path);
+        let (_, after) = entry_stats(&path);
+        assert!(after > before);
     }
 
     #[test]
