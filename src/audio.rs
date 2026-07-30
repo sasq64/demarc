@@ -185,7 +185,7 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
-    let target = SampleRate(48000);
+    let target: SampleRate = 48000;
 
     let supported = device
         .supported_output_configs()?
@@ -218,7 +218,7 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
 
     info!(
         "cpal cfg: rate={} channels={} buffer={:?}",
-        config.sample_rate.0, config.channels, config.buffer_size
+        config.sample_rate, config.channels, config.buffer_size
     );
 
     let stream = device.build_output_stream(
@@ -236,7 +236,7 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
     )?;
 
     stream.play()?;
-    Ok((config.sample_rate.0 as f32, stream))
+    Ok((config.sample_rate as f32, stream))
 }
 
 #[derive(Default)]
