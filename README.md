@@ -35,8 +35,17 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/
 Windows:
 
 ```powershell
-powershell -c "irm https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.ps1 | iex"
+irm https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.ps1 -OutFile "$env:TEMP\demarc-installer.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\demarc-installer.ps1"
 ```
+
+The shorter `powershell -c "irm ... | iex"` one-liner does the same thing, but
+antivirus and script policies tend to block that download-cradle pattern (it
+fails with "Access is denied" before the installer prints anything), so
+downloading the script first is the reliable route.
+
+Both install to `%CARGO_HOME%\bin` (or `%USERPROFILE%\.cargo\bin`) and add it to
+your PATH; set `DEMARC_INSTALL_DIR` to install elsewhere.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (demarc is
 not on crates.io, so point it at the repo):
