@@ -207,9 +207,13 @@ struct Args {
     #[arg(long)]
     no_silence: bool,
 
-    /// Skip bad files and go to next
+    /// Skip bad files, loop playlist and detect idle demos
     #[arg(long)]
-    skip_bad: bool,
+    tv_mode: bool,
+
+    /// Skip demo after still screen and no audio
+    #[arg(long)]
+    idle_timeout: i32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -407,7 +411,8 @@ struct AppSettings {
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
-    skip_bad: bool,
+    tv_mode: bool,
+    idle_timeout: i32,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -634,7 +639,8 @@ fn main() {
         max_time: args.max_time,
         maximized: args.grid.is_none(),
         speed_test: args.speed_test,
-        skip_bad: args.skip_bad,
+        tv_mode: args.tv_mode,
+        idle_timeout: args.idle_timeout,
         ..Default::default()
     };
 

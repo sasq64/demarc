@@ -161,6 +161,8 @@ pub(crate) struct Emulator {
     pub(crate) speed_test: bool,
     pub(crate) is_image: bool,
     pub(crate) buttons: u32,
+    pub last_active_time: f32,
+    pub idle_time: f32,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -539,6 +541,7 @@ impl Emulator {
         self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();
         self.start_time = time.elapsed_secs_f64();
+        self.last_active_time = time.elapsed_secs();
         trace!("FRAME START");
         Ok(())
     }
@@ -568,9 +571,12 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return true;
         };
-        let frames = core.frames_stepped();
         let idle = core.is_idle();
-        //debug!("IDLE: {}",
+        let t = time.elapsed_secs();
+        if !idle {
+            self.last_active_time = t;
+        }
+        self.idle_time = t - self.last_active_time;
 
         // Benchmark mode: pump the core once per update with no audio handling
         // and no frame pacing, so throughput is bound only by CPU/GPU speed.

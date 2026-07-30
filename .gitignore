@@ -3,5 +3,7 @@
 /libretro/
 /slang-shaders/
 __pycache__/
-system/vice/*dump*
+/system/vice/*dump*
+/system/*.mcd
 /test_*png
+

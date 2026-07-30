@@ -81,6 +81,7 @@ const MARKER_FILES: &[&str] = &[
     "vicerc-dump-C64",
     "vicerc-dump-C64SC",
     "vicerc-dump-PLUS4",
+    "pcsx-card2.mcd",
 ];
 
 /// Pack the loose `system/` directory into `system.zip` (embedded into the
