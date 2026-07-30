@@ -568,6 +568,9 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return true;
         };
+        let frames = core.frames_stepped();
+        let idle = core.is_idle();
+        //debug!("IDLE: {}",
 
         // Benchmark mode: pump the core once per update with no audio handling
         // and no frame pacing, so throughput is bound only by CPU/GPU speed.
