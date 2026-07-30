@@ -4,3 +4,4 @@
 /slang-shaders/
 __pycache__/
 system/vice/*dump*
+/test_*png
