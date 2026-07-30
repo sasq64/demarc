@@ -537,6 +537,10 @@ fn main() {
     #[cfg(not(unix))]
     builder.init();
 
+    // Trim the download cache before anything fetches into it, so this run's
+    // own downloads can't be evicted out from under it.
+    fetch::prune_cache();
+
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
 
