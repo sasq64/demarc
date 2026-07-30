@@ -37,6 +37,7 @@ const CORE_NAME_TIC80: &str = "tic80";
 const CORE_NAME_PICO8: &str = "fake08";
 const CORE_NAME_GAMEBOY: &str = "gambatte";
 const CORE_NAME_GBA: &str = "mgba";
+const CORE_NAME_NEOGEO: &str = "geolith";
 /// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
 /// default *here*: it faithfully enforces the BIOS licence check, and scene
 /// rips almost always ship with the "Sony Computer Entertainment" licence
@@ -64,6 +65,7 @@ pub enum SystemType {
     Gameboy,
     Gba,
     Psx,
+    NeoGeo,
     Ilbm,
     Gfx,
     #[default]
@@ -152,6 +154,7 @@ pub fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Gameboy => "Gameboy",
         SystemType::Gba => "GBA",
         SystemType::Psx => "PlayStation",
+        SystemType::NeoGeo => "Neo Geo",
         SystemType::Ilbm => "Amiga Gfx",
         SystemType::Gfx => "Gfx",
         SystemType::Unknown => "Unknown",
@@ -227,6 +230,7 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
         SystemType::Pico8 => CORE_NAME_PICO8,
         SystemType::Gameboy => CORE_NAME_GAMEBOY,
         SystemType::Gba => CORE_NAME_GBA,
+        SystemType::NeoGeo => CORE_NAME_NEOGEO,
         SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
             CORE_NAME_PSX_BEETLE
         }
@@ -292,6 +296,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
         "gif" | "png" | "bmp" | "jpg" | "jpeg" => SystemType::Gfx,
+        "neo" => SystemType::NeoGeo,
         _ => SystemType::Unknown,
     };
     if system_type == SystemType::Unknown {
@@ -380,6 +385,12 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
         set_var("pcsx_rearmed_bios", "HLE");
         set_var("pcsx_rearmed_region", "PAL");
         set_var("beetle_psx_region", "pal");
+    } else if system_type == SystemType::NeoGeo {
+        //
+        set_var("geolith_overscan_t", "8");
+        set_var("geolith_overscan_b", "8");
+        set_var("geolith_overscan_l", "0");
+        set_var("geolith_overscan_r", "0");
     }
 }
 
