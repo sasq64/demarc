@@ -21,11 +21,41 @@ Make it easy to watch demos from C64 and Amiga
 * Can run multiple files at once in a grid
 
 
+## INSTALL
+
+Pre-built binaries for Linux (x86_64), Windows (x86_64) and macOS (arm64) are
+attached to every [release](https://github.com/sasq64/demarc/releases/latest).
+
+Linux/macOS:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
+```
+
+Windows:
+
+```powershell
+powershell -c "irm https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.ps1 | iex"
+```
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (demarc is
+not on crates.io, so point it at the repo):
+
+```sh
+cargo binstall --git https://github.com/sasq64/demarc demarc
+```
+
+Emulator cores are downloaded from the libretro buildbot on first use, so the
+binary is all you need.
+
 ## BUILD
 
 You need _rust_.
 
 `cargo build --release`
+
+On Linux the ALSA and udev headers are also needed
+(`libasound2-dev libudev-dev` on Debian/Ubuntu).
 
 ## RUN
 
@@ -62,5 +92,25 @@ ENTER = Maximize/Unmazimize
 A = Select all emulators
 
 ```
+
+## RELEASE
+
+Releases are built by [dist](https://opensource.axo.dev/cargo-dist/)
+(`dist-workspace.toml` + `.github/workflows/release.yml`). To cut one:
+
+```sh
+# bump `version` in Cargo.toml, then
+just release-check          # sanity check what would be built
+git commit -am "release: 1.3.1"
+git tag v1.3.1
+git push && git push --tags
+```
+
+Pushing the tag builds all three targets, then creates the GitHub Release with
+the archives, checksums and the shell/powershell installers. `just release-local`
+builds the current host's artifacts into `target/distrib` without touching CI.
+
+After bumping the `dist` version in `dist-workspace.toml`, run `dist init --yes`
+to regenerate the workflow.
 
 
