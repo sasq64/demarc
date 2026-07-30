@@ -497,15 +497,17 @@ fn run_retro(
         // Drop audio entirely in the speed-test benchmark.
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
 
-        let d = if emu.run_next && settings.current_game < (settings.files.len() as isize) - 1 {
+        let flen = settings.files.len() as isize;
+
+        let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
             1
-        } else if emu.run_prev && settings.current_game > 0 {
+        } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
             -1
         } else {
             0
         };
         if d != 0 {
-            settings.current_game += d;
+            settings.current_game = (settings.current_game + d + flen) % flen;
             let game = settings.files[settings.current_game as usize].clone();
             match emu.load(&time, &game) {
                 Err(e) => {
@@ -515,7 +517,7 @@ fn run_retro(
                         crate::load_error::classify(&e).reason()
                     );
 
-                    if !settings.skip_bad {
+                    if !settings.tv_mode {
                         emu.run_next = false;
                         emu.run_prev = false;
                         writer.write(SetHudText {
@@ -534,7 +536,7 @@ fn run_retro(
                         writer.write(SetHudText {
                             text: get_info_text(&emu.work_file),
                             delay: Duration::from_secs(5),
-                            duration: Duration::from_secs(12),
+                            duration: Duration::from_secs(8),
                             location: HudLocation::InfoText,
                         });
                     }
@@ -560,6 +562,20 @@ fn run_retro(
             emu.run_next = true;
         };
 
+        let mut max_idle = settings.idle_timeout;
+        if max_idle == 0 && settings.tv_mode {
+            max_idle = 20;
+            if emu.work_file.system_type == SystemType::Ilbm
+                || emu.work_file.system_type == SystemType::Gfx
+            {
+                max_idle = 10;
+            }
+        }
+
+        if max_idle > 0 && emu.idle_time > max_idle as f32 {
+            emu.run_next = true;
+        }
+
         if emu.core.is_none() {
             continue;
         }
@@ -569,7 +585,7 @@ fn run_retro(
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         if !emu.run(&time) {
-            debug!("XXXXXXXXXXXXXXXXXXXXXXXX");
+            // TODO: Better warp-end detection
             writer.write(SetHudText {
                 location: HudLocation::TopRight,
                 ..Default::default()
