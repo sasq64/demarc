@@ -2,3 +2,5 @@
 /system/WHD*
 /libretro/
 /slang-shaders/
+__pycache__/
+system/vice/*dump*
