@@ -281,7 +281,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "atr" | "xex" | "atx" => SystemType::AtariXL,
         "tic80" | "tic" => SystemType::Tic80,
         "p8" => SystemType::Pico8,
-        "gb" | "gbc" => SystemType::Gameboy,
+        "gb" | "gbc" | "cgb" => SystemType::Gameboy,
         "gba" | "agb" => SystemType::Gba,
         // CD-image containers. The sheet points at the bulk track data, so it —
         // not the `.bin` — is what gets loaded.
