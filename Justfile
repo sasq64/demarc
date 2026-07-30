@@ -44,6 +44,14 @@ install:
     cargo build --release
     sudo cp target/release/demarc /usr/local/bin
 
+# What a `git tag v<version>` push would produce (no build).
+release-check:
+    dist plan
+
+# Build this host's release artifacts into target/distrib, as CI would.
+release-local:
+    dist build --artifacts=local
+
 HOME := x'${HOME}'
 ZOLA := HOME / "projects/docs/minnberg"
 
