@@ -75,7 +75,13 @@ fn build_cbmconvert() {
     build.compile("cbmconvert");
 }
 
-const MARKER_FILES: &[&str] = &[".v4", ".checksum"];
+const MARKER_FILES: &[&str] = &[
+    ".v4",
+    ".checksum",
+    "vicerc-dump-C64",
+    "vicerc-dump-C64SC",
+    "vicerc-dump-PLUS4",
+];
 
 /// Pack the loose `system/` directory into `system.zip` (embedded into the
 /// binary via `include_bytes!`), then emit a SHA-256 of the resulting archive
