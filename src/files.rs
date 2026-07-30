@@ -492,7 +492,8 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
             return Ok(());
         } else {
             let t = get_system_type(&path);
-            if t != SystemType::Unknown {
+            // NOTE: Images on disk are assumed to be screenshots
+            if t != SystemType::Unknown && t != SystemType::Gfx {
                 if found_type != SystemType::Unknown && found_type != t {
                     mixed = true;
                 }

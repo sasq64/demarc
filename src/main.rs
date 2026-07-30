@@ -212,7 +212,7 @@ struct Args {
     tv_mode: bool,
 
     /// Skip demo after still screen and no audio
-    #[arg(long)]
+    #[arg(long, default_value_t = 0)]
     idle_timeout: i32,
 }
 
