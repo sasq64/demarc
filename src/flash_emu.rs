@@ -83,8 +83,9 @@ enum FlashCmd {
 struct FlashUpdate {
     width: usize,
     height: usize,
-    /// RGBA8, tightly packed, alpha forced opaque.
-    frame: Vec<u8>,
+    /// One packed RGBA8 pixel per `u32` (bytes in `[r, g, b, a]` memory order),
+    /// tightly packed, alpha forced opaque.
+    frame: Vec<u32>,
     /// Interleaved stereo i16 for this frame (`SAMPLE_RATE / fps` samples).
     audio: Vec<i16>,
     /// Live movie frame rate (ActionScript can change it at runtime).
@@ -126,7 +127,7 @@ pub struct FlashEmu {
     // Latest presented state, refreshed by `run`.
     width: usize,
     height: usize,
-    frame: Vec<u8>,
+    frame: Vec<u32>,
     /// Accumulates across `run` calls; drained by `with_audio`.
     audio: Vec<i16>,
     fps: f64,
@@ -151,7 +152,7 @@ impl FlashEmu {
                 worker: Some(worker),
                 width: width as usize,
                 height: height as usize,
-                frame: vec![0u8; width as usize * height as usize * 4],
+                frame: vec![0u32; width as usize * height as usize],
                 audio: Vec::new(),
                 fps,
             }),
@@ -186,7 +187,7 @@ impl Backend for FlashEmu {
         true
     }
 
-    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(self.width, self.height, &self.frame);
     }
 
@@ -352,7 +353,7 @@ fn worker_loop(
 
         let mut frame = Vec::new();
         if !capture_frame_fast(&player, &descriptors, &mut frame) {
-            frame = vec![0u8; width as usize * height as usize * 4];
+            frame = vec![0u32; width as usize * height as usize];
         }
 
         // One frame's worth of audio, frame-locked to video like a libretro
@@ -484,8 +485,9 @@ fn capture_frame(player: &PlayerHandle) -> Option<Vec<u8>> {
 /// premultiplied alpha is irrelevant: we skip the divide entirely and just
 /// de-pad the rows (the buffer is padded to `padded_bytes_per_row`) and set
 /// alpha to 255. Returns `false` if the renderer isn't the wgpu backend or has
-/// no readback buffer, leaving `out` untouched.
-fn capture_frame_fast(player: &PlayerHandle, descriptors: &Descriptors, out: &mut Vec<u8>) -> bool {
+/// no readback buffer, leaving `out` untouched. Output is one packed RGBA `u32`
+/// per pixel, the layout [`Backend::with_frame`] hands on.
+fn capture_frame_fast(player: &PlayerHandle, descriptors: &Descriptors, out: &mut Vec<u32>) -> bool {
     let mut guard = player.lock().unwrap();
     let renderer = guard.renderer_mut();
     let Some(backend) = <dyn Any>::downcast_mut::<WgpuRenderBackend<TextureTarget>>(renderer)
@@ -516,13 +518,15 @@ fn capture_frame_fast(player: &PlayerHandle, descriptors: &Descriptors, out: &mu
 
     let map = slice.get_mapped_range();
     out.clear();
-    out.reserve(dims.height * dims.unpadded_bytes_per_row);
+    out.reserve(dims.height * dims.unpadded_bytes_per_row / 4);
     for row in map.chunks(dims.padded_bytes_per_row as usize) {
-        out.extend_from_slice(&row[..dims.unpadded_bytes_per_row]);
-    }
-    // Present opaque regardless of the stage's premultiplied alpha.
-    for px in out.chunks_exact_mut(4) {
-        px[3] = 255;
+        // Pack each pixel, presenting opaque regardless of the stage's
+        // premultiplied alpha.
+        out.extend(
+            row[..dims.unpadded_bytes_per_row]
+                .chunks_exact(4)
+                .map(|px| u32::from_ne_bytes([px[0], px[1], px[2], 255])),
+        );
     }
     drop(map);
     buffer.unmap();
@@ -961,7 +965,7 @@ mod tests {
         let mut got_frame = false;
         for _ in 0..600 {
             emu.run();
-            emu.with_frame(&mut |_, _, buf| got_frame = buf.iter().any(|&b| b != 0));
+            emu.with_frame(&mut |_, _, buf| got_frame = buf.iter().any(|&px| px != 0));
             if got_frame {
                 break;
             }
@@ -978,13 +982,15 @@ mod tests {
         emu.with_frame(&mut |fw, fh, buf| {
             assert_eq!(fw, w);
             assert_eq!(fh, h);
-            assert_eq!(buf.len(), fw * fh * 4, "RGBA8 buffer is w*h*4 bytes");
-            assert!(buf.iter().any(|&b| b != 0), "frame is not all-zero");
+            assert_eq!(buf.len(), fw * fh, "RGBA8 buffer is w*h pixels");
+            assert!(buf.iter().any(|&px| px != 0), "frame is not all-zero");
             // Confirm real rasterized content, not just a flat clear color.
+            // Alpha is forced opaque, so compare the colour bytes only.
             let distinct = {
                 let mut set = std::collections::HashSet::new();
-                for px in buf.chunks_exact(4) {
-                    set.insert([px[0], px[1], px[2]]);
+                for &px in buf {
+                    let [r, g, b, _] = px.to_ne_bytes();
+                    set.insert([r, g, b]);
                     if set.len() > 4 {
                         break;
                     }
@@ -994,8 +1000,12 @@ mod tests {
             assert!(distinct > 1, "frame has more than one color");
 
             if let Ok(png) = std::env::var("FLASH_TEST_PNG") {
-                let img = image::RgbaImage::from_raw(fw as u32, fh as u32, buf.to_vec())
-                    .expect("valid rgba buffer");
+                let img = image::RgbaImage::from_raw(
+                    fw as u32,
+                    fh as u32,
+                    crate::retro_emu::frame_bytes(buf).to_vec(),
+                )
+                .expect("valid rgba buffer");
                 img.save(&png).expect("save png");
                 eprintln!("wrote {png} ({fw}x{fh})");
             }

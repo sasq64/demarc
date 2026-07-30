@@ -569,6 +569,7 @@ fn run_retro(
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         if !emu.run(&time) {
+            debug!("XXXXXXXXXXXXXXXXXXXXXXXX");
             writer.write(SetHudText {
                 location: HudLocation::TopRight,
                 ..Default::default()
@@ -579,6 +580,9 @@ fn run_retro(
         let bg_h = emu.height as usize;
 
         emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
+            // The texture is a byte buffer; the frame is one packed RGBA `u32`
+            // per pixel, so copy it through a byte view.
+            let frame = crate::retro_emu::frame_bytes(frame);
             let copy_w = w.min(bg_w);
             let copy_h = h.min(bg_h);
             for y in 0..copy_h {

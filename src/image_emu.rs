@@ -45,7 +45,7 @@ pub struct ImageEmu {
     width: usize,
     height: usize,
     /// Current RGBA8 frame (alpha opaque), updated by `run` while cycling.
-    frame: Vec<u8>,
+    frame: Vec<u32>,
     /// Base palette (RGB); empty when there is nothing to cycle.
     palette: Vec<[u8; 3]>,
     /// One palette index per pixel; empty when there is nothing to cycle.
@@ -81,7 +81,7 @@ impl ImageEmu {
                 let mut emu = Self {
                     width,
                     height,
-                    frame: vec![0u8; width * height * 4],
+                    frame: vec![0u32; width * height],
                     palette: img.palette,
                     indices: img.indices,
                     ranges,
@@ -103,7 +103,11 @@ impl ImageEmu {
                 Ok(Self {
                     width: w as usize,
                     height: h as usize,
-                    frame: img.into_raw(),
+                    frame: img
+                        .into_raw()
+                        .chunks_exact(4)
+                        .map(|px| u32::from_ne_bytes([px[0], px[1], px[2], px[3]]))
+                        .collect(),
                     palette: Vec::new(),
                     indices: Vec::new(),
                     ranges: Vec::new(),
@@ -144,11 +148,9 @@ impl ImageEmu {
         }
         for (i, &idx) in self.indices.iter().enumerate() {
             let c = palette.get(idx as usize).copied().unwrap_or([0, 0, 0]);
-            let o = i * 4;
-            self.frame[o] = c[0];
-            self.frame[o + 1] = c[1];
-            self.frame[o + 2] = c[2];
-            self.frame[o + 3] = 255;
+            // Packed so the pixel's bytes land in `[r, g, b, a]` memory order,
+            // matching what the frontend uploads (see `retro_emu::frame_bytes`).
+            self.frame[i] = u32::from_ne_bytes([c[0], c[1], c[2], 255]);
         }
     }
 }
@@ -170,7 +172,7 @@ impl Backend for ImageEmu {
         true
     }
 
-    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(self.width, self.height, &self.frame);
     }
 
@@ -200,9 +202,12 @@ impl Backend for ImageEmu {
     }
 
     fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let buf =
-            image::RgbaImage::from_raw(self.width as u32, self.height as u32, self.frame.clone())
-                .ok_or("failed to build image buffer")?;
+        let buf = image::RgbaImage::from_raw(
+            self.width as u32,
+            self.height as u32,
+            crate::retro_emu::frame_bytes(&self.frame).to_vec(),
+        )
+        .ok_or("failed to build image buffer")?;
         buf.save(path)?;
         Ok(())
     }
@@ -240,11 +245,11 @@ mod tests {
         assert!(emu.run());
         emu.with_frame(&mut |w, h, frame| {
             assert_eq!((w, h), (640, 512));
-            assert_eq!(frame.len(), w * h * 4);
+            assert_eq!(frame.len(), w * h);
             // The decoded image must not be a single flat color.
-            let first = &frame[0..4];
+            let first = frame[0];
             assert!(
-                frame.chunks_exact(4).any(|px| px != first),
+                frame.iter().any(|&px| px != first),
                 "presented frame is blank"
             );
         });
@@ -270,10 +275,10 @@ mod tests {
             assert!(emu.run());
             emu.with_frame(&mut |w, h, frame| {
                 assert_eq!((w, h), (8, 6));
-                assert_eq!(frame.len(), w * h * 4);
-                let first = &frame[0..4];
+                assert_eq!(frame.len(), w * h);
+                let first = frame[0];
                 assert!(
-                    frame.chunks_exact(4).any(|px| px != first),
+                    frame.iter().any(|&px| px != first),
                     "presented .{ext} frame is blank"
                 );
             });
@@ -300,3 +305,4 @@ mod tests {
         assert_ne!(frame_a, frame_b, "colour cycling did not change the frame");
     }
 }
+

@@ -107,7 +107,7 @@ pub trait Backend {
     fn set_mouse_position(&mut self, _x: f32, _y: f32) {}
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
     fn set_joypad(&mut self, port: u32, id: u32, down: bool);
-    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8]));
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32]));
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
     fn get_frame_size(&self) -> (usize, usize);
     fn aspect_ratio(&self) -> f32;
@@ -122,13 +122,16 @@ pub trait Backend {
     fn frames_stepped(&self) -> u64 {
         0
     }
+    fn is_idle(&self) -> bool {
+        false
+    }
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture
 /// upload (and PNG encoder) expect. Each `u32` holds one pixel with its bytes
 /// already in `[r, g, b, a]` memory order (see the LUTs / `video_refresh`), so
 /// this is a plain, always-sound width-narrowing view.
-fn frame_bytes(pixels: &[u32]) -> &[u8] {
+pub fn frame_bytes(pixels: &[u32]) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(pixels.as_ptr() as *const u8, std::mem::size_of_val(pixels))
     }
@@ -213,6 +216,48 @@ fn convert_16bpp(
             *out = lut[p];
         }
     }
+}
+
+/// Alpha byte masked off when testing a pixel for pure black / pure white.
+/// Built with `from_ne_bytes` so the constant lands on the same bits the frame
+/// pixels do, whichever endianness we are on (see [`frame_bytes`]). Cores using
+/// `XRGB8888` leave alpha undefined, and our own converters force it to 255, so
+/// it must never participate in the comparison.
+const RGB_MASK: u32 = u32::from_ne_bytes([0xff, 0xff, 0xff, 0x00]);
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Result of the single scan over a frame, before it is compared against the
+/// previous one.
+struct FrameScan {
+    hash: u64,
+    all_black: bool,
+    all_white: bool,
+}
+
+/// Fold `frame` (one packed RGBA8888 pixel per `u32`, as handed to
+/// [`Backend::with_frame`]) into its hash and its uniform-colour flags in one
+/// pass.
+///
+/// Pixels are hashed in pairs so the multiply is amortized over two of them; a
+/// 320x240 frame is ~38k iterations of a handful of ALU ops, which is noise next
+/// to the emulation that produced it. An empty frame reports as both black and
+/// white — callers are expected to have a real frame in hand.
+fn scan_frame(frame: &[u32]) -> u64 {
+    let mut hash = FNV_OFFSET;
+
+    let mut pairs = frame.chunks_exact(2);
+    for p in &mut pairs {
+        let w = (p[0] as u64) | ((p[1] as u64) << 32);
+        hash = (hash ^ w).wrapping_mul(FNV_PRIME);
+    }
+
+    // An odd pixel count leaves one pixel over; hash it alone in the low half.
+    if let [px] = *pairs.remainder() {
+        hash = (hash ^ px as u64).wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 pub struct RetroCoreDirect {
@@ -315,11 +360,11 @@ impl RetroCoreDirect {
         };
     }
 
-    pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u8])) {
+    pub fn with_frame(&self, f: impl FnOnce(usize, usize, &[u32])) {
         f(
             self.state.frame_width,
             self.state.frame_height,
-            frame_bytes(&self.state.frame),
+            &self.state.frame,
         );
     }
     pub fn with_audio(&mut self, f: impl FnOnce(&[i16])) {
@@ -932,7 +977,7 @@ impl Backend for RetroCoreDirect {
     fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
         RetroCoreDirect::set_joypad(self, port, id, down)
     }
-    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         RetroCoreDirect::with_frame(self, |w, h, fr| f(w, h, fr))
     }
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
@@ -1003,11 +1048,12 @@ enum RetroCmd {
 struct RetroUpdate {
     width: usize,
     height: usize,
-    frame: Vec<u8>,
+    frame: Vec<u32>,
     audio: Vec<i16>,
     aspect_ratio: f32,
     sample_rate: f64,
     fps: f64,
+    frame_hash: u64,
 }
 
 pub struct RetroCoreThreaded {
@@ -1018,7 +1064,11 @@ pub struct RetroCoreThreaded {
     // the lock is never actually contended.
     update_rx: Mutex<mpsc::Receiver<RetroUpdate>>,
     handle: Option<thread::JoinHandle<()>>,
-    frame: Vec<u8>,
+    frame: Vec<u32>,
+    frame_hash: u64,
+    last_hash: u64,
+    audio_sum: i32,
+    last_sum: i32,
     frame_width: usize,
     frame_height: usize,
     audio: Vec<i16>,
@@ -1103,6 +1153,10 @@ impl RetroCoreThreaded {
                 update_rx: Mutex::new(update_rx),
                 handle: Some(handle),
                 frame: Vec::new(),
+                frame_hash: 0,
+                last_hash: 0,
+                audio_sum: 0,
+                last_sum: 0,
                 frame_width: width,
                 frame_height: height,
                 audio: Vec::new(),
@@ -1166,6 +1220,9 @@ fn worker_loop(
         let (width, height) = core.get_frame_size();
         let mut frame = Vec::new();
         core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
+
+        let hash = scan_frame(&frame);
+
         let mut audio = Vec::new();
         core.with_audio(|s| audio.extend_from_slice(s));
 
@@ -1177,6 +1234,7 @@ fn worker_loop(
             aspect_ratio: core.aspect_ratio(),
             sample_rate: core.sample_rate(),
             fps: core.fps(),
+            frame_hash: hash,
         };
         if speed_test {
             // Benchmark: never block on the consumer. Hand off the latest frame
@@ -1225,8 +1283,12 @@ impl Backend for RetroCoreThreaded {
                 return false;
             }
             self.frame = update.frame;
+            self.last_hash = self.frame_hash;
+            self.frame_hash = update.frame_hash;
             self.frame_width = update.width;
             self.frame_height = update.height;
+            self.last_sum = self.audio_sum;
+            self.audio_sum = update.audio.iter().map(|a| (*a).abs() as i32).sum();
             self.audio.extend_from_slice(&update.audio);
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
@@ -1236,6 +1298,11 @@ impl Backend for RetroCoreThreaded {
         }
         true
     }
+
+    fn is_idle(&self) -> bool {
+        self.last_hash == self.frame_hash && self.audio_sum.abs() < 1000
+    }
+
     fn get_number_of_disks(&mut self) -> u32 {
         self.disk_count
     }
@@ -1261,7 +1328,7 @@ impl Backend for RetroCoreThreaded {
     fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
         let _ = self.cmd_tx.send(RetroCmd::SetJoypad { port, id, down });
     }
-    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u8])) {
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(self.frame_width, self.frame_height, &self.frame);
     }
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
