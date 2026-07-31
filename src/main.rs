@@ -447,6 +447,27 @@ impl std::io::Write for FdWriter {
     }
 }
 
+#[cfg(unix)]
+static SAVED_STDOUT: std::sync::OnceLock<FdWriter> = std::sync::OnceLock::new();
+
+/// Print a line to the real terminal, bypassing the `/dev/null` redirect that
+/// [`silence_stdout`] installs on fd 1 to muzzle the libretro cores. Falls back
+/// to the process stdout when nothing was redirected.
+pub(crate) fn println(text: impl std::fmt::Display) {
+    // Format up front and write once, so a line can't be torn in half by
+    // another thread's write between the text and its newline.
+    let mut line = text.to_string();
+    line.push('\n');
+    #[cfg(unix)]
+    if let Some(mut writer) = SAVED_STDOUT.get().copied() {
+        use std::io::Write;
+        let _ = writer.write_all(line.as_bytes());
+        return;
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(line.as_bytes());
+}
+
 /// Raise the process's soft open-file limit to the hard limit (or a large
 /// fallback), best-effort. Some bundled libretro cores (notably the Amiga
 /// `puae` core) leak POSIX named semaphores across reloads — every file
@@ -547,6 +568,11 @@ fn main() {
     } else {
         silence_stdout().ok()
     };
+    // Hand the dup to `println` so the rest of the app can still print.
+    #[cfg(unix)]
+    if let Some(writer) = saved_stdout {
+        let _ = SAVED_STDOUT.set(writer);
+    }
 
     // Under `--features profile` the subscriber is built by Bevy's `LogPlugin`
     // instead (see `profiling::log_plugin`), because that's where the
@@ -591,7 +617,12 @@ fn main() {
         exclude: &args.exclude,
     };
     if let Some(db) = &args.db {
-        collect_db(Path::new(db), &filter, &mut files).unwrap();
+        let path = Path::new(db);
+        if !path.exists() {
+            println(format!("** Error: Can't load database {path:?}"));
+            return;
+        }
+        collect_db(path, &filter, &mut files).unwrap();
     }
     // Anything piped in is a db too, so it can be filtered before loading.
     collect_db_stdin(&filter, &mut files).unwrap();
