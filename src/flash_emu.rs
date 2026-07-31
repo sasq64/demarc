@@ -131,6 +131,9 @@ pub struct FlashEmu {
     /// Accumulates across `run` calls; drained by `with_audio`.
     audio: Vec<i16>,
     fps: f64,
+    /// Bumped whenever the worker hands over a new frame. Starts at 0, with
+    /// `frame` still blank. See [`Backend::frame_serial`].
+    serial: u64,
 }
 
 impl FlashEmu {
@@ -155,6 +158,7 @@ impl FlashEmu {
                 frame: vec![0u32; width as usize * height as usize],
                 audio: Vec::new(),
                 fps,
+                serial: 0,
             }),
             Ok(SetupResult::Err(e)) => {
                 let _ = worker.join();
@@ -183,8 +187,13 @@ impl Backend for FlashEmu {
             self.frame = update.frame;
             self.audio.extend_from_slice(&update.audio);
             self.fps = update.fps;
+            self.serial += 1;
         }
         true
+    }
+
+    fn frame_serial(&self) -> u64 {
+        self.serial
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {

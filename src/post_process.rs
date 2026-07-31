@@ -141,7 +141,7 @@ pub struct PostProcess {
     // pub border_mode: BorderMode,
 }
 
-#[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
+#[derive(Component, Default, Clone, Copy, PartialEq, ExtractComponent, ShaderType)]
 pub struct PostProcessUniform {
     uv_scale: Vec2,
     uv_offset: Vec2,
@@ -156,9 +156,16 @@ pub struct PostProcessUniform {
 /// `None` means "no clipping" — the blit covers the whole viewport. That's used
 /// for [`BorderMode::Stretch`], where the bars are intentionally filled with
 /// stretched edge texels by the shader rather than the clear color.
-#[derive(Component, Clone, Copy, ExtractComponent)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, ExtractComponent)]
 pub struct BorderScissor(pub Option<URect>);
 
+/// Recomputes both post-process components from the camera's current viewport.
+///
+/// Nothing here changes unless the window is resized, the core switches video
+/// mode or a hotkey toggles the shader — but it runs every frame, so both writes
+/// go through `set_if_neq` and the components are only inserted when missing.
+/// An unconditional write would mark them changed (and re-queue an archetype
+/// insert through `Commands`) on every single frame.
 fn update_post_process_uniform(
     images: Res<Assets<Image>>,
     settings: Res<RenderSettings>,
@@ -168,18 +175,28 @@ fn update_post_process_uniform(
         &PostProcess,
         &Camera,
         Option<&mut PostProcessUniform>,
+        Option<&mut BorderScissor>,
     )>,
 ) {
-    for (entity, pp, camera, existing) in &mut query {
+    for (entity, pp, camera, existing, existing_scissor) in &mut query {
         let uniform = compute_uniform(pp, &settings, camera, &images);
         let scissor = BorderScissor(compute_scissor(&uniform, &settings, camera));
         match existing {
-            Some(mut u) => *u = uniform,
+            Some(mut u) => {
+                u.set_if_neq(uniform);
+            }
             None => {
                 commands.entity(entity).insert(uniform);
             }
         }
-        commands.entity(entity).insert(scissor);
+        match existing_scissor {
+            Some(mut s) => {
+                s.set_if_neq(scissor);
+            }
+            None => {
+                commands.entity(entity).insert(scissor);
+            }
+        }
     }
 }
 

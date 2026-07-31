@@ -11,6 +11,16 @@ coverage:
 coverage_text:
     cargo llvm-cov ---ignore-run-fail
 
+# Run with Bevy's per-system tracing spans and the change audit (src/profiling.rs).
+# Writes trace.json; ~100 MB per second of capture, so keep the run short.
+profile file="demos/rebels.adf":
+    cargo build --profile release-fast --features profile
+    TRACE_CHROME=trace.json ./target/release-fast/demarc --window {{file}}
+
+# Rank the spans in a profile trace by self time. `--filter` narrows it further.
+trace-summary file="trace.json":
+    scripts/trace-summary.py {{file}} --filter 'system: '
+
 RUST_SYSROOT := `rustc --print sysroot`
 
 perf:

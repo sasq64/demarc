@@ -122,6 +122,14 @@ pub trait Backend {
     fn frames_stepped(&self) -> u64 {
         0
     }
+    /// A value that changes whenever [`with_frame`](Self::with_frame) would hand
+    /// back different pixels than it did last time.
+    ///
+    /// The frontend re-uploads the emulator's texture only when this moves, so a
+    /// backend that leaves it constant is never redrawn — which is why there is
+    /// no default implementation. Any monotonic counter or content hash will do;
+    /// it only has to differ, not to increase.
+    fn frame_serial(&self) -> u64;
     fn is_idle(&self) -> bool {
         false
     }
@@ -282,6 +290,9 @@ pub struct RetroCoreDirect {
     skip_frames: u32,
     retro_frame_time: Option<unsafe extern "C" fn(i64)>,
     time_reference: i64,
+    /// Bumped by every `run`, since each one leaves a freshly rendered frame.
+    /// See [`Backend::frame_serial`].
+    frame_serial: u64,
 }
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
@@ -774,6 +785,7 @@ impl RetroCoreDirect {
                 skip_frames: 0,
                 retro_frame_time: None,
                 time_reference: 0,
+                frame_serial: 0,
             };
             // Our options go in before the core is told anything, so they are
             // already there whenever it announces its own defaults (usually
@@ -866,6 +878,7 @@ impl RetroCoreDirect {
             unsafe { cb(self.time_reference) }
         }
         unsafe { (self.retro_run_fn)() }
+        self.frame_serial = self.frame_serial.wrapping_add(1);
         // Relative motion has been consumed by the core this frame.
         self.mouse.dx = 0;
         self.mouse.dy = 0;
@@ -954,6 +967,9 @@ impl Backend for RetroCoreDirect {
     fn run(&mut self) -> bool {
         RetroCoreDirect::run(self);
         true
+    }
+    fn frame_serial(&self) -> u64 {
+        self.frame_serial
     }
     fn reset(&mut self) {
         RetroCoreDirect::reset(self)
@@ -1364,6 +1380,12 @@ impl Backend for RetroCoreThreaded {
     }
     fn frames_stepped(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
+    }
+    /// The worker already hashes every frame it hands over (for `is_idle`), so
+    /// reuse that: it changes only when the pixels do, which also skips the
+    /// upload for a core that is redrawing the same static screen.
+    fn frame_serial(&self) -> u64 {
+        self.frame_hash
     }
 }
 

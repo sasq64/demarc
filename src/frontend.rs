@@ -488,12 +488,13 @@ fn run_retro(
     }
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
-        let Some(mut image) = images.get_mut(&emu.image) else {
+        // Read-only probe. The mutable borrow that the frame copy needs is taken
+        // further down, only when the core has something new: `get_mut` marks the
+        // asset modified when it drops, and Bevy answers that by re-uploading the
+        // whole texture.
+        if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
             continue;
-        };
-        let Some(dst) = image.data.as_mut() else {
-            continue;
-        };
+        }
         // Drop audio entirely in the speed-test benchmark.
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
 
@@ -595,22 +596,33 @@ fn run_retro(
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
 
-        emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
-            // The texture is a byte buffer; the frame is one packed RGBA `u32`
-            // per pixel, so copy it through a byte view.
-            let frame = crate::retro_emu::frame_bytes(frame);
-            let copy_w = w.min(bg_w);
-            let copy_h = h.min(bg_h);
-            for y in 0..copy_h {
-                let src_off = y * w * 4;
-                let dst_off = y * bg_w * 4;
-                dst[dst_off..dst_off + copy_w * 4]
-                    .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
+        // Only copy (and so re-upload) when the backend has different pixels
+        // than the last copy. The screen refreshes at 60-165Hz while a core
+        // produces 50-60 frames a second — and the threaded backend often has no
+        // update ready at all — so most passes through here have nothing new.
+        let serial = emu.core.as_ref().unwrap().frame_serial();
+        if serial != emu.frame_serial {
+            emu.frame_serial = serial;
+            // Scoped so the `AssetMut` (whose destructor fires change detection)
+            // releases the `images` borrow before it is taken again below.
+            if let Some(mut image) = images.get_mut(&emu.image)
+                && let Some(dst) = image.data.as_mut()
+            {
+                emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
+                    // The texture is a byte buffer; the frame is one packed RGBA
+                    // `u32` per pixel, so copy it through a byte view.
+                    let frame = crate::retro_emu::frame_bytes(frame);
+                    let copy_w = w.min(bg_w);
+                    let copy_h = h.min(bg_h);
+                    for y in 0..copy_h {
+                        let src_off = y * w * 4;
+                        let dst_off = y * bg_w * 4;
+                        dst[dst_off..dst_off + copy_w * 4]
+                            .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
+                    }
+                });
             }
-        });
-        // `AssetMut` holds the `images` borrow until dropped (its destructor fires
-        // change detection), so release it before re-borrowing `images` below.
-        drop(image);
+        }
         // For some reason we need to compensate the hatari aspect
         let aspect = if emu.work_file.system_type == SystemType::AtariST {
             let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
@@ -623,8 +635,10 @@ fn run_retro(
             emu.core.as_mut().unwrap().aspect_ratio()
         };
 
+        // Guarded: `PostProcess` is extracted into the render world, and the
+        // aspect only moves when the core changes video mode.
         for (_, _, mut pp) in &mut cameras {
-            if pp.source == emu.image {
+            if pp.source == emu.image && pp.aspect != aspect {
                 pp.aspect = aspect;
             }
         }
@@ -635,6 +649,11 @@ fn run_retro(
             debug!("SIZE CHANGE TO {w} {h}");
             emu.width = w as u32;
             emu.height = h as u32;
+            // The texture below is replaced with a blank one, so whatever was
+            // copied in for this serial is gone: forget it, or a backend that
+            // isn't producing new frames (a still image, a paused core) would
+            // never refill it and stay black.
+            emu.frame_serial = 0;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(

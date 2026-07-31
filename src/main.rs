@@ -29,6 +29,8 @@ mod libloader;
 mod load_error;
 mod media_keys;
 mod post_process;
+#[cfg(feature = "profile")]
+mod profiling;
 mod retro_emu;
 mod screensaver;
 mod speed_test;
@@ -44,6 +46,7 @@ use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
+#[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
 use crate::files::{DbFilter, EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
@@ -424,7 +427,7 @@ fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 /// be handed out repeatedly by a `MakeWriter` closure without owning the fd.
 #[cfg(unix)]
 #[derive(Clone, Copy)]
-struct FdWriter(std::os::fd::RawFd);
+pub(crate) struct FdWriter(std::os::fd::RawFd);
 
 #[cfg(unix)]
 impl std::io::Write for FdWriter {
@@ -509,33 +512,43 @@ fn main() {
         args.no_silence = true;
     }
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(if cfg!(debug_assertions) {
-            "demarc=debug,warn"
-        } else {
-            "error"
-        })
-    });
-    let builder = tracing_subscriber::fmt()
-        .with_ansi(cfg!(not(target_os = "windows")))
-        .with_env_filter(filter)
-        .with_target(true)
-        .compact();
     // On Unix, silence the cores by redirecting stdout/stderr to /dev/null and
     // route tracing to a dup of the original stdout, unless `--no-silence` asks
     // us to leave them alone (for debugging core output).
     #[cfg(unix)]
-    match if args.no_silence {
+    let saved_stdout = if args.no_silence {
         None
     } else {
         silence_stdout().ok()
-    } {
-        Some(writer) => builder.with_writer(move || writer).init(),
-        // Silencing disabled or redirect failed: use the default stdout writer.
-        None => builder.init(),
+    };
+
+    // Under `--features profile` the subscriber is built by Bevy's `LogPlugin`
+    // instead (see `profiling::log_plugin`), because that's where the
+    // chrome-trace layer that records the ECS spans is installed. Setting one
+    // here too would just lose the race and log an error.
+    #[cfg(not(feature = "profile"))]
+    {
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(if cfg!(debug_assertions) {
+                "demarc=debug,warn"
+            } else {
+                "error"
+            })
+        });
+        let builder = tracing_subscriber::fmt()
+            .with_ansi(cfg!(not(target_os = "windows")))
+            .with_env_filter(filter)
+            .with_target(true)
+            .compact();
+        #[cfg(unix)]
+        match saved_stdout {
+            Some(writer) => builder.with_writer(move || writer).init(),
+            // Silencing disabled or redirect failed: use the default stdout writer.
+            None => builder.init(),
+        }
+        #[cfg(not(unix))]
+        builder.init();
     }
-    #[cfg(not(unix))]
-    builder.init();
 
     // Trim the download cache before anything fetches into it, so this run's
     // own downloads can't be evicted out from under it.
@@ -657,14 +670,26 @@ fn main() {
         // Drive the update loop as fast as possible regardless of window focus.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
+    // `main` installs its own tracing subscriber above, so the default one is
+    // dropped — except in a profiling build, where `LogPlugin` owns the
+    // subscriber (it carries the chrome-trace layer) and gets our writer.
+    let default_plugins = DefaultPlugins.build();
+    #[cfg(not(feature = "profile"))]
+    let default_plugins = default_plugins.disable::<bevy::log::LogPlugin>();
+    #[cfg(feature = "profile")]
+    let default_plugins = default_plugins.set(profiling::log_plugin(
+        #[cfg(unix)]
+        saved_stdout,
+        #[cfg(not(unix))]
+        None,
+    ));
+
     app.insert_resource(args)
         .insert_resource(settings)
         .insert_resource(render_settings)
         .insert_resource(ClearColor(clear_color))
         .add_plugins((
-            DefaultPlugins
-                .build()
-                .disable::<bevy::log::LogPlugin>()
+            default_plugins
                 // Bevy's default compute pool grabs every remaining core and runs
                 // the multi-threaded ECS executor across all of them. This app has
                 // only a handful of trivial systems and is GPU-bound plus one
@@ -706,6 +731,8 @@ fn main() {
             ScreenSaverPlugin,
             SpeedTestPlugin,
         ));
+    #[cfg(feature = "profile")]
+    app.add_plugins(profiling::ProfilingPlugin);
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
     // this restores the actually-requested fullscreen mode afterward.

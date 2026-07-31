@@ -56,6 +56,9 @@ pub struct ImageEmu {
     frames: u64,
     /// Per-range step offset last rendered, used to skip redundant redraws.
     last_offsets: Vec<i64>,
+    /// Bumped by each redraw. Starts at 1 because both constructors leave a
+    /// rendered frame behind. See [`Backend::frame_serial`].
+    serial: u64,
 }
 
 impl ImageEmu {
@@ -87,6 +90,7 @@ impl ImageEmu {
                     ranges,
                     frames: 0,
                     last_offsets: Vec::new(),
+                    serial: 1,
                 };
                 // Render the initial (unrotated) frame so the first presented
                 // frame is correct even before any time has elapsed.
@@ -113,6 +117,7 @@ impl ImageEmu {
                     ranges: Vec::new(),
                     frames: 0,
                     last_offsets: Vec::new(),
+                    serial: 1,
                 })
             }
         }
@@ -168,8 +173,13 @@ impl Backend for ImageEmu {
         if offsets != self.last_offsets {
             self.render(elapsed);
             self.last_offsets = offsets;
+            self.serial += 1;
         }
         true
+    }
+
+    fn frame_serial(&self) -> u64 {
+        self.serial
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {

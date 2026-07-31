@@ -24,7 +24,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 sha2 = "0.11"
 
 [dependencies]
-bevy = { version = "0.19.0", features = ["file_watcher"] }
+bevy = { version = "0.19.0", default-features = false, features = ["2d", "ui", "audio", "file_watcher"] }
 rand = "0.10.1"
 libloading = "0.9"
 cpal = "0.17.1"
@@ -84,6 +84,11 @@ unarc-rs = "0.6.1"
 
 [features]
 default = []
+# Profiling build (src/profiling.rs): Bevy's per-system tracing spans written to
+# a Chrome/Perfetto trace file, frame/CPU diagnostics, and a per-second audit of
+# which components are being marked changed. Costs a full Bevy rebuild, so keep
+# it out of the default set. Use with `--profile profiling` for symbols.
+profile = ["bevy/trace_chrome", "bevy/sysinfo_plugin"]
 # Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
 flash = [
     "dep:ruffle_core",

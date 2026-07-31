@@ -70,3 +70,40 @@ crt-royale's own fix (FIX_DISCONTINUITIES) uses ddx/ddy in a header that's also 
 Fix (src/post_process.rs): each frame, for the active CRT chain, pick the integer tile size in 22–26 px whose screen center sits furthest from a tile boundary and set mask_triad_size_desired at runtime via librashader. Keeps triads ~3 px (visually identical, mask stays pixel-sharp) and pushes the seam off-center; picks 24 (the stock default) when the center is already clear, so it only acts at pathological resolutions.
 
 Caveat: this removes the prominent center line but doesn't eliminate crt-royale's underlying per-tile frac() discontinuity — a faint per-tile seam is inherent and only the (uncompilable) derivative fix would remove it fully.
+
+PROFILING BEVY
+
+`--features profile` (src/profiling.rs) turns on three things at once: Bevy's
+per-system tracing spans written to a Chrome/Perfetto trace, the frame/CPU/entity
+diagnostics, and a per-second "change audit" that counts how many entities had
+each hot component marked changed. The audit is the cheap way to spot a system
+that rewrites a component every frame whether or not the value moved — a count
+sitting at exactly 1.00/f per entity is the tell.
+
+```
+just profile demos/rebels.adf     # build + run, writes trace.json
+just trace-summary                # rank spans by self time
+```
+
+The trace is roughly 100 MB per second of capture, so keep runs short. The
+summary script is what actually answers "what costs the most"; Perfetto is for
+looking at one frame's shape. Note that a *schedule's* self time is inflated —
+its systems run on worker threads, so they aren't subtracted as children. Only
+`system:` spans are directly comparable.
+
+Baseline, 2026-07-31, rebels.adf windowed at 720x540 on a 144 Hz screen, 1.4k
+frames: ~7.4 ms/frame, no single main-world system above 0.2 ms. The app is
+presentation-bound, not CPU-bound — the wait shows up as `prepare_windows` self
+time. What the capture did show:
+
+- Dropping bevy's `3d` feature removed ~1 ms/frame of PBR/light/anti-alias
+  systems that a 2D-only app never uses (135 -> 160 fps, 2388 -> 1497 distinct
+  spans). Done: `default-features = false, features = ["2d", "ui", "audio"]`.
+- `Image` assets are marked modified once per *app* frame (1.00/f), but a PAL
+  core only produces 50 new frames a second. `run_retro` calls
+  `images.get_mut()` before it knows whether the core stepped, so ~2/3 of the
+  texture uploads (`prepare_assets<GpuImage>`, 0.15 ms/frame plus ~1.6 MB of
+  bus traffic each) re-upload pixels that didn't change.
+- `PostProcess`, `PostProcessUniform` and `BorderScissor` are also rewritten
+  1.00/f per camera; `update_post_process_uniform` re-inserts `BorderScissor`
+  through `Commands` every frame instead of comparing first.

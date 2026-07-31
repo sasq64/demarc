@@ -153,6 +153,10 @@ pub(crate) struct Emulator {
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
     pub(crate) width: u32,
     pub(crate) height: u32,
+    /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
+    /// display refreshes much faster than a core produces frames, so this is
+    /// what keeps `run_retro` from re-uploading the same pixels every frame.
+    pub(crate) frame_serial: u64,
     pub(crate) paused: bool,
     pub(crate) skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
@@ -537,6 +541,10 @@ impl Emulator {
 
         self.core = Some(core);
         self.work_file = work_file;
+        // The new backend's serial has nothing to do with the old one's, so
+        // start from "nothing uploaded yet". A backend that begins at 0 does so
+        // with a blank frame, which is exactly what the texture already holds.
+        self.frame_serial = 0;
         self.run_next = false;
         self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();
