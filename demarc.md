@@ -24,21 +24,26 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 * Can run multiple files at once in a grid
 * Linux: Pause screen blanker and handle media keys
 
-## Install (Linux, Mac, Windows)
+## Install (Linux, Mac)
+
+`curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.sh | sh`
+
+## Install (Windows)
+
+_IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
+
+`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.ps1 | iex"`
+
+(the above is usually blocked by Windows. You can try downloading the ps1 script manually and executing it).
+
+Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-x86_64-pc-windows-msvc.zip)
+## Rust source install
 
 If you don't already have it, install [rust](https://rustup.rs).
 
 Then:
 
 `cargo install --git https://github.com/sasq64/demarc.git`
-
-## Download (Windows)
-
-Pre-built windows binary [here](/dl/demarc.exe)
-
-_IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
-
-(Another note to windows users; if you _really_ don't want to use the command line, you can drag and drop demos onto the demarc executable to run them).
 
 ## Prepare
 
