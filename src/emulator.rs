@@ -400,12 +400,14 @@ impl Emulator {
             KeyCode::ArrowDown => Some(RETRO_DEVICE_ID_JOYPAD_DOWN),
             KeyCode::ArrowLeft => Some(RETRO_DEVICE_ID_JOYPAD_LEFT),
             KeyCode::ArrowRight => Some(RETRO_DEVICE_ID_JOYPAD_RIGHT),
-            KeyCode::KeyZ => Some(RETRO_DEVICE_ID_JOYPAD_START),
-            //KeyCode::KeyX => Some(RETRO_DEVICE_ID_JOYPAD_SELECT),
             KeyCode::KeyO => Some(RETRO_DEVICE_ID_JOYPAD_A),
             KeyCode::KeyX => Some(RETRO_DEVICE_ID_JOYPAD_B),
-            KeyCode::Enter | KeyCode::Space => Some(RETRO_DEVICE_ID_JOYPAD_B),
-            KeyCode::ShiftRight | KeyCode::Backspace => Some(RETRO_DEVICE_ID_JOYPAD_A),
+            KeyCode::KeyA => Some(RETRO_DEVICE_ID_JOYPAD_A),
+            KeyCode::KeyB => Some(RETRO_DEVICE_ID_JOYPAD_B),
+            KeyCode::KeyL => Some(RETRO_DEVICE_ID_JOYPAD_L),
+            KeyCode::KeyR => Some(RETRO_DEVICE_ID_JOYPAD_R),
+            KeyCode::Enter => Some(RETRO_DEVICE_ID_JOYPAD_START),
+            KeyCode::Backspace => Some(RETRO_DEVICE_ID_JOYPAD_SELECT),
             _ => None,
         }
     }
