@@ -68,8 +68,17 @@ sha2 = "0.11"
 thiserror = "2"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
-# Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above
-ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
+# Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
+#
+# That pulls wgpu-hal 27 into the lock file even with `flash` off, and wgpu-hal 27
+# requires `windows = "0.58"` exactly. gpu-allocator 0.28 (a dep of wgpu-hal 29)
+# only asks for `windows = ">=0.53, <=0.62"`, so the resolver is free to collapse
+# it onto that 0.58 -- and then wgpu-hal 29's dx12 backend hands 0.58 `ID3D12Heap`
+# values to `windows` 0.62 APIs and the MSVC build fails to compile. Cargo.lock
+# therefore pins gpu-allocator 0.28 to `windows 0.62.2`; if `just win` ever dies
+# in wgpu-hal/src/dx12 with "multiple different versions of crate windows", check
+# that edge in Cargo.lock first.
+ruffle_core ={ git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
     "audio",
     "mp3",
     "nellymoser",
