@@ -278,6 +278,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
         "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
         "dsk" => SystemType::Amstrad,
+        "smd" | "gen" | "32x" => SystemType::Megadrive,
         "msa" | "st" => SystemType::AtariST,
         "a26" => SystemType::Atari2600,
         "tap" | "scl" | "trd" => SystemType::ZXSpectrum,
