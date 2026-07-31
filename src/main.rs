@@ -501,7 +501,33 @@ fn silence_stdout() -> std::io::Result<FdWriter> {
     Ok(FdWriter(saved.into_raw_fd()))
 }
 
+/// Keep the OpenMP-using cores (bsnes, bsnes-hd, flycast) from eating the
+/// machine.
+///
+/// Those cores parallelise tiny per-frame regions — bsnes renders scanlines
+/// with an `omp parallel for` — but libgomp defaults to *active* waiting, so
+/// its `nproc - 1` workers busy-spin between regions. On a 48-thread box that
+/// is ~25 cores burned to render 224 scanlines, and it is also slower than not
+/// spinning at all (bsnes measured 294 fps spinning vs 377 fps passive).
+/// Passive waiting parks the workers instead, and a small pool avoids waking
+/// and joining dozens of threads per frame for work that never fills them.
+///
+/// Must run before the core is `dlopen`ed: libgomp reads these once, when its
+/// first parallel region starts.
+fn tame_openmp_cores() {
+    for (key, value) in [("OMP_WAIT_POLICY", "passive"), ("OMP_NUM_THREADS", "4")] {
+        // Leave anything the user set on the command line alone.
+        if std::env::var_os(key).is_none() {
+            // SAFETY: single-threaded here — this is the first thing `main`
+            // does, before any thread is spawned.
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+}
+
 fn main() {
+    tame_openmp_cores();
+
     #[cfg(unix)]
     raise_fd_limit();
 
