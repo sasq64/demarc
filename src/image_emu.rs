@@ -305,4 +305,3 @@ mod tests {
         assert_ne!(frame_a, frame_b, "colour cycling did not change the frame");
     }
 }
-

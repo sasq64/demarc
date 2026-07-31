@@ -14,7 +14,7 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, LoadState};
 use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
@@ -94,6 +94,14 @@ struct EmuView {
 
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
+
+/// How long after a failed load before another one is started, in seconds.
+///
+/// `--tv-mode` skips a bad entry by re-arming `run_next`, and a load no longer
+/// blocks the frame — so without a floor here a stretch of broken entries (a dead
+/// mirror, unsupported files, a missing core) would race through the whole
+/// playlist at the frame rate, one entry per frame.
+const LOAD_RETRY_DELAY: f32 = 0.5;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` maps cleanly to a distinct camera order.
@@ -499,27 +507,50 @@ fn run_retro(
 
         let flen = settings.files.len() as isize;
 
-        let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
-            1
-        } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
-            -1
-        } else {
-            0
-        };
-        if d != 0 {
-            settings.current_game = (settings.current_game + d + flen) % flen;
-            let game = settings.files[settings.current_game as usize].clone();
+        // Claim the next entry. Nothing is started while a load is already in
+        // flight, and the flags are cleared here at request time rather than when
+        // the load finishes: a load can now span many frames, and a flag left set
+        // would have the timers further down claim another entry on every one.
+        let retry_ready = emu
+            .last_load_error
+            .is_none_or(|t| time.elapsed_secs() - t > LOAD_RETRY_DELAY);
+        if emu.pending_load.is_none() && retry_ready {
+            let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
+                1
+            } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
+                -1
+            } else {
+                0
+            };
+            if d != 0 {
+                settings.current_game = (settings.current_game + d + flen) % flen;
+                emu.pending_load = Some(settings.files[settings.current_game as usize].clone());
+                emu.pending_prev = d < 0;
+                emu.run_next = false;
+                emu.run_prev = false;
+            }
+        }
+
+        // Poll the claimed entry. While its download is in flight nothing about
+        // this emulator changes, so this falls through to the run/blit path below
+        // and whatever was already on screen keeps playing.
+        if let Some(game) = emu.pending_load.take() {
             match emu.load(&time, &game) {
+                Ok(LoadState::Pending) => emu.pending_load = Some(game),
                 Err(e) => {
+                    emu.last_load_error = Some(time.elapsed_secs());
                     let text = format!(
                         "Could not load {}: {}",
                         game.game_info.title,
                         crate::load_error::classify(&e).reason()
                     );
 
-                    if !settings.tv_mode {
-                        emu.run_next = false;
-                        emu.run_prev = false;
+                    if settings.tv_mode {
+                        // Skip the broken entry and carry on the way we were
+                        // going, paced by `LOAD_RETRY_DELAY`.
+                        emu.run_prev = emu.pending_prev;
+                        emu.run_next = !emu.pending_prev;
+                    } else {
                         writer.write(SetHudText {
                             text,
                             delay: Duration::from_secs(0),
@@ -528,10 +559,9 @@ fn run_retro(
                         });
                     }
                     error!("{e:?}");
+                    continue;
                 }
-                Ok(()) => {
-                    emu.run_next = false;
-                    emu.run_prev = false;
+                Ok(LoadState::Loaded) => {
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
                             text: get_info_text(&emu.work_file),
@@ -540,9 +570,9 @@ fn run_retro(
                             location: HudLocation::InfoText,
                         });
                     }
+                    continue;
                 }
-            };
-            continue;
+            }
         }
 
         if show_info && i == settings.current_emu {
@@ -554,8 +584,14 @@ fn run_retro(
             });
         }
 
+        // Both auto-advance timers measure the entry currently on screen, so they
+        // stay quiet while the next one downloads: `start_time` and `idle_time`
+        // still belong to the old entry, and a slow mirror is not an idle demo.
+        let loading = emu.pending_load.is_some();
+
         let et = time.elapsed_secs_f64();
         if let Some(mt) = emu.max_time
+            && !loading
             && et > emu.start_time + (mt as f64)
             && (et - settings.last_draw) > 1.0
         {
@@ -572,7 +608,7 @@ fn run_retro(
             }
         }
 
-        if max_idle > 0 && emu.idle_time > max_idle as f32 {
+        if max_idle > 0 && !loading && emu.idle_time > max_idle as f32 {
             emu.run_next = true;
         }
 

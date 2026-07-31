@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::{
     cbmconvert,
-    fetch::{fetch_url, fetch_urls},
+    fetch::{Fetched, fetch_url_async, fetch_urls_async},
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
@@ -91,23 +91,29 @@ fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
 
 impl FileSource {
     /// Ensure the data is available locally — downloading the URL (cached, see
-    /// [`fetch_url`]) the first time — and return the resulting local path. A
-    /// [`FileSource::Path`] is returned as-is.
-    fn resolve(&mut self) -> Result<&PathBuf> {
+    /// [`fetch_url_async`]) the first time — and return the resulting local path.
+    /// A [`FileSource::Path`] is returned as-is.
+    ///
+    /// Returns `None` while a download is still in flight, so the caller can come
+    /// back next frame instead of blocking the app on the transfer.
+    fn resolve(&mut self) -> Result<Option<&PathBuf>> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory
             // (built into an m3u later). Otherwise just grab the first entry.
             let urls = filter_release_urls(urls.clone());
-            let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
-                fetch_urls(&urls)?
+            let fetched = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
+                fetch_urls_async(&urls)?
             } else {
-                fetch_url(urls.first().unwrap().as_ref())?
+                fetch_url_async(urls.first().unwrap().as_ref())?
+            };
+            let Fetched::Ready(p) = fetched else {
+                return Ok(None);
             };
             *self = FileSource::Path(p);
         }
         match self {
-            FileSource::Path(p) => Ok(p),
+            FileSource::Path(p) => Ok(Some(p)),
             FileSource::Url(_) => unreachable!("just converted to Path above"),
         }
     }
@@ -683,10 +689,25 @@ fn only_file(dir: &Path) -> Option<PathBuf> {
     }
 }
 
+/// How far [`prepare_file`] got: either a finished [`WorkingFile`], or a download
+/// that hasn't landed yet.
+#[derive(Debug)]
+pub enum Prepared {
+    Ready(WorkingFile),
+    /// A URL is still downloading; call [`prepare_file`] again next frame.
+    Pending,
+}
+
 /// Prepare a file for loading into emulator. Unpack archives, parse
 /// binaries for more info, convert formats as needed.
 /// Also need to determine system_type if not done previously
-pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
+///
+/// Returns [`Prepared::Pending`] while a remote entry is still downloading. Only
+/// the first step — resolving the source to a local path — can be pending, and it
+/// is cheap to re-enter (a lock and a hash lookup, see [`fetch_url_async`]), so a
+/// caller polls by simply calling this again; nothing after that step runs until
+/// the bytes are on disk.
+pub fn prepare_file(emu_file: &EmuFile) -> Result<Prepared> {
     let EmuFile {
         mut system_type,
         path: mut source,
@@ -704,7 +725,10 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
     // cache means later loads of the same URL are free. Re-detect the system
     // type once we have the real file, since collection only saw the URL.
     let was_url = matches!(source, FileSource::Url(_));
-    let mut path = source.resolve()?.clone();
+    let Some(resolved) = source.resolve()? else {
+        return Ok(Prepared::Pending);
+    };
+    let mut path = resolved.clone();
     if was_url {
         system_type = get_system_type(&path);
     }
@@ -850,18 +874,27 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
             Err(err) => warn!("Could not prepare PSX disc {path:?}: {err}"),
         }
     }
-    Ok(WorkingFile {
+    Ok(Prepared::Ready(WorkingFile {
         system_type,
         path,
         settings: tags,
         game_info,
         temp_dir,
-    })
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The finished [`WorkingFile`]. Every fixture below is a local file, which
+    /// resolves without a download, so `Pending` means the test itself is wrong.
+    fn ready(prepared: Prepared) -> WorkingFile {
+        match prepared {
+            Prepared::Ready(wf) => wf,
+            Prepared::Pending => panic!("a local file must not be pending a download"),
+        }
+    }
 
     /// The local path behind a source. Everything below collects real files, so
     /// a URL here means the test itself is wrong.
@@ -1017,7 +1050,7 @@ mod tests {
     /// frontend does: collect it, then unpack/convert it for the emulator.
     fn prepare(rel: &str) -> WorkingFile {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        prepare_file(&collect_file(&root.join(rel)).unwrap()).unwrap()
+        ready(prepare_file(&collect_file(&root.join(rel)).unwrap()).unwrap())
     }
 
     /// A bare GEMDOS executable is wrapped in a bootable floppy image, so the
@@ -1116,11 +1149,13 @@ mod tests {
         )
         .unwrap();
 
-        let wf = prepare_file(&EmuFile {
-            path: dir.path().into(),
-            ..Default::default()
-        })
-        .unwrap();
+        let wf = ready(
+            prepare_file(&EmuFile {
+                path: dir.path().into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path.extension().unwrap(), "prg");
         assert!(!wf.path.starts_with(dir.path()));
@@ -1141,11 +1176,13 @@ mod tests {
         data.resize(0x800 + 0x4000, 0);
         fs::write(&exe, &data).unwrap();
 
-        let wf = prepare_file(&EmuFile {
-            path: exe.as_path().into(),
-            ..Default::default()
-        })
-        .unwrap();
+        let wf = ready(
+            prepare_file(&EmuFile {
+                path: exe.as_path().into(),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
 
         let t_size = |p: &Path| {
             let header = read_header(p, 0x20).unwrap();
@@ -1491,7 +1528,7 @@ mod tests {
         collect_files(&root.join("testdata/intros"), &mut out, true).unwrap();
         assert_eq!(out.len(), 15);
         out.sort_by(|a, b| local_path(&a.path).cmp(local_path(&b.path)));
-        let wf = prepare_file(&out[0]).unwrap();
+        let wf = ready(prepare_file(&out[0]).unwrap());
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path, local_path(&out[0].path));
     }

@@ -9,7 +9,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::{EmuFile, prepare_file};
+use crate::files::{EmuFile, Prepared, prepare_file};
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
@@ -163,6 +163,28 @@ pub(crate) struct Emulator {
     pub(crate) buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
+    /// The entry this emulator is loading, kept until [`Emulator::load`] reports
+    /// something other than [`LoadState::Pending`]. Its presence is what tells
+    /// `run_retro` to keep polling instead of picking another entry, and to leave
+    /// the auto-advance timers alone while a download is in flight.
+    pub(crate) pending_load: Option<EmuFile>,
+    /// Whether [`Self::pending_load`] was claimed by stepping backwards, so that
+    /// auto-skipping a broken entry keeps going the way the user was heading.
+    pub(crate) pending_prev: bool,
+    /// When the last load failed, used to pace `--tv-mode`'s auto-skip. Loads no
+    /// longer block, so nothing else stops a run of instantly-failing entries from
+    /// advancing the playlist once per frame.
+    pub(crate) last_load_error: Option<f32>,
+}
+
+/// How far [`Emulator::load`] got.
+#[derive(PartialEq, Eq, Debug)]
+pub(crate) enum LoadState {
+    /// The core is up and running the entry.
+    Loaded,
+    /// Still downloading; call `load` again with the same entry next frame. The
+    /// previous core, if any, is untouched and keeps running meanwhile.
+    Pending,
 }
 
 /// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
@@ -503,8 +525,22 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
-    pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
-        let work_file = prepare_file(emu_file)?;
+    /// Load `emu_file`, or report that it is still downloading.
+    ///
+    /// Non-blocking: a remote entry returns [`LoadState::Pending`] and is polled by
+    /// calling this again with the same file (see [`prepare_file`]). Nothing about
+    /// this emulator changes until the bytes are there, so whatever it was running
+    /// keeps running — and several emulators polling at once means their downloads
+    /// overlap instead of queueing up behind each other.
+    pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<LoadState> {
+        let work_file = match prepare_file(emu_file)? {
+            Prepared::Ready(work_file) => work_file,
+            Prepared::Pending => return Ok(LoadState::Pending),
+        };
+        // Past this point the load runs to completion on this frame. Dropping the
+        // old core here (rather than before the download) both keeps the previous
+        // entry on screen while waiting and keeps `RetroCoreThreaded`'s blocking
+        // unload join off every polling frame.
         self.core = None;
         let tags = load_tags(&work_file, &self.tags);
         let core = create_core(
@@ -543,7 +579,7 @@ impl Emulator {
         self.start_time = time.elapsed_secs_f64();
         self.last_active_time = time.elapsed_secs();
         trace!("FRAME START");
-        Ok(())
+        Ok(LoadState::Loaded)
     }
     pub fn skip(&mut self, frames: u32) {
         let Some(core) = self.core.as_mut() else {

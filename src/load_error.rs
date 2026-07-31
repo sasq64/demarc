@@ -43,6 +43,20 @@ pub struct MissingBios {
 #[error("unsupported or unrecognized file type")]
 pub struct UnknownSystem;
 
+/// A download that failed on a fetch worker thread, already classified there.
+///
+/// The transport error itself can't come back: `anyhow::Error` isn't `Clone`,
+/// and one failed URL may be reported to several waiting emulators (and again on
+/// a later poll, see [`crate::fetch`]'s retry backoff). So the worker runs
+/// [`classify`] while it still holds the real error and keeps the verdict plus
+/// its rendered message, which is everything the display boundary needs.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+pub struct FetchFailed {
+    pub failure: LoadFailure,
+    pub message: String,
+}
+
 /// What went wrong, at the granularity worth telling the user about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadFailure {
@@ -85,6 +99,11 @@ impl LoadFailure {
 /// error type. Ordering matters only in that demarc's own errors are checked
 /// first; a single failure never carries two of these.
 pub fn classify(error: &anyhow::Error) -> LoadFailure {
+    // Checked first: a fetch worker already classified this one against the real
+    // transport error, which no longer exists to be downcast below.
+    if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<FetchFailed>()) {
+        return e.failure;
+    }
     if error.chain().any(|e| e.is::<NoCore>()) {
         return LoadFailure::NoCore;
     }
@@ -179,6 +198,19 @@ mod tests {
         .context("could not prepare file")
         .context("load failed");
         assert_eq!(classify(&err), LoadFailure::NoCore);
+    }
+
+    /// A failure a fetch worker already classified keeps its verdict, which is
+    /// the only thing left of the transport error by the time the HUD asks.
+    #[test]
+    fn classifies_a_preclassified_fetch_failure() {
+        let err = anyhow::Error::new(FetchFailed {
+            failure: LoadFailure::NotFound,
+            message: "http status: 404".into(),
+        })
+        .context("could not prepare file")
+        .context("load failed");
+        assert_eq!(classify(&err), LoadFailure::NotFound);
     }
 
     #[test]

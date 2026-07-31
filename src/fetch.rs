@@ -1,12 +1,17 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use sha2::{Digest, Sha256};
 use tracing::info;
 use url::Url;
+
+use crate::load_error::{FetchFailed, classify};
 
 /// Give up after this many HTTP redirects, matching typical browser limits.
 const MAX_REDIRECTS: usize = 10;
@@ -95,25 +100,175 @@ pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-/// Gather several URLs into a single fresh temp directory and return that
-/// directory's path, so multi-disk sets end up side by side in one directory.
+/// Copy already-cached downloads into a single fresh temp directory, so multi-disk
+/// sets end up side by side in one directory.
 ///
-/// Each URL is fetched through [`fetch_url`], so it is cached individually; when
-/// they are all already cached this just copies the cached files across without
-/// re-downloading. Each file keeps its URL-derived name (see [`url_filename`]),
-/// which is what ends up in the generated m3u, so two disks of one set whose
-/// URLs differ only in a directory would land on the same name here — they stay
-/// apart in the cache, but the copy below still flattens them.
-pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
+/// Each file keeps its URL-derived name (see [`url_filename`]), which is what ends
+/// up in the generated m3u, so two disks of one set whose URLs differ only in a
+/// directory would land on the same name here — they stay apart in the cache, but
+/// the copy below still flattens them.
+fn gather_into_dir(cached: &[PathBuf]) -> anyhow::Result<PathBuf> {
     let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    for url in urls {
-        let cached = fetch_url(url.as_ref())?;
-        let name = cached
+    for path in cached {
+        let name = path
             .file_name()
-            .with_context(|| format!("cached download has no filename: {}", cached.display()))?;
-        std::fs::copy(&cached, dir.join(name))?;
+            .with_context(|| format!("cached download has no filename: {}", path.display()))?;
+        std::fs::copy(path, dir.join(name))?;
     }
     Ok(dir)
+}
+
+/// Outcome of a non-blocking fetch request: either the bytes are on disk, or a
+/// worker thread is still getting them and the caller should ask again later.
+#[derive(Debug)]
+pub enum Fetched {
+    Ready(PathBuf),
+    Pending,
+}
+
+/// How long a failed download is remembered, during which the same URL fails
+/// immediately from the recorded verdict instead of being re-dialed.
+///
+/// Without this, an emulator that auto-skips broken entries (`--tv-mode`) would
+/// retry a dead mirror on every frame: the failure is cheap to reproduce once
+/// DNS has cached the negative answer, so nothing else paces the retries.
+const FETCH_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// What the registry knows about one URL. A URL with no entry either has never
+/// been requested or has already landed in the cache, which the `is_file` check
+/// in [`fetch_url_async`] catches before the registry is consulted at all.
+enum Job {
+    /// A worker thread is downloading this URL right now.
+    Running,
+    /// It failed; `at` is when, for [`FETCH_RETRY_AFTER`].
+    Failed { error: FetchFailed, at: Instant },
+}
+
+/// In-flight and recently-failed downloads, keyed by URL. Global rather than
+/// threaded through the callers because [`crate::files::prepare_file`] is a free
+/// function several frames deep in a Bevy system, with no resource to hang this
+/// off.
+static DOWNLOADS: LazyLock<Mutex<HashMap<String, Job>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The registry lock, recovered from a poisoned mutex rather than propagating the
+/// panic: the map is a plain cache of job states, so a worker that died mid-update
+/// leaves it stale at worst, never inconsistent.
+fn jobs() -> MutexGuard<'static, HashMap<String, Job>> {
+    DOWNLOADS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Non-blocking [`fetch_url`]: returns [`Fetched::Ready`] the moment the file is
+/// in the cache, and [`Fetched::Pending`] while a worker thread downloads it.
+///
+/// Callers are expected to poll — one call per frame per emulator — so a pending
+/// request costs a mutex lock and a hash lookup and nothing else. An error means
+/// this URL failed; see [`FETCH_RETRY_AFTER`] for how long that is remembered.
+///
+/// Requesting a URL that is already downloading joins the existing job instead of
+/// starting a second one. That matters for correctness, not just efficiency: two
+/// concurrent downloads of one URL would write the same cache file.
+pub fn fetch_url_async(url: &str) -> anyhow::Result<Fetched> {
+    let path = downloads_dir().join(url_hash(url)).join(url_filename(url));
+    if path.is_file() {
+        // Mark the hit as recent so [`prune_cache`] evicts genuinely unused
+        // downloads rather than merely old ones.
+        touch(&path);
+        return Ok(Fetched::Ready(path));
+    }
+
+    let mut jobs = jobs();
+    match jobs.get(url) {
+        Some(Job::Running) => return Ok(Fetched::Pending),
+        Some(Job::Failed { error, at }) if at.elapsed() < FETCH_RETRY_AFTER => {
+            return Err(anyhow::Error::new(error.clone()));
+        }
+        // No entry, or a failure old enough to be worth another try.
+        _ => {}
+    }
+    jobs.insert(url.to_string(), Job::Running);
+    // Released before spawning so the worker can't block on a lock we still hold.
+    drop(jobs);
+
+    let owned = url.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("demarc-fetch".into())
+        // Every path this worker touches is absolute — `downloads_dir()` is
+        // rooted at the user cache dir — which it has to be: a conversion on the
+        // main thread `chdir`s the whole process (see `cbmconvert::CwdGuard`), so
+        // a relative path here would resolve somewhere unpredictable.
+        .spawn(move || {
+            let result = fetch_url(&owned);
+            finish(owned, result.map(|_| ()));
+        });
+    if let Err(e) = spawned {
+        // Nothing will ever complete this job, so record the failure now rather
+        // than leave the caller polling a `Running` entry forever.
+        let e =
+            anyhow::Error::new(e).context(format!("could not start a download thread for {url}"));
+        return Err(anyhow::Error::new(record_failure(url.to_string(), e)));
+    }
+    Ok(Fetched::Pending)
+}
+
+/// Record a finished download: success drops the entry, since the file is on disk
+/// now and later callers take the cache-hit path.
+fn finish(url: String, result: anyhow::Result<()>) {
+    match result {
+        Ok(()) => {
+            jobs().remove(&url);
+        }
+        Err(e) => {
+            record_failure(url, e);
+        }
+    }
+}
+
+/// Register a failed download and return the verdict recorded for it.
+///
+/// The classification happens here, on the worker, while the real transport error
+/// still exists to be downcast — by the time a caller asks, all that is left is
+/// this [`FetchFailed`] (see its doc comment for why it can't be the error itself).
+fn record_failure(url: String, e: anyhow::Error) -> FetchFailed {
+    tracing::error!("Failed to download {url}: {e:?}");
+    let error = FetchFailed {
+        failure: classify(&e),
+        // `{:#}` so the whole context chain reaches the message, not just the
+        // outermost layer.
+        message: format!("{e:#}"),
+    };
+    jobs().insert(
+        url,
+        Job::Failed {
+            error: error.clone(),
+            at: Instant::now(),
+        },
+    );
+    error
+}
+
+/// Fetch several URLs and gather them into one directory (see
+/// [`gather_into_dir`]), the multi-URL counterpart to [`fetch_url_async`].
+///
+/// Requests every URL up front so a multi-disk set downloads its disks in
+/// parallel, and is [`Fetched::Pending`] until they have all landed; the temp
+/// directory is only built once nothing is outstanding. Each URL is cached
+/// individually, so a set that is already cached skips straight to the copy.
+pub fn fetch_urls_async(urls: &[Url]) -> anyhow::Result<Fetched> {
+    let mut cached = Vec::with_capacity(urls.len());
+    let mut pending = false;
+    for url in urls {
+        // Deliberately not short-circuiting on the first `Pending`: every URL has
+        // to be requested for them to download concurrently.
+        match fetch_url_async(url.as_ref())? {
+            Fetched::Ready(path) => cached.push(path),
+            Fetched::Pending => pending = true,
+        }
+    }
+    if pending {
+        return Ok(Fetched::Pending);
+    }
+    Ok(Fetched::Ready(gather_into_dir(&cached)?))
 }
 
 /// Root of the download cache: one subdirectory per URL hash, each holding the
@@ -132,7 +287,9 @@ fn downloads_dir() -> PathBuf {
 /// download over, it just risks being evicted earlier than it should be.
 fn touch(path: &Path) {
     let now = SystemTime::now();
-    let times = std::fs::FileTimes::new().set_accessed(now).set_modified(now);
+    let times = std::fs::FileTimes::new()
+        .set_accessed(now)
+        .set_modified(now);
     // Opening for write, not read: on Windows `set_times` needs write access,
     // and on Unix futimens wants a handle we're allowed to modify.
     if let Ok(file) = std::fs::File::options().write(true).open(path) {
@@ -210,7 +367,10 @@ fn entry_stats(path: &Path) -> (u64, SystemTime) {
         return (0, SystemTime::UNIX_EPOCH);
     };
     if !meta.is_dir() {
-        return (meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+        return (
+            meta.len(),
+            meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        );
     }
     let Ok(entries) = std::fs::read_dir(path) else {
         return (0, SystemTime::UNIX_EPOCH);
@@ -228,18 +388,37 @@ fn entry_stats(path: &Path) -> (u64, SystemTime) {
 /// Download `url` to `path`, writing first to a sibling `.part` file that is
 /// renamed into place on success so an interrupted transfer never leaves a
 /// truncated file masquerading as a complete one.
+///
+/// The `.part` name carries the pid and a counter so that two downloads aiming at
+/// the same cache file can't interleave their writes into one temp file and then
+/// both rename it into place, which would publish a spliced archive as a valid
+/// cache entry. Within one process [`fetch_url_async`] already dedupes by URL;
+/// this also covers two demarc processes browsing the same collection. The final
+/// rename replaces an existing destination on both Unix and Windows, so whichever
+/// download finishes last simply wins with its own complete copy.
 fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
+    static PART_COUNT: AtomicUsize = AtomicUsize::new(0);
+
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
-    let tmp = path.with_file_name(format!(".{name}.part"));
-    let mut file = std::fs::File::create(&tmp)?;
-    download(url, &mut file)?;
-    file.flush()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    let unique = PART_COUNT.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{name}.{}-{unique}.part", std::process::id()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        download(url, &mut file)?;
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        // Unique names mean a failed attempt would otherwise leave a fresh piece
+        // of litter in the cache every time, which nothing else cleans up.
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Download `url` (`http`, `https` or `ftp`) into `out`.
@@ -392,6 +571,80 @@ fn url_filename(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load_error::LoadFailure;
+
+    /// When the recorded failure for `url` was registered, or `None` if there is
+    /// no recorded failure — never requested, in flight, or already succeeded.
+    fn failed_at(url: &str) -> Option<Instant> {
+        match jobs().get(url) {
+            Some(Job::Failed { at, .. }) => Some(*at),
+            _ => None,
+        }
+    }
+
+    /// Poll a non-blocking fetch until it settles, the way `run_retro` does frame
+    /// by frame. Panics rather than spinning forever.
+    fn poll(url: &str) -> anyhow::Result<PathBuf> {
+        for _ in 0..500 {
+            match fetch_url_async(url) {
+                Ok(Fetched::Ready(path)) => return Ok(path),
+                Ok(Fetched::Pending) => std::thread::sleep(Duration::from_millis(10)),
+                Err(e) => return Err(e),
+            }
+        }
+        panic!("{url} never settled");
+    }
+
+    /// An already-cached URL is ready on the first call, without a worker thread
+    /// and without a registry entry — the path every repeat load takes.
+    #[test]
+    fn cached_url_is_ready_immediately() {
+        let url = "https://demarc.invalid/already-cached.zip";
+        let dir = downloads_dir().join(url_hash(url));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(url_filename(url)), b"PK\x03\x04").unwrap();
+
+        let Ok(Fetched::Ready(path)) = fetch_url_async(url) else {
+            panic!("a cached URL must be ready immediately");
+        };
+        assert_eq!(path, dir.join("already-cached.zip"));
+        assert!(
+            !jobs().contains_key(url),
+            "a cache hit must not register a job"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The whole worker round-trip — spawn, fail, classify, record — against a
+    /// dead loopback port, which answers without touching the network.
+    #[test]
+    fn failed_download_is_recorded_and_not_immediately_retried() {
+        let url = "http://127.0.0.1:1/demarc-test-refused.zip";
+        let err = poll(url).unwrap_err();
+        // Classified on the worker thread and still recoverable from the anyhow
+        // chain here, which is what puts a reason on screen. Loopback refuses
+        // instantly; a host that filters the port instead would time out, and
+        // either verdict proves the classification survived the thread boundary.
+        assert!(
+            matches!(
+                classify(&err),
+                LoadFailure::Offline | LoadFailure::Timeout | LoadFailure::DownloadFailed
+            ),
+            "unexpected verdict: {:?}",
+            classify(&err)
+        );
+
+        let first = failed_at(url).expect("the failure must be recorded");
+        // Inside the backoff window the recorded verdict comes straight back. A
+        // re-dial would replace the entry, so its timestamp is the witness.
+        let again = fetch_url_async(url).unwrap_err();
+        assert_eq!(classify(&again), classify(&err));
+        assert_eq!(failed_at(url), Some(first), "must not have dialed again");
+
+        jobs().remove(url);
+        let _ = std::fs::remove_dir_all(downloads_dir().join(url_hash(url)));
+    }
 
     #[test]
     fn detects_urls() {

@@ -84,10 +84,25 @@ pub fn get_libretro(name: &str) -> Option<PathBuf> {
     get_libretro_in(&dir, name)
 }
 
+/// Serializes the download-and-extract below. [`extract_zip`] writes the library
+/// straight into the shared library directory, so two of these running at once for
+/// the same core would write one file from two archives and produce a truncated
+/// `.so` that then fails to `dlopen`. Cheap to hold: the lock is only contended on
+/// the rare path where a core isn't installed yet.
+static DOWNLOAD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Implementation of [`get_libretro`] against an explicit library directory, so
 /// the cache/download logic can be exercised without touching the real home dir.
 fn get_libretro_in(dir: &Path, name: &str) -> Option<PathBuf> {
     let target = dir.join(dylib_name(name));
+    if target.is_file() {
+        return Some(target);
+    }
+
+    // A panicking download leaves nothing behind but a missing file, which the
+    // `is_file` re-check below handles, so a poisoned lock is fine to keep using.
+    let _guard = DOWNLOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Another caller may have installed it while we waited for the lock.
     if target.is_file() {
         return Some(target);
     }
