@@ -159,7 +159,7 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
 
-    let tags = tags_from_args(args);
+    let mut tags = tags_from_args(args);
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
@@ -172,6 +172,8 @@ fn setup_retro(world: &mut World) {
         spawn_emulator(world, tags, match_fps, max_time, speed_test, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
+        // pcsx rearmed can only run 3 instances at one time
+        tags.insert("psx_core".into(), "beetle".into());
         for (i, cell) in cells.into_iter().enumerate() {
             spawn_emulator(
                 world,
