@@ -1,4 +1,6 @@
+// Needed for bevy systems
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;

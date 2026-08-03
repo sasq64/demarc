@@ -1,5 +1,3 @@
-// #![allow(dead_code)]
-
 use anyhow::{Result, anyhow};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -128,7 +126,7 @@ pub trait Backend {
     /// backend that leaves it constant is never redrawn — which is why there is
     /// no default implementation. Any monotonic counter or content hash will do;
     /// it only has to differ, not to increase.
-    fn frame_serial(&self) -> u64;
+    fn frame_hash(&self) -> u64;
     fn is_idle(&self) -> bool {
         false
     }
@@ -901,7 +899,7 @@ impl Backend for RetroCoreDirect {
         RetroCoreDirect::run(self);
         true
     }
-    fn frame_serial(&self) -> u64 {
+    fn frame_hash(&self) -> u64 {
         self.frame_serial
     }
     fn reset(&mut self) {
@@ -1301,10 +1299,8 @@ impl Backend for RetroCoreThreaded {
     fn frames_stepped(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
     }
-    /// The worker already hashes every frame it hands over (for `is_idle`), so
-    /// reuse that: it changes only when the pixels do, which also skips the
-    /// upload for a core that is redrawing the same static screen.
-    fn frame_serial(&self) -> u64 {
+
+    fn frame_hash(&self) -> u64 {
         self.frame_hash
     }
 }

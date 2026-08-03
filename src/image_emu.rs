@@ -178,7 +178,7 @@ impl Backend for ImageEmu {
         true
     }
 
-    fn frame_serial(&self) -> u64 {
+    fn frame_hash(&self) -> u64 {
         self.serial
     }
 

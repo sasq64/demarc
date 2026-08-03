@@ -1,4 +1,3 @@
-#![allow(clippy::type_complexity)]
 //! A searchable list widget: a [`TextInput`] stacked on top of a [`TextList`].
 //! As the user types, the list is filtered to the entries that match the query.
 //!
@@ -62,7 +61,7 @@ pub struct SubstringSource {
 }
 
 impl SubstringSource {
-    #![allow(dead_code)]
+    #[allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
@@ -102,7 +101,7 @@ pub struct AllWordsSource {
 }
 
 impl AllWordsSource {
-    #![allow(dead_code)]
+    #[allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }

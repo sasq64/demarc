@@ -599,9 +599,9 @@ fn run_retro(
         // than the last copy. The screen refreshes at 60-165Hz while a core
         // produces 50-60 frames a second — and the threaded backend often has no
         // update ready at all — so most passes through here have nothing new.
-        let serial = emu.core.as_ref().unwrap().frame_serial();
-        if serial != emu.frame_serial {
-            emu.frame_serial = serial;
+        let hash = emu.core.as_ref().unwrap().frame_hash();
+        if hash != emu.frame_hash {
+            emu.frame_hash = hash;
             // Scoped so the `AssetMut` (whose destructor fires change detection)
             // releases the `images` borrow before it is taken again below.
             if let Some(mut image) = images.get_mut(&emu.image)
@@ -649,10 +649,10 @@ fn run_retro(
             emu.width = w as u32;
             emu.height = h as u32;
             // The texture below is replaced with a blank one, so whatever was
-            // copied in for this serial is gone: forget it, or a backend that
+            // copied in for this hash is gone: forget it, or a backend that
             // isn't producing new frames (a still image, a paused core) would
             // never refill it and stay black.
-            emu.frame_serial = 0;
+            emu.frame_hash = 0;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(

@@ -138,7 +138,7 @@ pub(crate) struct Emulator {
     /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
     /// display refreshes much faster than a core produces frames, so this is
     /// what keeps `run_retro` from re-uploading the same pixels every frame.
-    pub(crate) frame_serial: u64,
+    pub(crate) frame_hash: u64,
     pub(crate) paused: bool,
     pub(crate) skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
@@ -353,7 +353,7 @@ impl Emulator {
         let Some(core) = core else {
             return false;
         };
-        // Apply the PI controller's drift correction to the resampler ratio.
+
         sink.set_adjust(*audio_rate_adjust);
         let from = core.sample_rate();
         let mut got_audio = false;
@@ -523,7 +523,7 @@ impl Emulator {
         // The new backend's serial has nothing to do with the old one's, so
         // start from "nothing uploaded yet". A backend that begins at 0 does so
         // with a blank frame, which is exactly what the texture already holds.
-        self.frame_serial = 0;
+        self.frame_hash = 0;
         self.run_next = false;
         self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();

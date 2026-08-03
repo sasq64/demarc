@@ -192,7 +192,7 @@ impl Backend for FlashEmu {
         true
     }
 
-    fn frame_serial(&self) -> u64 {
+    fn frame_hash(&self) -> u64 {
         self.serial
     }
 
@@ -496,7 +496,11 @@ fn capture_frame(player: &PlayerHandle) -> Option<Vec<u8>> {
 /// alpha to 255. Returns `false` if the renderer isn't the wgpu backend or has
 /// no readback buffer, leaving `out` untouched. Output is one packed RGBA `u32`
 /// per pixel, the layout [`Backend::with_frame`] hands on.
-fn capture_frame_fast(player: &PlayerHandle, descriptors: &Descriptors, out: &mut Vec<u32>) -> bool {
+fn capture_frame_fast(
+    player: &PlayerHandle,
+    descriptors: &Descriptors,
+    out: &mut Vec<u32>,
+) -> bool {
     let mut guard = player.lock().unwrap();
     let renderer = guard.renderer_mut();
     let Some(backend) = <dyn Any>::downcast_mut::<WgpuRenderBackend<TextureTarget>>(renderer)
