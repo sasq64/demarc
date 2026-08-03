@@ -211,17 +211,6 @@ impl Backend for ImageEmu {
         FRAME_RATE
     }
 
-    fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let buf = image::RgbaImage::from_raw(
-            self.width as u32,
-            self.height as u32,
-            crate::retro_emu::frame_bytes(&self.frame).to_vec(),
-        )
-        .ok_or("failed to build image buffer")?;
-        buf.save(path)?;
-        Ok(())
-    }
-
     // Everything below is inapplicable to a still image.
     fn set_disk(&mut self, _no: u32) {}
     fn get_number_of_disks(&mut self) -> u32 {
@@ -232,7 +221,6 @@ impl Backend for ImageEmu {
     fn add_mouse_motion(&mut self, _dx: f32, _dy: f32) {}
     fn set_mouse_buttons(&mut self, _left: bool, _right: bool, _middle: bool) {}
     fn set_joypad(&mut self, _port: u32, _id: u32, _down: bool) {}
-    fn unload(&mut self) {}
     fn skip_frames(&mut self, _frames: u32) {}
 }
 
@@ -315,4 +303,3 @@ mod tests {
         assert_ne!(frame_a, frame_b, "colour cycling did not change the frame");
     }
 }
-

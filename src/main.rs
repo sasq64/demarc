@@ -1,4 +1,4 @@
-#![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
@@ -400,7 +400,6 @@ struct AppSettings {
     show_info: bool,
     files: Vec<EmuFile>,
     current_game: isize,
-    max_time: Option<usize>,
     current_emu: usize,
     maximized: bool,
     all_emus: bool,
@@ -710,7 +709,6 @@ fn main() {
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         files,
-        max_time: args.max_time,
         maximized: args.grid.is_none(),
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,

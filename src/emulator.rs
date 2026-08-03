@@ -169,11 +169,7 @@ pub(crate) struct Emulator {
     pub idle_time: f32,
 }
 
-/// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
-/// hold. Sits between the duplicate (2000) and frame-drop (12000) thresholds,
-/// leaving headroom on both sides.
 const AUDIO_BUF_MIN: usize = 3000;
-const AUDIO_BUF_TARGET: f64 = 8000.0;
 const AUDIO_BUF_MAX: usize = 15000;
 
 impl Emulator {
@@ -487,10 +483,6 @@ impl Emulator {
             mouse_buttons.pressed(MouseButton::Middle),
         );
         self.buttons = 0;
-    }
-
-    pub fn get_frame_size(&self) -> (usize, usize) {
-        self.core.as_ref().unwrap().get_frame_size()
     }
 
     pub fn set_mouse_buttons(&mut self, buttons: u32) {

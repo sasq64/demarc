@@ -62,6 +62,7 @@ pub struct SubstringSource {
 }
 
 impl SubstringSource {
+    #![allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
@@ -101,6 +102,7 @@ pub struct AllWordsSource {
 }
 
 impl AllWordsSource {
+    #![allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
@@ -355,7 +357,7 @@ pub struct FuzzyListSelect {
     pub id: usize,
     /// Stable id of the chosen item (see [`FuzzyItem::id`]).
     pub item: usize,
-    /// The chosen item's display text, for convenience.
+    #[allow(dead_code)]
     pub text: String,
 }
 

@@ -12,24 +12,6 @@ use unarc_rs::unified::ArchiveFormat;
 
 use crate::systems::{SystemType, get_system_type};
 
-fn check_reset_vector(data: &[u8]) -> bool {
-    let len = data.len();
-    if len < 4 {
-        return false;
-    }
-
-    // Reset vector is at the last 4 bytes: NMI, RESET, IRQ/BRK
-    // For a cart ending at $FFFF, reset vector is at offset len-4+2
-    let reset_lo = data[len - 4 + 2] as u16;
-    let reset_hi = data[len - 4 + 3] as u16;
-    let reset_addr = (reset_hi << 8) | reset_lo;
-
-    // Should point into the high ROM bank, typically $F000–$FFFF
-    // (or $E000–$FFFF for 8KB, etc.)
-    let bank_start = 0x10000u32 - len as u32;
-    reset_addr as u32 >= bank_start
-}
-
 pub fn is_disk_image(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();

@@ -410,7 +410,6 @@ fn run_retro(
     window: Single<&Window, With<PrimaryWindow>>,
     mut cameras: Query<(&EmuView, &Camera, &mut PostProcess)>,
 ) {
-    let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
     // A controlled TextList is capturing keyboard navigation; while it is open,
     // swallow all keys so they don't also reach the emulated machine.
     let modal = lists.iter().any(|l| l.controlled);
@@ -441,7 +440,7 @@ fn run_retro(
 
     if let Some(cmd) = cmd {
         settings.hotkey_pressed = 0.0;
-        cmd_writer.write(CmdMessage(cmd, shift));
+        cmd_writer.write(CmdMessage(cmd));
     }
 
     // Map the OS cursor to normalized frame coordinates of the emulator it is

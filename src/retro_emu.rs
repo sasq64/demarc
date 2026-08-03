@@ -1,10 +1,10 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use anyhow::{Result, anyhow};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -113,8 +113,7 @@ pub trait Backend {
     fn aspect_ratio(&self) -> f32;
     fn sample_rate(&self) -> f64;
     fn fps(&self) -> f64;
-    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
-    fn unload(&mut self);
+    // fn unload(&mut self);
     fn skip_frames(&mut self, frames: u32);
     /// Total number of emulated frames the core has stepped so far. Used by the
     /// `--speed-test` benchmark to measure throughput. Defaults to 0 for cores
@@ -226,23 +225,8 @@ fn convert_16bpp(
     }
 }
 
-/// Alpha byte masked off when testing a pixel for pure black / pure white.
-/// Built with `from_ne_bytes` so the constant lands on the same bits the frame
-/// pixels do, whichever endianness we are on (see [`frame_bytes`]). Cores using
-/// `XRGB8888` leave alpha undefined, and our own converters force it to 255, so
-/// it must never participate in the comparison.
-const RGB_MASK: u32 = u32::from_ne_bytes([0xff, 0xff, 0xff, 0x00]);
-
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-/// Result of the single scan over a frame, before it is compared against the
-/// previous one.
-struct FrameScan {
-    hash: u64,
-    all_black: bool,
-    all_white: bool,
-}
 
 /// Fold `frame` (one packed RGBA8888 pixel per `u32`, as handed to
 /// [`Backend::with_frame`]) into its hash and its uniform-colour flags in one
@@ -272,7 +256,6 @@ pub struct RetroCoreDirect {
     lib: Option<Library>,
     retro_run_fn: unsafe extern "C" fn(),
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
-    retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info),
     retro_deinit_fn: unsafe extern "C" fn(),
     retro_reset_fn: unsafe extern "C" fn(),
     retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
@@ -283,7 +266,6 @@ pub struct RetroCoreDirect {
     audio_buf: Vec<i16>,
     core_path: CString,
     system_path: CString,
-    image_index: u32,
     /// Temp dir holding this instance's private copy of the core .so. Held so
     /// the copy lives as long as the loaded library and is removed on drop.
     _core_tempdir: tempfile::TempDir,
@@ -337,23 +319,6 @@ impl RetroCoreDirect {
         let _guard = CurrentEmuGuard::enter(self);
         unsafe { (self.retro_deinit_fn)() }
         self.lib = None;
-    }
-    pub fn next_disk(&mut self) -> u32 {
-        let _guard = CurrentEmuGuard::enter(self);
-        let cb = &self.disk_callback;
-        unsafe {
-            let count = (cb.get_num_images.unwrap())();
-            if count < 2 {
-                return 0;
-            }
-            self.image_index += 1;
-            self.image_index %= count;
-            (cb.set_eject_state.unwrap())(true);
-            (cb.set_image_index.unwrap())(self.image_index);
-            (cb.set_eject_state.unwrap())(false);
-        }
-        debug!("Inserted image {}", self.image_index);
-        self.image_index
     }
 
     pub fn get_number_of_disks(&mut self) -> u32 {
@@ -486,22 +451,6 @@ impl RetroCoreDirect {
                 unsafe { std::slice::from_raw_parts(data as *const u8, pitch * height as usize) };
             ctx.video_refresh(slice, width as usize, height as usize, pitch);
         });
-    }
-
-    fn video_refresh_dumb(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
-        for y in 0..height {
-            let src_row = &data[y * pitch..y * pitch + width * 4];
-            let dst_row = &mut self.state.frame[y * width..(y + 1) * width];
-            for x in 0..width {
-                // Source is 4-byte BGRA (little-endian XRGB8888); repack so
-                // the u32's native bytes come out `[r, g, b, 255]`: R in the
-                // low byte, B in byte 2.
-                dst_row[x] = (src_row[x * 4 + 2] as u32)
-                    | ((src_row[x * 4 + 1] as u32) << 8)
-                    | ((src_row[x * 4] as u32) << 16)
-                    | (0xFF << 24);
-            }
-        }
     }
 
     fn video_refresh(&mut self, data: &[u8], width: usize, height: usize, pitch: usize) {
@@ -769,7 +718,6 @@ impl RetroCoreDirect {
                 lib: None,
                 retro_run_fn,
                 retro_load_game_fn,
-                retro_get_avinfo_fn,
                 retro_deinit_fn,
                 retro_reset_fn,
                 retro_set_keyboard: None,
@@ -780,7 +728,6 @@ impl RetroCoreDirect {
                 audio_buf: Vec::new(),
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
                 core_path: CString::new(core_path.to_string_lossy().as_bytes()).unwrap(),
-                image_index: 0,
                 _core_tempdir: core_tempdir,
                 skip_frames: 0,
                 retro_frame_time: None,
@@ -899,20 +846,6 @@ impl RetroCoreDirect {
         self.state.sample_rate
     }
 
-    pub fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let width = self.state.frame_width as u32;
-        let height = self.state.frame_height as u32;
-        let expected = (width as usize) * (height as usize);
-        if width == 0 || height == 0 || self.state.frame.len() < expected {
-            return Err("no frame available".into());
-        }
-        let bytes = frame_bytes(&self.state.frame[..expected]).to_vec();
-        let buf = image::RgbaImage::from_raw(width, height, bytes)
-            .ok_or("failed to build image buffer")?;
-        buf.save(path)?;
-        Ok(())
-    }
-
     pub(crate) fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         if self.state.keys.len() <= code as usize {
             self.state.keys.resize(code as usize + 1, 0);
@@ -1011,12 +944,10 @@ impl Backend for RetroCoreDirect {
     fn fps(&self) -> f64 {
         RetroCoreDirect::fps(self)
     }
-    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        RetroCoreDirect::save_png(self, path)
-    }
-    fn unload(&mut self) {
-        RetroCoreDirect::unload(self)
-    }
+
+    // fn unload(&mut self) {
+    //     RetroCoreDirect::unload(self)
+    // }
 
     fn skip_frames(&mut self, frames: u32) {
         for _ in 0..frames {
@@ -1049,9 +980,6 @@ enum RetroCmd {
     },
     SetDisk {
         no: u32,
-    },
-    SavePng {
-        path: PathBuf,
     },
     Unload,
     Skip {
@@ -1281,10 +1209,10 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
         RetroCmd::SetDisk { no } => {
             core.set_disk(no);
         }
-        RetroCmd::SavePng { path } => {
-            let _res = core.save_png(&path).map_err(|e| e.to_string());
+        RetroCmd::Unload => {
+            core.unload();
+            return true;
         }
-        RetroCmd::Unload => return true,
         RetroCmd::Skip { frames } => core.skip_frames = frames,
     }
     false
@@ -1363,17 +1291,9 @@ impl Backend for RetroCoreThreaded {
     fn fps(&self) -> f64 {
         self.fps
     }
-    fn save_png(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        self.cmd_tx
-            .send(RetroCmd::SavePng {
-                path: path.to_path_buf(),
-            })
-            .map_err(|_| "retro worker thread is gone")?;
-        Ok(())
-    }
-    fn unload(&mut self) {
-        let _ = self.cmd_tx.send(RetroCmd::Unload);
-    }
+    // fn unload(&mut self) {
+    //     let _ = self.cmd_tx.send(RetroCmd::Unload);
+    // }
 
     fn skip_frames(&mut self, frames: u32) {
         let _ = self.cmd_tx.send(RetroCmd::Skip { frames });
@@ -1419,12 +1339,28 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
 
     use crate::libloader;
 
     use super::*;
 
+    pub fn save_png(emu: &RetroCoreDirect, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let width = emu.state.frame_width as u32;
+        let height = emu.state.frame_height as u32;
+        let expected = (width as usize) * (height as usize);
+        if width == 0 || height == 0 || emu.state.frame.len() < expected {
+            return Err("no frame available".into());
+        }
+        let bytes = frame_bytes(&emu.state.frame[..expected]).to_vec();
+        let buf = image::RgbaImage::from_raw(width, height, bytes)
+            .ok_or("failed to build image buffer")?;
+        buf.save(path)?;
+        Ok(())
+    }
     /// Paths here are rooted at the crate directory rather than left relative:
     /// a conversion running in another test switches the process-wide working
     /// directory for its duration (see `cbmconvert::CwdGuard`).
@@ -1461,7 +1397,7 @@ mod tests {
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(&root("test_amiga.png")).unwrap();
+        save_png(&retro_emu, &root("test_amiga.png")).unwrap();
     }
 
     /// Boot a self-booting directory under Kickstart 1.3 (A500). The WHDLoad
@@ -1482,7 +1418,7 @@ mod tests {
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(&root("test_amiga_dir.png")).unwrap();
+        save_png(&retro_emu, &root("test_amiga_dir.png")).unwrap();
     }
 
     #[test]
@@ -1507,7 +1443,7 @@ mod tests {
         }
         // The worker may still be a few frames behind; make sure we have one.
         run_until_frame(emu, Duration::from_secs(5));
-        emu.save_png(&root("test_amiga_threaded.png")).unwrap();
+        //emu.save_png(&root("test_amiga_threaded.png")).unwrap();
         let (w, h) = emu.get_frame_size();
         assert!(w > 0 && h > 0, "no frame produced by worker");
     }
@@ -1577,7 +1513,7 @@ mod tests {
             run_until_frame(emu, Duration::from_secs(5));
             let (w, h) = emu.get_frame_size();
             assert!(w > 0 && h > 0, "no frame produced by worker for {path}");
-            emu.save_png(Path::new(path)).unwrap();
+            //emu.save_png(Path::new(path)).unwrap();
         }
     }
 
@@ -1636,7 +1572,7 @@ mod tests {
         for _ in 0..150 {
             emu.run();
         }
-        emu.save_png(&root("test_psx.png")).unwrap();
+        // emu.save_png(&root("test_psx.png")).unwrap();
 
         let (w, h) = emu.get_frame_size();
         assert!(w > 0 && h > 0, "no frame produced");
@@ -1661,7 +1597,7 @@ mod tests {
         for _ in 0..200 {
             retro_emu.run();
         }
-        retro_emu.save_png(&root("test_d64.png")).unwrap();
+        save_png(&retro_emu, &root("test_d64.png")).unwrap();
     }
 
     /// The settings handed to a core — a db header's `puae_model:A1200`, in the

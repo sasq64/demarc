@@ -11,6 +11,7 @@ use bevy::{
 /// A line of text was input by the user
 #[derive(Message, Debug, Clone)]
 pub struct TextInputSubmitted {
+    #[allow(dead_code)]
     pub text: String,
 }
 

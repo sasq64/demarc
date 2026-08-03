@@ -47,7 +47,7 @@ pub enum Cmd {
 }
 
 #[derive(Message)]
-pub struct CmdMessage(pub Cmd, pub bool);
+pub struct CmdMessage(pub Cmd);
 
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
@@ -159,7 +159,7 @@ fn handle_textlist(
     for &TextListSelect { id, index } in reader.read() {
         if id == 0 && index < HOTKEYS.len() {
             let cmd = HOTKEYS[index].cmd;
-            writer.write(CmdMessage(cmd, false));
+            writer.write(CmdMessage(cmd));
             if let Some(e) = settings.text_list.take() {
                 commands.entity(e).despawn();
             }
@@ -174,7 +174,7 @@ fn handle_textlist(
                 commands.entity(e).despawn();
             }
             settings.current_game = item as isize;
-            writer.write(CmdMessage(Cmd::Reload, false));
+            writer.write(CmdMessage(Cmd::Reload));
         }
     }
     let hot_key_pressed =
@@ -523,7 +523,7 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
             MediaKeyEvent::Stop => None,
         };
         if let Some(cmd) = cmd {
-            writer.write(CmdMessage(cmd, false));
+            writer.write(CmdMessage(cmd));
         }
     }
 }
@@ -533,7 +533,7 @@ pub struct CommandPlugin;
 /// When `--select` is passed, open the file-open selector once on the first frame.
 fn open_select_menu(args: Res<crate::Args>, mut writer: MessageWriter<CmdMessage>) {
     if args.select {
-        writer.write(CmdMessage(Cmd::OpenFile, false));
+        writer.write(CmdMessage(Cmd::OpenFile));
     }
 }
 

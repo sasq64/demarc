@@ -20,9 +20,9 @@ use bevy::{
             AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState,
             PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, Sampler,
-            SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Texture,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-            TextureView, TextureViewDescriptor,
+            SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, TextureDescriptor,
+            TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
+            TextureViewDescriptor,
             binding_types::{sampler, texture_2d, uniform_buffer},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery},
@@ -578,7 +578,6 @@ struct PostProcessPipeline {
 /// when that size changes (window resize / core resolution change).
 struct IntermediateTarget {
     size: UVec2,
-    texture: Texture,
     view: TextureView,
 }
 
@@ -600,11 +599,7 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
         view_formats: &[],
     });
     let view = texture.create_view(&TextureViewDescriptor::default());
-    IntermediateTarget {
-        size,
-        texture,
-        view,
-    }
+    IntermediateTarget { size, view }
 }
 
 /// One emulator's librashader state: its own effect and passthrough chains, its

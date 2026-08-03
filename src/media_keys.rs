@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::sync::mpsc;
 
 /// Media key events that can be listened to

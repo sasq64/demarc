@@ -91,6 +91,7 @@ pub struct WorkingFile {
     /// or a file in a subdirectory of it (zip with a single top-level dir); in
     /// every case holding the [`TempDir`] here is what keeps it on disk, and
     /// dropping the `WorkingFile` removes the whole tree.
+    #[allow(dead_code)]
     pub temp_dir: Option<TempDir>,
 }
 
@@ -170,6 +171,7 @@ pub fn get_system_name(work_file: &WorkingFile) -> String {
     base
 }
 
+#[expect(dead_code)]
 pub fn get_full_info(work_file: &WorkingFile) -> String {
     let system = get_system_name(work_file);
     let ram = get_memory(work_file);
@@ -349,12 +351,6 @@ pub fn get_system_type(path: &Path) -> SystemType {
     }
     debug!("Found {system_type:?}");
     system_type
-}
-
-/// True if `path` is a raw PlayStation executable rather than a disc image.
-/// These need a different core from a `.cue`/`.chd` — see `get_core`.
-fn is_psx_exe(path: &Path) -> bool {
-    read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
 
 pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, String>) {
