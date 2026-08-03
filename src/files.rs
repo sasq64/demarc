@@ -17,10 +17,10 @@ use crate::{
     frontend::system_dir,
     systems::{GameInfo, SystemType, WorkingFile, get_system_type},
     utils::{
-        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, fix_psx_text_size,
-        has_matching, is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
-        prepare_psx_disc, psx_needs_text_fix, read_header, scan_release_dir, sort_disks,
-        unpack_if_packed, unpack_into, unpack_to_temp,
+        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, create_psx_iso,
+        fix_psx_text_size, has_matching, is_disk_image, is_gba_rom, is_psx_exe,
+        is_self_booting_dir, parse_m3u, prepare_psx_disc, psx_needs_text_fix, read_header,
+        scan_release_dir, sort_disks, unpack_if_packed, unpack_into, unpack_to_temp,
     },
 };
 
@@ -686,7 +686,7 @@ fn only_file(dir: &Path) -> Option<PathBuf> {
 /// Prepare a file for loading into emulator. Unpack archives, parse
 /// binaries for more info, convert formats as needed.
 /// Also need to determine system_type if not done previously
-pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
+pub fn prepare_file(emu_file: &EmuFile, in_tags: &HashMap<String, String>) -> Result<WorkingFile> {
     let EmuFile {
         mut system_type,
         path: mut source,
@@ -698,6 +698,10 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
     // builds a new one first copies out what it needs from the old, so simply
     // replacing this drops — and removes — the directory it is done with.
     let mut temp_dir: Option<TempDir> = None;
+
+    for (key, val) in in_tags {
+        tags.insert(key.clone(), val.clone());
+    }
 
     // Entries backed by a URL (e.g. from a `--db` list) are downloaded to the
     // local cache on first load, then handled like any other local file. The
@@ -761,22 +765,39 @@ pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
 
     if !path.is_dir() {
         if is_psx_exe(&path) {
-            tags.insert("psx_core".into(), "beetle".into());
-            // A scene exe whose header undercounts its text section doesn't
-            // load at all, so patch the header before the core sees it. The
-            // file we were handed isn't ours to write to unless it already
-            // came out of a temp directory, so anything else is copied first.
-            if psx_needs_text_fix(&path) {
-                if temp_dir.is_none() {
-                    // TODO: temp file leek? Better to wire this in convert_dir()
-                    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
-                    let copy = dir.path().join(path.file_name().unwrap());
-                    fs::copy(&path, &copy)?;
-                    path = copy;
-                    temp_dir = Some(dir);
+            // Only Beetle loads a raw PS-X EXE, and only with a real BIOS. Wrap
+            // the executable in a bootable disc image instead and the default
+            // core takes it, HLE BIOS and all. The image lives in the cache and
+            // is reused between runs, so it deliberately isn't the `temp_dir`.
+
+            if tags.get("psx_core").is_none() {
+                debug!("Building iso");
+                let disc = create_psx_iso(&path).unwrap_or_else(|err| {
+                    warn!("Could not build a disc image for {path:?}: {err}");
+                    None
+                });
+                if let Some(disc) = disc {
+                    debug!("FMT: PSX executable wrapped in disc image {disc:?}");
+                    path = disc;
+                } else {
+                    tags.insert("psx_core".into(), "beetle".into());
+                    // A scene exe whose header undercounts its text section doesn't
+                    // load at all, so patch the header before the core sees it. The
+                    // file we were handed isn't ours to write to unless it already
+                    // came out of a temp directory, so anything else is copied first.
+                    if psx_needs_text_fix(&path) {
+                        if temp_dir.is_none() {
+                            // TODO: temp file leek? Better to wire this in convert_dir()
+                            let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+                            let copy = dir.path().join(path.file_name().unwrap());
+                            fs::copy(&path, &copy)?;
+                            path = copy;
+                            temp_dir = Some(dir);
+                        }
+                        debug!("FMT: patching short PSX text section in {path:?}");
+                        fix_psx_text_size(&path)?;
+                    }
                 }
-                debug!("FMT: patching short PSX text section in {path:?}");
-                fix_psx_text_size(&path)?;
             }
         }
 
@@ -878,7 +899,7 @@ mod tests {
         let mut out = vec![];
         collect_files(&root.join("demos/nexus7"), &mut out, false).unwrap();
         println!("{:?}", out[0]);
-        let wf = prepare_file(&out[0]);
+        let wf = prepare_file(&out[0], &HashMap::new());
         println!("{:?}", wf);
     }
 
@@ -1017,7 +1038,7 @@ mod tests {
     /// frontend does: collect it, then unpack/convert it for the emulator.
     fn prepare(rel: &str) -> WorkingFile {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        prepare_file(&collect_file(&root.join(rel)).unwrap()).unwrap()
+        prepare_file(&collect_file(&root.join(rel)).unwrap(), &HashMap::new()).unwrap()
     }
 
     /// A bare GEMDOS executable is wrapped in a bootable floppy image, so the
@@ -1116,10 +1137,13 @@ mod tests {
         )
         .unwrap();
 
-        let wf = prepare_file(&EmuFile {
-            path: dir.path().into(),
-            ..Default::default()
-        })
+        let wf = prepare_file(
+            &EmuFile {
+                path: dir.path().into(),
+                ..Default::default()
+            },
+            &HashMap::new(),
+        )
         .unwrap();
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path.extension().unwrap(), "prg");
@@ -1127,13 +1151,16 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
-    /// A PSX executable that undercounts its text section is patched on the way
-    /// to the core — which refuses to load it otherwise — and the file we were
-    /// handed keeps the header it came with, since it isn't ours to write to.
+    /// A PSX executable is wrapped in a bootable disc image on the way to the
+    /// core, so the default core — which loads discs, not executables — can take
+    /// it without a BIOS. The short text section it came with is repaired inside
+    /// that image; the file we were handed isn't ours to write to.
     #[test]
-    fn short_psx_exe_is_patched_on_a_copy() {
+    fn psx_exe_is_wrapped_in_a_disc() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("demo.psx");
+        // The cached image is named after the executable, so a stem no other
+        // test uses keeps the two from tidying up each other's cache entry.
+        let exe = dir.path().join("wrapped-demo.psx");
         let mut data = b"PS-X EXE".to_vec();
         data.resize(0x18, 0);
         data.extend_from_slice(&0x8001_0000u32.to_le_bytes()); // t_addr
@@ -1141,23 +1168,31 @@ mod tests {
         data.resize(0x800 + 0x4000, 0);
         fs::write(&exe, &data).unwrap();
 
-        let wf = prepare_file(&EmuFile {
-            path: exe.as_path().into(),
-            ..Default::default()
-        })
+        let wf = prepare_file(
+            &EmuFile {
+                path: exe.as_path().into(),
+                ..Default::default()
+            },
+            &HashMap::new(),
+        )
         .unwrap();
 
+        assert_eq!(wf.path.extension().unwrap(), "iso");
+        assert_eq!(wf.settings.get("psx_core"), None, "no Beetle, no BIOS");
+
+        let image = fs::read(&wf.path).unwrap();
+        // The executable is on the disc with the size its header undercounted.
+        let on_disc = image.windows(8).position(|w| w == b"PS-X EXE").unwrap();
+        assert_eq!(
+            u32::from_le_bytes(image[on_disc + 0x1c..on_disc + 0x20].try_into().unwrap()),
+            0x4000
+        );
         let t_size = |p: &Path| {
             let header = read_header(p, 0x20).unwrap();
             u32::from_le_bytes(header[0x1c..0x20].try_into().unwrap())
         };
-        assert_ne!(wf.path, exe, "the original must not be the one loaded");
-        assert_eq!(t_size(&wf.path), 0x4000);
-        assert_eq!(t_size(&exe), 0x800);
-        assert_eq!(
-            wf.settings.get("psx_core").map(String::as_str),
-            Some("beetle")
-        );
+        assert_eq!(t_size(&exe), 0x800, "the original is left alone");
+        let _ = fs::remove_file(&wf.path);
     }
 
     /// A GBA rom is recognised by its header, not its name — this one is a
@@ -1491,7 +1526,7 @@ mod tests {
         collect_files(&root.join("testdata/intros"), &mut out, true).unwrap();
         assert_eq!(out.len(), 15);
         out.sort_by(|a, b| local_path(&a.path).cmp(local_path(&b.path)));
-        let wf = prepare_file(&out[0]).unwrap();
+        let wf = prepare_file(&out[0], &HashMap::new()).unwrap();
         assert_eq!(wf.system_type, SystemType::C64);
         assert_eq!(wf.path, local_path(&out[0].path));
     }

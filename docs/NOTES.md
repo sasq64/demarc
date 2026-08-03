@@ -1,11 +1,11 @@
-RetroEmu
+TAGS
 
--> Load library
--> Set callbacks
-<- Set default variables
--> retro_init
-<- Get variables
--> load_game
+Arg tags + system default tags => tags
+
+prepare(tags) -> WorkFile with tags
+
+
+
 
  
 FLASH SPEED

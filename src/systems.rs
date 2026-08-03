@@ -297,6 +297,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
         // A `.cue` is just as likely to be an audio-CD rip sitting in a music
         // library, so it only counts as PlayStation if it has a data track.
         "cue" if cue_has_data_track(path) => SystemType::Psx,
+        "iso" => SystemType::Psx,
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
         "gif" | "png" | "bmp" | "jpg" | "jpeg" => SystemType::Gfx,
@@ -354,9 +355,6 @@ pub fn get_system_type(path: &Path) -> SystemType {
 }
 
 pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, String>) {
-    // Read before `set_var` borrows `tags` mutably for the rest of the function.
-    // pcsx_rearmed refuses to load a raw PS-X EXE outright, so those always go
-    // to Beetle regardless of the disc-oriented default.
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
             tags.insert(name.into(), val.into());

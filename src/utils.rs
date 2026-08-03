@@ -210,6 +210,242 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// One sector of an ISO9660 image: the user-data half of a CD-ROM data sector,
+/// and the unit every address in the format counts in.
+const ISO_SECTOR: usize = 2048;
+
+/// Where each piece of a [`build_psx_iso`] image lives. The first 16 sectors are
+/// the system area — a pressed disc keeps Sony's licence data there, but nothing
+/// reads it here, since the core boots with an HLE BIOS — and the rest is the
+/// smallest filesystem that still describes two files.
+const LBA_PVD: u32 = 16;
+const LBA_TERMINATOR: u32 = 17;
+const LBA_PATH_TABLE_L: u32 = 18;
+const LBA_PATH_TABLE_M: u32 = 19;
+const LBA_ROOT_DIR: u32 = 20;
+const LBA_SYSTEM_CNF: u32 = 21;
+const LBA_EXE: u32 = 22;
+
+/// The name the executable is given on the disc. Both the BIOS and every core
+/// fall back to this one when a disc has no `SYSTEM.CNF`, so it is also what
+/// makes the image boot if the sheet is ever ignored.
+const ISO_EXE_NAME: &[u8] = b"PSX.EXE;1";
+
+/// An ISO9660 32-bit field: the value little endian, then big endian again.
+/// Sizes and addresses are all stored twice so a reader of either byte order can
+/// take the half it likes.
+fn both_endian32(value: u32) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    out[0..4].copy_from_slice(&value.to_le_bytes());
+    out[4..8].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+/// [`both_endian32`] for the format's 16-bit fields.
+fn both_endian16(value: u16) -> [u8; 4] {
+    let mut out = [0u8; 4];
+    out[0..2].copy_from_slice(&value.to_le_bytes());
+    out[2..4].copy_from_slice(&value.to_be_bytes());
+    out
+}
+
+/// Write `text` into `buf` at `at` as a fixed-width, space-padded field, which
+/// is how ISO9660 stores every string.
+fn put_padded(buf: &mut [u8], at: usize, len: usize, text: &str) {
+    buf[at..at + len].fill(b' ');
+    let n = text.len().min(len);
+    buf[at..at + n].copy_from_slice(&text.as_bytes()[..n]);
+}
+
+/// An ISO9660 directory record naming `len` bytes at `lba`. `name` is the
+/// identifier exactly as it goes on the disc, so files keep the `;1` version
+/// suffix and the `.`/`..` entries are the single bytes 0 and 1.
+///
+/// Records are padded to an even length, which is what makes the one-byte-named
+/// entries — and so the copy of the root's record inside the volume descriptor —
+/// 34 bytes.
+fn dir_record(name: &[u8], lba: u32, len: u32, is_dir: bool) -> Vec<u8> {
+    let mut rec = vec![0u8; 33 + name.len()];
+    rec[2..10].copy_from_slice(&both_endian32(lba));
+    rec[10..18].copy_from_slice(&both_endian32(len));
+    // Recording time, as years-since-1900 down to seconds plus a timezone in
+    // quarter hours. Nothing on the PlayStation side reads it; a fixed
+    // 1980-01-01 GMT keeps the image byte-identical between builds, which the
+    // content-keyed cache below relies on.
+    rec[18..25].copy_from_slice(&[80, 1, 1, 0, 0, 0, 0]);
+    rec[25] = if is_dir { 0x02 } else { 0x00 };
+    rec[28..32].copy_from_slice(&both_endian16(1)); // volume sequence number
+    rec[32] = name.len() as u8;
+    rec[33..].copy_from_slice(name);
+    if !rec.len().is_multiple_of(2) {
+        rec.push(0);
+    }
+    rec[0] = rec.len() as u8;
+    rec
+}
+
+/// The primary volume descriptor: the sector at a fixed 16 that every reader
+/// starts from, and which points at the root directory's own record.
+fn primary_volume_descriptor(total_sectors: u32, path_table_size: u32, root: &[u8]) -> Vec<u8> {
+    let mut pvd = vec![0u8; ISO_SECTOR];
+    pvd[0] = 1; // primary volume descriptor
+    pvd[1..6].copy_from_slice(b"CD001");
+    pvd[6] = 1; // descriptor version
+    // A pressed PlayStation disc says exactly this, and some tools identify one
+    // by it. Nothing refuses to boot without it, but it costs 11 bytes.
+    put_padded(&mut pvd, 8, 32, "PLAYSTATION");
+    put_padded(&mut pvd, 40, 32, "DEMARC");
+    pvd[80..88].copy_from_slice(&both_endian32(total_sectors));
+    pvd[120..124].copy_from_slice(&both_endian16(1)); // volume set size
+    pvd[124..128].copy_from_slice(&both_endian16(1)); // volume sequence number
+    pvd[128..132].copy_from_slice(&both_endian16(ISO_SECTOR as u16));
+    pvd[132..140].copy_from_slice(&both_endian32(path_table_size));
+    // The two path tables are the one pair of fields stored as a plain value in
+    // each byte order rather than both-endian.
+    pvd[140..144].copy_from_slice(&LBA_PATH_TABLE_L.to_le_bytes());
+    pvd[148..152].copy_from_slice(&LBA_PATH_TABLE_M.to_be_bytes());
+    pvd[156..156 + root.len()].copy_from_slice(root);
+    for (at, len) in [(190, 128), (318, 128), (446, 128), (574, 128)] {
+        put_padded(&mut pvd, at, len, "");
+    }
+    for at in [702, 739, 776] {
+        put_padded(&mut pvd, at, 37, "");
+    }
+    // Creation and modification, then expiration and effective, as
+    // YYYYMMDDHHMMSSCC plus a timezone byte. All zeros means "unspecified",
+    // which is what a disc that never expires records.
+    for at in [813, 830] {
+        pvd[at..at + 17].copy_from_slice(b"1980010100000000\0");
+    }
+    for at in [847, 864] {
+        pvd[at..at + 17].copy_from_slice(b"0000000000000000\0");
+    }
+    pvd[881] = 1; // file structure version
+    pvd
+}
+
+/// Lay `exe` out as a bootable PlayStation disc image: a `SYSTEM.CNF` naming the
+/// boot file and the executable itself, in a filesystem with nothing else in it.
+///
+/// The console's boot path is what decides the shape here. It reads the volume
+/// descriptor at sector 16, follows the root directory record inside it, looks
+/// for `SYSTEM.CNF`, takes the `BOOT = cdrom:\…` line from it, and loads that
+/// file as a PS-X EXE — the file's first sector being the executable's own
+/// 0x800-byte header, which is why the executable goes on the disc unaltered.
+/// Cores that HLE the BIOS (pcsx_rearmed) walk the same structures themselves.
+fn build_psx_iso(exe: &[u8]) -> Vec<u8> {
+    const CNF_NAME: &[u8] = b"SYSTEM.CNF;1";
+    // `BOOT` is the only line a core reads; the rest is what a real disc carries
+    // and what the console's own BIOS would set up from.
+    const CNF: &str = "BOOT = cdrom:\\PSX.EXE;1\r\nTCB = 4\r\nEVENT = 10\r\nSTACK = 801FFFF0\r\n";
+
+    let exe_sectors = exe.len().div_ceil(ISO_SECTOR) as u32;
+    let mut total_sectors = LBA_EXE + exe_sectors;
+    // pcsx_rearmed tells a 2048-byte-sector image from a raw 2352-byte one by
+    // the file's length alone, so a length that divides evenly by both would be
+    // read as the wrong kind of disc — which only happens at a multiple of 147
+    // sectors. An extra empty sector steps past it.
+    if total_sectors.is_multiple_of(147) {
+        total_sectors += 1;
+    }
+
+    // The root directory: itself, its parent (itself again, since it is the
+    // root), and the two files. One sector holds all four with room to spare.
+    let mut root_dir = Vec::with_capacity(ISO_SECTOR);
+    for rec in [
+        dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
+        dir_record(&[1], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
+        dir_record(CNF_NAME, LBA_SYSTEM_CNF, CNF.len() as u32, false),
+        dir_record(ISO_EXE_NAME, LBA_EXE, exe.len() as u32, false),
+    ] {
+        root_dir.extend_from_slice(&rec);
+    }
+
+    // The path table, listing the one directory there is: a one-byte name (the
+    // root's, which is the single zero byte), parented to itself.
+    let mut path_l = vec![1u8, 0];
+    path_l.extend_from_slice(&LBA_ROOT_DIR.to_le_bytes());
+    path_l.extend_from_slice(&1u16.to_le_bytes());
+    path_l.extend_from_slice(&[0, 0]); // name, then padding to an even length
+    let mut path_m = vec![1u8, 0];
+    path_m.extend_from_slice(&LBA_ROOT_DIR.to_be_bytes());
+    path_m.extend_from_slice(&1u16.to_be_bytes());
+    path_m.extend_from_slice(&[0, 0]);
+
+    let root_record = dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true);
+    let pvd = primary_volume_descriptor(total_sectors, path_l.len() as u32, &root_record);
+
+    let mut terminator = vec![0u8; ISO_SECTOR];
+    terminator[0] = 0xff; // volume descriptor set terminator
+    terminator[1..6].copy_from_slice(b"CD001");
+    terminator[6] = 1;
+
+    let mut image = vec![0u8; total_sectors as usize * ISO_SECTOR];
+    let mut put = |lba: u32, bytes: &[u8]| {
+        let at = lba as usize * ISO_SECTOR;
+        image[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+    put(LBA_PVD, &pvd);
+    put(LBA_TERMINATOR, &terminator);
+    put(LBA_PATH_TABLE_L, &path_l);
+    put(LBA_PATH_TABLE_M, &path_m);
+    put(LBA_ROOT_DIR, &root_dir);
+    put(LBA_SYSTEM_CNF, CNF.as_bytes());
+    put(LBA_EXE, exe);
+    image
+}
+
+/// Wrap the PlayStation executable at `exe_path` in a bootable disc image, so it
+/// can be handed to pcsx_rearmed, which loads discs but refuses a raw PS-X EXE.
+/// Beetle takes the executable directly but needs a real BIOS, which is the
+/// thing this avoids having to ask for.
+///
+/// The image is cached under its contents, since the file it came from is often
+/// unpacked to a fresh temp directory on every launch — see [`prepare_psx_disc`],
+/// which keys its cache the same way and for the same reason.
+///
+/// Returns `None` when `exe_path` isn't a PlayStation executable at all.
+pub fn create_psx_iso(exe_path: &Path) -> Result<Option<PathBuf>> {
+    use std::hash::{Hash, Hasher};
+
+    let mut exe = fs::read(exe_path)?;
+    if exe.len() <= PSX_HEADER_LEN as usize || exe[0..8] != *b"PS-X EXE" {
+        return Ok(None);
+    }
+    // The header's text size has to describe what follows it exactly, and the
+    // disc is read straight through from the executable's first sector, so a
+    // size that overruns the file would pull in whatever sectors come after it.
+    // Same repair the raw-executable path makes, applied to our copy — the file
+    // we were handed isn't ours to write to.
+    if let Some(size) = psx_text_size_fix(exe_path) {
+        debug!("Recording a {size:#x} byte text section for {exe_path:?}");
+        exe[PSX_TEXT_SIZE_OFFSET..PSX_TEXT_SIZE_OFFSET + 4].copy_from_slice(&size.to_le_bytes());
+        exe.truncate(PSX_HEADER_LEN as usize + size as usize);
+    }
+
+    let mut key = std::collections::hash_map::DefaultHasher::new();
+    exe.hash(&mut key);
+    let stem = exe_path.file_stem().unwrap_or_default().to_string_lossy();
+    let out_dir = dirs::cache_dir()
+        .unwrap_or_default()
+        .join("demarc")
+        .join("psxexe");
+    let out = out_dir.join(format!("{stem}-{:016x}.iso", key.finish()));
+    if out.is_file() {
+        debug!("Using cached disc image {out:?}");
+        return Ok(Some(out));
+    }
+
+    info!("Building bootable disc image for {exe_path:?}");
+    fs::create_dir_all(&out_dir)?;
+    // Write beside the target and rename, so a second demarc looking at the
+    // cache never finds a half-written image under a name that says it is done.
+    let partial = out.with_extension("iso.part");
+    fs::write(&partial, build_psx_iso(&exe))?;
+    fs::rename(&partial, &out)?;
+    Ok(Some(out))
+}
+
 /// No libretro PSX core decodes MP3 audio tracks — they read the compressed
 /// bytes straight through as PCM, which comes out as full-scale noise. If a cue
 /// references any, build a parallel disc directory in the cache with those
@@ -306,8 +542,9 @@ pub fn prepare_psx_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(out_cue))
 }
 
-/// True if `path` is a raw PlayStation executable rather than a disc image.
-/// These need a different core from a `.cue`/`.chd` — see `get_core`.
+/// True if `path` is a raw PlayStation executable rather than a disc image. No
+/// core loads one the way it stands: [`create_psx_iso`] wraps it in a disc for
+/// the default core, and Beetle takes it directly — see `get_core`.
 pub fn is_psx_exe(path: &Path) -> bool {
     read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
@@ -1204,8 +1441,8 @@ mod tests {
         data.resize(2048, 0);
         fs::write(&exe, &data).unwrap();
         assert_eq!(get_system_type(&exe), SystemType::Psx);
-        // Both halves matter: the type picks the system, `is_psx_exe` picks the
-        // core, because pcsx_rearmed can't load a raw executable.
+        // Both halves matter: the type picks the system, `is_psx_exe` decides
+        // the executable has to be wrapped in a disc before a core sees it.
         assert!(is_psx_exe(&exe));
 
         let disc = dir.path().join("disc.cue");
@@ -1272,6 +1509,169 @@ mod tests {
         let not_an_exe = dir.path().join("plain.bin");
         fs::write(&not_an_exe, [0u8; 0x1000]).unwrap();
         assert!(!psx_needs_text_fix(&not_an_exe));
+    }
+
+    /// Walk an image the way the console's boot code does: the volume descriptor
+    /// at sector 16, the root directory record inside it at offset 156, then the
+    /// records in the directory that points to. Returns each file — directories
+    /// are the `.`/`..` entries and nothing else here — with its contents, taken
+    /// at the length the record claims.
+    fn read_iso_files(image: &[u8]) -> Vec<(String, Vec<u8>)> {
+        let sector = |lba: u32| &image[lba as usize * ISO_SECTOR..];
+        let le32 = |b: &[u8]| u32::from_le_bytes(b[0..4].try_into().unwrap());
+
+        let pvd = sector(LBA_PVD);
+        assert_eq!(pvd[0], 1, "volume descriptor type");
+        assert_eq!(&pvd[1..6], b"CD001", "standard identifier");
+        // Every field is stored twice; a reader taking the big-endian half has
+        // to see the same numbers as one taking the little-endian half.
+        assert_eq!(
+            le32(&pvd[80..]),
+            u32::from_be_bytes(pvd[84..88].try_into().unwrap())
+        );
+
+        let root = &pvd[156..];
+        let mut dir = sector(le32(&root[2..]));
+        let mut end = le32(&root[10..]) as usize;
+
+        let mut files = vec![];
+        while end > 0 && dir[0] != 0 {
+            let rec = &dir[..dir[0] as usize];
+            let name_len = rec[32] as usize;
+            let name = String::from_utf8_lossy(&rec[33..33 + name_len]).to_string();
+            if rec[25] & 0x02 == 0 {
+                let (lba, len) = (le32(&rec[2..]), le32(&rec[10..]) as usize);
+                files.push((name, sector(lba)[..len].to_vec()));
+            }
+            end -= rec.len();
+            dir = &dir[rec.len()..];
+        }
+        files
+    }
+
+    /// The disc has to name the executable in `SYSTEM.CNF` and carry it byte for
+    /// byte, since the core reads it straight off the disc as a PS-X EXE — the
+    /// header sector included.
+    #[test]
+    fn psx_iso_boots_the_executable() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        // The cached image is named after the executable, so each test that
+        // builds one uses a stem of its own and can clean up after itself.
+        let exe = dir.path().join("bootable.psx");
+        write_psx_exe(&exe, 0x8001_0000, 0x4000, 0x4000);
+
+        let iso = create_psx_iso(&exe).unwrap().expect("should be wrapped");
+        let image = fs::read(&iso).unwrap();
+        let _ = fs::remove_file(&iso);
+
+        assert_eq!(image.len() % ISO_SECTOR, 0, "whole sectors");
+        assert_eq!(
+            &image[LBA_PVD as usize * ISO_SECTOR + 8..][..11],
+            b"PLAYSTATION"
+        );
+
+        let files = read_iso_files(&image);
+        let names: Vec<_> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["SYSTEM.CNF;1", "PSX.EXE;1"]);
+
+        let cnf = String::from_utf8_lossy(&files[0].1).to_string();
+        assert!(
+            cnf.contains("BOOT = cdrom:\\PSX.EXE;1"),
+            "boot line missing from: {cnf}"
+        );
+        assert_eq!(files[1].1, fs::read(&exe).unwrap(), "executable on disc");
+    }
+
+    /// An executable whose header undercounts its text section is unloadable
+    /// from a disc too — the core reads the recorded size and stops there — so
+    /// the copy that goes on the disc records what is really behind it.
+    #[test]
+    fn psx_iso_records_the_real_text_size() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        let exe = dir.path().join("short.psx");
+        write_psx_exe(&exe, 0x8001_0000, 0x800, 0x4000);
+
+        let iso = create_psx_iso(&exe).unwrap().unwrap();
+        let image = fs::read(&iso).unwrap();
+        let _ = fs::remove_file(&iso);
+
+        let on_disc = read_iso_files(&image).pop().unwrap().1;
+        assert_eq!(
+            u32::from_le_bytes(on_disc[PSX_TEXT_SIZE_OFFSET..][..4].try_into().unwrap()),
+            0x4000
+        );
+        assert_eq!(on_disc.len(), PSX_HEADER_LEN as usize + 0x4000);
+        // The original is left exactly as it was; only the copy is repaired.
+        assert!(psx_needs_text_fix(&exe));
+    }
+
+    /// pcsx_rearmed decides whether an image has 2048- or 2352-byte sectors from
+    /// its length, so a length divisible by both would be read as the wrong kind
+    /// of disc. That is every 147th sector, and the image has to avoid landing
+    /// there whatever size the executable is.
+    #[test]
+    fn psx_iso_length_cannot_be_mistaken_for_raw_sectors() {
+        // 125 sectors of executable puts the image at exactly 147 without the
+        // padding sector; the neighbours on either side are the control.
+        for sectors in 124..=126 {
+            let mut exe = b"PS-X EXE".to_vec();
+            exe.resize(sectors * ISO_SECTOR, 0);
+            let image = build_psx_iso(&exe);
+            assert_eq!(image.len() % ISO_SECTOR, 0);
+            assert_ne!(
+                image.len() % 2352,
+                0,
+                "{sectors} sector executable makes an ambiguous image"
+            );
+        }
+    }
+
+    /// Discs get unpacked to a fresh temp directory on every launch, so the
+    /// cache has to be keyed on the executable's contents rather than where it
+    /// happened to be — the same reason [`prepare_psx_disc`] does.
+    #[test]
+    fn psx_iso_cache_key_ignores_path() {
+        let mut seen = vec![];
+        for _ in 0..2 {
+            let dir = tempfile::Builder::new()
+                .prefix("demarc-")
+                .tempdir()
+                .unwrap();
+            let exe = dir.path().join("same.psx");
+            write_psx_exe(&exe, 0x8001_0000, 0x1000, 0x1000);
+            seen.push(create_psx_iso(&exe).unwrap().unwrap());
+        }
+        assert_eq!(
+            seen[0], seen[1],
+            "identical executables must share one cached image"
+        );
+        for iso in seen {
+            let _ = fs::remove_file(iso);
+        }
+    }
+
+    /// Anything that isn't a PlayStation executable is left for the caller to
+    /// deal with, rather than wrapped in a disc that can't boot.
+    #[test]
+    fn non_executables_are_not_wrapped() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        let plain = dir.path().join("data.bin");
+        fs::write(&plain, [0u8; 0x2000]).unwrap();
+        assert!(create_psx_iso(&plain).unwrap().is_none());
+
+        // A header with nothing behind it is a PS-X EXE with no program in it.
+        let empty = dir.path().join("empty.psx");
+        write_psx_exe(&empty, 0x8001_0000, 0, 0);
+        assert!(create_psx_iso(&empty).unwrap().is_none());
     }
 
     /// The text section can't be grown past the end of the 2MB of main RAM it

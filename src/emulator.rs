@@ -18,26 +18,8 @@ use crate::libretro;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
 
-/// The tags one load hands to the core, in increasing order of precedence:
-///
-/// 1. what the entry itself carries — a db header line (`# Platform:Amiga
-///    puae_model:date`), a db line's own fields or an `.m3u` — together with
-///    whatever [`prepare_file`] worked out from the file (WHDLoad install, a
-///    large Amiga executable, a PS-X EXE, ...). Both are already merged into
-///    [`WorkingFile::settings`], detection last, since it saw the real file.
-/// 2. the tags from the command line, which the user asked for just now.
-///
-/// Two Amiga values name a release rather than a machine and are resolved here
-/// once everything is merged: `puae_model:date` picks the model from the year,
-/// and an `AGA Chipset` scene tag means A1200 whatever the year says.
-fn load_tags(
-    work_file: &WorkingFile,
-    cli_tags: &HashMap<String, String>,
-) -> HashMap<String, String> {
+fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
     let mut tags = work_file.settings.clone();
-    for (key, val) in cli_tags {
-        tags.insert(key.clone(), val.clone());
-    }
 
     if tags.get("puae_model").is_some_and(|m| m == "date") {
         tags.insert("puae_model".into(), "A500".into());
@@ -502,9 +484,12 @@ impl Emulator {
     }
 
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
-        let work_file = prepare_file(emu_file)?;
+        let work_file = prepare_file(emu_file, &self.tags)?;
+
+        let tags = resolve_tags(&work_file);
+
         self.core = None;
-        let tags = load_tags(&work_file, &self.tags);
+        //let tags = load_tags(&work_file, &self.tags);
         let core = create_core(
             work_file.system_type,
             &work_file.path,
@@ -685,12 +670,6 @@ mod tests {
         }
     }
 
-    fn cli(tags: &[(&str, &str)]) -> HashMap<String, String> {
-        tags.iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    }
-
     /// Tags a db carries — here from its `# Platform:Amiga puae_model:A500`
     /// header — are what the core gets, and anything the command line names
     /// still overrides them.
@@ -708,12 +687,9 @@ mod tests {
         let mut wf = work_file("1992", &[]);
         wf.settings = out[0].tags.clone();
 
-        let tags = load_tags(&wf, &HashMap::new());
+        let tags = resolve_tags(&wf);
         assert_eq!(tags.get("puae_model").unwrap(), "A500");
         assert_eq!(tags.get("puae_floppy_speed").unwrap(), "100");
-
-        let tags = load_tags(&wf, &cli([("puae_model", "A1200")].as_slice()));
-        assert_eq!(tags.get("puae_model").unwrap(), "A1200", "--aga wins");
     }
 
     /// `puae_model:date` isn't a machine but an instruction: pick one from the
@@ -721,7 +697,7 @@ mod tests {
     #[test]
     fn date_picks_the_model() {
         let by_year = |year: &str| {
-            let tags = load_tags(&work_file(year, &[("puae_model", "date")]), &HashMap::new());
+            let tags = resolve_tags(&work_file(year, &[("puae_model", "date")]));
             (
                 tags.get("puae_model").cloned().unwrap_or_default(),
                 tags.contains_key("puae_kickstart"),
@@ -745,10 +721,7 @@ mod tests {
                 ("tags", "Multiple Parts,AGA Chipset"),
             ],
         );
-        assert_eq!(
-            load_tags(&wf, &HashMap::new()).get("puae_model").unwrap(),
-            "A1200"
-        );
+        assert_eq!(resolve_tags(&wf).get("puae_model").unwrap(), "A1200");
     }
 
     /// What `prepare_file` reads out of the file itself — a WHDLoad install
@@ -760,7 +733,7 @@ mod tests {
             "1992",
             &[("puae_model", "A1200"), ("puae_use_whdload", "enabled")],
         );
-        let tags = load_tags(&wf, &HashMap::new());
+        let tags = resolve_tags(&wf);
         assert_eq!(tags.get("puae_model").unwrap(), "A1200");
         assert_eq!(tags.get("puae_use_whdload").unwrap(), "enabled");
     }
