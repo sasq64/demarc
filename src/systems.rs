@@ -270,6 +270,17 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
     })
 }
 
+/// The branch instruction every GEMDOS executable starts with — an Atari ST
+/// program is recognized by this, whatever it is named (`.prg`, `.tos`, `.ttp`
+/// or nothing at all).
+pub const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
+
+/// True if `path` is an Atari ST executable. Only the two magic bytes are read,
+/// so this is cheap enough to run over every file in a directory.
+pub fn is_atari_program(path: &Path) -> bool {
+    path.is_file() && read_header(path, GEMDOS_MAGIC.len()).is_ok_and(|data| data == GEMDOS_MAGIC)
+}
+
 pub fn get_system_type(path: &Path) -> SystemType {
     let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         ext.to_lowercase()
@@ -332,7 +343,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::SuperNintendo;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
-                } else if data[0..2] == [0x60, 0x1a] {
+                } else if data[0..2] == GEMDOS_MAGIC {
                     system_type = SystemType::AtariST;
                 } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                     system_type = SystemType::Amiga;

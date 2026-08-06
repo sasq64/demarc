@@ -826,7 +826,10 @@ pub fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
     })
 }
 
-fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
+/// The entry of `dir` named `name`, whatever its case — Atari and Amiga file
+/// systems are case insensitive, so a release's `AUTO` folder may just as well
+/// be spelled `auto` on disk.
+pub fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
         let path = e.path();
         let matches = path

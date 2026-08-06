@@ -15,9 +15,9 @@ use crate::{
     cbmconvert,
     fetch::{fetch_url, fetch_urls},
     frontend::system_dir,
-    systems::{GameInfo, SystemType, WorkingFile, get_system_type},
+    systems::{GEMDOS_MAGIC, GameInfo, SystemType, WorkingFile, get_system_type, is_atari_program},
     utils::{
-        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, create_psx_iso,
+        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, create_psx_iso, find_child,
         fix_psx_text_size, has_matching, is_disk_image, is_gba_rom, is_psx_exe,
         is_self_booting_dir, parse_m3u, prepare_psx_disc, psx_needs_text_fix, read_header,
         scan_release_dir, sort_disks, unpack_if_packed, unpack_into, unpack_to_temp,
@@ -507,8 +507,10 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     }
 
     // Mixed types in directory, add every valid file one by one
-    // Amiga: Always add parent dir (to get data files)
-    if mixed || ((!disk_images) && found_type != SystemType::Amiga) {
+    // Amiga and Atari ST: Always add parent dir (to get data files) — both
+    // cores can mount the whole directory as a hard drive.
+    let whole_dir = matches!(found_type, SystemType::Amiga | SystemType::AtariST);
+    if mixed || ((!disk_images) && !whole_dir) {
         //out.extend(files.iter().map(|f| handle_file(f)?));
         for f in files {
             out.push(collect_file(&f)?);
@@ -683,6 +685,188 @@ fn only_file(dir: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The extensions TOS starts a program under. A release names what the user is
+/// meant to run this way and leaves its payload something else (`.BIN`, `.DAT`),
+/// even when that payload is a GEMDOS executable in its own right.
+const ATARI_PROGRAM_EXTS: [&str; 4] = ["prg", "tos", "ttp", "app"];
+
+/// True if `path` is named the way a program meant to be started is.
+fn has_atari_program_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ATARI_PROGRAM_EXTS.iter().any(|w| e.eq_ignore_ascii_case(w)))
+}
+
+/// The Atari program a release directory boots, searching the top level before
+/// descending — a demo sitting next to its data files wins over anything buried
+/// deeper.
+///
+/// Extension decides first: a `.tos`/`.prg`/`.ttp` beats an executable named
+/// anything else, however small. A multi-part demo is a tiny loader next to huge
+/// `.bin` parts it Pexecs after reading their data files (More Or Less Zero:
+/// `molz.tos` is 651 bytes, `part1.bin` 652K) — start the part directly and it
+/// runs on data that was never loaded.
+///
+/// Within a level the biggest program wins: a release ships the demo alongside a
+/// readme viewer, an installer or the disk-swap stubs of its floppy version, and
+/// the demo itself dwarfs all of them. Name breaks a tie, so the pick is stable.
+/// Name the file with a `boot_file` tag to decide it outright.
+fn find_atari_program(dir: &Path) -> Option<PathBuf> {
+    let mut files = vec![];
+    let mut dirs = vec![];
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() { &mut dirs } else { &mut files }.push(path);
+    }
+    let mut programs: Vec<(bool, u64, PathBuf)> = files
+        .into_iter()
+        .filter(|f| is_atari_program(f))
+        .map(|f| {
+            let len = fs::metadata(&f).map_or(0, |m| m.len());
+            (has_atari_program_ext(&f), len, f)
+        })
+        .collect();
+    programs.sort_by(|(a_ext, a_len, a), (b_ext, b_len, b)| {
+        b_ext
+            .cmp(a_ext)
+            .then_with(|| b_len.cmp(a_len))
+            .then_with(|| a.cmp(b))
+    });
+    if let Some((_, _, prg)) = programs.into_iter().next() {
+        return Some(prg);
+    }
+    dirs.sort();
+    dirs.iter().find_map(|d| find_atari_program(d))
+}
+
+/// Compare a file name the way the Atari and Amiga file systems a release comes
+/// off would: case doesn't matter, and neither does which slash separates the
+/// path (`AUTO\DEMO.PRG` is `auto/demo.prg`).
+fn name_key(name: &str) -> String {
+    name.replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// Find the file a `boot_file` tag names under `dir`, matching either its bare
+/// name (`TLKTLK2.PRG`) or its path relative to the release
+/// (`TALKTALK.2/TLKTLK2.PRG`). Shallower matches win, so the name alone is
+/// usually enough.
+fn find_boot_file(dir: &Path, base: &Path, wanted: &str) -> Option<PathBuf> {
+    let mut entries: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    entries.sort();
+    for path in entries.iter().filter(|p| !p.is_dir()) {
+        let rel = path.strip_prefix(base).unwrap_or(path);
+        let name = path.file_name().unwrap_or_default();
+        if name_key(&rel.to_string_lossy()) == wanted || name_key(&name.to_string_lossy()) == wanted
+        {
+            return Some(path.clone());
+        }
+    }
+    entries
+        .iter()
+        .filter(|p| p.is_dir())
+        .find_map(|d| find_boot_file(d, base, wanted))
+}
+
+/// The file a `boot_file` tag names, looked up in the release directory. An
+/// unresolvable name is warned about rather than failed on — the release still
+/// loads the way it would without the tag.
+fn tagged_boot_file(dir: &Path, tags: &HashMap<String, String>) -> Option<PathBuf> {
+    let name = tags.get("boot_file")?;
+    let found = find_boot_file(dir, dir, &name_key(name));
+    if found.is_none() {
+        warn!("boot_file {name:?} not found in {dir:?}");
+    }
+    found
+}
+
+/// The Atari program `dir` should be booted from as a GEMDOS hard drive, if
+/// there is one. A directory that boils down to the program alone is left to
+/// [`build_atari_auto_disk`] instead: a lone executable boots from a floppy the
+/// way it was released, and that is what old demos expect.
+fn atari_hard_drive(dir: &Path) -> Option<PathBuf> {
+    if only_file(dir).is_some() {
+        return None;
+    }
+    find_atari_program(dir)
+}
+
+/// Name given to the program copied into the drive's `AUTO` folder. TOS only
+/// auto-starts `.PRG` files from there, so a `.TOS` or `.TTP` demo has to be
+/// renamed to run — and 8.3 keeps GEMDOS from mangling the name.
+const AUTO_PROGRAM: &str = "STARTME.PRG";
+
+/// Where a release's own `AUTO` folder is moved when we start the program
+/// ourselves. Its contents are kept, just not under the one name TOS runs on
+/// boot.
+const DISABLED_AUTO: &str = "NOAUTO";
+
+/// `dir/name`, numbered (`NOAUTO2`, `NOAUTO3`, ...) until nothing of that name
+/// is there already.
+fn free_name(dir: &Path, name: &str) -> PathBuf {
+    let mut path = dir.join(name);
+    for n in 2.. {
+        if !path.exists() {
+            break;
+        }
+        path = dir.join(format!("{name}{n}"));
+    }
+    path
+}
+
+/// Stage `prg` and everything next to it as an Atari ST hard drive for hatari,
+/// which mounts a host directory as GEMDOS drive C: and boots from it. Returns
+/// the path to hand the core and the temp directory holding it, which the
+/// caller has to keep alive for as long as the drive is needed.
+///
+/// The libretro core takes the drive as a `.gem` file whose name, minus that
+/// extension, is the directory to mount — so the two are created side by side,
+/// the `.gem` itself empty.
+///
+/// Booting from the drive runs `C:\AUTO\*.PRG`, so that is where `prg` goes. A
+/// release that keeps its own program in `AUTO` already starts itself and is
+/// left alone; any *other* `AUTO` folder is moved aside first, because what a
+/// hard drive release carries there is usually the disk-swap stubs of its floppy
+/// version, which stop the boot dead ("insert disk 1 and reboot").
+///
+/// Everything is copied into the temp directory rather than mounted in place:
+/// the drive is writable from the emulator, and the `AUTO` folder is ours to
+/// rearrange — neither is something to do to a directory of the user's own.
+fn build_gemdos_drive(prg: &Path) -> Result<(PathBuf, TempDir)> {
+    let mut root = prg.parent().unwrap_or(Path::new("."));
+    // A program already in an `AUTO` folder is started by the folder above it.
+    let in_auto = root
+        .file_name()
+        .is_some_and(|n| n.eq_ignore_ascii_case("auto"));
+    if in_auto && let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let temp = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+    let drive = temp.path().join("harddrive");
+    copy_dir_all(root, &drive)?;
+
+    if !in_auto {
+        if let Some(auto) = find_child(&drive, "auto").filter(|a| a.is_dir()) {
+            let aside = free_name(&drive, DISABLED_AUTO);
+            debug!("FMT: moving the release's AUTO folder aside to {aside:?}");
+            fs::rename(&auto, &aside)?;
+        }
+        let auto = drive.join("AUTO");
+        fs::create_dir_all(&auto)?;
+        fs::copy(prg, auto.join(AUTO_PROGRAM))?;
+    }
+
+    let gem = temp.path().join("harddrive.gem");
+    fs::write(&gem, [])?;
+    Ok((gem, temp))
+}
+
 /// Prepare a file for loading into emulator. Unpack archives, parse
 /// binaries for more info, convert formats as needed.
 /// Also need to determine system_type if not done previously
@@ -751,7 +935,30 @@ pub fn prepare_file(emu_file: &EmuFile, in_tags: &HashMap<String, String>) -> Re
                 system_type = scan.system_type;
             }
             let mut files = scan.disk_images;
-            if files.len() > 1 {
+            // A `boot_file` tag names what to start and overrides the scan,
+            // wherever in the release the file sits.
+            let boot = tagged_boot_file(&path, &tags);
+            let program = match &boot {
+                Some(f) => is_atari_program(f).then(|| f.clone()),
+                None if files.is_empty() => atari_hard_drive(&path),
+                None => None,
+            };
+            if let Some(prg) = program {
+                debug!("FMT: Atari GEMDOS hard drive booting {prg:?}");
+                let (gem, dir) = build_gemdos_drive(&prg)?;
+                path = gem;
+                temp_dir = Some(dir);
+                system_type = SystemType::AtariST;
+                // A release shipped on a hard drive is from the late ST era and
+                // outgrew the floppy machine: nothing that needs a hard drive
+                // ran on a 1 MB ST. `--ste`/`--xmem` and any tag still win.
+                for (key, val) in [("hatari_machinetype", "ste"), ("hatari_ramsize", "4")] {
+                    tags.entry(key.into()).or_insert_with(|| val.into());
+                }
+            } else if let Some(f) = boot {
+                path = f;
+                copy_all = true;
+            } else if files.len() > 1 {
                 sort_disks(&mut files);
                 let (m3u, dir) = build_m3u(&files)?;
                 path = m3u;
@@ -804,7 +1011,7 @@ pub fn prepare_file(emu_file: &EmuFile, in_tags: &HashMap<String, String>) -> Re
         // Only the header is examined below — the GBA check reaches furthest
         // into it; the Amiga branch works off `path`, not the contents.
         let data = read_header(&path, GBA_HEADER_LEN)?;
-        if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
+        if data.starts_with(&GEMDOS_MAGIC) {
             // GEMDOS executable: wrap it in a bootable Atari ST floppy image
             // with the program in the AUTO folder so it runs on boot. The whole
             // executable goes on the disk, not just the header read above.
@@ -1049,6 +1256,280 @@ mod tests {
         assert_eq!(wf.system_type, SystemType::AtariST);
         assert_eq!(wf.path.extension().unwrap(), "st");
         assert!(wf.temp_dir.is_some());
+    }
+
+    /// A release directory holding an ST program next to its data is mounted as
+    /// a GEMDOS hard drive: the whole tree is copied to the drive and the
+    /// program is copied into `AUTO` so TOS starts it when it boots from C:.
+    #[test]
+    fn atari_dir() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(
+            root.join("demos/natrium.prg"),
+            dir.path().join("NATRIUM.PRG"),
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join("DATA")).unwrap();
+        fs::write(dir.path().join("DATA/MUSIC.SND"), b"data").unwrap();
+
+        let wf = prepare_file(
+            &EmuFile {
+                path: dir.path().into(),
+                ..Default::default()
+            },
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(wf.system_type, SystemType::AtariST);
+        assert_eq!(wf.path.extension().unwrap(), "gem");
+        // The core mounts the directory named by the `.gem` file minus that
+        // extension, so the two have to sit side by side.
+        let drive = wf.path.with_extension("");
+        assert!(drive.join("AUTO/STARTME.PRG").is_file());
+        assert!(drive.join("NATRIUM.PRG").is_file());
+        assert!(drive.join("DATA/MUSIC.SND").is_file());
+        // The user's own directory is left exactly as it was.
+        assert!(!dir.path().join("AUTO").exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    /// Build a release directory: `files` are `(relative path, size)`, each
+    /// written as a GEMDOS program of that size, and every other entry as data.
+    /// A name is a program when it is named like one (`.prg`, `.tos`, ...) or is
+    /// marked with a leading `*`, which a release uses for payloads it Pexecs
+    /// under a data-looking name (`*PART1.BIN`). The marker isn't part of the
+    /// file name.
+    fn release_dir(files: &[(&str, usize)]) -> TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, size) in files {
+            let forced = name.strip_prefix('*');
+            let name = forced.unwrap_or(name);
+            let path = dir.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut data = if forced.is_some() || has_atari_program_ext(Path::new(name)) {
+                GEMDOS_MAGIC.to_vec()
+            } else {
+                b"da".to_vec()
+            };
+            data.resize(*size, 0);
+            fs::write(&path, data).unwrap();
+        }
+        dir
+    }
+
+    /// Prepare a directory the way the frontend does, with `tags` applied.
+    fn prepare_dir(dir: &Path, tags: &[(&str, &str)]) -> WorkingFile {
+        let tags = tags
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        prepare_file(
+            &EmuFile {
+                path: dir.into(),
+                ..Default::default()
+            },
+            &tags,
+        )
+        .unwrap()
+    }
+
+    /// The demo dwarfs the readme viewer and installer a release ships next to
+    /// it, so size — not alphabetical order — decides what is started.
+    #[test]
+    fn atari_biggest_program_wins() {
+        let dir = release_dir(&[
+            ("DEMO.PRG", 120_000),
+            ("AREADME.PRG", 40_000),
+            ("INSTALL.PRG", 8_000),
+            ("DATA/MUSIC.SND", 4),
+        ]);
+        assert_eq!(
+            find_atari_program(dir.path()).unwrap(),
+            dir.path().join("DEMO.PRG")
+        );
+    }
+
+    /// A multi-part demo is a tiny loader that reads the data files and Pexecs
+    /// its parts, which are GEMDOS executables too — and far bigger. Extension
+    /// beats size, so the loader is what starts.
+    #[test]
+    fn atari_program_extension_beats_size() {
+        let dir = release_dir(&[
+            ("MOLZ.TOS", 651),
+            ("*PART1.BIN", 667_822),
+            ("*PART2.BIN", 205_821),
+            ("PART1.MUS", 618_487),
+        ]);
+        assert_eq!(
+            find_atari_program(dir.path()).unwrap(),
+            dir.path().join("MOLZ.TOS")
+        );
+    }
+
+    /// A hard drive release carries the `AUTO` folder of its floppy version,
+    /// full of disk-swap stubs that stop the boot. Since the program we start
+    /// isn't one of them, the folder is moved aside — kept, but no longer the
+    /// name TOS runs on boot — and our own starter takes its place.
+    #[test]
+    fn atari_dir_leftover_auto_moved_aside() {
+        let dir = release_dir(&[
+            ("TLKTLK2.PRG", 120_000),
+            ("TLK2READ.PRG", 40_000),
+            ("AUTO/DISK2.PRG", 3_500),
+            ("AUTO/LOADER.PRG", 5_000),
+            ("TLKTLK2.D8A/TLK2_100.D8A", 1_766),
+        ]);
+
+        let wf = prepare_dir(dir.path(), &[]);
+        assert_eq!(wf.system_type, SystemType::AtariST);
+        let drive = wf.path.with_extension("");
+        assert!(drive.join("AUTO/STARTME.PRG").is_file());
+        assert!(
+            !drive.join("AUTO/DISK2.PRG").exists(),
+            "stub still auto-runs"
+        );
+        // Nothing is lost, it just isn't called AUTO any more.
+        assert!(drive.join("NOAUTO/DISK2.PRG").is_file());
+        assert!(drive.join("NOAUTO/LOADER.PRG").is_file());
+        // The biggest program is the one that got copied in.
+        assert_eq!(
+            fs::metadata(drive.join("AUTO/STARTME.PRG")).unwrap().len(),
+            120_000
+        );
+        // A hard drive release gets the late-era machine it was made for.
+        assert_eq!(wf.settings.get("hatari_machinetype").unwrap(), "ste");
+        assert_eq!(wf.settings.get("hatari_ramsize").unwrap(), "4");
+    }
+
+    /// `--ste`/`--xmem` and any explicit tag win over the hard drive defaults.
+    #[test]
+    fn atari_dir_machine_tags_win() {
+        let dir = release_dir(&[("DEMO.PRG", 120_000), ("DATA.BIN", 4)]);
+        let wf = prepare_dir(
+            dir.path(),
+            &[("hatari_machinetype", "st"), ("hatari_ramsize", "8")],
+        );
+        assert_eq!(wf.settings.get("hatari_machinetype").unwrap(), "st");
+        assert_eq!(wf.settings.get("hatari_ramsize").unwrap(), "8");
+    }
+
+    /// `boot_file` names the program to start, whatever the size heuristic
+    /// would have picked. The name is matched the way the Atari file system
+    /// would: case doesn't matter, and a path may be given to disambiguate.
+    #[test]
+    fn atari_boot_file_tag() {
+        let files = [
+            ("DEMO.PRG", 120_000),
+            ("MENU.PRG", 40_000),
+            ("EXTRA/BONUS.PRG", 20_000),
+        ];
+        for name in ["MENU.PRG", "menu.prg", "EXTRA\\BONUS.PRG"] {
+            let dir = release_dir(&files);
+            let wf = prepare_dir(dir.path(), &[("boot_file", name)]);
+            let started = fs::metadata(wf.path.with_extension("").join("AUTO/STARTME.PRG"))
+                .unwrap()
+                .len();
+            let expected = if name.to_ascii_lowercase().contains("bonus") {
+                20_000
+            } else {
+                40_000
+            };
+            assert_eq!(started, expected, "boot_file {name:?}");
+        }
+    }
+
+    /// A `boot_file` naming something that isn't there is a warning, not a
+    /// failure: the release loads the way it would without the tag.
+    #[test]
+    fn atari_boot_file_missing() {
+        let dir = release_dir(&[("DEMO.PRG", 120_000), ("DATA.BIN", 4)]);
+        let wf = prepare_dir(dir.path(), &[("boot_file", "NOSUCH.PRG")]);
+        assert_eq!(wf.system_type, SystemType::AtariST);
+        assert_eq!(
+            fs::metadata(wf.path.with_extension("").join("AUTO/STARTME.PRG"))
+                .unwrap()
+                .len(),
+            120_000
+        );
+    }
+
+    /// A release that brings its own `AUTO` folder starts what is already in
+    /// there, and the drive is the directory holding that folder — not the
+    /// folder itself.
+    #[test]
+    fn atari_dir_with_auto_folder() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("auto")).unwrap();
+        fs::copy(
+            root.join("demos/natrium.prg"),
+            dir.path().join("auto/DEMO.PRG"),
+        )
+        .unwrap();
+        fs::write(dir.path().join("MUSIC.SND"), b"data").unwrap();
+
+        let wf = prepare_file(
+            &EmuFile {
+                path: dir.path().into(),
+                ..Default::default()
+            },
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(wf.system_type, SystemType::AtariST);
+        let drive = wf.path.with_extension("");
+        assert!(drive.join("MUSIC.SND").is_file());
+        assert!(drive.join("auto/DEMO.PRG").is_file());
+        assert!(!drive.join("auto/STARTME.PRG").exists());
+    }
+
+    /// A directory holding nothing but the program keeps taking the floppy
+    /// route — a bootable disk is what a lone ST executable was released as.
+    #[test]
+    fn atari_single_program_dir() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(
+            root.join("demos/natrium.prg"),
+            dir.path().join("NATRIUM.PRG"),
+        )
+        .unwrap();
+
+        let wf = prepare_file(
+            &EmuFile {
+                path: dir.path().into(),
+                ..Default::default()
+            },
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(wf.system_type, SystemType::AtariST);
+        assert_eq!(wf.path.extension().unwrap(), "st");
+    }
+
+    /// An ST release directory is collected as the directory itself, the way an
+    /// Amiga one is, so the data files next to the program come along.
+    #[test]
+    fn collects_atari_dir_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let release = dir.path().join("release");
+        fs::create_dir(&release).unwrap();
+        fs::copy(root.join("demos/natrium.prg"), release.join("NATRIUM.PRG")).unwrap();
+        fs::copy(root.join("demos/natrium.prg"), release.join("PART2.PRG")).unwrap();
+
+        let mut out = vec![];
+        collect_files(dir.path(), &mut out, false).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(local_path(&out[0].path), release);
+
+        // `many` splits the same directory back into its programs.
+        let mut out = vec![];
+        collect_files(dir.path(), &mut out, true).unwrap();
+        assert_eq!(out.len(), 2);
     }
 
     /// The playlist's `#EXTINF` tags become emulator settings.
@@ -1531,3 +2012,4 @@ mod tests {
         assert_eq!(wf.path, local_path(&out[0].path));
     }
 }
+
