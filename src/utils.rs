@@ -4,6 +4,7 @@ use tracing::{debug, info, warn};
 use std::{
     collections::HashMap,
     fs,
+    io::BufReader,
     path::{Path, PathBuf},
 };
 
@@ -1001,6 +1002,17 @@ pub fn unpack_to_temp(path: &Path) -> Result<Option<TempDir>> {
     }
 }
 
+pub fn is_archive(path: &Path) -> Result<bool> {
+    let mut file = BufReader::new(fs::File::open(path)?);
+    let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
+        return Ok(false);
+    };
+    if !is_supported_archive(format) {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// Extract the archive at `path` into the existing directory `target_dir`,
 /// which is written into directly — see [`unpack_to_temp`] for the variant that
 /// makes a temp directory of its own. Returns `false`, having written nothing,
@@ -1123,6 +1135,8 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
             system_type = t;
         }
     }
+
+    sort_disks(&mut disk_images);
 
     Ok(ScannedDir {
         disk_images,

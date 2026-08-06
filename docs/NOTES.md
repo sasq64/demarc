@@ -1,10 +1,41 @@
-TAGS
 
-Arg tags + system default tags => tags
+## NEW PROCESS
 
-prepare(tags) -> WorkFile with tags
+`collect_files() -> Vec<EmuFile>` as usual
+
+but ask systems for leaf dirs without m3u to know if whole dir
+or individual files should be added.
 
 
+
+### Loading EmuFile
+
+non system prepare:
+
+Download
+Unpack archives
+
+
+Pass EmuFile to all Systems until matched
+
+Always single file or directory
+
+
+
+
+
+can load -> WorkFile
+
+can create Backend
+
+`Load <WorkFile>`
+
+- Supported file: Direct load
+- Directory
+  * Maybe: convert files 
+  - First supported file
+  - Collect disk images -> m3u
+  - Load directory
 
 
  

@@ -93,7 +93,7 @@ impl FileSource {
     /// Ensure the data is available locally — downloading the URL (cached, see
     /// [`fetch_url`]) the first time — and return the resulting local path. A
     /// [`FileSource::Path`] is returned as-is.
-    fn resolve(&mut self) -> Result<&PathBuf> {
+    pub fn resolve(&mut self) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory

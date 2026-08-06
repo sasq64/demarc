@@ -30,6 +30,7 @@ mod image_emu;
 mod libloader;
 mod load_error;
 mod media_keys;
+mod newsys;
 mod post_process;
 #[cfg(feature = "profile")]
 mod profiling;
