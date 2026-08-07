@@ -7,6 +7,12 @@ but ask systems for leaf dirs without m3u to know if whole dir
 or individual files should be added.
 
 
+### Loading FileSource
+
+* If source is list of URLs, download all to temp dir
+
+* `
+
 
 ### Loading EmuFile
 
@@ -36,6 +42,10 @@ can create Backend
   - First supported file
   - Collect disk images -> m3u
   - Load directory
+
+Iterate dir -> supported files.
+Disk images -> m3u, else first supported
+  new
 
 
  

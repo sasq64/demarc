@@ -40,6 +40,7 @@ mod speed_test;
 mod systems;
 mod text_input;
 mod utils;
+mod workfile;
 
 use commands::CommandPlugin;
 use frontend::{RetroPlugin, system_dir};

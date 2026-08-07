@@ -1,8 +1,18 @@
+use anyhow::Result;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use tempfile::TempDir;
+
+use crate::utils::copy_dir_all;
 
 /// Used to pass around files that can be temporary.
 pub struct WorkFile {
-    path: PathBuf,
-    temp_dir: Option<TempDir>,
+    pub path: PathBuf,
+    // If Some, must be parent of PathBuf or PathBuf
+    pub temp_dir: Option<TempDir>,
 }
 
 impl WorkFile {
@@ -13,8 +23,34 @@ impl WorkFile {
         }
     }
 
+    pub fn new_dir() -> Result<Self> {
+        let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+        Ok(Self {
+            path: temp_dir.path().into(),
+            temp_dir: Some(temp_dir),
+        })
+    }
+
     pub fn as_path(&self) -> &Path {
         &self.path
+    }
+
+    // Make sure 'path' is in a temp dir and can be modified
+    pub fn make_temp(&mut self) -> Result<()> {
+        if self.temp_dir.is_none() {
+            let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+            let dir = temp_dir.path();
+            if self.path.is_dir() {
+                copy_dir_all(&self.path, &dir)?;
+                self.path = dir.to_path_buf();
+            } else {
+                let target = dir.join(self.path.file_name().unwrap_or_default());
+                fs::copy(&self.path, &target)?;
+                self.path = target;
+            }
+            self.temp_dir = Some(temp_dir);
+        }
+        Ok(())
     }
 
     /// Point at another path while keeping the same temp dir alive, e.g. after
@@ -114,4 +150,3 @@ impl From<WorkFile> for PathBuf {
         work_file.path
     }
 }
-

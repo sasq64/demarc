@@ -1002,17 +1002,6 @@ pub fn unpack_to_temp(path: &Path) -> Result<Option<TempDir>> {
     }
 }
 
-pub fn is_archive(path: &Path) -> Result<bool> {
-    let mut file = BufReader::new(fs::File::open(path)?);
-    let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
-        return Ok(false);
-    };
-    if !is_supported_archive(format) {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
 /// Extract the archive at `path` into the existing directory `target_dir`,
 /// which is written into directly — see [`unpack_to_temp`] for the variant that
 /// makes a temp directory of its own. Returns `false`, having written nothing,
@@ -1089,6 +1078,7 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Re
 }
 
 /// Result of recursively scanning a release directory.
+#[derive(Debug, Clone)]
 pub struct ScannedDir {
     /// Disk images (`.d64`, `.adf`, `.atr`) found anywhere under the directory.
     pub disk_images: Vec<PathBuf>,
@@ -1108,6 +1098,7 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
 
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
+        println!("{path:?}");
 
         if path.is_dir() {
             let sub = scan_release_dir(&path)?;
