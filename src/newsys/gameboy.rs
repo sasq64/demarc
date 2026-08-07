@@ -10,4 +10,7 @@ impl System for GameboySystem {
     fn core_name(&self) -> &'static str {
         CORE_NAME_GAMEBOY
     }
+    fn name(&self) -> &'static str {
+        "Gameboy"
+    }
 }

@@ -1,0 +1,59 @@
+
+        THIS PACKAGE COMES WITH ABSOLUTELY NO WARRANTY OF ANY KIND, EITHER
+        EXPRESS OR IMPLIED, STATUTORY OR OTHERWISE.
+        THE ENTIRE RISK AS TO USE, RESULTS AND PERFORMANCE OF THE PACKAGE IS
+        ASSUMED BY YOU AND IF THE PACKAGE SHOULD PROVE TO BE DEFECTIVE, YOU
+        ASSUME THE ENTIRE COST OF ALL NECESSARY SERVICING, REPAIR OR OTHER
+        REMEDIATION.
+        UNDER NO CIRCUMSTANCES, CAN THE AUTHOR BE HELD RESPONSIBLE FOR ANY
+        DAMAGE CAUSED IN ANY USUAL, SPECIAL, OR ACCIDENTAL WAY, ALSO IF THE
+        OWNER OR A THIRD PARTY HAS BEEN POINTED AT SUCH POSSIBILITIES OF
+        DAMAGE.
+
+
+        That install applies to "Nexus 7" © 1994 Andromeda.
+
+
+        That install requires WHDLoad 14+ and DIC to be in the path.
+        Both can be found in the WHDLoad package.
+        To install from a different drive than DF0: select Expert as
+        installation mode.
+
+
+        You need 792 KB ChipMem and 788 KB OtherMem.
+        You need AGA chipset and at least a 68020 processor.
+        You can quit the demo by pressing F10 (key can be changed with
+        Tooltype "QuitKey=")
+
+        Version 1.1 (25.05.2001) by Psygore:
+        - Use less ChipMem
+        - SuperScalar, BranchCache, StoreBuffer enabled (some parts speed up)
+        - White line bug fixed in SplitScreen part
+        - Invalid copper-list fixed (SnoopAGA)
+        - Nice NewIcon (by Frank) included
+
+        Version 1.0 (12.02.2001) by Psygore:
+        - Uses fast memory and caches
+        - Full speed on 68060
+        - Decruncher routine relocated in fast memory
+        - Quit with F10 or click on LMB
+
+
+        "Nexus 7" was 1st at The Party 4, in the end of december 1994.
+
+        Enjoy this great production from Andromeda.
+
+
+        If you have problems with this installation please report them via
+        the Bug-Report-Form which can be accessed via
+                http://www.whdload.org/
+
+        or via mail to:
+                p.muhlheim@free.fr
+
+        for full WHDLoad package and other installs refer to:
+                http://www.whdload.org/
+        or      aminet:dev/misc/whdload#?
+        and     aminet:game/patch/
+
+

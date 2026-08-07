@@ -586,13 +586,7 @@ fn run_retro(
             let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
-        if !emu.run(&time) {
-            // TODO: Better warp-end detection
-            writer.write(SetHudText {
-                location: HudLocation::TopRight,
-                ..Default::default()
-            });
-        }
+        emu.run(&time);
 
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;

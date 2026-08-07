@@ -172,3 +172,42 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     }
     Ok(true)
 }
+/// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
+/// file is shorter.
+pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
+    read_at(path, 0, len)
+}
+
+/// Read up to `len` bytes of `path` starting at `offset`. Returns fewer bytes
+/// if the file ends first.
+fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut buf = vec![0u8; len];
+    let mut file = fs::File::open(path)?;
+    if offset != 0 {
+        file.seek(SeekFrom::Start(offset))?;
+    }
+    let mut got = 0;
+    while got < len {
+        match file.read(&mut buf[got..])? {
+            0 => break,
+            n => got += n,
+        }
+    }
+    buf.truncate(got);
+    Ok(buf)
+}
+
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}

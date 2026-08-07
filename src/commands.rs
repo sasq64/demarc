@@ -453,7 +453,7 @@ fn handle_cmd(
                         emu.skip(10 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1500),
+                            duration: Duration::from_secs(1),
                             text,
                             ..Default::default()
                         });
@@ -463,7 +463,7 @@ fn handle_cmd(
                         emu.skip(30 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1500),
+                            duration: Duration::from_secs(1),
                             text,
                             ..Default::default()
                         });

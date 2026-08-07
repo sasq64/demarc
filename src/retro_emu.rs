@@ -6,9 +6,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use libloading::Library;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 unsafe extern "C" {
     fn demarc_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
@@ -95,6 +96,16 @@ pub trait Backend {
     fn get_number_of_disks(&mut self) -> u32;
     /// Step the emulator by one presented frame
     fn run(&mut self) -> bool;
+
+    fn run_frames(&mut self, count: u32) {
+        self.skip_frames(count);
+        for i in 0..count {
+            while !self.run() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
     fn reset(&mut self);
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
     fn add_mouse_motion(&mut self, dx: f32, dy: f32);
@@ -738,6 +749,7 @@ impl RetroCoreDirect {
             // friends do it later) and whenever it reads them back.
             for (key, val) in settings.iter() {
                 retro_emu.set_var(key, val);
+                println!("{key} = {val}");
             }
 
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
@@ -1147,15 +1159,15 @@ fn worker_loop(
         frames.fetch_add(1, Ordering::Relaxed);
         if core.skip_frames > 0 {
             core.skip_frames -= 1;
-            if core.skip_frames == 0 {
-                core.with_audio(|_| {});
-                let update = RetroUpdate {
-                    ..Default::default()
-                };
-                if update_tx.send(update).is_err() {
-                    return; // main side gone
-                }
-            }
+            // if core.skip_frames == 0 {
+            //     core.with_audio(|_| {});
+            //     let update = RetroUpdate {
+            //         ..Default::default()
+            //     };
+            //     if update_tx.send(update).is_err() {
+            //         return; // main side gone
+            //     }
+            // }
             continue;
         }
 
@@ -1219,11 +1231,11 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
 impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
-            if update.frame.is_empty() && update.audio.is_empty() {
-                info!("GOT 0 UPDATE");
-                self.audio.clear();
-                return false;
-            }
+            // if update.frame.is_empty() && update.audio.is_empty() {
+            //     info!("GOT 0 UPDATE");
+            //     self.audio.clear();
+            //     return false;
+            // }
             self.frame = update.frame;
             self.last_hash = self.frame_hash;
             self.frame_hash = update.frame_hash;
@@ -1235,10 +1247,11 @@ impl Backend for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
+            true
         } else {
-            warn!("Starving");
+            trace!("Starving");
+            false
         }
-        true
     }
 
     fn is_idle(&self) -> bool {

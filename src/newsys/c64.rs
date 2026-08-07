@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::{collections::HashMap, fs, path::Path};
+use std::{fs, path::Path};
 use tracing::{info, warn};
 
 use super::utils::{build_m3u, get_disk_images, has_extension, unpack_into};
@@ -48,7 +48,12 @@ impl System for C64System {
     fn core_name(&self) -> &'static str {
         CORE_NAME_VICE_64SC
     }
-    fn load(&self, file: &mut WorkFile, _tags: &HashMap<String, String>) -> Result<bool> {
+
+    fn name(&self) -> &'static str {
+        "C64"
+    }
+
+    fn load(&self, file: &mut WorkFile) -> Result<bool> {
         println!("LOAD C64: {file:?}");
         if file.is_dir() || has_extension(file, "t64") {
             file.make_temp()?;
@@ -63,6 +68,11 @@ impl System for C64System {
                     file.path = path;
                     return Ok(true);
                 }
+                return Ok(false);
+            }
+        } else {
+            if !self.can_load(file) {
+                return Ok(false);
             }
         }
         Ok(true)

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -13,6 +14,7 @@ pub struct WorkFile {
     pub path: PathBuf,
     // If Some, must be parent of PathBuf or PathBuf
     pub temp_dir: Option<TempDir>,
+    pub tags: HashMap<String, String>,
 }
 
 impl WorkFile {
@@ -20,6 +22,7 @@ impl WorkFile {
         Self {
             path: path.into(),
             temp_dir: None,
+            tags: HashMap::new(),
         }
     }
 
@@ -28,7 +31,20 @@ impl WorkFile {
         Ok(Self {
             path: temp_dir.path().into(),
             temp_dir: Some(temp_dir),
+            tags: HashMap::new(),
         })
+    }
+
+    pub fn set_tag(&mut self, key: &str, val: impl Into<String>) {
+        self.tags.insert(key.into(), val.into());
+    }
+
+    pub fn has_tag(&self, key: &str) -> bool {
+        self.tags.contains_key(&key.to_string())
+    }
+
+    pub fn get_tag(&self, arg: &str, def: impl Into<String>) -> String {
+        self.tags.get(arg).map_or(def.into(), |s| s.to_string())
     }
 
     pub fn as_path(&self) -> &Path {
