@@ -1230,7 +1230,7 @@ impl Backend for RetroCoreThreaded {
             self.frame_width = update.width;
             self.frame_height = update.height;
             self.last_sum = self.audio_sum;
-            self.audio_sum = update.audio.iter().map(|a| (*a).abs() as i32).sum();
+            self.audio_sum = update.audio.iter().map(|a| (*a as i32).abs()).sum();
             self.audio.extend_from_slice(&update.audio);
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
