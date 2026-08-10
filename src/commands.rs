@@ -261,14 +261,6 @@ impl FuzzySource for FilePickerSource {
     }
 }
 
-/// Width of the file picker, in pixels.
-const PICKER_WIDTH: f32 = 800.0;
-/// How many characters of a URL fit on one line of the picker's info field at
-/// [`PICKER_WIDTH`]. Its 18px font averages a little under half that per
-/// character for URL-ish text; the estimate is deliberately conservative, since
-/// the point of [`trunc_url`] is that the URL never wraps onto a second line.
-const MAX_URL_CHARS: usize = 70;
-
 /// Shorten `url` to at most `max` characters by dropping path components from
 /// the left, keeping the two parts that identify it — the host it came from and
 /// the file name at the end. Everything dropped is replaced by a single `...`:
