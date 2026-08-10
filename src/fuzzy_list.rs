@@ -23,7 +23,7 @@ use crate::text_input::TextInput;
 
 /// The number of results fetched from the source per query. A source may hold
 /// far more items than can be shown; this caps how many we pull and render.
-const DEFAULT_MAX_RESULTS: usize = 256;
+const DEFAULT_MAX_RESULTS: usize = 500_000;
 
 /// Inner [`TextList`] ids are offset by this so they never collide with the
 /// plain `TextList`s used elsewhere (which use small ids like 0/1). `FuzzyList`
