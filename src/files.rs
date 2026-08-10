@@ -296,9 +296,9 @@ fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
     }
 }
 
-/// Which db lines to keep, as regexes matched against the raw line before it is
-/// parsed — the same thing piping the db through `grep`/`grep -v` would do, so
-/// a pattern can pick on any field (`category:Demo`, `author:Fairlight`).
+/// Which db lines to keep, as regexes matched against the raw fields of a line
+/// before it is parsed, so a pattern can pick on any field (`category:Demo`,
+/// `author:Fairlight`).
 ///
 /// A line has to match *every* `include` pattern and must not match *any*
 /// `exclude` pattern, so repeating `-I` narrows the selection down while
@@ -312,9 +312,21 @@ pub struct DbFilter<'a> {
 
 impl DbFilter<'_> {
     fn keeps(&self, line: &str) -> bool {
-        self.include.iter().all(|re| re.is_match(line))
-            && !self.exclude.iter().any(|re| re.is_match(line))
+        self.include.iter().all(|re| matches_field(re, line))
+            && !self.exclude.iter().any(|re| matches_field(re, line))
     }
+}
+
+/// Whether `re` matches any one of the line's tab-separated fields.
+///
+/// Matching field by field rather than the whole line keeps a pattern inside
+/// the field it names: `author:.*Firefox` can't run past the end of `author:`
+/// and pick up a `Firefox` somewhere later on the line. It also lets `^` and
+/// `$` anchor to a field, so `^category:Demo$` picks plain demos while leaving
+/// `category:Demoshow` alone. The flip side is that a pattern can no longer
+/// span two fields at once.
+fn matches_field(re: &Regex, line: &str) -> bool {
+    line.split('\t').any(|field| re.is_match(field))
 }
 
 /// Load a db piped in on stdin, so entries can be filtered before they reach
@@ -1900,6 +1912,54 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4"]);
+    }
+
+    /// Each pattern is matched against one field at a time, so it can't run
+    /// past the end of the field it names into the next one, and `^`/`$`
+    /// anchor to a field rather than the whole line.
+    #[test]
+    fn collect_db_filter_matches_per_field() {
+        const DB: &str = "id:1\ttitle:Firefox Intro\tauthor:Zenith\tcategory:Demo\tdownload:http://example.com/a\n\
+             id:2\ttitle:Hoax\tauthor:Firefox\tcategory:Demoshow\tdownload:http://example.com/b\n";
+
+        let titles = |filter: &DbFilter| {
+            let mut out = vec![];
+            collect_db_text(DB, filter, &mut out);
+            out.iter()
+                .map(|f| f.game_info.title.clone())
+                .collect::<Vec<_>>()
+        };
+
+        // `.*` stops at the field end, so the `Firefox` in the title of the
+        // first line doesn't count as an author.
+        let include = [Regex::new("author:.*Firefox").unwrap()];
+        assert_eq!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            }),
+            ["Hoax"]
+        );
+
+        // `$` is the end of a field, so `Demoshow` isn't a `Demo`.
+        let include = [Regex::new("^category:Demo$").unwrap()];
+        assert_eq!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            }),
+            ["Firefox Intro"]
+        );
+
+        // A pattern spanning the tab between two fields matches nothing.
+        let include = [Regex::new("title:Hoax\tauthor:Firefox").unwrap()];
+        assert!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            })
+            .is_empty()
+        );
     }
 
     /// A `platform` field, or a `# Platform:` header covering the lines below

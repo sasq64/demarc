@@ -118,15 +118,17 @@ struct Args {
     #[arg(long)]
     slangp: Option<PathBuf>,
 
-    /// Only load db entries whose line matches this regex, e.g.
-    /// `-I '(Demo|Intro)'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; all patterns must match.
+    /// Only load db entries with a field matching this regex, e.g.
+    /// `-I '(Demo|Intro)'`. Matched against each field of the db line on its
+    /// own, so it can pick on any one of them but never spans two.
+    /// Repeatable; all patterns must match.
     #[arg(short = 'I', long, value_parser = Regex::new)]
     include: Vec<Regex>,
 
-    /// Exclude db entries matching regex. e.g.
-    /// `-X 'category:.*Disk'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; a match on any pattern excludes.
+    /// Exclude db entries with a field matching this regex, e.g.
+    /// `-X 'category:.*Disk'`. Matched against each field of the db line on
+    /// its own, so it can pick on any one of them but never spans two.
+    /// Repeatable; a match on any pattern excludes.
     #[arg(short = 'X', long, value_parser = Regex::new)]
     exclude: Vec<Regex>,
 
