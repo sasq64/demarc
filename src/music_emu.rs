@@ -152,6 +152,10 @@ pub struct MusicEmu {
     player: Box<dyn MusixPlayer>,
     /// Output rate the player generates at, in Hz.
     sample_rate: f64,
+    /// Channels the player itself produces. Mono output is doubled into stereo
+    /// in [`Self::fill_pending`]; everything else is taken as interleaved
+    /// stereo already.
+    channels: u32,
     /// Interleaved stereo samples rendered but not yet collected by
     /// [`with_audio`](Backend::with_audio).
     audio: Vec<i16>,
@@ -211,6 +215,8 @@ impl MusicEmu {
             meta(&mut player, "format")
         );
 
+        let channels = meta(&mut player, "channels").parse::<u32>().unwrap_or(2);
+
         // A player that reports no rate would make the frame length zero, and
         // the song would never advance; 44.1kHz is what every musix plugin
         // resamples to by default.
@@ -219,13 +225,14 @@ impl MusicEmu {
             hz => hz as f64,
         };
 
-        Ok(Self::from_player(player, sample_rate))
+        Ok(Self::from_player(player, sample_rate, channels))
     }
 
-    fn from_player(player: Box<dyn MusixPlayer>, sample_rate: f64) -> Self {
+    fn from_player(player: Box<dyn MusixPlayer>, sample_rate: f64, channels: u32) -> Self {
         Self {
             player,
             sample_rate,
+            channels,
             audio: Vec::new(),
             sample_debt: 0.0,
             pending: Vec::new(),
@@ -242,6 +249,10 @@ impl MusicEmu {
     /// from the player in [`CHUNK`]-sized blocks. Gives up for this call as
     /// soon as a read comes back empty, so a player that has stopped (or has
     /// not started) costs one read per frame rather than a spin.
+    ///
+    /// A mono player's samples are doubled into stereo pairs here, so that
+    /// everything downstream — the frame sizing, the scope, the audio sink —
+    /// only ever deals with interleaved stereo.
     fn fill_pending(&mut self, wanted: usize) {
         while self.pending.len() - self.pending_pos < wanted {
             // Drop what has already been handed out before growing the buffer,
@@ -254,6 +265,18 @@ impl MusicEmu {
             self.pending.resize(base + CHUNK, 0);
             let got = self.player.get_samples(&mut self.pending[base..]);
             self.pending.truncate(base + got);
+
+            if self.channels == 1 && got > 0 {
+                // Expand in place, back to front: sample `i` moves out to `2i`,
+                // which for every sample but the first is past the ones still
+                // waiting to be moved.
+                self.pending.resize(base + got * 2, 0);
+                for i in (0..got).rev() {
+                    let sample = self.pending[base + i];
+                    self.pending[base + i * 2] = sample;
+                    self.pending[base + i * 2 + 1] = sample;
+                }
+            }
 
             if got == 0 {
                 self.empty_reads += 1;
@@ -468,6 +491,14 @@ mod tests {
     }
 
     fn fake(empty_reads: u32, always_empty: bool) -> (MusicEmu, Arc<Mutex<Vec<usize>>>) {
+        fake_with_channels(empty_reads, always_empty, 2)
+    }
+
+    fn fake_with_channels(
+        empty_reads: u32,
+        always_empty: bool,
+        channels: u32,
+    ) -> (MusicEmu, Arc<Mutex<Vec<usize>>>) {
         let sizes = Arc::new(Mutex::new(Vec::new()));
         let player = FakePlayer {
             empty_reads,
@@ -476,7 +507,76 @@ mod tests {
             sizes: sizes.clone(),
             files: Vec::new(),
         };
-        (MusicEmu::from_player(Box::new(player), 44100.0), sizes)
+        (
+            MusicEmu::from_player(Box::new(player), 44100.0, channels),
+            sizes,
+        )
+    }
+
+    /// A mono player must still fill a stereo frame: each sample is doubled, so
+    /// a second of mono is a second of stereo rather than half of one.
+    #[test]
+    fn mono_output_is_doubled_into_stereo() {
+        // A ramp, so a duplicated pair is distinguishable from two neighbouring
+        // samples that happen to be equal.
+        struct MonoRamp {
+            next: i16,
+            files: Vec<PathBuf>,
+        }
+        impl MusixPlayer for MonoRamp {
+            fn get_song_files(&self) -> &Vec<PathBuf> {
+                &self.files
+            }
+            fn get_frequency(&self) -> u32 {
+                44100
+            }
+            fn get_samples(&mut self, target: &mut [i16]) -> usize {
+                for slot in target.iter_mut() {
+                    *slot = self.next;
+                    self.next = self.next.wrapping_add(1);
+                }
+                target.len()
+            }
+        }
+
+        let player = MonoRamp {
+            next: 0,
+            files: Vec::new(),
+        };
+        let mut emu = MusicEmu::from_player(Box::new(player), 44100.0, 1);
+        assert!(emu.run());
+
+        let mut samples = Vec::new();
+        emu.with_audio(&mut |s| samples.extend_from_slice(s));
+        assert_eq!(samples.len(), 44100 / FRAME_RATE as usize * 2);
+        for (i, pair) in samples.chunks(2).enumerate() {
+            assert_eq!(pair[0], pair[1], "pair {i} is not duplicated: {pair:?}");
+            assert_eq!(pair[0], i as i16, "pair {i} is out of order: {pair:?}");
+        }
+
+        // And the doubling holds across the chunk boundary, where the in-place
+        // expansion has to leave the unread tail alone.
+        let mut later = Vec::new();
+        for _ in 0..30 {
+            emu.run();
+            emu.with_audio(&mut |s| later.extend_from_slice(s));
+        }
+        assert!(later.len() > CHUNK * 2, "not enough audio to cross a chunk");
+        assert!(
+            later.chunks(2).all(|pair| pair[0] == pair[1]),
+            "a pair was not duplicated after the first chunk"
+        );
+    }
+
+    /// A stereo player is passed through untouched.
+    #[test]
+    fn stereo_output_is_not_doubled() {
+        let (mut emu, _) = fake_with_channels(0, false, 2);
+        assert!(emu.run());
+        let mut samples = Vec::new();
+        emu.with_audio(&mut |s| samples.extend_from_slice(s));
+        assert_eq!(samples.len(), 44100 / FRAME_RATE as usize * 2);
+        assert!(samples.iter().all(|&s| s == 1000));
     }
 
     /// Every read must be a whole [`CHUNK`], never the frame-sized sliver that
@@ -674,6 +774,9 @@ mod tests {
         std::fs::write(dir.join("readme.txt"), b"nothing to play here").unwrap();
         write_test_mod(&dir.join("music/tune.mod"));
 
+        // Through `can_handle` so the plugins are registered: `playable_file`
+        // sees nothing playable until `init_musix` has run.
+        assert!(can_handle(&dir, &data_dir()));
         assert_eq!(playable_file(&dir), Some(dir.join("music/tune.mod")));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -757,5 +860,3 @@ mod tests {
         let _ = std::fs::remove_file(&song);
     }
 }
-
-

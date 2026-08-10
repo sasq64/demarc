@@ -48,10 +48,19 @@ const URL_REWRITES: &[(&str, &str)] = &[
         "https://files.scene.org/get/*",
         "https://files.scene.org/get:de-https/*",
     ),
+    // (
+    //     "https://ftp.untergrund.net/users/ltk_tscl/fujiology/*",
+    //     "https://fujiology.org/*",
+    // ),
     (
-        "https://ftp.untergrund.net/users/ltk_tscl/fujiology/*",
-        "https://fujiology.org/*",
+        "https://ftp.modland.com/pub/modules/pub/modules/*",
+        "https://ftp.modland.com/pub/modules/*",
     ),
+    (
+        "https://ftp.untergrund.net/users/ltk_tscl/*",
+        "https://ftp.untergrund.net/users/ltk_tscc/*",
+    ),
+    ("http://sndh.atari.org/*", "https://sndh.atari.org/*"),
 ];
 
 /// Rewrite `url` according to the first matching rule in [`URL_REWRITES`],
@@ -90,7 +99,6 @@ pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
         return Ok(path);
     }
 
-    info!("Downloading {url}...");
     download_to(url, &path)?;
     Ok(path)
 }
@@ -132,7 +140,9 @@ fn downloads_dir() -> PathBuf {
 /// download over, it just risks being evicted earlier than it should be.
 fn touch(path: &Path) {
     let now = SystemTime::now();
-    let times = std::fs::FileTimes::new().set_accessed(now).set_modified(now);
+    let times = std::fs::FileTimes::new()
+        .set_accessed(now)
+        .set_modified(now);
     // Opening for write, not read: on Windows `set_times` needs write access,
     // and on Unix futimens wants a handle we're allowed to modify.
     if let Ok(file) = std::fs::File::options().write(true).open(path) {
@@ -210,7 +220,10 @@ fn entry_stats(path: &Path) -> (u64, SystemTime) {
         return (0, SystemTime::UNIX_EPOCH);
     };
     if !meta.is_dir() {
-        return (meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+        return (
+            meta.len(),
+            meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        );
     }
     let Ok(entries) = std::fs::read_dir(path) else {
         return (0, SystemTime::UNIX_EPOCH);
@@ -251,6 +264,7 @@ fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
 fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     let url = translate_url(url);
     let url = url.as_str();
+    info!("Downloading {url}...");
     if url.starts_with("ftp://") {
         return fetch_ftp(url, out);
     }
