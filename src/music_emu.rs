@@ -59,6 +59,21 @@ const EMPTY_READS_UNTIL_END: u32 = 32;
 /// See the note in [`Backend::run`].
 const MAX_QUEUED_AUDIO: usize = 96000;
 
+/// How far behind the audio it renders the scope draws, in seconds.
+///
+/// A frame's samples are not heard the moment [`run`](Backend::run) produces
+/// them: they queue in the frontend's ring buffer (which the frame dup/drop
+/// pacing lets float around 4500 stereo frames, ~95ms) and then in the output
+/// device's own buffer (2048 frames, ~45ms) before reaching the speakers.
+/// Drawing them immediately puts the trace that far ahead of what is playing —
+/// unmistakable on anything with a beat, an MP3 above all. So the scope keeps
+/// the samples around and draws the ones that are coming out *now*.
+///
+/// A fixed figure, since the backend cannot see the sink: it matches the local
+/// audio path, and a sink with a latency of its own (Bluetooth, ~100-300ms on
+/// top) needs it raised. This is the knob for that.
+const SCOPE_DELAY: f64 = 0.14;
+
 const BACKGROUND: u32 = rgb(0x08, 0x08, 0x10);
 /// Baseline drawn at the vertical centre of each channel's band.
 const AXIS: u32 = rgb(0x20, 0x20, 0x30);
@@ -169,9 +184,14 @@ pub struct MusicEmu {
     pending_pos: usize,
     /// Consecutive reads that returned nothing; see [`EMPTY_READS_UNTIL_END`].
     empty_reads: u32,
-    /// The current frame's samples — what the scope draws, and what the last
-    /// [`run`](Backend::run) added to [`Self::audio`].
+    /// The current frame's samples — what the last [`run`](Backend::run) added
+    /// to [`Self::audio`], and how wide a window the scope draws.
     frame_samples: Vec<i16>,
+    /// The last [`SCOPE_DELAY`] seconds of audio, oldest first, ending with
+    /// [`Self::frame_samples`]. The scope draws a frame-wide window from the
+    /// far end of it rather than the samples just rendered, which are still
+    /// queued ahead of the speakers.
+    scope: Vec<i16>,
     /// The oscilloscope image handed to the frontend.
     frame: Vec<u32>,
     /// Bumped on every redraw. See [`Backend::frame_hash`].
@@ -209,10 +229,11 @@ impl MusicEmu {
             player.get_meta_string(what).unwrap_or_default()
         };
         info!(
-            "Playing '{}' by '{}' [{}]",
+            "Playing '{}' by '{}' [{}] C {}",
             meta(&mut player, "title"),
             meta(&mut player, "composer"),
-            meta(&mut player, "format")
+            meta(&mut player, "format"),
+            meta(&mut player, "channels")
         );
 
         let channels = meta(&mut player, "channels").parse::<u32>().unwrap_or(2);
@@ -239,6 +260,7 @@ impl MusicEmu {
             pending_pos: 0,
             empty_reads: 0,
             frame_samples: Vec::new(),
+            scope: Vec::new(),
             frame: vec![BACKGROUND; WIDTH * HEIGHT],
             serial: 1,
             ended: false,
@@ -318,14 +340,47 @@ impl MusicEmu {
         avail
     }
 
-    /// Draw [`Self::frame_samples`] as a two-channel oscilloscope: left in the
-    /// top half of the frame, right in the bottom. Consecutive samples are
-    /// joined by a vertical span so a fast waveform reads as a continuous trace
-    /// rather than a dotted line.
+    /// [`SCOPE_DELAY`] as a count of interleaved samples, rounded to a whole
+    /// stereo pair so a window offset by it keeps left on the left.
+    fn delay_samples(&self) -> usize {
+        (self.sample_rate * SCOPE_DELAY) as usize * 2
+    }
+
+    /// Add the frame just rendered to the scope history, dropping whatever has
+    /// aged out of the delay window. Keeps one frame more than the delay
+    /// itself, which is the window [`Self::draw_scope`] reads.
+    fn push_scope_history(&mut self) {
+        if self.scope.is_empty() {
+            // A song starts with nothing yet on its way to the speakers, so the
+            // window opens on silence rather than running ahead of the audio
+            // until the history has filled.
+            self.scope.resize(self.delay_samples(), 0);
+        }
+        self.scope.extend_from_slice(&self.frame_samples);
+        let keep = self.delay_samples() + self.frame_samples.len();
+        if self.scope.len() > keep {
+            let excess = self.scope.len() - keep;
+            self.scope.drain(..excess);
+        }
+    }
+
+    /// Draw one frame's worth of the scope history as a two-channel
+    /// oscilloscope: left in the top half of the frame, right in the bottom.
+    /// Consecutive samples are joined by a vertical span so a fast waveform
+    /// reads as a continuous trace rather than a dotted line.
     fn draw_scope(&mut self) {
         self.frame.fill(BACKGROUND);
         let band = HEIGHT / 2;
         let half = band as i32 / 2;
+        // The window ends where playback has reached: a whole delay back from
+        // the samples just rendered. Until the history has filled — the first
+        // few frames of a song — that is simply the oldest audio there is.
+        let width = self.frame_samples.len();
+        let start = self
+            .scope
+            .len()
+            .saturating_sub(self.delay_samples() + width)
+            & !1;
 
         for (channel, colour) in [(0usize, LEFT_TRACE), (1usize, RIGHT_TRACE)] {
             let top = channel * band;
@@ -334,7 +389,7 @@ impl MusicEmu {
                 self.frame[(top + half as usize) * WIDTH + x] = AXIS;
             }
 
-            let pairs = self.frame_samples.len() / 2;
+            let pairs = width.min(self.scope.len() - start) / 2;
             if pairs == 0 {
                 continue;
             }
@@ -344,8 +399,8 @@ impl MusicEmu {
             // this decimates; the exact peaks matter less than the shape.
             let mut prev: Option<i32> = None;
             for x in 0..WIDTH {
-                let idx = x * pairs / WIDTH * 2 + channel;
-                let sample = self.frame_samples[idx] as i32;
+                let idx = start + x * pairs / WIDTH * 2 + channel;
+                let sample = self.scope[idx] as i32;
                 // i16 range -> half the band, centred on the baseline.
                 let y = half - (sample * half / i16::MAX as i32);
                 let y = y.clamp(0, band as i32 - 1);
@@ -371,6 +426,7 @@ impl Backend for MusicEmu {
             return true;
         }
         self.audio.extend_from_slice(&self.frame_samples);
+        self.push_scope_history();
         // Nothing normally accumulates here — the frontend collects after every
         // `run` — but `--speed-test` steps the core as fast as it can and never
         // reads the audio back, so drop the oldest instead of growing forever.
@@ -426,7 +482,10 @@ impl Backend for MusicEmu {
                 break;
             }
         }
+        // The skipped audio never reaches the speakers, so the delay line has
+        // nothing to say about what is playing after it.
         self.frame_samples.clear();
+        self.scope.clear();
     }
 
     /// Restart from the beginning of the first subsong. Plugins that do not
@@ -434,6 +493,7 @@ impl Backend for MusicEmu {
     fn reset(&mut self) {
         self.player.seek(0, 0);
         self.audio.clear();
+        self.scope.clear();
         self.pending.clear();
         self.pending_pos = 0;
         self.empty_reads = 0;
@@ -565,6 +625,70 @@ mod tests {
         assert!(
             later.chunks(2).all(|pair| pair[0] == pair[1]),
             "a pair was not duplicated after the first chunk"
+        );
+    }
+
+    /// The scope draws what the speakers are playing, not what was just
+    /// rendered: a burst of audio must appear on screen [`SCOPE_DELAY`] later,
+    /// once it has worked its way through the frontend's audio buffers.
+    #[test]
+    fn the_scope_lags_the_audio_by_the_output_delay() {
+        /// One frame of full-scale tone, then silence for as long as it is asked.
+        struct OneBurst {
+            left: usize,
+            files: Vec<PathBuf>,
+        }
+        impl MusixPlayer for OneBurst {
+            fn get_song_files(&self) -> &Vec<PathBuf> {
+                &self.files
+            }
+            fn get_frequency(&self) -> u32 {
+                44100
+            }
+            fn get_samples(&mut self, target: &mut [i16]) -> usize {
+                let burst = self.left.min(target.len());
+                target[..burst].fill(30000);
+                target[burst..].fill(0);
+                self.left -= burst;
+                target.len()
+            }
+        }
+
+        let frame = (44100.0 / FRAME_RATE) as usize * 2;
+        let player = OneBurst {
+            left: frame,
+            files: Vec::new(),
+        };
+        let mut emu = MusicEmu::from_player(Box::new(player), 44100.0, 2);
+
+        // The trace sits on the baseline while the window holds silence, and
+        // jumps to the top of the band while the burst is passing through.
+        let burst_on_screen = |emu: &MusicEmu| {
+            let band = HEIGHT / 2;
+            emu.frame[..band * WIDTH / 2]
+                .iter()
+                .any(|&px| px == LEFT_TRACE)
+        };
+
+        // Whole frames of delay: the window moves a frame at a time, so the
+        // burst lands in the one after that many have gone by.
+        let expected = 1 + (44100.0 * SCOPE_DELAY) as usize * 2 / frame;
+        let mut seen: Option<usize> = None;
+        for n in 1..expected + 4 {
+            emu.run();
+            if burst_on_screen(&emu) {
+                seen.get_or_insert(n);
+            } else {
+                assert!(
+                    seen.is_none() || n > expected,
+                    "the burst left the scope early, at frame {n}"
+                );
+            }
+        }
+        let seen = seen.expect("the burst never reached the scope");
+        assert!(
+            seen.abs_diff(expected) <= 1,
+            "the burst showed at frame {seen}, expected about {expected}"
         );
     }
 
