@@ -4,6 +4,23 @@ All notable changes to demarc will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## [1.4.0] - 2026-08-06
+
+### Added
+
+- **Atari ST Hard Drive Loading**: Load Atari ST release directories as GEMDOS hard drives (`05dad3d`).
+- **PS-X Bootable Images**: Wrap PS-X executables in a bootable disc image for `pcsx_rearmed` (`5e57f59`).
+- **Bindgen Generation Script**: Regenerated `libretro.rs` with allowlisted bindgen and added a generation script (`48e15fe`, `858f714`).
+
+### Changed
+
+- **Keyboard Bindings**: Reworked the default keyboard-to-joypad bindings (`f1955ce`).
+- **Multiview PSX Core**: Force the beetle PSX core for multiview cells (`565b796`).
+- **Screenshot Chroma**: `pouet_shot` keeps 4:4:4 chroma until the byte budget forces 4:2:0 (`41e1e51`).
+- **Thread Spinning**: Tamed OpenMP thread spinning in emulator cores (`338f59e`).
+- **Cleanup**: Removed dead code and dropped blanket `dead_code` allows (`9210169`); renamed `Backend::frame_serial` to `frame_hash` (`ed93df6`).
+- **Docs**: Updated install instructions (`5b91640`).
+
 ## [1.3.1] - 2026-07-31
 
 ### Added
