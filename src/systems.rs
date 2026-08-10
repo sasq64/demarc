@@ -130,10 +130,17 @@ pub fn get_memory(work_file: &WorkingFile) -> String {
 }
 
 pub fn get_system_name(work_file: &WorkingFile) -> String {
-    let tags = &work_file.settings;
+    system_name(work_file.system_type, &work_file.settings)
+}
+
+/// The display name of a system, refined by the tags that distinguish its
+/// variants (an STE from an ST, an AGA Amiga from an A500). Takes the parts
+/// rather than a [`WorkingFile`] so it also works for an
+/// [`EmuFile`](crate::files::EmuFile) that hasn't been prepared for loading yet.
+pub fn system_name(system_type: SystemType, tags: &HashMap<String, String>) -> String {
     let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
     let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let mut base = match work_file.system_type {
+    let mut base = match system_type {
         SystemType::C64 => "C64",
         SystemType::Amiga => "Amiga",
         SystemType::Amstrad => "Amstrad CPC",
@@ -161,7 +168,7 @@ pub fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Unknown => "Unknown",
     }
     .to_string();
-    if work_file.system_type == SystemType::Amiga {
+    if system_type == SystemType::Amiga {
         if a1200 {
             base += " (AGA)";
         } else {

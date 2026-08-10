@@ -247,11 +247,11 @@ pub struct TextList {
 }
 
 const SELECTED_ROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
-const ROW_FONT_SIZE: f32 = 22.0;
+const ROW_FONT_SIZE: f32 = 20.0;
 /// Fixed height of every row, slightly above the natural line height for
 /// [`ROW_FONT_SIZE`]. Rows keep this height even when empty, so the box does not
 /// resize as the list is filtered or emptied.
-const ROW_HEIGHT: f32 = ROW_FONT_SIZE * 1.3;
+const ROW_HEIGHT: f32 = ROW_FONT_SIZE * 1.1;
 
 /// Marks a child text entity of a [`TextList`] and records which visible row it is.
 #[derive(Component)]
