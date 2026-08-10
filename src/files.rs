@@ -560,7 +560,10 @@ fn is_wrapper(path: &Path) -> bool {
 /// True if `path` names a container that isn't loadable as-is and that
 /// [`convert_dir`] knows how to turn into something that is.
 fn needs_conversion(path: &Path) -> bool {
-    has_extension(path, "t64") || is_wrapper(path)
+    has_extension(path, "t64")
+        || has_extension(path, "lnx")
+        || has_extension(path, "p00")
+        || is_wrapper(path)
 }
 
 /// True if `path` — a file, or anything in a directory tree — needs converting.
@@ -637,6 +640,20 @@ fn convert_files(dir: &Path) -> Result<()> {
             info!("Converting {path:?}");
             let _guard = cbmconvert::CwdGuard::enter(dir);
             let code = cbmconvert::run(["-t", "-N", path.to_string_lossy().as_ref()]);
+            if code != 0 {
+                warn!("cbmconvert failed on {path:?} (exit code {code})");
+            }
+        } else if has_extension(&path, "lnx") {
+            info!("Converting {path:?}");
+            let _guard = cbmconvert::CwdGuard::enter(dir);
+            let code = cbmconvert::run(["-l", "-N", path.to_string_lossy().as_ref()]);
+            if code != 0 {
+                warn!("cbmconvert failed on {path:?} (exit code {code})");
+            }
+        } else if has_extension(&path, "p00") {
+            info!("Converting {path:?}");
+            let _guard = cbmconvert::CwdGuard::enter(dir);
+            let code = cbmconvert::run(["-p", "-N", path.to_string_lossy().as_ref()]);
             if code != 0 {
                 warn!("cbmconvert failed on {path:?} (exit code {code})");
             }
@@ -2072,4 +2089,3 @@ mod tests {
         assert_eq!(wf.path, local_path(&out[0].path));
     }
 }
-

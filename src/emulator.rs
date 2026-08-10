@@ -32,9 +32,22 @@ fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
         }
     }
 
-    if tags.get("tags").is_some_and(|t| t.contains("AGA Chipset")) {
-        tags.insert("puae_model".into(), "A1200".into());
+    if let Some(file_tags) = tags.get("tags").cloned() {
+        if file_tags.contains("AGA Chipset") {
+            tags.insert("puae_model".into(), "A1200".into());
+        }
+        if file_tags.contains("2sid") {
+            tags.insert("vice_sid_extra".into(), "0xd420".into());
+        }
+        if file_tags.contains("6581") {
+            tags.insert("vice_sid_model".into(), "6581".into());
+        }
+        if file_tags.contains("ste") {
+            tags.insert("hatari_machinetype".into(), "ste".into());
+            tags.insert("hatari_ramsize".into(), "4".into());
+        }
     }
+
     tags
 }
 

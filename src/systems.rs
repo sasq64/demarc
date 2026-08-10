@@ -296,7 +296,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
     };
     let mut system_type = match ext.as_str() {
         "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
-        "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
+        "d64" | "d81" | "crt" | "g64" | "x64" | "t64" | "lnx" | "p00" => SystemType::C64,
         "dsk" => SystemType::Amstrad,
         "smd" | "gen" | "32x" => SystemType::Megadrive,
         "msa" | "st" => SystemType::AtariST,
@@ -439,7 +439,7 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     }
     if args.ste {
         set_var("hatari_machinetype", "ste");
-        set_var("hatari_ramsize", "2");
+        set_var("hatari_ramsize", "4");
     }
 
     if args.xmem {
