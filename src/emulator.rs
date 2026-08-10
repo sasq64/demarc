@@ -15,6 +15,7 @@ use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
 use crate::image_emu::ImageEmu;
 use crate::libretro;
+use crate::music_emu::{self, MusicEmu};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
 
@@ -51,6 +52,13 @@ fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
     tags
 }
 
+/// Where the runtime files some `musix` plugins need live (UADE players, sc68
+/// replayers, `adplug.db`). Packed into `system.zip` with everything else under
+/// `system/`, so it travels with the binary.
+fn music_data_dir() -> std::path::PathBuf {
+    system_dir().join("musix")
+}
+
 pub fn create_core(
     system_type: SystemType,
     game: &Path,
@@ -67,6 +75,13 @@ pub fn create_core(
     }
     if system_type == SystemType::Ilbm || system_type == SystemType::Gfx {
         return Ok(Box::new(ImageEmu::new(game)?));
+    }
+    // Music files have no system type of their own — they fall through
+    // detection as `Unknown` — so `musix` gets asked whether it recognises the
+    // file rather than the extension table. Only for `Unknown`, so nothing that
+    // already resolves to a core (a `.d64` full of SIDs, say) is diverted here.
+    if system_type == SystemType::Unknown && music_emu::can_handle(game, &music_data_dir()) {
+        return Ok(Box::new(MusicEmu::new(game, &music_data_dir())?));
     }
 
     tags_for_system(system_type, &mut tags);
