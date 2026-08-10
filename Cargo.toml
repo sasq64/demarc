@@ -67,7 +67,7 @@ percent-encoding = "2"
 sha2 = "0.11"
 thiserror = "2"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
-# Demarc adapted version of musix crate
+#musix = { path = "../musicplayer" }
 musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above
