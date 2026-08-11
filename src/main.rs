@@ -17,6 +17,7 @@ mod libretro;
 mod audio;
 mod cbmconvert;
 mod commands;
+mod degas;
 mod emulator;
 mod fetch;
 mod files;

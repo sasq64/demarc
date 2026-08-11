@@ -67,9 +67,24 @@ pub enum SystemType {
     Psx,
     NeoGeo,
     Ilbm,
+    Degas,
     Gfx,
     #[default]
     Unknown,
+}
+
+impl SystemType {
+    /// Whether the file is a still picture, shown by
+    /// [`ImageEmu`](crate::image_emu::ImageEmu) instead of a libretro core.
+    pub fn is_image(self) -> bool {
+        matches!(self, SystemType::Ilbm | SystemType::Degas | SystemType::Gfx)
+    }
+
+    /// Whether the format can carry a colour-cycling animation. Those images
+    /// are left running so the animation plays; the rest are paused.
+    pub fn is_cycling_image(self) -> bool {
+        matches!(self, SystemType::Ilbm | SystemType::Degas)
+    }
 }
 
 #[derive(Default, Debug, Clone)]
@@ -164,6 +179,7 @@ pub fn system_name(system_type: SystemType, tags: &HashMap<String, String>) -> S
         SystemType::Psx => "PlayStation",
         SystemType::NeoGeo => "Neo Geo",
         SystemType::Ilbm => "Amiga Gfx",
+        SystemType::Degas => "Atari Gfx",
         SystemType::Gfx => "Gfx",
         SystemType::Unknown => "Unknown",
     }
@@ -244,10 +260,14 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
             CORE_NAME_PSX_BEETLE
         }
         SystemType::Psx => CORE_NAME_PSX,
-        // Ilbm and Flash are handled by their own backends before `get_core` is
-        // reached, so arriving here with one means the file type was never
+        // Images and Flash are handled by their own backends before `get_core`
+        // is reached, so arriving here with one means the file type was never
         // resolved to something loadable.
-        SystemType::Gfx | SystemType::Ilbm | SystemType::Flash | SystemType::Unknown => {
+        SystemType::Gfx
+        | SystemType::Ilbm
+        | SystemType::Degas
+        | SystemType::Flash
+        | SystemType::Unknown => {
             return Err(crate::load_error::UnknownSystem.into());
         }
     };
@@ -318,6 +338,10 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "iso" => SystemType::Psx,
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
+        // DEGAS low resolution, plain and compressed. The medium- and
+        // high-resolution variants (.pi2/.pi3, .pc2/.pc3) are far rarer and are
+        // left unclaimed for now.
+        "pi1" | "pc1" => SystemType::Degas,
         "gif" | "png" | "bmp" | "jpg" | "jpeg" => SystemType::Gfx,
         "neo" => SystemType::NeoGeo,
         _ => SystemType::Unknown,
@@ -356,6 +380,8 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::Amiga;
                 } else if l >= 12 && &data[0..4] == b"FORM" && &data[8..12] == b"ILBM" {
                     system_type = SystemType::Ilbm;
+                } else if crate::degas::is_degas(&data, l) {
+                    system_type = SystemType::Degas;
                 } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
                     // Flash SWF signatures: uncompressed / zlib / LZMA.
                     system_type = SystemType::Flash;

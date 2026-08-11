@@ -1100,6 +1100,14 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
 
+        if path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .starts_with(".")
+        {
+            continue;
+        }
         if path.is_dir() {
             let sub = scan_release_dir(&path)?;
             if first_file.is_none() {

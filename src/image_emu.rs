@@ -5,10 +5,12 @@
 //! same pipeline as a libretro core or the Flash backend: it hands the frontend
 //! one RGBA frame via [`with_frame`](RetroEmu::with_frame) and reports its
 //! geometry, while every interactive method (input, disks, audio, reset) is a
-//! no-op. It decodes the Amiga ILBM/IFF format (see [`crate::ilbm`]) as well as
-//! the common still formats handled by the `image` crate (PNG, BMP, JPEG).
+//! no-op. It decodes the Amiga ILBM/IFF format (see [`crate::ilbm`]) and the
+//! Atari ST DEGAS format (see [`crate::degas`]), as well as the common still
+//! formats handled by the `image` crate (PNG, BMP, JPEG).
 //!
-//! ILBM images can define colour-cycling ranges (CRNG chunks). When cycling is
+//! Paletted images can define colour-cycling ranges (ILBM CRNG chunks, DEGAS
+//! Elite colour animation). When cycling is
 //! enabled (opt-in via `--color-cycle`) the image is kept in its paletted form
 //! and the RGBA frame is regenerated in [`run`](RetroEmu::run) from a palette
 //! that is rotated according to how many frames have elapsed, animating the
@@ -18,6 +20,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::degas;
 use crate::ilbm::{self, CycleRange};
 use crate::retro_emu::Backend;
 
@@ -63,7 +66,10 @@ pub struct ImageEmu {
 
 impl ImageEmu {
     pub fn new(game: &Path) -> Result<Self> {
-        match ilbm::load_indexed(game) {
+        // Both paletted formats land in the same indexed representation, so
+        // colour cycling works the same for an Amiga CRNG and a DEGAS Elite
+        // colour animation.
+        match ilbm::load_indexed(game).or_else(|_| degas::load_indexed(game)) {
             Ok(img) => {
                 let width = img.width as usize;
                 let height = img.height as usize;
@@ -99,7 +105,7 @@ impl ImageEmu {
                 Ok(emu)
             }
             Err(_) => {
-                // Not an indexed ILBM. Try the full IFF decoder (HAM, deep,
+                // Not an indexed ILBM or DEGAS. Try the full IFF decoder (HAM, deep,
                 // dynamic-palette, …); if that also fails the file isn't IFF at
                 // all, so fall back to the `image` crate for PNG/BMP/JPEG.
                 let img = ilbm::load(game).or_else(|_| load_image(game))?;
@@ -251,6 +257,25 @@ mod tests {
                 "presented frame is blank"
             );
         });
+    }
+
+    /// Atari DEGAS images reach the same indexed path as ILBM, plain (`.PI1`)
+    /// and compressed (`.PC1`) alike.
+    #[test]
+    fn image_emu_presents_degas_frames() {
+        for file in ["testdata/degas/FUSE.PI1", "testdata/degas/BOLEK3.PC1"] {
+            let mut emu = ImageEmu::new(&root(file)).unwrap();
+            assert_eq!(emu.get_frame_size(), (320, 200), "wrong size for {file}");
+            assert!(emu.run());
+            emu.with_frame(&mut |w, h, frame| {
+                assert_eq!((w, h), (320, 200));
+                let first = frame[0];
+                assert!(
+                    frame.iter().any(|&px| px != first),
+                    "presented {file} frame is blank"
+                );
+            });
+        }
     }
 
     /// PNG/BMP/JPEG still images decode through the same path as ILBM, via the
