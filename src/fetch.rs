@@ -36,47 +36,6 @@ pub fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://")
 }
 
-/// URL rewrite rules applied before downloading, as `(pattern, replacement)`
-/// pairs. A trailing `*` in the pattern matches any suffix, which is then
-/// substituted for the `*` in the replacement.
-///
-/// The scene.org rule turns a `/get/` link — which 302-redirects to a slow FTP
-/// mirror — into its `/get:de-https/` variant, which serves the file directly
-/// over HTTPS.
-const URL_REWRITES: &[(&str, &str)] = &[
-    (
-        "https://files.scene.org/get/*",
-        "https://files.scene.org/get:de-https/*",
-    ),
-    // (
-    //     "https://ftp.untergrund.net/users/ltk_tscl/fujiology/*",
-    //     "https://fujiology.org/*",
-    // ),
-    (
-        "https://ftp.modland.com/pub/modules/pub/modules/*",
-        "https://ftp.modland.com/pub/modules/*",
-    ),
-    (
-        "https://ftp.untergrund.net/users/ltk_tscl/*",
-        "https://ftp.untergrund.net/users/ltk_tscc/*",
-    ),
-    ("http://sndh.atari.org/*", "https://sndh.atari.org/*"),
-];
-
-/// Rewrite `url` according to the first matching rule in [`URL_REWRITES`],
-/// returning it unchanged if no rule applies.
-pub fn translate_url(url: &str) -> String {
-    for (pattern, replacement) in URL_REWRITES {
-        if let Some(prefix) = pattern.strip_suffix('*')
-            && let Some(rest) = url.strip_prefix(prefix)
-            && let Some(repl_prefix) = replacement.strip_suffix('*')
-        {
-            return format!("{repl_prefix}{rest}");
-        }
-    }
-    url.to_string()
-}
-
 /// Download the file at `url` into a local cache directory and return its path.
 ///
 /// Files are cached under `<cache>/demarc/downloads/<url-hash>/<name>`, so
@@ -261,9 +220,11 @@ fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
 /// redirect from an `http(s)://` URL to an `ftp://` one — as files.scene.org
 /// does for its `/get/...` download links — is handled by switching to the FTP
 /// transport instead of failing on the unknown scheme.
+///
+/// URLs are downloaded exactly as the db gives them: the rewrites that point a
+/// link at a faster or still-living mirror live in the db generators (see
+/// `URL_REWRITES` in demodb's demozoo.py), so what is exported is what works.
 fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
-    let url = translate_url(url);
-    let url = url.as_str();
     info!("Downloading {url}...");
     if url.starts_with("ftp://") {
         return fetch_ftp(url, out);
@@ -414,19 +375,6 @@ mod tests {
         assert!(is_url("ftp://example.com/a.zip"));
         assert!(!is_url("/home/user/a.zip"));
         assert!(!is_url("a.zip"));
-    }
-
-    #[test]
-    fn translates_scene_org_urls() {
-        assert_eq!(
-            translate_url("https://files.scene.org/get/demos/groups/x/y.zip"),
-            "https://files.scene.org/get:de-https/demos/groups/x/y.zip"
-        );
-        // Non-matching URLs pass through untouched.
-        assert_eq!(
-            translate_url("https://example.com/get/foo.zip"),
-            "https://example.com/get/foo.zip"
-        );
     }
 
     #[test]
