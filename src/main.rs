@@ -71,7 +71,14 @@ const CLAP_STYLES: Styles = Styles::styled()
     .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", styles = CLAP_STYLES, color = ColorChoice::Always, 
+#[command(name = "demarc", version, styles = CLAP_STYLES, color = ColorChoice::Always,
+    // clap 4 drops the version from the help header, so put it back by hand.
+    help_template = "\
+{name} {version}
+{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}",
     about = "Demo scene emulator frontend for the command line",
     long_about = r#"
 DEMARC
