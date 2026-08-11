@@ -138,7 +138,10 @@ opt-level = 2
 # a few. Use `cargo build --profile release-fast`.
 [profile.release-fast]
 inherits = "release"
-lto = false
+# Must be "off", not `false`: `false` means thin-*local* LTO, which combined with
+# many codegen units + incremental produces `undefined hidden symbol: anon.*.llvm.*`
+# link errors.
+lto = "off"
 codegen-units = 256
 incremental = true
 strip = false
