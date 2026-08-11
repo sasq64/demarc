@@ -18,7 +18,8 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 * CRT shaders (Lottes) for "authentic" look
 * Can load slangp retroarch shaders
 * Fuzzy search files on disk or from database file
-* Displays IFF images
+* Displays Amiga IFF and Atari DEGAS images
+* Plays music
 * Can load disk images and executables
 * Right-Alt/Ctrl hotkey for disk switch etc
 * Can run multiple files at once in a grid
@@ -69,7 +70,7 @@ _TIP:_ Download all intros from [https://intros.c64.org](https://intros.c64.org/
 
 * [bitworld.txt.gz](/dl/bitworld.txt.gz) (1.8MB)
 * [csdb.txt.gz](/dl/csdb.txt.gz) (8MB)
-* [demozoo.txt.gz](/dl/demozoo.txt.gz) (13MB)
+* [demozoo.txt.gz](/dl/demozoo.txt.gz) (UPDATED 26081011) (7MB)
 
 #### Best of Amiga OCS (and some AGA)
 
