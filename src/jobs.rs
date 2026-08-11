@@ -204,11 +204,101 @@ pub struct ActiveJob<'a> {
     pub progress: &'a JobProgress,
 }
 
-struct RunningJob<T> {
-    id: JobId,
+/// One background job, owned by whoever spawned it.
+///
+/// This is the handle form: hold it in a component or a struct field and call
+/// [`poll`](Self::poll) each frame. Use it when the result belongs to one
+/// specific owner — a per-entity download, say — where routing it back through
+/// a global [`JobFinished`] message would only mean filtering by id again.
+/// [`Jobs<T>`] is the collective form, built on this.
+///
+/// Dropping the handle abandons the job: the blocking body still runs to
+/// completion on its pool thread (nothing can interrupt it), but its result is
+/// discarded. Call [`cancel`](Self::cancel) first if the body checks for it.
+pub struct Job<T> {
     name: Arc<str>,
     task: Task<Result<T, JobError>>,
     progress: Arc<JobProgress>,
+    /// Set once [`poll`](Self::poll) has handed the result over. Polling an
+    /// `async_task::Task` after it has completed panics, so this is what makes
+    /// a repeated `poll` return `None` instead.
+    taken: bool,
+}
+
+impl<T: Send + 'static> Job<T> {
+    /// Runs `work` on the I/O pool and returns immediately.
+    ///
+    /// `work` is ordinary blocking code. It gets a [`JobProgress`] to report
+    /// through and to poll for cancellation — a job that never checks
+    /// [`JobProgress::is_cancelled`] simply runs to completion and has its
+    /// result discarded, since dropping a [`Task`] whose body never awaits
+    /// cannot interrupt it.
+    pub fn spawn<F>(name: impl Into<Arc<str>>, work: F) -> Self
+    where
+        F: FnOnce(&JobProgress) -> anyhow::Result<T> + Send + 'static,
+    {
+        let name = name.into();
+        let progress = Arc::new(JobProgress::default());
+
+        let task_progress = Arc::clone(&progress);
+        let task = IoTaskPool::get().spawn(async move {
+            // Not an async body in any real sense: no `.await` appears below,
+            // the blocking call just occupies one I/O-pool thread until it
+            // returns. `IoTaskPool` is sized for exactly that.
+            if task_progress.is_cancelled() {
+                return Err(JobError::Cancelled);
+            }
+            let result = work(&task_progress);
+            if task_progress.is_cancelled() {
+                return Err(JobError::Cancelled);
+            }
+            result.map_err(JobError::Failed)
+        });
+
+        Self {
+            name,
+            task,
+            progress,
+            taken: false,
+        }
+    }
+
+    /// Returns the result if the job has finished, `None` while it is still
+    /// running. Never blocks, so this is what a per-frame system calls.
+    ///
+    /// Returns `None` forever once the result has been handed over.
+    pub fn poll(&mut self) -> Option<Result<T, JobError>> {
+        if self.taken {
+            return None;
+        }
+        let result = check_ready(&mut self.task)?;
+        self.taken = true;
+        Some(result)
+    }
+
+    /// True until [`poll`](Self::poll) has produced the result.
+    pub fn is_running(&self) -> bool {
+        !self.taken
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn progress(&self) -> &JobProgress {
+        &self.progress
+    }
+
+    /// Asks the job to stop; it reports [`JobError::Cancelled`] once the body
+    /// returns. Advisory — see [`JobProgress::cancel`].
+    pub fn cancel(&self) {
+        self.progress.cancel();
+    }
+}
+
+struct RunningJob<T> {
+    id: JobId,
+    job: Job<T>,
 }
 
 /// The jobs currently in flight that produce a `T`.
@@ -233,44 +323,20 @@ impl<T: Send + Sync + 'static> Default for Jobs<T> {
 }
 
 impl<T: Send + Sync + 'static> Jobs<T> {
-    /// Runs `work` on the I/O pool and returns immediately.
+    /// Runs `work` on the I/O pool and returns immediately. See
+    /// [`Job::spawn`] for what `work` may do.
     ///
-    /// `work` is ordinary blocking code. It gets a [`JobProgress`] to report
-    /// through and to poll for cancellation — a job that never checks
-    /// [`JobProgress::is_cancelled`] simply runs to completion and has its
-    /// result discarded, since dropping a [`Task`] whose body never awaits
-    /// cannot interrupt it.
-    ///
-    /// Completion arrives as a [`JobFinished<T>`] message in `Update`.
+    /// Completion arrives as a [`JobFinished<T>`] message in `Update`. To own
+    /// the result directly instead, spawn a [`Job<T>`] and poll it yourself.
     pub fn spawn<F>(&mut self, name: impl Into<Arc<str>>, work: F) -> JobId
     where
         F: FnOnce(&JobProgress) -> anyhow::Result<T> + Send + 'static,
     {
         let id = JobId(self.next_id);
         self.next_id += 1;
-        let name = name.into();
-        let progress = Arc::new(JobProgress::default());
-
-        let task_progress = Arc::clone(&progress);
-        let task = IoTaskPool::get().spawn(async move {
-            // Not an async body in any real sense: no `.await` appears below,
-            // the blocking call just occupies one I/O-pool thread until it
-            // returns. `IoTaskPool` is sized for exactly that.
-            if task_progress.is_cancelled() {
-                return Err(JobError::Cancelled);
-            }
-            let result = work(&task_progress);
-            if task_progress.is_cancelled() {
-                return Err(JobError::Cancelled);
-            }
-            result.map_err(JobError::Failed)
-        });
-
         self.running.push(RunningJob {
             id,
-            name,
-            task,
-            progress,
+            job: Job::spawn(name, work),
         });
         id
     }
@@ -279,14 +345,14 @@ impl<T: Send + Sync + 'static> Jobs<T> {
     /// system holding `Res<Jobs<T>>` can cancel without triggering change
     /// detection. The job still reports back, as [`JobError::Cancelled`].
     pub fn cancel(&self, id: JobId) {
-        if let Some(job) = self.running.iter().find(|job| job.id == id) {
-            job.progress.cancel();
+        if let Some(entry) = self.running.iter().find(|entry| entry.id == id) {
+            entry.job.cancel();
         }
     }
 
     pub fn cancel_all(&self) {
-        for job in &self.running {
-            job.progress.cancel();
+        for entry in &self.running {
+            entry.job.cancel();
         }
     }
 
@@ -294,20 +360,20 @@ impl<T: Send + Sync + 'static> Jobs<T> {
     pub fn progress(&self, id: JobId) -> Option<&JobProgress> {
         self.running
             .iter()
-            .find(|job| job.id == id)
-            .map(|job| job.progress.as_ref())
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.job.progress())
     }
 
     pub fn is_running(&self, id: JobId) -> bool {
-        self.running.iter().any(|job| job.id == id)
+        self.running.iter().any(|entry| entry.id == id)
     }
 
     /// Every unfinished job, oldest first — for a HUD listing what's in flight.
     pub fn active(&self) -> impl Iterator<Item = ActiveJob<'_>> {
-        self.running.iter().map(|job| ActiveJob {
-            id: job.id,
-            name: &job.name,
-            progress: &job.progress,
+        self.running.iter().map(|entry| ActiveJob {
+            id: entry.id,
+            name: entry.job.name(),
+            progress: entry.job.progress(),
         })
     }
 
@@ -395,18 +461,17 @@ fn poll_jobs<T: Send + Sync + 'static>(
     }
 
     let mut done = Vec::new();
-    jobs.running
-        .retain_mut(|job| match check_ready(&mut job.task) {
-            Some(result) => {
-                done.push(JobFinished {
-                    id: job.id,
-                    name: Arc::clone(&job.name),
-                    result: Some(result),
-                });
-                false
-            }
-            None => true,
-        });
+    jobs.running.retain_mut(|entry| match entry.job.poll() {
+        Some(result) => {
+            done.push(JobFinished {
+                id: entry.id,
+                name: Arc::clone(&entry.job.name),
+                result: Some(result),
+            });
+            false
+        }
+        None => true,
+    });
 
     for msg in done {
         match msg.result() {

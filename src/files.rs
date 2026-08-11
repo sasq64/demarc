@@ -13,7 +13,7 @@ use url::Url;
 
 use crate::{
     cbmconvert,
-    fetch::{fetch_url, fetch_urls},
+    fetch::{OnProgress, fetch_url_with_progress, fetch_urls},
     frontend::system_dir,
     systems::{GEMDOS_MAGIC, GameInfo, SystemType, WorkingFile, get_system_type, is_atari_program},
     utils::{
@@ -91,27 +91,23 @@ fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
 
 impl FileSource {
     /// Ensure the data is available locally — downloading the URL (cached, see
-    /// [`fetch_url`]) the first time — and return the resulting local path. A
+    /// [`crate::fetch::fetch_url`]) the first time — and return the resulting local path. A
     /// [`FileSource::Path`] is returned as-is.
+    ///
+    /// This blocks for as long as the download takes, so on the main thread it
+    /// is only safe for a source that is already a path. Loads that may hit the
+    /// network go through [`Emulator::load_async`](crate::emulator::Emulator::load_async),
+    /// which runs this on the I/O pool.
     pub fn resolve(&mut self) -> Result<&PathBuf> {
-        if let FileSource::Url(urls) = self {
-            // If any URL is a disk image, this is a (possibly multi-) disk set:
-            // download every disk image so they sit together in one directory
-            // (built into an m3u later). Otherwise just grab the first entry.
-            let urls = filter_release_urls(urls.clone());
-            let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
-                fetch_urls(&urls)?
-            } else {
-                fetch_url(urls.first().unwrap().as_ref())?
-            };
-            *self = FileSource::Path(p);
-        }
-        match self {
-            FileSource::Path(p) => Ok(p),
-            FileSource::Url(_) => unreachable!("just converted to Path above"),
-        }
+        self.resolve_with_progress(&|_, _| {})
     }
-    pub fn resolve_async(&mut self) -> Result<&PathBuf> {
+
+    /// [`resolve`](Self::resolve) reporting download progress, for the
+    /// background job that a URL-backed load runs on.
+    ///
+    /// A multi-disk set reports nothing: it is several downloads in a row, and
+    /// forwarding each one's byte count would restart the bar on every disk.
+    pub fn resolve_with_progress(&mut self, on_progress: OnProgress<'_>) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory
@@ -120,7 +116,7 @@ impl FileSource {
             let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
                 fetch_urls(&urls)?
             } else {
-                fetch_url(urls.first().unwrap().as_ref())?
+                fetch_url_with_progress(urls.first().unwrap().as_ref(), on_progress)?
             };
             *self = FileSource::Path(p);
         }

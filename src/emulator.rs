@@ -9,15 +9,17 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::{EmuFile, has_extension, prepare_file};
+use crate::files::has_extension;
+use crate::files::{EmuFile, FileSource, prepare_file};
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
 use crate::image_emu::ImageEmu;
+use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
 use crate::music_emu::{self, MusicEmu};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
-use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
+use crate::systems::{SystemType, WorkingFile, get_core, get_system_type, tags_for_system};
 use crate::utils::is_disk_image;
 
 fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
@@ -147,6 +149,40 @@ pub struct EmuEvent {
     what: EmuAction,
 }
 
+/// A load started by [`Emulator::load_async`] whose download hasn't landed yet.
+struct PendingLoad {
+    /// The entry exactly as the frontend handed it over, still carrying its
+    /// original [`FileSource`]. [`Emulator::update_load`] rebuilds it with the
+    /// resolved path once the job finishes.
+    emu_file: EmuFile,
+    /// Whether the source was a URL, which decides if the system type has to be
+    /// re-detected from the downloaded file (see [`Emulator::update_load`]).
+    was_url: bool,
+    /// `(run_next, run_prev)` as they stood when the load was requested.
+    /// [`Emulator::load_async`] clears them so the frontend doesn't re-request
+    /// the same load every frame while the download runs; a load that fails
+    /// puts them back, which is what lets tv mode carry on past a dead link in
+    /// the direction it was already going.
+    advance: (bool, bool),
+    job: Job<std::path::PathBuf>,
+}
+
+/// What [`Emulator::update_load`] found this frame.
+pub(crate) enum LoadStatus {
+    /// No load in flight.
+    Idle,
+    /// A download is still running; the previously loaded core, if any, keeps
+    /// running meanwhile.
+    Pending,
+    /// The load finished this frame — `result` is `Ok` when the new core is
+    /// live.
+    ///
+    /// `title` names the entry this was for. It is carried here because on
+    /// failure there is nowhere else left to read it from:
+    /// [`Emulator::work_file`] still describes whatever was loaded before.
+    Done { title: String, result: Result<()> },
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
@@ -192,6 +228,8 @@ pub struct Emulator {
     pub idle_time: f32,
     pub events: Vec<EmuEvent>,
     pub retro_replay: u32,
+    /// Download in flight for the next game, driven by [`Emulator::update_load`].
+    pending_load: Option<PendingLoad>,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;
@@ -537,6 +575,143 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
+    /// Begin loading `emu_file`, downloading it first if it is URL-backed.
+    ///
+    /// Returns immediately. The download runs on the I/O pool and the actual
+    /// load happens in whichever [`update_load`](Self::update_load) call finds
+    /// it finished — so the core currently running keeps running (and playing)
+    /// until then, rather than the frontend stalling for the whole transfer.
+    ///
+    /// A load already in flight is abandoned; its result is discarded. That is
+    /// what makes a fresh request during a slow download — picking another
+    /// entry from the selector, say — take effect instead of being queued
+    /// behind it.
+    pub fn load_async(&mut self, emu_file: &EmuFile) {
+        if let Some(previous) = &self.pending_load {
+            previous.job.cancel();
+        }
+
+        // Taken, not just read: leaving them set would have the frontend ask
+        // for this same load again on the very next frame.
+        let advance = (self.run_next, self.run_prev);
+        self.run_next = false;
+        self.run_prev = false;
+
+        let was_url = matches!(emu_file.path, FileSource::Url(_));
+        let name = if emu_file.game_info.title.is_empty() {
+            "load".to_string()
+        } else {
+            emu_file.game_info.title.clone()
+        };
+
+        // Only the *resolution* runs off-thread. Unpacking, conversion and core
+        // creation stay on the main thread inside `load`, as before: they are
+        // the parts that touch shared state, and they are not what a slow
+        // mirror makes you wait on.
+        let mut source = emu_file.path.clone();
+        let job = Job::spawn(name, move |progress| {
+            let path = source.resolve_with_progress(&|done, total| {
+                progress.set_done(done);
+                progress.set_total(total.unwrap_or(0));
+            })?;
+            Ok(path.clone())
+        });
+
+        self.pending_load = Some(PendingLoad {
+            emu_file: emu_file.clone(),
+            was_url,
+            advance,
+            job,
+        });
+    }
+
+    /// Drive a [`load_async`](Self::load_async) forward; call once per frame.
+    ///
+    /// When the download lands this calls [`load`](Self::load) with a
+    /// [`FileSource::Path`], so the caller sees exactly the outcome the old
+    /// synchronous `load` produced — just some frames later.
+    pub fn update_load(&mut self, time: &Time) -> LoadStatus {
+        let Some(pending) = self.pending_load.as_mut() else {
+            return LoadStatus::Idle;
+        };
+        // `poll` hands the result over exactly once, so it has to be kept here
+        // rather than re-read after the `take` below.
+        let Some(resolved) = pending.job.poll() else {
+            return LoadStatus::Pending;
+        };
+        let PendingLoad {
+            mut emu_file,
+            was_url,
+            advance,
+            ..
+        } = self.pending_load.take().expect("checked just above");
+
+        let title = emu_file.game_info.title.clone();
+        let path = match resolved {
+            Ok(path) => path,
+            // Unwrap `JobError::Failed` rather than wrapping it: `load_error::classify`
+            // downcasts along the error chain to tell a 404 from a dead mirror,
+            // and an extra layer on top would still work but buys nothing.
+            Err(JobError::Failed(err)) => {
+                return self.failed_load(advance, title, err);
+            }
+            Err(JobError::Cancelled) => {
+                return self.failed_load(advance, title, anyhow::anyhow!("load cancelled"));
+            }
+        };
+
+        // `prepare_file` re-detects the system type after a download, because
+        // collection only ever saw the URL. Handing it a `Path` means it no
+        // longer can, so do it here on the same condition.
+        if was_url {
+            emu_file.system_type = get_system_type(&path);
+        }
+        emu_file.path = FileSource::Path(path);
+        match self.load(time, &emu_file) {
+            Ok(()) => LoadStatus::Done {
+                title,
+                result: Ok(()),
+            },
+            Err(err) => self.failed_load(advance, title, err),
+        }
+    }
+
+    /// Report a load that didn't happen, re-arming the advance it consumed.
+    ///
+    /// Restoring `run_next`/`run_prev` leaves the frontend where the old
+    /// synchronous path left it on failure: still asking to move on, so tv mode
+    /// steps past the broken entry, while an interactive session clears them
+    /// itself and stops on the error message.
+    fn failed_load(
+        &mut self,
+        advance: (bool, bool),
+        title: String,
+        err: anyhow::Error,
+    ) -> LoadStatus {
+        (self.run_next, self.run_prev) = advance;
+        LoadStatus::Done {
+            title,
+            result: Err(err),
+        }
+    }
+
+    // The pair below is what a "downloading…" indicator would be built from.
+    // Nothing draws one yet, so outside the tests nothing calls them — but the
+    // byte counting behind `load_progress` is plumbed end to end already
+    // (`fetch` counts, [`FileSource::resolve_with_progress`] forwards).
+
+    /// True while a [`load_async`](Self::load_async) download is outstanding.
+    #[allow(dead_code)]
+    pub fn is_loading(&self) -> bool {
+        self.pending_load.is_some()
+    }
+
+    /// Byte progress of the download in flight. Reports an unknown total for a
+    /// multi-disk set and for a server that declares no size.
+    #[allow(dead_code)]
+    pub fn load_progress(&self) -> Option<&JobProgress> {
+        self.pending_load.as_ref().map(|p| p.job.progress())
+    }
 
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
         let work_file = prepare_file(emu_file, &self.tags)?;
@@ -733,9 +908,170 @@ impl Emulator {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use bevy::MinimalPlugins;
+    use url::Url;
+
     use super::*;
     use crate::files::{DbFilter, collect_db_text};
     use crate::systems::GameInfo;
+
+    /// Spins up the task pools `load_async` needs, and nothing else.
+    fn task_pools() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.update();
+        app
+    }
+
+    /// Pumps `update_load` until it stops reporting `Pending`.
+    fn drive_load(emu: &mut Emulator) -> LoadStatus {
+        let time = Time::default();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match emu.update_load(&time) {
+                LoadStatus::Pending => {
+                    assert!(emu.is_loading(), "a pending load must report as loading");
+                    assert!(Instant::now() < deadline, "load never finished");
+                    std::thread::yield_now();
+                }
+                status => return status,
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_pending_is_idle() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
+        assert!(!emu.is_loading());
+        assert!(matches!(
+            emu.update_load(&Time::default()),
+            LoadStatus::Idle
+        ));
+    }
+
+    /// A failed download surfaces as `Done`, carrying the entry's title so the
+    /// frontend can name it — `work_file` still describes the previous load.
+    ///
+    /// Port 1 refuses immediately, so this fails fast without leaving the host.
+    #[test]
+    fn a_failed_download_finishes_the_load() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
+
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            game_info: GameInfo {
+                title: "Unreachable".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(emu.is_loading(), "the download starts in flight");
+
+        let LoadStatus::Done { title, result } = drive_load(&mut emu) else {
+            panic!("expected the load to finish");
+        };
+        assert_eq!(title, "Unreachable");
+        assert!(result.is_err(), "a refused connection cannot load");
+        assert!(!emu.is_loading(), "the pending load is cleared either way");
+        // Nothing was swapped in, so the emulator still has no core.
+        assert!(emu.core.is_none());
+    }
+
+    /// The whole point of `update_load`: `load` is handed a resolved
+    /// `FileSource::Path`, never a URL, so it never blocks on the network.
+    #[test]
+    fn a_local_path_reaches_load_unchanged() {
+        let _app = task_pools();
+        let dir = tempfile::tempdir().unwrap();
+        // Not a real disk image, so `load` fails inside core creation — after
+        // the resolution step this test is about.
+        let game = dir.path().join("demo.d64");
+        std::fs::write(&game, b"not really a d64").unwrap();
+
+        let mut emu = Emulator::default();
+        emu.load_async(&EmuFile {
+            path: FileSource::Path(game),
+            system_type: SystemType::C64,
+            ..Default::default()
+        });
+
+        assert!(matches!(drive_load(&mut emu), LoadStatus::Done { .. }));
+        assert!(!emu.is_loading());
+    }
+
+    /// `load_async` consumes the advance request, so the frontend asks for the
+    /// load once rather than on every frame of the download; a failure hands it
+    /// back, which is how tv mode steps past a dead link.
+    #[test]
+    fn the_advance_request_is_taken_and_returned_on_failure() {
+        let _app = task_pools();
+        let mut emu = Emulator {
+            run_next: true,
+            ..Default::default()
+        };
+
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            ..Default::default()
+        });
+        assert!(
+            !emu.run_next && !emu.run_prev,
+            "the request is consumed while the download runs"
+        );
+
+        assert!(matches!(drive_load(&mut emu), LoadStatus::Done { .. }));
+        assert!(emu.run_next, "a failed load re-arms the advance");
+    }
+
+    /// The backwards direction survives a failure too, so an explicit PrevFile
+    /// onto a dead link keeps going backwards rather than reversing.
+    #[test]
+    fn a_failed_load_re_arms_the_direction_it_had() {
+        let _app = task_pools();
+        let mut emu = Emulator {
+            run_prev: true,
+            ..Default::default()
+        };
+
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            ..Default::default()
+        });
+        assert!(matches!(drive_load(&mut emu), LoadStatus::Done { .. }));
+        assert!(emu.run_prev && !emu.run_next);
+    }
+
+    /// Starting a second load replaces the first: only one download can be
+    /// outstanding, so the frontend can't stack them up frame after frame.
+    #[test]
+    fn a_second_load_replaces_the_first() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
+        let entry = |title: &str| EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            game_info: GameInfo {
+                title: title.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        emu.load_async(&entry("First"));
+        emu.load_async(&entry("Second"));
+
+        let LoadStatus::Done { title, .. } = drive_load(&mut emu) else {
+            panic!("expected the load to finish");
+        };
+        assert_eq!(title, "Second", "the newer load is the one that lands");
+        assert!(matches!(
+            emu.update_load(&Time::default()),
+            LoadStatus::Idle
+        ));
+    }
 
     /// A `WorkingFile` as `prepare_file` would hand it over: the entry's own
     /// tags plus anything detection added, and the release year.
