@@ -231,6 +231,14 @@ struct Args {
     /// Skip demo after still screen and no audio
     #[arg(long, default_value_t = 0)]
     idle_timeout: i32,
+
+    /// Delay until info is shown for new file
+    #[arg(long, default_value_t = 4)]
+    info_delay: u64,
+
+    /// Duration of info showing for new file
+    #[arg(long, default_value_t = 8)]
+    info_duration: u64,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -429,6 +437,8 @@ struct AppSettings {
     speed_test: bool,
     tv_mode: bool,
     idle_timeout: i32,
+    info_delay: u64,
+    info_duration: u64,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -727,6 +737,8 @@ fn main() {
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,
         idle_timeout: args.idle_timeout,
+        info_delay: args.info_delay,
+        info_duration: args.info_duration,
         ..Default::default()
     };
 
