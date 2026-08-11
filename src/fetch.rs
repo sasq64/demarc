@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use sha2::{Digest, Sha256};
 use tracing::info;
 use url::Url;
@@ -269,6 +269,13 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
 /// Supports an optional `user:password@` prefix in the authority; without one it
 /// logs in anonymously. Transfers are done in binary mode so files aren't
 /// corrupted by line-ending translation.
+///
+/// The path is percent-decoded before it goes out as the `RETR` argument: FTP
+/// has no percent-encoding, so a server asked for `Count%20Duckula.png` looks
+/// for a file with a literal `%20` in its name and answers 550. URLs reach here
+/// encoded either because the db has them that way or because `Url::join`
+/// encoded a redirect `Location` that contained raw spaces — which is exactly
+/// what files.scene.org's `/get/...` links redirect to.
 fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     use std::net::ToSocketAddrs;
 
@@ -281,6 +288,7 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
         None => (rest, ""),
     };
     anyhow::ensure!(!path.is_empty(), "ftp URL has no file path: {url}");
+    let path = percent_decode_str(path).decode_utf8_lossy();
 
     let (credentials, host_port) = match authority.rsplit_once('@') {
         Some((creds, host)) => (Some(creds), host),
@@ -316,7 +324,7 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     let _ = ftp.get_ref().set_write_timeout(Some(RESPONSE_TIMEOUT));
     ftp.login(&user, &pass).context("FTP login failed")?;
     ftp.transfer_type(FileType::Binary)?;
-    ftp.retr(path, |reader| {
+    ftp.retr(&path, |reader| {
         std::io::copy(reader, out).map_err(suppaftp::FtpError::ConnectionError)?;
         Ok(())
     })
@@ -353,10 +361,16 @@ const FILENAME_ESCAPE: &AsciiSet = &NON_ALPHANUMERIC
 /// Derive a filesystem-safe filename from a URL's final path segment, dropping
 /// any `?query` or `#fragment` and percent-encoding anything that isn't an
 /// unreserved character so the result is safe to use as a cache key.
+///
+/// The segment is percent-*decoded* first so an already-encoded URL doesn't
+/// come back doubly encoded — `Count%20Duckula.png` is a space, not a literal
+/// `%20`, and re-encoding the `%` would name the cached file
+/// `Count%2520Duckula.png`.
 fn url_filename(url: &str) -> String {
     let tail = url.rsplit_once('/').map_or(url, |(_, tail)| tail);
     let tail = &tail[..tail.find(['?', '#']).unwrap_or(tail.len())];
-    let cleaned = utf8_percent_encode(tail, FILENAME_ESCAPE).to_string();
+    let tail = percent_decode_str(tail).decode_utf8_lossy();
+    let cleaned = utf8_percent_encode(&tail, FILENAME_ESCAPE).to_string();
     if cleaned.is_empty() || cleaned == "." {
         "download".to_string()
     } else {
@@ -390,6 +404,22 @@ mod tests {
         assert_eq!(&buf[..2], b"PK");
     }
 
+    /// A path with a space survives the https→ftp redirect: files.scene.org
+    /// sends the space raw in `Location`, `Url::join` encodes it to `%20`, and
+    /// the FTP side has to decode it again before `RETR` or the server 550s.
+    #[test]
+    #[ignore = "hits the network"]
+    fn downloads_ftp_path_containing_a_space() {
+        let mut buf = Vec::new();
+        download(
+            "https://files.scene.org/get:fi-ftp/mirrors/amigascne/Gfx/M/Mr_Acid/Count%20Duckula.png",
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(buf.len(), 5402);
+        assert_eq!(&buf[1..4], b"PNG");
+    }
+
     #[test]
     #[ignore = "hits the network"]
     fn caches_under_url_hash() {
@@ -406,12 +436,9 @@ mod tests {
     fn extracts_filename() {
         assert_eq!(url_filename("https://x.com/path/foo.zip"), "foo.zip");
         assert_eq!(url_filename("https://x.com/path/foo.zip?a=b"), "foo.zip");
-        // The `%` of an already-encoded segment is itself encoded, keeping the
-        // mapping from URL to cache name unambiguous.
-        assert_eq!(
-            url_filename("https://x.com/foo%20bar.d64"),
-            "foo%2520bar.d64"
-        );
+        // An already-encoded segment is decoded before re-encoding, so it comes
+        // back as it went in rather than doubly encoded.
+        assert_eq!(url_filename("https://x.com/foo%20bar.d64"), "foo%20bar.d64");
         assert_eq!(url_filename("https://x.com/a b&c.zip"), "a%20b%26c.zip");
         assert_eq!(url_filename("https://x.com/"), "download");
         assert_eq!(url_filename("game.zip"), "game.zip");
