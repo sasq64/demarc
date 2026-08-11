@@ -5112,7 +5112,7 @@ dependencies = [
 [[package]]
 name = "musix"
 version = "0.3.5"
-source = "git+https://github.com/sasq64/musicplayer?branch=demarc-version#3b997db05097aa79196f15b6c7f5b40501fc97d3"
+source = "git+https://github.com/sasq64/musicplayer?branch=demarc-version#00562d1d6261dac6ed7f0d942a68e4e2b761f351"
 dependencies = [
  "cc",
  "claxon",
