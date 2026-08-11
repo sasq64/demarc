@@ -28,6 +28,7 @@ mod fuzzy_list;
 mod hud;
 mod ilbm;
 mod image_emu;
+mod jobs;
 mod libloader;
 mod load_error;
 mod media_keys;
@@ -811,6 +812,7 @@ fn main() {
             FuzzyListPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,
+            jobs::JobsPlugin,
         ));
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);

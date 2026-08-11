@@ -27,17 +27,17 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 
 ## Install (Linux, Mac)
 
-`curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.sh | sh`
+`curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.sh | sh`
 
 ## Install (Windows)
 
 _IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
 
-`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.ps1 | iex"`
+`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
 
 (the above is usually blocked by Windows. You can try downloading the ps1 script manually and executing it).
 
-Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-x86_64-pc-windows-msvc.zip)
+Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-x86_64-pc-windows-msvc.zip)
 ## Rust source install
 
 If you don't already have it, install [rust](https://rustup.rs).
@@ -130,25 +130,6 @@ SHIFT+N = Next file in all emulators
   files next to the executable come along (`--many` splits it into single files)
 * If other _executables_ found in a directory, each of the executables are added
 
-### Tags
-
-Tags configure the emulator per file. They come from a db header (`# Platform:Atari
-puae_model:A500`) or line, an `.m3u`'s `#EXTINF`, or the command line
-(`-x hatari_machinetype=ste`). Most are libretro core options (see `docs/flags.md`);
-demarc adds a few of its own:
-
-| Tag | Effect |
-| --- | --- |
-| `boot_file` | Which file in a release directory to auto start, e.g. `boot_file=TLKTLK2.PRG`. Overrides the guess demarc makes (nearest the top of the release, named like a program — `.prg`, `.tos`, `.ttp`, `.app` — and the biggest of those). Matched case insensitively, by file name or by path within the release (`DEMO/TLKTLK2.PRG`) |
-| `psx_core` | `beetle` to load a PlayStation release with Beetle (needs a BIOS) instead of the default pcsx_rearmed |
-
-An Atari ST release directory is loaded as a hard drive, and the program is
-started from the drive's `AUTO` folder. The release's own `AUTO` folder is moved
-aside unless the started program lives in it — what a hard drive release keeps
-there is usually the disk-swap loaders of its floppy version, which stop the boot
-("insert disk 1 and reboot"). Such a release also defaults to a 4MB STE, since
-nothing that needs a hard drive ran on a 1MB ST; `--ste`, `--xmem` and an explicit
-tag still win.
 
 ### Command line arguments
 

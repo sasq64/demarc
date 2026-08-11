@@ -399,6 +399,9 @@ pub fn get_system_type(path: &Path) -> SystemType {
 }
 
 pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, String>) {
+    let videl = tags
+        .get("hatari_machinetype")
+        .is_some_and(|v| v == "falcon" || v == "tt");
     let mut set_var = |name: &str, val: &str| {
         if !tags.contains_key(name) {
             tags.insert(name.into(), val.into());
@@ -427,6 +430,17 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
         set_var("hatari_start_in_mouse_mode", "false");
         set_var("hatari_fastboot", "true");
         set_var("hatari_video_crop_overscan", "false");
+        if videl {
+            // Hatari sizes its internal "desktop" from the libretro core's
+            // retrow/retroh, which only the ST/STE renderer ever updates —
+            // the Falcon/TT Videl path never does. Left at the core's low-res
+            // default (392x248) every Videl mode is larger than that fake
+            // desktop, so hostscreen.c halves it ("too large screen size
+            // 640x480 -> divided by 2x2") and draws the shrunken image into
+            // the top-left of the frame we're handed. Hires raises it to
+            // 832x548, which covers the usual Falcon modes.
+            set_var("hatari_video_hires", "true");
+        }
     } else if system_type == SystemType::Psx {
         set_var("pcsx_rearmed_bios", "HLE");
         set_var("pcsx_rearmed_region", "PAL");

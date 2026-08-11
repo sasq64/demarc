@@ -537,6 +537,7 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
+
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
         let work_file = prepare_file(emu_file, &self.tags)?;
 

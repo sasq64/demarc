@@ -93,7 +93,25 @@ impl FileSource {
     /// Ensure the data is available locally — downloading the URL (cached, see
     /// [`fetch_url`]) the first time — and return the resulting local path. A
     /// [`FileSource::Path`] is returned as-is.
-    fn resolve(&mut self) -> Result<&PathBuf> {
+    pub fn resolve(&mut self) -> Result<&PathBuf> {
+        if let FileSource::Url(urls) = self {
+            // If any URL is a disk image, this is a (possibly multi-) disk set:
+            // download every disk image so they sit together in one directory
+            // (built into an m3u later). Otherwise just grab the first entry.
+            let urls = filter_release_urls(urls.clone());
+            let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
+                fetch_urls(&urls)?
+            } else {
+                fetch_url(urls.first().unwrap().as_ref())?
+            };
+            *self = FileSource::Path(p);
+        }
+        match self {
+            FileSource::Path(p) => Ok(p),
+            FileSource::Url(_) => unreachable!("just converted to Path above"),
+        }
+    }
+    pub fn resolve_async(&mut self) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory
