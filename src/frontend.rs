@@ -567,9 +567,7 @@ fn run_retro(
         let mut max_idle = settings.idle_timeout;
         if max_idle == 0 && settings.tv_mode {
             max_idle = 20;
-            if emu.work_file.system_type == SystemType::Ilbm
-                || emu.work_file.system_type == SystemType::Gfx
-            {
+            if emu.work_file.system_type.is_image() {
                 max_idle = 10;
             }
         }

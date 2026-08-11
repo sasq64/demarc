@@ -65,7 +65,7 @@ pub fn create_core(
             "Flash (SWF) support is not enabled; rebuild with --features flash"
         ));
     }
-    if system_type == SystemType::Ilbm || system_type == SystemType::Gfx {
+    if system_type.is_image() {
         return Ok(Box::new(ImageEmu::new(game)?));
     }
 
@@ -519,7 +519,7 @@ impl Emulator {
         {
             self.input_mode = InputMode::Joystick1;
         }
-        if t == SystemType::Ilbm {
+        if t.is_cycling_image() {
             self.is_image = true;
             let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
             self.paused = !cycle_enabled;

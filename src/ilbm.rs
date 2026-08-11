@@ -133,7 +133,13 @@ fn display_scale(form_type: &str, width: usize, height: usize, camg: u32) -> (us
 /// Replicate each element of a `width` x `height` grid `sx` times horizontally
 /// and `sy` times vertically (nearest-neighbour upscale). Used to apply the
 /// aspect-ratio correction from [`display_scale`] to pixels or palette indices.
-fn scale_grid<T: Copy>(src: &[T], width: usize, height: usize, sx: usize, sy: usize) -> Vec<T> {
+pub(crate) fn scale_grid<T: Copy>(
+    src: &[T],
+    width: usize,
+    height: usize,
+    sx: usize,
+    sy: usize,
+) -> Vec<T> {
     if sx == 1 && sy == 1 {
         return src.to_vec();
     }
@@ -148,8 +154,11 @@ fn scale_grid<T: Copy>(src: &[T], width: usize, height: usize, sx: usize, sy: us
     out
 }
 
-/// Decompress a ByteRun1 (PackBits) encoded body into `expected` bytes.
-fn unpack_byterun1(src: &[u8], expected: usize) -> Result<Vec<u8>> {
+/// Decompress a ByteRun1 (PackBits) encoded body into `expected` bytes,
+/// returning the output and how many bytes of `src` it consumed. (Callers that
+/// store something after the packed data — see [`crate::degas`] — need to know
+/// where it ends.)
+pub(crate) fn unpack_byterun1(src: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
     let mut out = Vec::with_capacity(expected);
     let mut i = 0;
     while i < src.len() && out.len() < expected {
@@ -175,7 +184,7 @@ fn unpack_byterun1(src: &[u8], expected: usize) -> Result<Vec<u8>> {
             out.resize(out.len() + count, byte);
         }
     }
-    Ok(out)
+    Ok((out, i))
 }
 
 /// A colour-cycling range (CRNG chunk), as used by DeluxePaint. The colours in
@@ -341,7 +350,7 @@ fn decode_pbm(width: usize, height: usize, compression: u8, body: &[u8]) -> Resu
     let expected = row_bytes * height;
     let raw = match compression {
         0 => body.to_vec(),
-        1 => unpack_byterun1(body, expected)?,
+        1 => unpack_byterun1(body, expected)?.0,
         c => bail!("unsupported PBM compression: {c}"),
     };
     if raw.len() < expected {
@@ -621,7 +630,7 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
 
     let planar = match header.compression {
         0 => body.data().to_vec(),
-        1 => unpack_byterun1(body.data(), expected)?,
+        1 => unpack_byterun1(body.data(), expected)?.0,
         c => bail!("unsupported compression: {c}"),
     };
     if planar.len() < expected {
