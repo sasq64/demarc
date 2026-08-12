@@ -1579,6 +1579,33 @@ mod tests {
         assert!(wf.path.join("amiga_file").exists());
     }
 
+    /// The layout scene packages use: the demo under `DH0_demo`, the WinUAE
+    /// settings shots under `Docs`. Whichever folder the filesystem lists first,
+    /// the executable is what gets booted — a screenshot handed to puae loads
+    /// nothing.
+    #[test]
+    fn amiga_dir_with_screenshot_folder() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("Docs")).unwrap();
+        fs::write(dir.path().join("Docs/WinUAE-CPU.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        fs::create_dir(dir.path().join("DH0_demo")).unwrap();
+        fs::copy(
+            root.join("demos/o2-intro/o2intro"),
+            dir.path().join("DH0_demo/demo.exe"),
+        )
+        .unwrap();
+
+        let wf = prepare_dir(dir.path(), &[]);
+
+        assert_eq!(wf.system_type, SystemType::Amiga);
+        let startup = fs::read_to_string(wf.path.join("s/startup-sequence")).unwrap();
+        assert!(startup.contains("demo.exe"), "got {startup:?}");
+        assert!(wf.path.join("demo.exe").is_file());
+        // The whole release folder comes along, but only the one the demo is in.
+        assert!(!wf.path.join("Docs").exists());
+    }
+
     #[test]
     fn amiga_lha() {
         let wf = prepare("testdata/vS10-ami.lha");
