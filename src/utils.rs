@@ -1019,6 +1019,7 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    debug!("Unpacking {path:?}");
     let mut archive = format.open(file)?;
     // Single-file compressors (.Z/.gz/.bz2) carry no name for their payload, so
     // derive one from the archive's stem (e.g. `demo.tar.gz` -> `demo.tar`).
@@ -1228,7 +1229,10 @@ mod tests {
     /// so both orders have to land on the same answer.
     #[test]
     fn screenshot_folder_does_not_hide_the_demo() {
-        let dir = tempfile::Builder::new().prefix("demarc-").tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
         fs::create_dir(dir.path().join("Docs")).unwrap();
         fs::write(dir.path().join("Docs/WinUAE-CPU.png"), b"\x89PNG\r\n\x1a\n").unwrap();
         fs::create_dir(dir.path().join("DH0_demo")).unwrap();

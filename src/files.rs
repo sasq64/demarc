@@ -927,6 +927,7 @@ pub fn prepare_file(emu_file: &EmuFile, in_tags: &HashMap<String, String>) -> Re
     }
 
     if path.is_file()
+        && emu_file.system_type == SystemType::Unknown
         && let Some(unpacked) = unpack_to_temp(&path)?
     {
         debug!("FMT: unpacked archive {path:?} -> {:?}", unpacked.path());

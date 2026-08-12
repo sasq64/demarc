@@ -494,6 +494,7 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     if args.fast_load {
         //set_var("vice_jiffydos", "enabled");
         set_var("puae_floppy_speed", "0");
+        set_var("fast_load", "on");
     }
 
     if args.reu {

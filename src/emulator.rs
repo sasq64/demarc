@@ -191,7 +191,7 @@ pub struct Emulator {
     pub last_active_time: f32,
     pub idle_time: f32,
     pub events: Vec<EmuEvent>,
-    pub retro_replay: bool,
+    pub retro_replay: u32,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;
@@ -542,13 +542,14 @@ impl Emulator {
 
         let mut tags = resolve_tags(&work_file);
 
-        self.retro_replay = false;
+        self.retro_replay = 0;
         if work_file.system_type == SystemType::C64
-            && (is_disk_image(&work_file.path) || has_extension(&work_file.path, "m3u"))
+            && (tags.get("fast_load") == Some(&"on".to_string()) && is_disk_image(&work_file.path)
+                || has_extension(&work_file.path, "m3u"))
         {
             tags.insert("vice_cartridge".into(), "rr38ppal-auto.crt".into());
             tags.insert("vice_autostart".into(), "disabled".into());
-            self.retro_replay = true;
+            self.retro_replay = 1;
         }
 
         self.core = None;
@@ -634,17 +635,21 @@ impl Emulator {
             return core.run();
         }
 
-        if self.retro_replay {
+        if self.retro_replay > 0 {
             let frames = core.frames_stepped();
             let f = 60;
-            if frames == f {
+            if self.retro_replay == 1 && frames >= f {
                 core.press_key(RETROK_F1, true, 0);
-            } else if frames == f + 2 {
+                self.retro_replay += 1;
+            } else if self.retro_replay == 2 && frames >= f + 2 {
                 core.press_key(RETROK_F1, false, 0);
-            } else if frames == f + 6 {
+                self.retro_replay += 1;
+            } else if self.retro_replay == 3 && frames == f + 6 {
                 core.press_key(RETROK_RETURN, true, 0);
-            } else if frames == f + 8 {
+                self.retro_replay += 1;
+            } else if self.retro_replay == 4 && frames == f + 8 {
                 core.press_key(RETROK_RETURN, false, 0);
+                self.retro_replay = 0;
             }
         }
 
