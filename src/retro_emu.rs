@@ -1640,10 +1640,6 @@ mod tests {
         save_png(&retro_emu, &root("test_d64.png")).unwrap();
     }
 
-    /// The settings handed to a core — a db header's `puae_model:A1200`, in the
-    /// end — must be the values it reads back, not the defaults it announces
-    /// through `SET_VARIABLES`. The untouched option checks the other half: the
-    /// core's own defaults still fill in everything we didn't name.
     #[test]
     fn settings_reach_the_core() {
         let core_path = libloader::get_libretro("puae").unwrap();

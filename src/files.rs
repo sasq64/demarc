@@ -541,7 +541,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
 /// left to [`unpack_into`]: the file has to be picked out by name first, since
 /// what conversion does to it — replacing it in place — must never be a
 /// surprise for a file sitting in the user's own directory.
-fn has_extension(path: &Path, ext: &str) -> bool {
+pub fn has_extension(path: &Path, ext: &str) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))

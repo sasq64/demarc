@@ -9,6 +9,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
+use crate::emulator::EmuEvent;
 use crate::emulator::{Emulator, InputMode};
 use crate::files::{EmuFile, FileSource};
 use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};

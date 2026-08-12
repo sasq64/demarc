@@ -415,6 +415,8 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
         // mouse mode, silently killing joypad input. Unbind the hotkey.
         set_var("puae_mapper_mouse_toggle", "---");
     } else if system_type == SystemType::C64 {
+        // set_var("vice_cartridge", "rr38ppal-auto.crt");
+        // set_var("vice_autostart", "disabled");
         set_var("vice_sid_extra", "none");
         set_var("vice_sid_model", "8580");
         set_var("vice_sound_sample_rate", "44100");
@@ -490,7 +492,7 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     }
 
     if args.fast_load {
-        set_var("vice_jiffydos", "enabled");
+        //set_var("vice_jiffydos", "enabled");
         set_var("puae_floppy_speed", "0");
     }
 

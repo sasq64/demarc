@@ -9,15 +9,16 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::{EmuFile, prepare_file};
+use crate::files::{EmuFile, has_extension, prepare_file};
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
 use crate::image_emu::ImageEmu;
-use crate::libretro;
+use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
 use crate::music_emu::{self, MusicEmu};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
+use crate::utils::is_disk_image;
 
 fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
     let mut tags = work_file.settings.clone();
@@ -134,49 +135,63 @@ impl InputMode {
     }
 }
 
+pub enum EmuAction {
+    LeftClick,
+    RightClick,
+    Key(KeyCode),
+    Disk(u32),
+}
+
+pub struct EmuEvent {
+    frame: u32,
+    what: EmuAction,
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
 /// `PostProcess` camera (matched via [`Self::image`]).
 #[derive(Component, Default)]
-pub(crate) struct Emulator {
-    pub(crate) core: Option<Box<dyn Backend + Send + Sync>>,
-    pub(crate) work_file: WorkingFile,
-    pub(crate) run_next: bool,
-    pub(crate) run_prev: bool,
-    pub(crate) next_frame: f64,
-    pub(crate) start_time: f64,
-    pub(crate) max_time: Option<usize>,
-    pub(crate) display_fps: f64,
-    pub(crate) match_fps: bool,
-    pub(crate) show_info: bool,
-    pub(crate) match_frames: usize,
-    pub(crate) tags: HashMap<String, String>,
-    pub(crate) sink: AudioSink,
-    pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
-    pub(crate) audio_rate_adjust: f64,
-    pub(crate) audio_seen: bool,
-    pub(crate) disk_no: u32,
+pub struct Emulator {
+    pub core: Option<Box<dyn Backend + Send + Sync>>,
+    pub work_file: WorkingFile,
+    pub run_next: bool,
+    pub run_prev: bool,
+    pub next_frame: f64,
+    pub start_time: f64,
+    pub max_time: Option<usize>,
+    pub display_fps: f64,
+    pub match_fps: bool,
+    pub show_info: bool,
+    pub match_frames: usize,
+    pub tags: HashMap<String, String>,
+    pub sink: AudioSink,
+    pub key_map: HashMap<KeyCode, libretro::retro_key>,
+    pub audio_rate_adjust: f64,
+    pub audio_seen: bool,
+    pub disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
     /// `PostProcess` camera samples it (`PostProcess::source == image`).
-    pub(crate) image: Handle<Image>,
+    pub image: Handle<Image>,
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+    pub width: u32,
+    pub height: u32,
     /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
     /// display refreshes much faster than a core produces frames, so this is
     /// what keeps `run_retro` from re-uploading the same pixels every frame.
-    pub(crate) frame_hash: u64,
-    pub(crate) paused: bool,
-    pub(crate) skipping: bool,
+    pub frame_hash: u64,
+    pub paused: bool,
+    pub skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
-    pub(crate) input_mode: InputMode,
+    pub input_mode: InputMode,
     /// Benchmark mode: step the core once per update with no audio or pacing.
-    pub(crate) speed_test: bool,
-    pub(crate) is_image: bool,
-    pub(crate) buttons: u32,
+    pub speed_test: bool,
+    pub is_image: bool,
+    pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
+    pub events: Vec<EmuEvent>,
+    pub retro_replay: bool,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;
@@ -487,8 +502,15 @@ impl Emulator {
         if let Some(p) = abs_pointer {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
+        let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
+        if left {
+            self.events.push(EmuEvent {
+                frame: self.core.as_ref().unwrap().frames_stepped() as u32,
+                what: EmuAction::LeftClick,
+            });
+        }
         self.core.as_mut().unwrap().set_mouse_buttons(
-            mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1),
+            left,
             mouse_buttons.pressed(MouseButton::Right),
             mouse_buttons.pressed(MouseButton::Middle),
         );
@@ -504,6 +526,10 @@ impl Emulator {
     }
 
     pub fn set_disk(&mut self, no: u32) {
+        self.events.push(EmuEvent {
+            frame: self.core.as_ref().unwrap().frames_stepped() as u32,
+            what: crate::emulator::EmuAction::Disk(no),
+        });
         self.core.as_mut().unwrap().set_disk(no);
     }
 
@@ -514,7 +540,16 @@ impl Emulator {
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
         let work_file = prepare_file(emu_file, &self.tags)?;
 
-        let tags = resolve_tags(&work_file);
+        let mut tags = resolve_tags(&work_file);
+
+        self.retro_replay = false;
+        if work_file.system_type == SystemType::C64
+            && (is_disk_image(&work_file.path) || has_extension(&work_file.path, "m3u"))
+        {
+            tags.insert("vice_cartridge".into(), "rr38ppal-auto.crt".into());
+            tags.insert("vice_autostart".into(), "disabled".into());
+            self.retro_replay = true;
+        }
 
         self.core = None;
         //let tags = load_tags(&work_file, &self.tags);
@@ -597,6 +632,20 @@ impl Emulator {
         // and no frame pacing, so throughput is bound only by CPU/GPU speed.
         if self.speed_test {
             return core.run();
+        }
+
+        if self.retro_replay {
+            let frames = core.frames_stepped();
+            let f = 60;
+            if frames == f {
+                core.press_key(RETROK_F1, true, 0);
+            } else if frames == f + 2 {
+                core.press_key(RETROK_F1, false, 0);
+            } else if frames == f + 6 {
+                core.press_key(RETROK_RETURN, true, 0);
+            } else if frames == f + 8 {
+                core.press_key(RETROK_RETURN, false, 0);
+            }
         }
 
         if self.paused {
