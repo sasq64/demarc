@@ -39,17 +39,18 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_LIBRETRO_PATH, RETRO_ENVIRONMENT_GET_LOG_INTERFACE,
     RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_VARIABLE,
-    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK,
-    RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
-    RETRO_ENVIRONMENT_SET_MESSAGE, RETRO_ENVIRONMENT_SET_MESSAGE_EXT,
-    RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
-    RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
-    RETRO_PIXEL_FORMAT_XRGB8888, retro_audio_sample_batch_t, retro_audio_sample_t,
-    retro_disk_control_callback, retro_disk_control_ext_callback, retro_environment_t,
-    retro_frame_time_callback, retro_game_geometry, retro_game_info, retro_input_poll_t,
-    retro_input_state_t, retro_keyboard_callback, retro_log_callback, retro_log_level,
-    retro_pixel_format, retro_system_av_info, retro_variable, retro_video_refresh_t,
+    RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
+    RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, RETRO_ENVIRONMENT_SET_GEOMETRY,
+    RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_MESSAGE,
+    RETRO_ENVIRONMENT_SET_MESSAGE_EXT, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+    RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
+    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
+    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
+    retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
+    retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
+    retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
+    retro_system_av_info, retro_variable, retro_video_refresh_t,
 };
 
 /// Stack for the thread a core runs on. See the `stack_size` call in
@@ -621,7 +622,7 @@ impl RetroCoreDirect {
                     if !var.key.is_null() {
                         let key = CStr::from_ptr(var.key).to_string_lossy();
                         if let Some(value) = self.vars.get(key.as_ref()) {
-                            debug!("GET {key:?} {value:?}");
+                            trace!("GET {key:?} {value:?}");
                             // Safe: the CString lives in the static OPTIONS map
                             // and is never mutated after SET_VARIABLES.
                             var.value = value.as_ptr();
@@ -642,6 +643,8 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_SET_MESSAGE => {}
                 RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION => {}
                 RETRO_ENVIRONMENT_SET_MESSAGE_EXT => {}
+                // Ignore option display hints
+                RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY => {}
                 _ => {
                     debug!("unhandled ENV {cmd}");
                     handled = false;

@@ -29,6 +29,7 @@ mod ilbm;
 mod image_emu;
 mod libloader;
 mod load_error;
+mod m3u;
 mod media_keys;
 mod newsys;
 mod post_process;

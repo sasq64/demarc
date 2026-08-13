@@ -14,9 +14,10 @@ use crate::files::{EmuFile, prepare_file};
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
 use crate::image_emu::ImageEmu;
-use crate::libretro;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
+use crate::workfile::WorkFile;
+use crate::{libretro, newsys};
 
 fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
     let mut tags = work_file.settings.clone();
@@ -113,7 +114,7 @@ impl InputMode {
 #[derive(Component, Default)]
 pub(crate) struct Emulator {
     pub(crate) core: Option<Box<dyn Backend + Send + Sync>>,
-    pub(crate) work_file: WorkingFile,
+    pub(crate) work_file: WorkFile,
     pub(crate) run_next: bool,
     pub(crate) run_prev: bool,
     pub(crate) next_frame: f64,
@@ -484,42 +485,53 @@ impl Emulator {
     }
 
     pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
-        let work_file = prepare_file(emu_file, &self.tags)?;
+        let mut source = emu_file.path.clone();
+        let path = source.resolve()?;
 
-        let tags = resolve_tags(&work_file);
+        let mut tags = emu_file.tags.clone();
+        for (key, val) in &self.tags {
+            tags.insert(key.clone(), val.clone());
+        }
+        let res = newsys::load_file(&path, &tags)?;
+
+        // let work_file = prepare_file(emu_file, &self.tags)?;
+        // let tags = resolve_tags(&work_file);
 
         self.core = None;
         //let tags = load_tags(&work_file, &self.tags);
-        let core = create_core(
-            work_file.system_type,
-            &work_file.path,
-            tags,
-            self.speed_test,
-        )?;
-        let t = work_file.system_type;
-        if t == SystemType::Megadrive
-            || t == SystemType::SuperNintendo
-            || t == SystemType::Atari2600
-            || t == SystemType::Gameboy
-            || t == SystemType::Gba
-            || t == SystemType::Psx
-        {
-            self.input_mode = InputMode::Joystick1;
-        }
-        if t == SystemType::Ilbm {
-            self.is_image = true;
-            let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
-            self.paused = !cycle_enabled;
-        } else {
-            // Loading a real emulator must clear any lingering still-image state
-            // from a previously opened ILBM, otherwise the fresh core inherits
-            // the image's paused flag and never runs.
-            self.is_image = false;
-            self.paused = false;
-        }
+        //
+        // let core = newsys::use
+        // let core = create_core(
+        //     work_file.system_type,
+        //     &work_file.path,
+        //     tags,
+        //     self.speed_test,
+        // )?;
+        let core = res.backend;
+        // let t = work_file.system_type;
+        // if t == SystemType::Megadrive
+        //     || t == SystemType::SuperNintendo
+        //     || t == SystemType::Atari2600
+        //     || t == SystemType::Gameboy
+        //     || t == SystemType::Gba
+        //     || t == SystemType::Psx
+        // {
+        //     self.input_mode = InputMode::Joystick1;
+        // }
+        // if t == SystemType::Ilbm {
+        //     self.is_image = true;
+        //     let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
+        //     self.paused = !cycle_enabled;
+        // } else {
+        //     // Loading a real emulator must clear any lingering still-image state
+        //     // from a previously opened ILBM, otherwise the fresh core inherits
+        //     // the image's paused flag and never runs.
+        //     self.is_image = false;
+        //     self.paused = false;
+        // }
 
         self.core = Some(core);
-        self.work_file = work_file;
+        self.work_file = res.work_file;
         // The new backend's serial has nothing to do with the old one's, so
         // start from "nothing uploaded yet". A backend that begins at 0 does so
         // with a blank frame, which is exactly what the texture already holds.

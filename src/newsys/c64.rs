@@ -4,7 +4,7 @@ use tracing::{info, warn};
 
 use super::utils::{build_m3u, get_disk_images, has_extension, unpack_into};
 
-use crate::{cbmconvert, workfile::WorkFile};
+use crate::{cbmconvert, m3u::M3u, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
@@ -54,26 +54,45 @@ impl System for C64System {
     }
 
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        let mut images = vec![];
+        let mut prgs = vec![];
         println!("LOAD C64: {file:?}");
-        if file.is_dir() || has_extension(file, "t64") {
-            file.make_temp()?;
-            Self::convert_files(file)?;
-            let scanned = get_disk_images(file, &["d64", "d81"])?;
-            println!("DIR {scanned:?}");
-            if !scanned.is_empty() {
-                let m3u = build_m3u(&scanned, file)?;
-                file.path = m3u;
-            } else {
-                if let Some(path) = self.get_first_file(file)? {
-                    file.path = path;
-                    return Ok(true);
+        walk_dir(file, 4, |path, ext, _header| {
+            println!("{path:?} {ext:?}");
+            if ext == "t64" {
+                println!("Converting {path:?}");
+                let parent = path.parent().unwrap();
+                let _guard = cbmconvert::CwdGuard::enter(parent);
+                let code = cbmconvert::run(["-t", "-N", path.to_string_lossy().as_ref()]);
+                if code != 0 {
+                    warn!("cbmconvert failed on {path:?} (exit code {code})");
+                } else {
+                    fs::remove_file(path).unwrap();
                 }
-                return Ok(false);
+            } else if ext == "gz" {
+                unpack_into(path, &path.parent().context("Expect file to have parent")?)?;
+                fs::remove_file(path)?;
             }
+            Ok(())
+        })?;
+
+        walk_dir(file, 4, |path, ext, header| {
+            println!("{path:?} {ext:?}");
+            if ["d64", "d81"].contains(&ext) {
+                images.push(path.to_owned());
+            } else if ext == "prg" || (header[0] == 0x1 && header[1] == 0x8) {
+                prgs.push(path.to_owned());
+            }
+            Ok(())
+        })?;
+
+        if !images.is_empty() {
+            let m3u = build_m3u(&images, file)?;
+            file.path = m3u;
+        } else if !prgs.is_empty() {
+            file.path = prgs[0].clone();
         } else {
-            if !self.can_load(file) {
-                return Ok(false);
-            }
+            return Ok(false);
         }
         Ok(true)
     }

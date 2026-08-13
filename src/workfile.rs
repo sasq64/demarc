@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 use crate::utils::copy_dir_all;
 
+#[derive(Default)]
 /// Used to pass around files that can be temporary.
 pub struct WorkFile {
     pub path: PathBuf,

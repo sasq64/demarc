@@ -535,12 +535,12 @@ fn run_retro(
                     emu.run_next = false;
                     emu.run_prev = false;
                     if settings.show_info && settings.maximized {
-                        writer.write(SetHudText {
-                            text: get_info_text(&emu.work_file),
-                            delay: Duration::from_secs(5),
-                            duration: Duration::from_secs(8),
-                            location: HudLocation::InfoText,
-                        });
+                        // writer.write(SetHudText {
+                        //     text: get_info_text(&emu.work_file),
+                        //     delay: Duration::from_secs(5),
+                        //     duration: Duration::from_secs(8),
+                        //     location: HudLocation::InfoText,
+                        // });
                     }
                 }
             };
@@ -548,12 +548,12 @@ fn run_retro(
         }
 
         if show_info && i == settings.current_emu {
-            writer.write(SetHudText {
-                text: get_info_text(&emu.work_file),
-                duration: Duration::from_secs(2),
-                location: HudLocation::InfoText,
-                ..Default::default()
-            });
+            // writer.write(SetHudText {
+            //     text: get_info_text(&emu.work_file),
+            //     duration: Duration::from_secs(2),
+            //     location: HudLocation::InfoText,
+            //     ..Default::default()
+            // });
         }
 
         let et = time.elapsed_secs_f64();
@@ -567,11 +567,11 @@ fn run_retro(
         let mut max_idle = settings.idle_timeout;
         if max_idle == 0 && settings.tv_mode {
             max_idle = 20;
-            if emu.work_file.system_type == SystemType::Ilbm
-                || emu.work_file.system_type == SystemType::Gfx
-            {
-                max_idle = 10;
-            }
+            // if emu.work_file.system_type == SystemType::Ilbm
+            //     || emu.work_file.system_type == SystemType::Gfx
+            // {
+            //     max_idle = 10;
+            // }
         }
 
         if max_idle > 0 && emu.idle_time > max_idle as f32 {
@@ -619,7 +619,8 @@ fn run_retro(
             }
         }
         // For some reason we need to compensate the hatari aspect
-        let aspect = if emu.work_file.system_type == SystemType::AtariST {
+        let aspect = if false {
+            // emu.work_file.system_type == SystemType::AtariST {
             let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
             if h > 0 {
                 w as f32 / h as f32

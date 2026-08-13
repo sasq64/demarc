@@ -6,9 +6,9 @@ use std::{
 };
 use tracing::debug;
 
-use super::utils::{build_m3u, copy_dir_all, get_disk_images, has_any_extension, read_header};
+use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
 
-use crate::{frontend::system_dir, workfile::WorkFile};
+use crate::{frontend::system_dir, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
@@ -114,39 +114,52 @@ impl System for AmigaSystem {
         data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3]
     }
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        let mut images = vec![];
+        let mut exes = vec![];
         println!("LOAD Amiga: {file:?}");
         for (key, val) in self.default_tags() {
             file.set_tag(key, val);
         }
-        if file.is_dir() {
-            if is_self_booting_dir(&file) {
-                debug!("FMT: Amiga self-booting");
-                file.set_tag("puae_use_whdload", "disabled");
-            } else if has_matching(&file, ".slave").is_some() {
-                debug!("FMT: Amiga WHDLoad");
-                file.set_tag("puae_model", "A1200");
-                file.set_tag("puae_use_whdload", "enabled");
-            } else {
-                let scanned = get_disk_images(file, &["adf", "dms", "ips"])?;
-                println!("DIR {scanned:?}");
-                if !scanned.is_empty() {
-                    let m3u = build_m3u(&scanned, file)?;
-                    file.path = m3u;
-                } else {
-                    if let Some(path) = self.get_first_file(file)? {
-                        file.path = path;
-                        handle_exe(file, true);
-                    } else {
-                        return Ok(false);
-                    }
-                }
+
+        let mut is_dir = false;
+        walk_dir(&file.path.clone(), 4, |path, ext, header| {
+            println!("{path:?} {ext:?}");
+            if ["adf", "dms"].contains(&ext) {
+                images.push(path.to_owned());
+            } else if ext == "slave" {
+                file.tags.insert("puae_model".into(), "A1200".into());
+                file.tags
+                    .insert("puae_use_whdload".into(), "enabled".into());
+                is_dir = true;
+            } else if header[0..4] == [0x00, 0x00, 0x03, 0xF3] {
+                exes.push(path.to_owned());
+            } else if let Some(f) = file.file_name()
+                && f == "startup-sequence"
+            {
+                // Auto-booting
+                file.tags
+                    .insert("puae_use_whdload".into(), "disabled".into());
+                is_dir = true;
             }
+            Ok(())
+        })?;
+
+        if is_dir {
+            return Ok(true);
+        }
+
+        if !images.is_empty() {
+            if images.len() > 1 {
+                let m3u = build_m3u(&images, file)?;
+                file.path = m3u;
+            } else {
+                file.path = images[0].clone();
+            }
+        } else if !exes.is_empty() {
+            file.path = exes[0].clone();
+            handle_exe(file, false);
         } else {
-            if self.can_load(file) {
-                handle_exe(file, false);
-            } else {
-                return Ok(false);
-            }
+            return Ok(false);
         }
         Ok(true)
     }

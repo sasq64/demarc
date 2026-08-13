@@ -351,12 +351,12 @@ fn handle_cmd(
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
             if show_info && i == settings.current_emu {
-                writer.write(SetHudText {
-                    text: get_info_text(&emu.work_file),
-                    duration: Duration::from_secs(2),
-                    location: HudLocation::InfoText,
-                    ..Default::default()
-                });
+                // writer.write(SetHudText {
+                //     text: get_info_text(&emu.work_file),
+                //     duration: Duration::from_secs(2),
+                //     location: HudLocation::InfoText,
+                //     ..Default::default()
+                // });
             }
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;
@@ -407,7 +407,7 @@ fn handle_cmd(
                         }
                         let disk_no = emu.disk_no;
                         emu.set_disk(disk_no);
-                        let floppy = emu.work_file.system_type == SystemType::C64;
+                        let floppy = false; //emu.work_file.system_type == SystemType::C64;
                         let d = emu.disk_no + 1;
 
                         writer.write(SetHudText {
@@ -431,12 +431,12 @@ fn handle_cmd(
                                 ..Default::default()
                             });
                         } else {
-                            writer.write(SetHudText {
-                                text: get_info_text(&emu.work_file),
-                                delay: Duration::from_secs(0),
-                                duration: Duration::from_secs(5000),
-                                location: HudLocation::InfoText,
-                            });
+                            // writer.write(SetHudText {
+                            //     text: get_info_text(&emu.work_file),
+                            //     delay: Duration::from_secs(0),
+                            //     duration: Duration::from_secs(5000),
+                            //     location: HudLocation::InfoText,
+                            // });
                         }
                         emu.show_info = !emu.show_info;
                     }
@@ -470,8 +470,8 @@ fn handle_cmd(
                     }
                     Cmd::Screenshot => {
                         let name = format!(
-                            "{}-{}.png",
-                            emu.work_file.game_info.title,
+                            "{}.png",
+                            //emu.work_file.game_info.title,
                             time.elapsed_secs() as i32
                         );
                         screenshot(&mut commands, &name);

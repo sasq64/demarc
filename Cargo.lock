@@ -2953,6 +2953,7 @@ dependencies = [
  "unarc-rs",
  "ureq",
  "url",
+ "walkdir",
  "wgpu 29.0.4",
  "zbus",
  "zip",

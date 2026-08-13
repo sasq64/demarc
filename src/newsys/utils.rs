@@ -60,6 +60,13 @@ pub fn get_disk_images(dir: &Path, exts: &[&str]) -> Result<Vec<PathBuf>> {
     Ok(disk_images)
 }
 
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 pub fn build_m3u(files: &[impl AsRef<Path>], target_dir: &Path) -> Result<PathBuf> {
     let mut contents = String::from("#EXTM3U\n");
     for file in files {
@@ -67,7 +74,10 @@ pub fn build_m3u(files: &[impl AsRef<Path>], target_dir: &Path) -> Result<PathBu
         let name = file
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {:?}", file))?;
-        fs::copy(file, target_dir.join(name))?;
+        let target = target_dir.join(name);
+        if !is_same_file(file, &target) {
+            fs::copy(file, &target)?;
+        }
         contents.push_str(&name.to_string_lossy());
         contents.push('\n');
     }
