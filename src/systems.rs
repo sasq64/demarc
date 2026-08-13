@@ -67,9 +67,24 @@ pub enum SystemType {
     Psx,
     NeoGeo,
     Ilbm,
+    Degas,
     Gfx,
     #[default]
     Unknown,
+}
+
+impl SystemType {
+    /// Whether the file is a still picture, shown by
+    /// [`ImageEmu`](crate::image_emu::ImageEmu) instead of a libretro core.
+    pub fn is_image(self) -> bool {
+        matches!(self, SystemType::Ilbm | SystemType::Degas | SystemType::Gfx)
+    }
+
+    /// Whether the format can carry a colour-cycling animation. Those images
+    /// are left running so the animation plays; the rest are paused.
+    pub fn is_cycling_image(self) -> bool {
+        matches!(self, SystemType::Ilbm | SystemType::Degas)
+    }
 }
 
 #[derive(Default, Debug, Clone)]
@@ -130,10 +145,17 @@ pub fn get_memory(work_file: &WorkingFile) -> String {
 }
 
 pub fn get_system_name(work_file: &WorkingFile) -> String {
-    let tags = &work_file.settings;
+    system_name(work_file.system_type, &work_file.settings)
+}
+
+/// The display name of a system, refined by the tags that distinguish its
+/// variants (an STE from an ST, an AGA Amiga from an A500). Takes the parts
+/// rather than a [`WorkingFile`] so it also works for an
+/// [`EmuFile`](crate::files::EmuFile) that hasn't been prepared for loading yet.
+pub fn system_name(system_type: SystemType, tags: &HashMap<String, String>) -> String {
     let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
     let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let mut base = match work_file.system_type {
+    let mut base = match system_type {
         SystemType::C64 => "C64",
         SystemType::Amiga => "Amiga",
         SystemType::Amstrad => "Amstrad CPC",
@@ -157,11 +179,12 @@ pub fn get_system_name(work_file: &WorkingFile) -> String {
         SystemType::Psx => "PlayStation",
         SystemType::NeoGeo => "Neo Geo",
         SystemType::Ilbm => "Amiga Gfx",
+        SystemType::Degas => "Atari Gfx",
         SystemType::Gfx => "Gfx",
         SystemType::Unknown => "Unknown",
     }
     .to_string();
-    if work_file.system_type == SystemType::Amiga {
+    if system_type == SystemType::Amiga {
         if a1200 {
             base += " (AGA)";
         } else {
@@ -237,10 +260,14 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
             CORE_NAME_PSX_BEETLE
         }
         SystemType::Psx => CORE_NAME_PSX,
-        // Ilbm and Flash are handled by their own backends before `get_core` is
-        // reached, so arriving here with one means the file type was never
+        // Images and Flash are handled by their own backends before `get_core`
+        // is reached, so arriving here with one means the file type was never
         // resolved to something loadable.
-        SystemType::Gfx | SystemType::Ilbm | SystemType::Flash | SystemType::Unknown => {
+        SystemType::Gfx
+        | SystemType::Ilbm
+        | SystemType::Degas
+        | SystemType::Flash
+        | SystemType::Unknown => {
             return Err(crate::load_error::UnknownSystem.into());
         }
     };
@@ -270,6 +297,17 @@ pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Resu
     })
 }
 
+/// The branch instruction every GEMDOS executable starts with — an Atari ST
+/// program is recognized by this, whatever it is named (`.prg`, `.tos`, `.ttp`
+/// or nothing at all).
+pub const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
+
+/// True if `path` is an Atari ST executable. Only the two magic bytes are read,
+/// so this is cheap enough to run over every file in a directory.
+pub fn is_atari_program(path: &Path) -> bool {
+    path.is_file() && read_header(path, GEMDOS_MAGIC.len()).is_ok_and(|data| data == GEMDOS_MAGIC)
+}
+
 pub fn get_system_type(path: &Path) -> SystemType {
     let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         ext.to_lowercase()
@@ -278,7 +316,7 @@ pub fn get_system_type(path: &Path) -> SystemType {
     };
     let mut system_type = match ext.as_str() {
         "adf" | "dms" | "ipf" | "hdf" | "slave" => SystemType::Amiga,
-        "d64" | "d81" | "crt" | "g64" | "x64" => SystemType::C64,
+        "d64" | "d81" | "crt" | "g64" | "x64" | "t64" | "lnx" | "p00" => SystemType::C64,
         "dsk" => SystemType::Amstrad,
         "smd" | "gen" | "32x" => SystemType::Megadrive,
         "msa" | "st" => SystemType::AtariST,
@@ -300,6 +338,10 @@ pub fn get_system_type(path: &Path) -> SystemType {
         "iso" => SystemType::Psx,
         "swf" => SystemType::Flash,
         "iff" | "ilbm" | "lbm" => SystemType::Ilbm,
+        // DEGAS low resolution, plain and compressed. The medium- and
+        // high-resolution variants (.pi2/.pi3, .pc2/.pc3) are far rarer and are
+        // left unclaimed for now.
+        "pi1" | "pc1" => SystemType::Degas,
         "gif" | "png" | "bmp" | "jpg" | "jpeg" => SystemType::Gfx,
         "neo" => SystemType::NeoGeo,
         _ => SystemType::Unknown,
@@ -332,12 +374,14 @@ pub fn get_system_type(path: &Path) -> SystemType {
                     system_type = SystemType::SuperNintendo;
                 } else if l.is_power_of_two() && (2048..=32768).contains(&l) && ext == "bin" {
                     system_type = SystemType::Atari2600;
-                } else if data[0..2] == [0x60, 0x1a] {
+                } else if data[0..2] == GEMDOS_MAGIC {
                     system_type = SystemType::AtariST;
                 } else if data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                     system_type = SystemType::Amiga;
                 } else if l >= 12 && &data[0..4] == b"FORM" && &data[8..12] == b"ILBM" {
                     system_type = SystemType::Ilbm;
+                } else if crate::degas::is_degas(&data, l) {
+                    system_type = SystemType::Degas;
                 } else if matches!(&data[0..3], b"FWS" | b"CWS" | b"ZWS") {
                     // Flash SWF signatures: uncompressed / zlib / LZMA.
                     system_type = SystemType::Flash;
@@ -371,6 +415,8 @@ pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, Strin
         // mouse mode, silently killing joypad input. Unbind the hotkey.
         set_var("puae_mapper_mouse_toggle", "---");
     } else if system_type == SystemType::C64 {
+        // set_var("vice_cartridge", "rr38ppal-auto.crt");
+        // set_var("vice_autostart", "disabled");
         set_var("vice_sid_extra", "none");
         set_var("vice_sid_model", "8580");
         set_var("vice_sound_sample_rate", "44100");
@@ -421,7 +467,7 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     }
     if args.ste {
         set_var("hatari_machinetype", "ste");
-        set_var("hatari_ramsize", "2");
+        set_var("hatari_ramsize", "4");
     }
 
     if args.xmem {
@@ -446,8 +492,9 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     }
 
     if args.fast_load {
-        set_var("vice_jiffydos", "enabled");
+        //set_var("vice_jiffydos", "enabled");
         set_var("puae_floppy_speed", "0");
+        set_var("fast_load", "on");
     }
 
     if args.reu {

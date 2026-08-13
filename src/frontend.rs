@@ -537,8 +537,8 @@ fn run_retro(
                     if settings.show_info && settings.maximized {
                         // writer.write(SetHudText {
                         //     text: get_info_text(&emu.work_file),
-                        //     delay: Duration::from_secs(5),
-                        //     duration: Duration::from_secs(8),
+                        //     delay: Duration::from_secs(settings.info_delay),
+                        //     duration: Duration::from_secs(settings.info_duration),
                         //     location: HudLocation::InfoText,
                         // });
                     }

@@ -17,6 +17,7 @@ mod libretro;
 mod audio;
 mod cbmconvert;
 mod commands;
+mod degas;
 mod emulator;
 mod fetch;
 mod files;
@@ -31,6 +32,7 @@ mod libloader;
 mod load_error;
 mod m3u;
 mod media_keys;
+mod music_emu;
 mod newsys;
 mod post_process;
 #[cfg(feature = "profile")]
@@ -44,8 +46,9 @@ mod utils;
 mod workfile;
 
 use commands::CommandPlugin;
+use commands::FilePickerSource;
 use frontend::{RetroPlugin, system_dir};
-use fuzzy_list::{FuzzyListPlugin, IndexedSource};
+use fuzzy_list::FuzzyListPlugin;
 use hud::HudPlugin;
 use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
@@ -71,7 +74,14 @@ const CLAP_STYLES: Styles = Styles::styled()
     .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", styles = CLAP_STYLES, color = ColorChoice::Always, 
+#[command(name = "demarc", version, styles = CLAP_STYLES, color = ColorChoice::Always,
+    // clap 4 drops the version from the help header, so put it back by hand.
+    help_template = "\
+{name} {version}
+{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}",
     about = "Demo scene emulator frontend for the command line",
     long_about = r#"
 DEMARC
@@ -121,15 +131,17 @@ struct Args {
     #[arg(long)]
     slangp: Option<PathBuf>,
 
-    /// Only load db entries whose line matches this regex, e.g.
-    /// `-I '(Demo|Intro)'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; all patterns must match.
+    /// Only load db entries with a field matching this regex, e.g.
+    /// `-I '(Demo|Intro)'`. Matched against each field of the db line on its
+    /// own, so it can pick on any one of them but never spans two.
+    /// Repeatable; all patterns must match.
     #[arg(short = 'I', long, value_parser = Regex::new)]
     include: Vec<Regex>,
 
-    /// Exclude db entries matching regex. e.g.
-    /// `-X 'category:.*Disk'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; a match on any pattern excludes.
+    /// Exclude db entries with a field matching this regex, e.g.
+    /// `-X 'category:.*Disk'`. Matched against each field of the db line on
+    /// its own, so it can pick on any one of them but never spans two.
+    /// Repeatable; a match on any pattern excludes.
     #[arg(short = 'X', long, value_parser = Regex::new)]
     exclude: Vec<Regex>,
 
@@ -222,6 +234,14 @@ struct Args {
     /// Skip demo after still screen and no audio
     #[arg(long, default_value_t = 0)]
     idle_timeout: i32,
+
+    /// Delay until info is shown for new file
+    #[arg(long, default_value_t = 4)]
+    info_delay: u64,
+
+    /// Duration of info showing for new file
+    #[arg(long, default_value_t = 8)]
+    info_duration: u64,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -414,12 +434,14 @@ struct AppSettings {
     /// The file picker's search index, built lazily from `files` on first open
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.
-    file_source: Option<IndexedSource>,
+    file_source: Option<FilePickerSource>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
     tv_mode: bool,
     idle_timeout: i32,
+    info_delay: u64,
+    info_duration: u64,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -718,6 +740,8 @@ fn main() {
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,
         idle_timeout: args.idle_timeout,
+        info_delay: args.info_delay,
+        info_duration: args.info_duration,
         ..Default::default()
     };
 

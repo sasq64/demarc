@@ -9,15 +9,17 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::{EmuFile, prepare_file};
+use crate::files::EmuFile;
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
 use crate::image_emu::ImageEmu;
+use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
+use crate::music_emu::{self, MusicEmu};
+use crate::newsys;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
 use crate::workfile::WorkFile;
-use crate::{libretro, newsys};
 
 fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
     let mut tags = work_file.settings.clone();
@@ -33,10 +35,30 @@ fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
         }
     }
 
-    if tags.get("tags").is_some_and(|t| t.contains("AGA Chipset")) {
-        tags.insert("puae_model".into(), "A1200".into());
+    if let Some(file_tags) = tags.get("tags").cloned() {
+        if file_tags.contains("AGA Chipset") {
+            tags.insert("puae_model".into(), "A1200".into());
+        }
+        if file_tags.contains("2sid") {
+            tags.insert("vice_sid_extra".into(), "0xd420".into());
+        }
+        if file_tags.contains("6581") {
+            tags.insert("vice_sid_model".into(), "6581".into());
+        }
+        if file_tags.contains("ste") {
+            tags.insert("hatari_machinetype".into(), "ste".into());
+            tags.insert("hatari_ramsize".into(), "4".into());
+        }
     }
+
     tags
+}
+
+/// Where the runtime files some `musix` plugins need live (UADE players, sc68
+/// replayers, `adplug.db`). Packed into `system.zip` with everything else under
+/// `system/`, so it travels with the binary.
+fn music_data_dir() -> std::path::PathBuf {
+    system_dir().join("musix")
 }
 
 pub fn create_core(
@@ -53,8 +75,15 @@ pub fn create_core(
             "Flash (SWF) support is not enabled; rebuild with --features flash"
         ));
     }
-    if system_type == SystemType::Ilbm || system_type == SystemType::Gfx {
+    if system_type.is_image() {
         return Ok(Box::new(ImageEmu::new(game)?));
+    }
+    // Music files have no system type of their own — they fall through
+    // detection as `Unknown` — so `musix` gets asked whether it recognises the
+    // file rather than the extension table. Only for `Unknown`, so nothing that
+    // already resolves to a core (a `.d64` full of SIDs, say) is diverted here.
+    if system_type == SystemType::Unknown && music_emu::can_handle(game, &music_data_dir()) {
+        return Ok(Box::new(MusicEmu::new(game, &music_data_dir())?));
     }
 
     tags_for_system(system_type, &mut tags);
@@ -107,49 +136,63 @@ impl InputMode {
     }
 }
 
+pub enum EmuAction {
+    LeftClick,
+    RightClick,
+    Key(KeyCode),
+    Disk(u32),
+}
+
+pub struct EmuEvent {
+    frame: u32,
+    what: EmuAction,
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
 /// `PostProcess` camera (matched via [`Self::image`]).
 #[derive(Component, Default)]
-pub(crate) struct Emulator {
-    pub(crate) core: Option<Box<dyn Backend + Send + Sync>>,
-    pub(crate) work_file: WorkFile,
-    pub(crate) run_next: bool,
-    pub(crate) run_prev: bool,
-    pub(crate) next_frame: f64,
-    pub(crate) start_time: f64,
-    pub(crate) max_time: Option<usize>,
-    pub(crate) display_fps: f64,
-    pub(crate) match_fps: bool,
-    pub(crate) show_info: bool,
-    pub(crate) match_frames: usize,
-    pub(crate) tags: HashMap<String, String>,
-    pub(crate) sink: AudioSink,
-    pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
-    pub(crate) audio_rate_adjust: f64,
-    pub(crate) audio_seen: bool,
-    pub(crate) disk_no: u32,
+pub struct Emulator {
+    pub core: Option<Box<dyn Backend + Send + Sync>>,
+    pub work_file: WorkFile,
+    pub run_next: bool,
+    pub run_prev: bool,
+    pub next_frame: f64,
+    pub start_time: f64,
+    pub max_time: Option<usize>,
+    pub display_fps: f64,
+    pub match_fps: bool,
+    pub show_info: bool,
+    pub match_frames: usize,
+    pub tags: HashMap<String, String>,
+    pub sink: AudioSink,
+    pub key_map: HashMap<KeyCode, libretro::retro_key>,
+    pub audio_rate_adjust: f64,
+    pub audio_seen: bool,
+    pub disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
     /// `PostProcess` camera samples it (`PostProcess::source == image`).
-    pub(crate) image: Handle<Image>,
+    pub image: Handle<Image>,
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+    pub width: u32,
+    pub height: u32,
     /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
     /// display refreshes much faster than a core produces frames, so this is
     /// what keeps `run_retro` from re-uploading the same pixels every frame.
-    pub(crate) frame_hash: u64,
-    pub(crate) paused: bool,
-    pub(crate) skipping: bool,
+    pub frame_hash: u64,
+    pub paused: bool,
+    pub skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
-    pub(crate) input_mode: InputMode,
+    pub input_mode: InputMode,
     /// Benchmark mode: step the core once per update with no audio or pacing.
-    pub(crate) speed_test: bool,
-    pub(crate) is_image: bool,
-    pub(crate) buttons: u32,
+    pub speed_test: bool,
+    pub is_image: bool,
+    pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
+    pub events: Vec<EmuEvent>,
+    pub retro_replay: u32,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;
@@ -460,8 +503,15 @@ impl Emulator {
         if let Some(p) = abs_pointer {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
+        let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
+        if left {
+            self.events.push(EmuEvent {
+                frame: self.core.as_ref().unwrap().frames_stepped() as u32,
+                what: EmuAction::LeftClick,
+            });
+        }
         self.core.as_mut().unwrap().set_mouse_buttons(
-            mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1),
+            left,
             mouse_buttons.pressed(MouseButton::Right),
             mouse_buttons.pressed(MouseButton::Middle),
         );
@@ -477,6 +527,10 @@ impl Emulator {
     }
 
     pub fn set_disk(&mut self, no: u32) {
+        self.events.push(EmuEvent {
+            frame: self.core.as_ref().unwrap().frames_stepped() as u32,
+            what: crate::emulator::EmuAction::Disk(no),
+        });
         self.core.as_mut().unwrap().set_disk(no);
     }
 
@@ -489,6 +543,16 @@ impl Emulator {
         let path = source.resolve()?;
 
         let mut tags = emu_file.tags.clone();
+
+        self.retro_replay = 0;
+        // if work_file.system_type == SystemType::C64
+        //     && (tags.get("fast_load") == Some(&"on".to_string()) && is_disk_image(&work_file.path)
+        //         || has_extension(&work_file.path, "m3u"))
+        // {
+        //     tags.insert("vice_cartridge".into(), "rr38ppal-auto.crt".into());
+        //     tags.insert("vice_autostart".into(), "disabled".into());
+        //     self.retro_replay = 1;
+        // }
         for (key, val) in &self.tags {
             tags.insert(key.clone(), val.clone());
         }
@@ -581,6 +645,24 @@ impl Emulator {
         // and no frame pacing, so throughput is bound only by CPU/GPU speed.
         if self.speed_test {
             return core.run();
+        }
+
+        if self.retro_replay > 0 {
+            let frames = core.frames_stepped();
+            let f = 60;
+            if self.retro_replay == 1 && frames >= f {
+                core.press_key(RETROK_F1, true, 0);
+                self.retro_replay += 1;
+            } else if self.retro_replay == 2 && frames >= f + 2 {
+                core.press_key(RETROK_F1, false, 0);
+                self.retro_replay += 1;
+            } else if self.retro_replay == 3 && frames == f + 6 {
+                core.press_key(RETROK_RETURN, true, 0);
+                self.retro_replay += 1;
+            } else if self.retro_replay == 4 && frames == f + 8 {
+                core.press_key(RETROK_RETURN, false, 0);
+                self.retro_replay = 0;
+            }
         }
 
         if self.paused {

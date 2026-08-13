@@ -1245,7 +1245,7 @@ impl Backend for RetroCoreThreaded {
             self.frame_width = update.width;
             self.frame_height = update.height;
             self.last_sum = self.audio_sum;
-            self.audio_sum = update.audio.iter().map(|a| (*a).abs() as i32).sum();
+            self.audio_sum = update.audio.iter().map(|a| (*a as i32).abs()).sum();
             self.audio.extend_from_slice(&update.audio);
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
@@ -1656,10 +1656,6 @@ mod tests {
         save_png(&retro_emu, &root("test_d64.png")).unwrap();
     }
 
-    /// The settings handed to a core — a db header's `puae_model:A1200`, in the
-    /// end — must be the values it reads back, not the defaults it announces
-    /// through `SET_VARIABLES`. The untouched option checks the other half: the
-    /// core's own defaults still fill in everything we didn't name.
     #[test]
     fn settings_reach_the_core() {
         let core_path = libloader::get_libretro("puae").unwrap();

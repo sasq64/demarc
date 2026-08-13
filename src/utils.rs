@@ -827,7 +827,10 @@ pub fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
     })
 }
 
-fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
+/// The entry of `dir` named `name`, whatever its case — Atari and Amiga file
+/// systems are case insensitive, so a release's `AUTO` folder may just as well
+/// be spelled `auto` on disk.
+pub fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
         let path = e.path();
         let matches = path
@@ -1017,6 +1020,7 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    debug!("Unpacking {path:?}");
     let mut archive = format.open(file)?;
     // Single-file compressors (.Z/.gz/.bz2) carry no name for their payload, so
     // derive one from the archive's stem (e.g. `demo.tar.gz` -> `demo.tar`).
@@ -1100,12 +1104,27 @@ pub fn scan_release_dir(dir: &Path) -> Result<ScannedDir> {
         let path = entry?.path();
         println!("{path:?}");
 
+        if path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .starts_with(".")
+        {
+            continue;
+        }
         if path.is_dir() {
             let sub = scan_release_dir(&path)?;
-            if first_file.is_none() {
+            // Take the file and its type together — a subdirectory that only
+            // raised the type would leave `system_type` describing something
+            // other than `first_file`, and the caller loads the pair. The same
+            // screenshot preference as below applies across directories: a
+            // `Docs` folder of PNGs must not keep the executable in a sibling
+            // folder from being what gets run.
+            if sub.system_type != SystemType::Unknown
+                && (first_file.is_none()
+                    || (system_type == SystemType::Gfx && sub.system_type != SystemType::Gfx))
+            {
                 first_file = sub.first_file;
-            }
-            if sub.system_type != SystemType::Unknown {
                 system_type = sub.system_type;
             }
             disk_images.extend(sub.disk_images);
@@ -1205,6 +1224,34 @@ mod tests {
                 ("my track.mp3", "MP3"),
                 ("Pawlov.bin", "BINARY"),
             ]
+        );
+    }
+
+    /// An Amiga release with its WinUAE screenshots in one folder and the demo
+    /// in another. The scan has to come back with the executable *and* Amiga:
+    /// pairing one folder's file with the other folder's type sends a PNG to
+    /// puae. Which folder `read_dir` hands back first is up to the filesystem,
+    /// so both orders have to land on the same answer.
+    #[test]
+    fn screenshot_folder_does_not_hide_the_demo() {
+        let dir = tempfile::Builder::new()
+            .prefix("demarc-")
+            .tempdir()
+            .unwrap();
+        fs::create_dir(dir.path().join("Docs")).unwrap();
+        fs::write(dir.path().join("Docs/WinUAE-CPU.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        fs::create_dir(dir.path().join("DH0_demo")).unwrap();
+        let mut exe = vec![0x00, 0x00, 0x03, 0xf3];
+        exe.resize(4096, 0);
+        fs::write(dir.path().join("DH0_demo/demo.exe"), &exe).unwrap();
+
+        let scan = scan_release_dir(dir.path()).unwrap();
+        assert_eq!(scan.system_type, SystemType::Amiga);
+        assert_eq!(
+            scan.first_file.as_deref().and_then(Path::file_name),
+            Some("demo.exe".as_ref()),
+            "got {:?}",
+            scan.first_file
         );
     }
 

@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 
 use bevy::window::{PrimaryWindow, WindowResized};
@@ -245,11 +247,11 @@ pub struct TextList {
 }
 
 const SELECTED_ROW_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
-const ROW_FONT_SIZE: f32 = 22.0;
+const ROW_FONT_SIZE: f32 = 20.0;
 /// Fixed height of every row, slightly above the natural line height for
 /// [`ROW_FONT_SIZE`]. Rows keep this height even when empty, so the box does not
 /// resize as the list is filtered or emptied.
-const ROW_HEIGHT: f32 = ROW_FONT_SIZE * 1.3;
+const ROW_HEIGHT: f32 = ROW_FONT_SIZE * 1.1;
 
 /// Marks a child text entity of a [`TextList`] and records which visible row it is.
 #[derive(Component)]
@@ -357,7 +359,7 @@ impl TextList {
         box_entity
     }
     pub(crate) fn update_keys(
-        input: Res<ButtonInput<KeyCode>>,
+        mut messages: MessageReader<KeyboardInput>,
         mut lists: Query<&mut TextList>,
         mut writer: MessageWriter<TextListSelect>,
     ) {
@@ -366,31 +368,27 @@ impl TextList {
                 if list.items.is_empty() {
                     continue;
                 }
-                let last = list.items.len() - 1;
-                let page = list.visible_count.max(1);
-                if input.just_pressed(KeyCode::ArrowUp) {
-                    list.selected = list.selected.saturating_sub(1);
-                }
-                if input.just_pressed(KeyCode::ArrowDown) {
-                    list.selected = (list.selected + 1).min(last);
-                }
-                if input.just_pressed(KeyCode::PageUp) {
-                    list.selected = list.selected.saturating_sub(page);
-                }
-                if input.just_pressed(KeyCode::PageDown) {
-                    list.selected = (list.selected + page).min(last);
-                }
-                if input.just_pressed(KeyCode::Home) {
-                    list.selected = 0;
-                }
-                if input.just_pressed(KeyCode::End) {
-                    list.selected = last;
-                }
-                if input.just_pressed(KeyCode::Enter) {
-                    writer.write(TextListSelect {
-                        id: list.id,
-                        index: list.selected,
-                    });
+                for msg in messages.read() {
+                    if msg.state == ButtonState::Released {
+                        continue;
+                    }
+                    let last = list.items.len() - 1;
+                    let page = list.visible_count.max(1);
+                    match msg.key_code {
+                        KeyCode::ArrowUp => list.selected = list.selected.saturating_sub(1),
+                        KeyCode::ArrowDown => list.selected = (list.selected + 1).min(last),
+                        KeyCode::PageUp => list.selected = list.selected.saturating_sub(page),
+                        KeyCode::PageDown => list.selected = (list.selected + page).min(last),
+                        KeyCode::Home => list.selected = 0,
+                        KeyCode::End => list.selected = last,
+                        KeyCode::Enter => {
+                            writer.write(TextListSelect {
+                                id: list.id,
+                                index: list.selected,
+                            });
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -475,7 +473,7 @@ impl Plugin for HudPlugin {
                     spawn_toast.run_if(on_message::<SetHudText>),
                     update_relative_text_size.run_if(on_message::<WindowResized>),
                     TextList::update_text_list,
-                    TextList::update_keys,
+                    TextList::update_keys.run_if(on_message::<KeyboardInput>),
                     drive_hud_fades,
                 ),
             );

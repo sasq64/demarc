@@ -23,7 +23,7 @@ use crate::text_input::TextInput;
 
 /// The number of results fetched from the source per query. A source may hold
 /// far more items than can be shown; this caps how many we pull and render.
-const DEFAULT_MAX_RESULTS: usize = 256;
+const DEFAULT_MAX_RESULTS: usize = 500_000;
 
 /// Inner [`TextList`] ids are offset by this so they never collide with the
 /// plain `TextList`s used elsewhere (which use small ids like 0/1). `FuzzyList`
@@ -49,6 +49,14 @@ pub trait FuzzySource: Send + Sync + 'static {
     /// An empty/whitespace query should return the head of the full list (the
     /// unfiltered view).
     fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem>;
+
+    /// Free-form detail about the item with this [`FuzzyItem::id`], shown in the
+    /// multi-line field below the list as the selection moves. Newlines are
+    /// honoured and long lines wrap. The default returns nothing, which hides
+    /// the field entirely — implement it to describe the highlighted item.
+    fn get_info(&self, _id: usize) -> String {
+        String::new()
+    }
 }
 
 /// Simple in-memory source: case-insensitive substring match over a
@@ -389,7 +397,22 @@ impl FuzzyStateStore {
     }
 }
 
-/// A searchable list: a [`TextInput`] search box above a filtered [`TextList`].
+/// Font size of the info field below the list.
+const INFO_FONT_SIZE: f32 = 18.0;
+/// How many lines of [`FuzzySource::get_info`] the info field shows. Its height
+/// is fixed at this many lines so the widget doesn't resize (and the centred
+/// layout doesn't jump) as the selection moves between items whose info is of
+/// differing length; anything past it is clipped.
+const INFO_LINES: f32 = 5.0;
+const INFO_PADDING: f32 = 12.0;
+const INFO_BORDER: f32 = 2.0;
+/// Border-box height of the info field: its text lines plus its own padding and
+/// border (Taffy sizes borders/padding inside `height`).
+const INFO_HEIGHT: f32 = INFO_LINES * INFO_FONT_SIZE * 1.3 + 2.0 * (INFO_PADDING + INFO_BORDER);
+
+/// A searchable list: a [`TextInput`] search box above a filtered [`TextList`],
+/// with a multi-line info field below it describing the highlighted item (see
+/// [`FuzzySource::get_info`]).
 ///
 /// Spawn with [`FuzzyList::spawn`]; despawn the returned (root) entity to close
 /// it. Type to filter; Up/Down/PageUp/PageDown/Home/End navigate; Enter emits a
@@ -412,6 +435,14 @@ pub struct FuzzyList {
     list: Entity,
     /// The inner list's [`TextList::id`], used to route its selections.
     list_id: usize,
+    /// The info field's [`Text`] entity (below the list).
+    info: Entity,
+    /// The box around it, hidden outright when there is no info to show.
+    info_box: Entity,
+    /// Item whose info the field currently shows, so [`FuzzyList::sync_info`]
+    /// only re-asks the source when the highlighted item actually changes.
+    /// `None` when nothing is highlighted (no results).
+    info_item: Option<usize>,
     max_results: usize,
 }
 
@@ -487,7 +518,15 @@ impl FuzzyList {
         // list box to show them.
         let shown = source.search(&initial_state.query, DEFAULT_MAX_RESULTS);
         let items = shown.iter().map(|r| r.text.clone()).collect();
-        let list = TextList::spawn_box(commands, stack, list_id, font, items, visible_count, width);
+        let list = TextList::spawn_box(
+            commands,
+            stack,
+            list_id,
+            font.clone(),
+            items,
+            visible_count,
+            width,
+        );
 
         // Restore the remembered list position, clamped in case the source's
         // contents shrank since the state was saved.
@@ -501,6 +540,65 @@ impl FuzzyList {
                 list.scroll_position = scroll;
             });
 
+        // Info field, describing the initially highlighted item. The box stays
+        // hidden while there is nothing to say, so a source that doesn't
+        // implement `get_info` looks exactly as it did without the field.
+        let info_item = shown.get(selected).map(|item| item.id);
+        let info_text = info_item.map(|id| source.get_info(id)).unwrap_or_default();
+        let info_box = commands
+            .spawn((
+                Node {
+                    width: Val::Px(width),
+                    height: Val::Px(INFO_HEIGHT),
+                    padding: UiRect::all(Val::Px(INFO_PADDING)),
+                    border: UiRect::all(Val::Px(INFO_BORDER)),
+                    // Info too long for the fixed height is cut off at the
+                    // content box rather than spilling out of the widget. A
+                    // node's overflow clips its children, hence the separate
+                    // text entity below.
+                    overflow: Overflow::clip(),
+                    overflow_clip_margin: OverflowClipMargin::content_box(),
+                    display: if info_text.is_empty() {
+                        Display::None
+                    } else {
+                        Display::Flex
+                    },
+                    ..default()
+                },
+                BackgroundColor(Color::linear_rgba(0.0, 0.0, 0.0, 0.9)),
+                BorderColor::all(Color::linear_rgba(1.0, 0.4, 0.2, 0.9)),
+            ))
+            .id();
+        let info = commands
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    // Without this the text would be sized to fit its longest
+                    // unbroken line and push past the box instead of wrapping.
+                    min_width: Val::Px(0.0),
+                    ..default()
+                },
+                Text::new(info_text),
+                TextFont {
+                    font: font.into(),
+                    font_size: FontSize::Px(INFO_FONT_SIZE),
+                    ..default()
+                },
+                TextColor(Color::LinearRgba(LinearRgba {
+                    red: 0.4,
+                    green: 1.0,
+                    blue: 0.8,
+                    alpha: 1.0,
+                })),
+                TextLayout {
+                    justify: Justify::Left,
+                    linebreak: LineBreak::WordBoundary,
+                },
+            ))
+            .id();
+        commands.entity(info_box).add_child(info);
+        commands.entity(stack).add_child(info_box);
+
         commands.entity(stack).insert(FuzzyList {
             id,
             source,
@@ -509,6 +607,9 @@ impl FuzzyList {
             input,
             list,
             list_id,
+            info,
+            info_box,
+            info_item,
             max_results: DEFAULT_MAX_RESULTS,
         });
 
@@ -557,6 +658,38 @@ impl FuzzyList {
         }
     }
 
+    /// Keeps the info field showing [`FuzzySource::get_info`] for the currently
+    /// highlighted item. The source is only asked when the highlighted item
+    /// changes (arrow keys, or a new filter), not every frame.
+    fn sync_info(
+        mut lists: Query<&mut FuzzyList>,
+        text_lists: Query<&TextList>,
+        mut texts: Query<&mut Text>,
+        mut nodes: Query<&mut Node>,
+    ) {
+        for mut fuzzy in &mut lists {
+            let Ok(list) = text_lists.get(fuzzy.list) else {
+                continue;
+            };
+            let item = fuzzy.shown.get(list.selected).map(|item| item.id);
+            if item == fuzzy.info_item {
+                continue;
+            }
+            let text = item.map(|id| fuzzy.source.get_info(id)).unwrap_or_default();
+            if let Ok(mut node) = nodes.get_mut(fuzzy.info_box) {
+                node.display = if text.is_empty() {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+            if let Ok(mut info_text) = texts.get_mut(fuzzy.info) {
+                info_text.0 = text;
+            }
+            fuzzy.info_item = item;
+        }
+    }
+
     /// Translates an inner [`TextList`] selection into a [`FuzzyListSelect`],
     /// mapping the visible row back to its stable source item.
     fn relay_select(
@@ -591,6 +724,11 @@ impl Plugin for FuzzyListPlugin {
                 Update,
                 (
                     FuzzyList::sync_filter,
+                    // Reads the selection both the keys and the (re-)filter just
+                    // set, so it runs after each of them.
+                    FuzzyList::sync_info
+                        .after(FuzzyList::sync_filter)
+                        .after(TextList::update_keys),
                     // Runs after the inner TextList has produced its select message.
                     FuzzyList::relay_select.after(TextList::update_keys),
                 ),
@@ -633,18 +771,61 @@ mod tests {
     }
 
     fn spawn(app: &mut App) -> Entity {
+        spawn_with(app, SubstringSource::new(items()))
+    }
+
+    fn spawn_with(app: &mut App, source: impl FuzzySource) -> Entity {
         let font = Handle::<Font>::default();
         let root = FuzzyList::spawn(
             7,
             &mut app.world_mut().commands(),
             font,
-            SubstringSource::new(items()),
+            source,
             5,
             400.0,
             &FuzzyListState::default(),
         );
         app.update();
         root
+    }
+
+    /// A source that describes each item, to exercise the info field.
+    struct DescribedSource(SubstringSource);
+
+    impl FuzzySource for DescribedSource {
+        fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+            self.0.search(query, limit)
+        }
+        fn get_info(&self, id: usize) -> String {
+            format!("item {id}\nline two")
+        }
+    }
+
+    fn info_entity(app: &mut App) -> Entity {
+        let e = fuzzy_entity(app);
+        app.world().get::<FuzzyList>(e).unwrap().info
+    }
+
+    fn info_box_entity(app: &mut App) -> Entity {
+        let e = fuzzy_entity(app);
+        app.world().get::<FuzzyList>(e).unwrap().info_box
+    }
+
+    fn info_display(app: &mut App, info_box: Entity) -> Display {
+        app.world().get::<Node>(info_box).unwrap().display
+    }
+
+    fn info_text(app: &mut App) -> String {
+        let info = info_entity(app);
+        app.world().get::<Text>(info).unwrap().0.clone()
+    }
+
+    /// Move the selection the way the arrow keys would, and let `sync_info` see it.
+    fn select_row(app: &mut App, row: usize) {
+        let e = fuzzy_entity(app);
+        let list = app.world().get::<FuzzyList>(e).unwrap().list;
+        app.world_mut().get_mut::<TextList>(list).unwrap().selected = row;
+        app.update();
     }
 
     /// The `FuzzyList` component lives on the inner stack entity, not the root.
@@ -778,6 +959,56 @@ mod tests {
         let tl = app.world().get::<TextList>(list).unwrap();
         assert_eq!(tl.selected, 3);
         assert_eq!(tl.scroll_position, 1);
+    }
+
+    #[test]
+    fn info_field_describes_the_selected_item() {
+        let mut app = setup();
+        spawn_with(&mut app, DescribedSource(SubstringSource::new(items())));
+
+        // The initially selected row is described right away…
+        assert_eq!(info_text(&mut app), "item 0\nline two");
+
+        // …and moving down the list follows the selection.
+        select_row(&mut app, 2);
+        assert_eq!(info_text(&mut app), "item 2\nline two");
+
+        // Filtering re-selects row 0, whose *source* id is what gets described.
+        type_query(&mut app, "cherry");
+        assert_eq!(info_text(&mut app), "item 3\nline two");
+
+        // Nothing matches, nothing is selected, so there is nothing to describe.
+        type_query(&mut app, "zzz");
+        assert_eq!(info_text(&mut app), "");
+    }
+
+    #[test]
+    fn info_field_is_hidden_when_the_source_has_no_info() {
+        let mut app = setup();
+        spawn(&mut app);
+
+        // `SubstringSource` doesn't implement `get_info`, so the field takes up
+        // no space at all.
+        let info_box = info_box_entity(&mut app);
+        assert_eq!(info_display(&mut app, info_box), Display::None);
+        select_row(&mut app, 2);
+        assert_eq!(info_display(&mut app, info_box), Display::None);
+    }
+
+    #[test]
+    fn info_field_shows_and_hides_with_the_text() {
+        let mut app = setup();
+        spawn_with(&mut app, DescribedSource(SubstringSource::new(items())));
+        let info_box = info_box_entity(&mut app);
+        assert_eq!(info_display(&mut app, info_box), Display::Flex);
+
+        // An empty result set leaves nothing to describe: the field collapses…
+        type_query(&mut app, "zzz");
+        assert_eq!(info_display(&mut app, info_box), Display::None);
+
+        // …and comes back once a row is selectable again.
+        type_query(&mut app, "ap");
+        assert_eq!(info_display(&mut app, info_box), Display::Flex);
     }
 
     #[test]

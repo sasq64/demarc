@@ -18,7 +18,8 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 * CRT shaders (Lottes) for "authentic" look
 * Can load slangp retroarch shaders
 * Fuzzy search files on disk or from database file
-* Displays IFF images
+* Displays Amiga IFF and Atari DEGAS images
+* Plays music
 * Can load disk images and executables
 * Right-Alt/Ctrl hotkey for disk switch etc
 * Can run multiple files at once in a grid
@@ -69,7 +70,7 @@ _TIP:_ Download all intros from [https://intros.c64.org](https://intros.c64.org/
 
 * [bitworld.txt.gz](/dl/bitworld.txt.gz) (1.8MB)
 * [csdb.txt.gz](/dl/csdb.txt.gz) (8MB)
-* [demozoo.txt.gz](/dl/demozoo.txt.gz) (13MB)
+* [demozoo.txt.gz](/dl/demozoo.txt.gz) (UPDATED 26081011) (7MB)
 
 #### Best of Amiga OCS (and some AGA)
 
@@ -124,7 +125,30 @@ SHIFT+N = Next file in all emulators
 * Recurse all directories on the command line
 * If _demo.m3u_ file found, that directory is added and not recursed
 * If _disk images_ found in a directory, that directory is added and not recursed
-* If _executables_ found in a directory, each of the executables are added
+* If _Amiga or Atari ST executables_ found in a directory, that directory is added
+  and not recursed — the whole directory is loaded as a hard drive, so the data
+  files next to the executable come along (`--many` splits it into single files)
+* If other _executables_ found in a directory, each of the executables are added
+
+### Tags
+
+Tags configure the emulator per file. They come from a db header (`# Platform:Atari
+puae_model:A500`) or line, an `.m3u`'s `#EXTINF`, or the command line
+(`-x hatari_machinetype=ste`). Most are libretro core options (see `docs/flags.md`);
+demarc adds a few of its own:
+
+| Tag | Effect |
+| --- | --- |
+| `boot_file` | Which file in a release directory to auto start, e.g. `boot_file=TLKTLK2.PRG`. Overrides the guess demarc makes (nearest the top of the release, named like a program — `.prg`, `.tos`, `.ttp`, `.app` — and the biggest of those). Matched case insensitively, by file name or by path within the release (`DEMO/TLKTLK2.PRG`) |
+| `psx_core` | `beetle` to load a PlayStation release with Beetle (needs a BIOS) instead of the default pcsx_rearmed |
+
+An Atari ST release directory is loaded as a hard drive, and the program is
+started from the drive's `AUTO` folder. The release's own `AUTO` folder is moved
+aside unless the started program lives in it — what a hard drive release keeps
+there is usually the disk-swap loaders of its floppy version, which stop the boot
+("insert disk 1 and reboot"). Such a release also defaults to a 4MB STE, since
+nothing that needs a hard drive ran on a 1MB ST; `--ste`, `--xmem` and an explicit
+tag still win.
 
 ### Command line arguments
 
