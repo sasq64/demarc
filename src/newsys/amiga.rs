@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::{collections::HashMap, fs, path::Path};
 use tracing::debug;
 
-use super::utils::{build_m3u, copy_dir_all, find_child, has_any_extension, read_header};
+use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
 
 use crate::{frontend::system_dir, newsys::walk_dir, workfile::WorkFile};
 
@@ -20,11 +20,6 @@ impl AmigaSystem {
         Self::default()
     }
 }
-/// True if `game` is a directory containing an `s/startup-sequence` boot script,
-fn is_self_booting_dir(game: &Path) -> bool {
-    find_child(game, "s").is_some_and(|s_dir| find_child(&s_dir, "startup-sequence").is_some())
-}
-
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 {
@@ -85,10 +80,6 @@ impl System for AmigaSystem {
             ("puae_mapper_mouse_toggle", "---"),
         ]
         .into()
-    }
-
-    fn set_args(&mut self, args: &crate::Args) {
-        self.aga = args.aga;
     }
 
     fn can_load(&self, path: &Path) -> bool {

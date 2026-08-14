@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use std::{fs, path::Path};
-use tracing::{info, warn};
+use std::fs;
+use tracing::warn;
 
-use super::utils::{build_m3u, has_extension, unpack_into};
+use super::utils::{build_m3u, unpack_into};
 
 use crate::{cbmconvert, newsys::walk_dir, workfile::WorkFile};
 
@@ -18,27 +18,6 @@ const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
 pub struct C64System {}
 
 impl C64System {
-    fn convert_files(path: &Path) -> Result<()> {
-        if path.is_dir() {
-            for entry in fs::read_dir(path)? {
-                let path = entry?.path();
-                Self::convert_files(&path)?;
-            }
-        } else if has_extension(&path, "t64") {
-            info!("Converting {path:?}");
-            let _guard = cbmconvert::CwdGuard::enter(path.parent().unwrap());
-            let code = cbmconvert::run(["-t", "-N", path.to_string_lossy().as_ref()]);
-            if code != 0 {
-                warn!("cbmconvert failed on {path:?} (exit code {code})");
-            } else {
-                fs::remove_file(path)?;
-            }
-        } else if has_extension(&path, "gz") {
-            unpack_into(path, &path.parent().context("Expect file to have parent")?)?;
-            fs::remove_file(path)?;
-        }
-        Ok(())
-    }
 }
 
 impl System for C64System {

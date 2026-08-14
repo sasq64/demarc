@@ -6,7 +6,7 @@ use crate::newsys::utils::{copy_dir_all, has_extension, read_header};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
 use crate::workfile::WorkFile;
-use crate::{Args, libloader};
+use crate::libloader;
 use amiga::AmigaSystem;
 use anyhow::{Result, bail};
 use c64::C64System;
@@ -158,7 +158,6 @@ pub trait System {
         )?))
     }
 
-    fn set_args(&mut self, _args: &Args) {}
 }
 
 fn get_systems() -> Vec<Box<dyn System>> {
@@ -230,25 +229,6 @@ mod tests {
     use tracing_subscriber::{EnvFilter, fmt};
 
     use super::*;
-
-    pub fn frame_bytes(pixels: &[u32]) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(pixels.as_ptr() as *const u8, std::mem::size_of_val(pixels))
-        }
-    }
-    pub fn save_png(backend: &dyn Backend, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        backend.with_frame(&mut |width, height, pixels| {
-            let expected = width * height;
-            println!("{width} {height} {}", pixels.len());
-            if width == 0 || height == 0 || pixels.len() < expected {
-                return;
-            }
-            let bytes = frame_bytes(&pixels[..expected]).to_vec();
-            let buf = image::RgbaImage::from_raw(width as u32, height as u32, bytes).unwrap();
-            buf.save(path).unwrap();
-        });
-        Ok(())
-    }
 
     fn init_tracing() {
         let _ = fmt()

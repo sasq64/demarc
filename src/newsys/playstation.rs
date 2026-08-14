@@ -587,28 +587,6 @@ fn psx_text_size_fix(path: &Path) -> Option<u32> {
     (size > 0 && size != field(PSX_TEXT_SIZE_OFFSET)).then_some(size)
 }
 
-/// True if [`fix_psx_text_size`] would rewrite `path`.
-pub fn psx_needs_text_fix(path: &Path) -> bool {
-    psx_text_size_fix(path).is_some()
-}
-
-/// Rewrite the text section size of the PSX executable at `path` to the size
-/// the core demands — see [`psx_text_size_fix`] — cutting the file down to that
-/// size when it holds more than fits in RAM, since the core insists the two
-/// agree. Returns whether the file was changed.
-pub fn fix_psx_text_size(path: &Path) -> Result<bool> {
-    use std::io::{Seek, SeekFrom, Write};
-
-    let Some(size) = psx_text_size_fix(path) else {
-        return Ok(false);
-    };
-    let mut file = fs::OpenOptions::new().write(true).open(path)?;
-    file.seek(SeekFrom::Start(PSX_TEXT_SIZE_OFFSET as u64))?;
-    file.write_all(&size.to_le_bytes())?;
-    file.set_len(PSX_HEADER_LEN + u64::from(size))?;
-    Ok(true)
-}
-
 fn handle_exe(work_file: &Path) -> Result<PathBuf> {
     // Only Beetle loads a raw PS-X EXE, and only with a real BIOS. Wrap
     // the executable in a bootable disc image instead and the default

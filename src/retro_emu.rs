@@ -6,7 +6,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
 
 use libloading::Library;
 use tracing::{debug, error, info, trace, warn};
@@ -97,15 +96,6 @@ pub trait Backend {
     fn get_number_of_disks(&mut self) -> u32;
     /// Step the emulator by one presented frame
     fn run(&mut self) -> bool;
-
-    fn run_frames(&mut self, count: u32) {
-        self.skip_frames(count);
-        for _ in 0..count {
-            while !self.run() {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
-    }
 
     fn reset(&mut self);
     fn press_key(&mut self, code: u32, down: bool, mods: u16);
@@ -1524,72 +1514,6 @@ mod tests {
             assert!(w > 0 && h > 0, "no frame produced by worker for {path}");
             //emu.save_png(Path::new(path)).unwrap();
         }
-    }
-
-    /// The point of wrapping a PS-X EXE in a disc image: pcsx_rearmed won't take
-    /// the executable, but it boots the disc built around it, off its HLE BIOS
-    /// and with no BIOS image installed at all.
-    ///
-    /// This is the test that says the image is really bootable — the structural
-    /// checks in `utils` can only say it is well formed. It runs long enough for
-    /// the HLE boot to walk the filesystem, load the executable and draw with
-    /// it, and a blank frame means it never got there.
-    #[test]
-    fn psx_exe_boots_from_generated_disc() {
-        let core_path = libloader::get_libretro("pcsx_rearmed").unwrap();
-        // A temp dir, not `system/`: with no BIOS in it the core has to fall
-        // back to HLE, which is the path being tested, and it keeps the memory
-        // card files the core writes out of the packed `system.zip`.
-        let system_dir = tempfile::Builder::new()
-            .prefix("demarc-")
-            .tempdir()
-            .unwrap();
-        let iso = crate::utils::create_psx_iso(&root("demos/pdx-dlcm.psx"))
-            .unwrap()
-            .expect("the demo is a PS-X EXE");
-
-        let mut tags = HashMap::new();
-        tags.insert("pcsx_rearmed_bios".to_string(), "HLE".to_string());
-        tags.insert("pcsx_rearmed_region".to_string(), "PAL".to_string());
-        let mut emu =
-            RetroCoreDirect::new(&core_path, system_dir.path(), Some(&iso), tags).unwrap();
-        for _ in 0..300 {
-            emu.run();
-        }
-        // save_png(&emu, &root("test_psx_exe.png")).unwrap();
-
-        let (w, h) = emu.get_frame_size();
-        assert!(w > 0 && h > 0, "no frame produced");
-        let distinct = emu
-            .state
-            .frame
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        assert!(distinct > 16, "frame looks blank: only {distinct} colours");
-    }
-
-    /// The `psx_core` tag is the way to Beetle — where an executable ends up
-    /// when no disc could be built around it — while everything else keeps the
-    /// permissive default.
-    #[test]
-    fn psx_exe_routes_to_beetle() {
-        use crate::systems::SystemType;
-        use crate::systems::get_core;
-
-        let disc = get_core(SystemType::Psx, &HashMap::new()).unwrap();
-        assert!(
-            disc.to_string_lossy().contains("pcsx_rearmed"),
-            "discs should use pcsx_rearmed, got {disc:?}"
-        );
-
-        let mut tags = HashMap::new();
-        tags.insert("psx_core".to_string(), "beetle".to_string());
-        let exe = get_core(SystemType::Psx, &tags).unwrap();
-        assert!(
-            exe.to_string_lossy().contains("mednafen_psx"),
-            "the beetle tag should select Beetle, got {exe:?}"
-        );
     }
 
     /// Boots a licence-stripped scene disc with an MP3 audio track — the shape

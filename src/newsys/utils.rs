@@ -18,48 +18,6 @@ pub fn has_any_extension(path: &Path, ext: &[&str]) -> bool {
         .is_some_and(|e| ext.contains(&e))
 }
 
-pub fn sort_disks(files: &mut [PathBuf]) {
-    fn rank(path: &Path) -> u8 {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default();
-        if stem.chars().last().is_some_and(|c| c.is_ascii_digit()) {
-            0
-        } else if stem.chars().any(|c| c.is_ascii_digit()) {
-            1
-        } else {
-            2
-        }
-    }
-
-    files.sort_by(|a, b| {
-        rank(a)
-            .cmp(&rank(b))
-            .then_with(|| a.file_name().cmp(&b.file_name()))
-    });
-}
-
-pub fn get_disk_images(dir: &Path, exts: &[&str]) -> Result<Vec<PathBuf>> {
-    let mut disk_images = vec![];
-
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        println!("{path:?}");
-
-        if path.is_dir() {
-            let sub = get_disk_images(&path, exts)?;
-            disk_images.extend(sub);
-            continue;
-        };
-        if has_any_extension(&path, exts) {
-            disk_images.push(path);
-        }
-    }
-    sort_disks(&mut disk_images);
-    Ok(disk_images)
-}
-
 fn is_same_file(a: &Path, b: &Path) -> bool {
     match (fs::canonicalize(a), fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
@@ -220,17 +178,6 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Re
         }
     }
     Ok(())
-}
-
-pub fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
-        let path = e.path();
-        let matches = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.to_lowercase().contains(&name.to_lowercase()));
-        matches.then_some(path)
-    })
 }
 
 pub fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {

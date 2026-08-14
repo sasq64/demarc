@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::{image::Image, prelude::*};
@@ -10,99 +9,10 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
 use crate::emu_file::EmuFile;
-#[cfg(feature = "flash")]
-use crate::flash_emu::FlashEmu;
-use crate::frontend::system_dir;
-use crate::image_emu::ImageEmu;
 use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
-use crate::music_emu::{self, MusicEmu};
 use crate::newsys;
-use crate::retro_emu::{Backend, RetroCoreThreaded};
-use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
+use crate::retro_emu::Backend;
 use crate::workfile::WorkFile;
-
-fn resolve_tags(work_file: &WorkingFile) -> HashMap<String, String> {
-    let mut tags = work_file.settings.clone();
-
-    if tags.get("puae_model").is_some_and(|m| m == "date") {
-        tags.insert("puae_model".into(), "A500".into());
-        if let Ok(year) = work_file.game_info.year.parse::<u32>() {
-            if year < 1990 {
-                tags.insert("puae_kickstart".into(), "kick33180.A500".into());
-            } else if year >= 1993 {
-                tags.insert("puae_model".into(), "A1200".into());
-            }
-        }
-    }
-
-    if let Some(file_tags) = tags.get("tags").cloned() {
-        if file_tags.contains("AGA Chipset") {
-            tags.insert("puae_model".into(), "A1200".into());
-        }
-        if file_tags.contains("2sid") {
-            tags.insert("vice_sid_extra".into(), "0xd420".into());
-        }
-        if file_tags.contains("6581") {
-            tags.insert("vice_sid_model".into(), "6581".into());
-        }
-        if file_tags.contains("ste") {
-            tags.insert("hatari_machinetype".into(), "ste".into());
-            tags.insert("hatari_ramsize".into(), "4".into());
-        }
-    }
-
-    tags
-}
-
-/// Where the runtime files some `musix` plugins need live (UADE players, sc68
-/// replayers, `adplug.db`). Packed into `system.zip` with everything else under
-/// `system/`, so it travels with the binary.
-fn music_data_dir() -> std::path::PathBuf {
-    system_dir().join("musix")
-}
-
-pub fn create_core(
-    system_type: SystemType,
-    game: &Path,
-    mut tags: HashMap<String, String>,
-    speed_test: bool,
-) -> Result<Box<dyn Backend + Send + Sync>> {
-    if system_type == SystemType::Flash {
-        #[cfg(feature = "flash")]
-        return Ok(Box::new(FlashEmu::new(game, tags)?));
-        #[cfg(not(feature = "flash"))]
-        return Err(anyhow::anyhow!(
-            "Flash (SWF) support is not enabled; rebuild with --features flash"
-        ));
-    }
-    if system_type.is_image() {
-        return Ok(Box::new(ImageEmu::new(game)?));
-    }
-    // Music files have no system type of their own — they fall through
-    // detection as `Unknown` — so `musix` gets asked whether it recognises the
-    // file rather than the extension table. Only for `Unknown`, so nothing that
-    // already resolves to a core (a `.d64` full of SIDs, say) is diverted here.
-    if system_type == SystemType::Unknown && music_emu::can_handle(game, &music_data_dir()) {
-        return Ok(Box::new(MusicEmu::new(game, &music_data_dir())?));
-    }
-
-    tags_for_system(system_type, &mut tags);
-    println!("TAGS: {tags:?}");
-
-    // Propagate with `?` rather than re-`bail!`ing the message: formatting the
-    // error into a new string would drop the typed cause underneath it, which
-    // is what `load_error::classify` reads to tell "no core" from "missing
-    // BIOS" from "unknown file type".
-    let core = get_core(system_type, &tags)
-        .with_context(|| format!("could not pick a core for {game:?}"))?;
-    Ok(Box::new(RetroCoreThreaded::new(
-        Path::new(&core),
-        system_dir(),
-        Some(game),
-        tags,
-        speed_test,
-    )?))
-}
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
 /// In [`InputMode::Keyboard`] (the default) they map to the corresponding
@@ -738,96 +648,5 @@ impl Emulator {
             self.audio_rate_adjust = 0.0;
         }
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::files::{DbFilter, collect_db_text};
-    use crate::systems::GameInfo;
-
-    /// A `WorkingFile` as `prepare_file` would hand it over: the entry's own
-    /// tags plus anything detection added, and the release year.
-    fn work_file(year: &str, settings: &[(&str, &str)]) -> WorkingFile {
-        WorkingFile {
-            settings: settings
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-            game_info: GameInfo {
-                year: year.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-
-    /// Tags a db carries — here from its `# Platform:Amiga puae_model:A500`
-    /// header — are what the core gets, and anything the command line names
-    /// still overrides them.
-    #[test]
-    fn db_tags_reach_the_core() {
-        let mut out = vec![];
-        collect_db_text(
-            "# Platform:Amiga puae_model:A500 puae_floppy_speed:100\n\
-             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n",
-            &DbFilter::default(),
-            &mut out,
-        );
-        // What `prepare_file` passes on when it detects nothing itself: the
-        // entry's tags, unchanged.
-        let mut wf = work_file("1992", &[]);
-        wf.settings = out[0].tags.clone();
-
-        let tags = resolve_tags(&wf);
-        assert_eq!(tags.get("puae_model").unwrap(), "A500");
-        assert_eq!(tags.get("puae_floppy_speed").unwrap(), "100");
-    }
-
-    /// `puae_model:date` isn't a machine but an instruction: pick one from the
-    /// year of the release.
-    #[test]
-    fn date_picks_the_model() {
-        let by_year = |year: &str| {
-            let tags = resolve_tags(&work_file(year, &[("puae_model", "date")]));
-            (
-                tags.get("puae_model").cloned().unwrap_or_default(),
-                tags.contains_key("puae_kickstart"),
-            )
-        };
-        assert_eq!(by_year("1988"), ("A500".into(), true), "1.3 Kickstart");
-        assert_eq!(by_year("1991"), ("A500".into(), false));
-        assert_eq!(by_year("1996"), ("A1200".into(), false));
-        // No year at all leaves the plain A500 the sentinel resolves to.
-        assert_eq!(by_year(""), ("A500".into(), false));
-    }
-
-    /// An AGA release needs an A1200 whatever the year, and whatever the db
-    /// header said.
-    #[test]
-    fn aga_scene_tag_forces_a1200() {
-        let wf = work_file(
-            "1992",
-            &[
-                ("puae_model", "A500"),
-                ("tags", "Multiple Parts,AGA Chipset"),
-            ],
-        );
-        assert_eq!(resolve_tags(&wf).get("puae_model").unwrap(), "A1200");
-    }
-
-    /// What `prepare_file` reads out of the file itself — a WHDLoad install
-    /// here — is more specific than a db header covering thousands of lines,
-    /// so it is already merged over it by the time `load_tags` runs.
-    #[test]
-    fn detection_outranks_the_db_header() {
-        let wf = work_file(
-            "1992",
-            &[("puae_model", "A1200"), ("puae_use_whdload", "enabled")],
-        );
-        let tags = resolve_tags(&wf);
-        assert_eq!(tags.get("puae_model").unwrap(), "A1200");
-        assert_eq!(tags.get("puae_use_whdload").unwrap(), "enabled");
     }
 }

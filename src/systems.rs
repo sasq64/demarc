@@ -4,50 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
 use tempfile::TempDir;
 use tracing::{debug, info};
 
 use crate::{
     Args, CbmSystem,
     emu_file::EmuFile,
-    frontend::system_dir,
-    libloader,
     utils::{cue_has_data_track, is_gba_rom, is_snes_rom, read_header},
 };
-
-/// BIOS images Beetle looks for in the system dir, one per region. Unlike
-/// pcsx_rearmed it has no HLE fallback and won't boot without one.
-const PSX_BIOS: [&str; 3] = ["scph5500.bin", "scph5501.bin", "scph5502.bin"];
-
-const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
-const CORE_NAME_VICE_64: &str = "vice_x64";
-const CORE_NAME_VICE_DTV: &str = "vice_x64dtv";
-const CORE_NAME_VICE_128: &str = "vice_x128";
-const CORE_NAME_VICE_C16: &str = "vice_xplus4";
-const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
-const CORE_NAME_UAE: &str = "puae";
-const CORE_NAME_AMSTRAD: &str = "cap32";
-const CORE_NAME_ATARI: &str = "hatari";
-const CORE_NAME_MEGADRIVE: &str = "picodrive";
-const CORE_NAME_STELLA: &str = "stella";
-const CORE_NAME_SNES: &str = "bsnes";
-const CORE_NAME_SPECTRUM: &str = "fuse";
-const CORE_NAME_XL: &str = "atari800";
-const CORE_NAME_TIC80: &str = "tic80";
-const CORE_NAME_PICO8: &str = "fake08";
-const CORE_NAME_GAMEBOY: &str = "gambatte";
-const CORE_NAME_GBA: &str = "mgba";
-const CORE_NAME_NEOGEO: &str = "geolith";
-/// Default PSX core. Beetle is the more accurate emulator, but it is the wrong
-/// default *here*: it faithfully enforces the BIOS licence check, and scene
-/// rips almost always ship with the "Sony Computer Entertainment" licence
-/// sectors blanked, so they drop to the BIOS CD player instead of booting. It
-/// also can't read the MP3 audio tracks scene releases like to use. pcsx_rearmed
-/// does neither check, and its HLE BIOS means no copyrighted image is needed at
-/// all. Set the `psx_core` tag to `beetle` for accuracy on a licenced disc.
-const CORE_NAME_PSX: &str = "pcsx_rearmed";
-const CORE_NAME_PSX_BEETLE: &str = "mednafen_psx";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum SystemType {
@@ -75,17 +39,6 @@ pub enum SystemType {
 }
 
 impl SystemType {
-    /// Whether the file is a still picture, shown by
-    /// [`ImageEmu`](crate::image_emu::ImageEmu) instead of a libretro core.
-    pub fn is_image(self) -> bool {
-        matches!(self, SystemType::Ilbm | SystemType::Degas | SystemType::Gfx)
-    }
-
-    /// Whether the format can carry a colour-cycling animation. Those images
-    /// are left running so the animation plays; the rest are paused.
-    pub fn is_cycling_image(self) -> bool {
-        matches!(self, SystemType::Ilbm | SystemType::Degas)
-    }
 }
 
 #[derive(Default, Debug, Clone)]
@@ -234,80 +187,10 @@ pub fn get_info_text(work_file: &EmuFile, tags: &HashMap<String, String>) -> Str
     format!("\"{title}\"\n{group}\n{desc}{year}")
 }
 
-pub fn get_core(system_type: SystemType, tags: &HashMap<String, String>) -> Result<PathBuf> {
-    let cv = tags.get("cbm_variant").map_or("", |s| s.as_str());
-    info!("CBM VARIANT {cv}");
-    let core_name = match system_type {
-        SystemType::C64 if cv == "dtv" => CORE_NAME_VICE_DTV,
-        SystemType::C64 if cv == "c128" => CORE_NAME_VICE_128,
-        SystemType::C64 if cv == "c64_fast" => CORE_NAME_VICE_64,
-        SystemType::C64 if cv == "c16" => CORE_NAME_VICE_C16,
-        SystemType::C64 if cv == "vic20" => CORE_NAME_VICE_VIC20,
-        SystemType::C64 => CORE_NAME_VICE_64SC,
-        SystemType::Amiga => CORE_NAME_UAE,
-        SystemType::Amstrad => CORE_NAME_AMSTRAD,
-        SystemType::AtariST => CORE_NAME_ATARI,
-        SystemType::Megadrive => CORE_NAME_MEGADRIVE,
-        SystemType::Atari2600 => CORE_NAME_STELLA,
-        SystemType::SuperNintendo => CORE_NAME_SNES,
-        SystemType::ZXSpectrum => CORE_NAME_SPECTRUM,
-        SystemType::AtariXL => CORE_NAME_XL,
-        SystemType::Tic80 => CORE_NAME_TIC80,
-        SystemType::Pico8 => CORE_NAME_PICO8,
-        SystemType::Gameboy => CORE_NAME_GAMEBOY,
-        SystemType::Gba => CORE_NAME_GBA,
-        SystemType::NeoGeo => CORE_NAME_NEOGEO,
-        SystemType::Psx if tags.get("psx_core").is_some_and(|c| c == "beetle") => {
-            CORE_NAME_PSX_BEETLE
-        }
-        SystemType::Psx => CORE_NAME_PSX,
-        // Images and Flash are handled by their own backends before `get_core`
-        // is reached, so arriving here with one means the file type was never
-        // resolved to something loadable.
-        SystemType::Gfx
-        | SystemType::Ilbm
-        | SystemType::Degas
-        | SystemType::Flash
-        | SystemType::Unknown => {
-            return Err(crate::load_error::UnknownSystem.into());
-        }
-    };
-    if core_name.contains("beetle") {
-        // Only Beetle needs a BIOS — it has no HLE fallback. Its own failure is
-        // a bare load error with no hint, so name the files up front.
-        let dir = system_dir();
-        if !PSX_BIOS.iter().any(|b| dir.join(b).is_file()) {
-            return Err(crate::load_error::MissingBios {
-                core: "Beetle PSX".into(),
-                candidates: PSX_BIOS.iter().map(|b| b.to_string()).collect(),
-                dir: dir.display().to_string(),
-                note: Some(
-                    "Beetle is required here because pcsx_rearmed cannot load PS-X EXE files."
-                        .into(),
-                ),
-            }
-            .into());
-        }
-    }
-
-    // `NoCore` goes on as *context*, which anyhow keeps downcastable, so the
-    // loader's own explanation stays in the chain underneath it.
-    libloader::get_libretro(core_name).context(crate::load_error::NoCore {
-        name: core_name.to_string(),
-        system: system_type,
-    })
-}
-
 /// The branch instruction every GEMDOS executable starts with — an Atari ST
 /// program is recognized by this, whatever it is named (`.prg`, `.tos`, `.ttp`
 /// or nothing at all).
 pub const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
-
-/// True if `path` is an Atari ST executable. Only the two magic bytes are read,
-/// so this is cheap enough to run over every file in a directory.
-pub fn is_atari_program(path: &Path) -> bool {
-    path.is_file() && read_header(path, GEMDOS_MAGIC.len()).is_ok_and(|data| data == GEMDOS_MAGIC)
-}
 
 pub fn get_system_type(path: &Path) -> SystemType {
     let ext = if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
@@ -397,48 +280,6 @@ pub fn get_system_type(path: &Path) -> SystemType {
     }
     debug!("Found {system_type:?}");
     system_type
-}
-
-pub fn tags_for_system(system_type: SystemType, tags: &mut HashMap<String, String>) {
-    let mut set_var = |name: &str, val: &str| {
-        if !tags.contains_key(name) {
-            tags.insert(name.into(), val.into());
-        }
-    };
-    if system_type == SystemType::Amiga {
-        set_var("puae_model", "A500");
-        //set_var("puae_crop_mode", "4:3");
-        set_var("puae_crop", "smaller");
-        set_var("puae_horizontal_pos", "-5");
-        // PUAE binds RightCtrl to its own joystick/mouse RetroPad toggle by
-        // default. RightCtrl is our command modifier and gets forwarded to the
-        // core as a key press, so every command flipped the core into (locked)
-        // mouse mode, silently killing joypad input. Unbind the hotkey.
-        set_var("puae_mapper_mouse_toggle", "---");
-    } else if system_type == SystemType::C64 {
-        // set_var("vice_cartridge", "rr38ppal-auto.crt");
-        // set_var("vice_autostart", "disabled");
-        set_var("vice_sid_extra", "none");
-        set_var("vice_sid_model", "8580");
-        set_var("vice_sound_sample_rate", "44100");
-    } else if system_type == SystemType::Amstrad {
-        set_var("cap32_statusbar", "disabled");
-    } else if system_type == SystemType::AtariST {
-        set_var("hatari_forcerefresh", "2");
-        set_var("hatari_start_in_mouse_mode", "false");
-        set_var("hatari_fastboot", "true");
-        set_var("hatari_video_crop_overscan", "false");
-    } else if system_type == SystemType::Psx {
-        set_var("pcsx_rearmed_bios", "HLE");
-        set_var("pcsx_rearmed_region", "PAL");
-        set_var("beetle_psx_region", "pal");
-    } else if system_type == SystemType::NeoGeo {
-        //
-        set_var("geolith_overscan_t", "8");
-        set_var("geolith_overscan_b", "8");
-        set_var("geolith_overscan_l", "0");
-        set_var("geolith_overscan_r", "0");
-    }
 }
 
 pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
