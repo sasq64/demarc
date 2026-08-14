@@ -74,6 +74,10 @@ pub fn is_archive(path: &Path) -> Result<bool> {
     let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
         return Ok(false);
     };
+    // Tar is often reported falsely by file detection
+    if format == ArchiveFormat::Tar && ArchiveFormat::from_path(path) != Some(ArchiveFormat::Tar) {
+        return Ok(false);
+    }
     if !is_supported_archive(format) {
         return Ok(false);
     }
