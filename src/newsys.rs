@@ -1,10 +1,12 @@
-use crate::libloader;
 use crate::m3u::M3u;
+use crate::newsys::atari_st::AtariStSystem;
+use crate::newsys::images::ImageSystem;
 use crate::newsys::playstation::PSXSystem;
 use crate::newsys::utils::{copy_dir_all, has_extension, read_header};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
 use crate::workfile::WorkFile;
+use crate::{Args, libloader};
 use amiga::AmigaSystem;
 use anyhow::{Result, bail};
 use c64::C64System;
@@ -17,8 +19,10 @@ use utils::{is_archive, unpack_into};
 mod utils;
 
 mod amiga;
+mod atari_st;
 mod c64;
 mod gameboy;
+mod images;
 mod playstation;
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for
@@ -153,13 +157,18 @@ pub trait System {
             false,
         )?))
     }
+
+    fn set_args(&mut self, _args: &Args) {}
 }
+
 fn get_systems() -> Vec<Box<dyn System>> {
     vec![
+        Box::new(AmigaSystem::new()),
+        Box::new(AtariStSystem::new()),
         Box::new(C64System {}),
         Box::new(GameboySystem {}),
-        Box::new(AmigaSystem {}),
         Box::new(PSXSystem {}),
+        Box::new(ImageSystem {}),
     ]
 }
 
@@ -203,6 +212,7 @@ pub fn load_file(path: &Path, tags: &HashMap<String, String>) -> Result<LoadResu
             if let Some(td) = wf.temp_dir.as_ref() {
                 copy_dir_all(td.path(), Path::new("last"))?;
             }
+            wf.set_tag("system", sys.name());
 
             return Ok(LoadResult {
                 backend: sys.create(&wf)?,
@@ -273,7 +283,8 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let testdata = root.join("testdata").join("amiga");
         test_load(&testdata.join("rebels.adf"), "Amiga");
-        let res = test_load(&testdata.join("o2-intro"), "Amiga");
+        test_load(&testdata.join("o2-intro"), "Amiga");
+        let res = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
         assert!(res.work_file.tags.get("puae_model") == Some(&"A500".to_string()));
         let res = test_load(&testdata.join("nexus7"), "Amiga");
         assert!(res.work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));

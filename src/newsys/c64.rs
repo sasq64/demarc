@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use std::{fs, path::Path};
 use tracing::{info, warn};
 
-use super::utils::{build_m3u, get_disk_images, has_extension, unpack_into};
+use super::utils::{build_m3u, has_extension, unpack_into};
 
-use crate::{cbmconvert, m3u::M3u, newsys::walk_dir, workfile::WorkFile};
+use crate::{cbmconvert, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
@@ -42,9 +42,6 @@ impl C64System {
 }
 
 impl System for C64System {
-    fn extensions(&self) -> &'static [&'static str] {
-        &["d64", "prg", "d81", "t64"]
-    }
     fn core_name(&self) -> &'static str {
         CORE_NAME_VICE_64SC
     }

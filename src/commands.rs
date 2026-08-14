@@ -9,9 +9,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
-use crate::emulator::EmuEvent;
 use crate::emulator::{Emulator, InputMode};
-use crate::files::{EmuFile, FileSource};
 use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
 use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
@@ -20,6 +18,7 @@ use crate::post_process::{BorderMode, ScaleMode};
 use crate::systems::SystemType;
 use crate::systems::{get_info_text, system_name};
 use crate::{AppSettings, RenderSettings};
+use crate::{EmuFile, emu_file::FileSource};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -528,12 +527,13 @@ fn handle_cmd(
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
             if show_info && i == settings.current_emu {
-                // writer.write(SetHudText {
-                //     text: get_info_text(&emu.work_file),
-                //     duration: Duration::from_secs(2),
-                //     location: HudLocation::InfoText,
-                //     ..Default::default()
-                // });
+                let game = &settings.files[settings.current_game as usize];
+                writer.write(SetHudText {
+                    text: get_info_text(game, &emu.work_file.tags),
+                    duration: Duration::from_secs(2),
+                    location: HudLocation::InfoText,
+                    ..Default::default()
+                });
             }
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;

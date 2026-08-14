@@ -1,44 +1,25 @@
 use anyhow::Result;
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, fs, path::Path};
 use tracing::debug;
 
-use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
+use super::utils::{build_m3u, copy_dir_all, find_child, has_any_extension, read_header};
 
 use crate::{frontend::system_dir, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
 const CORE_NAME_UAE: &str = "puae";
-pub struct AmigaSystem {}
 
-impl AmigaSystem {}
-
-fn has_matching(dir: &Path, name: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
-        let path = e.path();
-        let matches = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.to_lowercase().contains(&name.to_lowercase()));
-        matches.then_some(path)
-    })
+#[derive(Default)]
+pub struct AmigaSystem {
+    aga: bool,
 }
 
-fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
-        let path = e.path();
-        let matches = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.eq_ignore_ascii_case(name));
-        matches.then_some(path)
-    })
+impl AmigaSystem {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
-
 /// True if `game` is a directory containing an `s/startup-sequence` boot script,
 fn is_self_booting_dir(game: &Path) -> bool {
     find_child(game, "s").is_some_and(|s_dir| find_child(&s_dir, "startup-sequence").is_some())
@@ -106,6 +87,10 @@ impl System for AmigaSystem {
         .into()
     }
 
+    fn set_args(&mut self, args: &crate::Args) {
+        self.aga = args.aga;
+    }
+
     fn can_load(&self, path: &Path) -> bool {
         if has_any_extension(path, &["dms", "adf", "ips"]) {
             return true;
@@ -121,24 +106,24 @@ impl System for AmigaSystem {
             file.set_tag(key, val);
         }
 
+        if self.aga {
+            file.set_tag("puae_model", "A1200");
+        }
+
         let mut is_dir = false;
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
             println!("{path:?} {ext:?}");
             if ["adf", "dms"].contains(&ext) {
                 images.push(path.to_owned());
             } else if ext == "slave" {
-                file.tags.insert("puae_model".into(), "A1200".into());
-                file.tags
-                    .insert("puae_use_whdload".into(), "enabled".into());
+                file.set_tag("puae_model", "A1200");
+                file.set_tag("puae_use_whdload", "enabled");
                 is_dir = true;
             } else if header[0..4] == [0x00, 0x00, 0x03, 0xF3] {
                 exes.push(path.to_owned());
-            } else if let Some(f) = file.file_name()
-                && f == "startup-sequence"
-            {
+            } else if path.ends_with("s/startup-sequence") {
                 // Auto-booting
-                file.tags
-                    .insert("puae_use_whdload".into(), "disabled".into());
+                file.set_tag("puae_use_whdload", "disabled");
                 is_dir = true;
             }
             Ok(())
@@ -157,7 +142,7 @@ impl System for AmigaSystem {
             }
         } else if !exes.is_empty() {
             file.path = exes[0].clone();
-            handle_exe(file, false);
+            handle_exe(file, true);
         } else {
             return Ok(false);
         }

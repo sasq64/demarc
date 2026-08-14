@@ -26,6 +26,9 @@ Pass EmuFile to all Systems until matched
 
 Always single file or directory
 
+"GAME" INFO
+
+Meta data from disk or db, handled by frontend.
 
 
 

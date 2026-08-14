@@ -18,6 +18,7 @@ mod audio;
 mod cbmconvert;
 mod commands;
 mod degas;
+mod emu_file;
 mod emulator;
 mod fetch;
 mod files;
@@ -57,7 +58,8 @@ use text_input::TextInputPlugin;
 #[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
-use crate::files::{DbFilter, EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
+use crate::emu_file::EmuFile;
+use crate::files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(

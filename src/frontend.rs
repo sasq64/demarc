@@ -19,7 +19,7 @@ use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::systems::{SystemType, get_info_text, tags_from_args};
+use crate::systems::{get_info_text, tags_from_args};
 use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
 
@@ -535,12 +535,12 @@ fn run_retro(
                     emu.run_next = false;
                     emu.run_prev = false;
                     if settings.show_info && settings.maximized {
-                        // writer.write(SetHudText {
-                        //     text: get_info_text(&emu.work_file),
-                        //     delay: Duration::from_secs(settings.info_delay),
-                        //     duration: Duration::from_secs(settings.info_duration),
-                        //     location: HudLocation::InfoText,
-                        // });
+                        writer.write(SetHudText {
+                            text: get_info_text(&game, &emu.work_file.tags),
+                            delay: Duration::from_secs(settings.info_delay),
+                            duration: Duration::from_secs(settings.info_duration),
+                            location: HudLocation::InfoText,
+                        });
                     }
                 }
             };
@@ -548,12 +548,13 @@ fn run_retro(
         }
 
         if show_info && i == settings.current_emu {
-            // writer.write(SetHudText {
-            //     text: get_info_text(&emu.work_file),
-            //     duration: Duration::from_secs(2),
-            //     location: HudLocation::InfoText,
-            //     ..Default::default()
-            // });
+            let game = settings.files[settings.current_game as usize].clone();
+            writer.write(SetHudText {
+                text: get_info_text(&game, &emu.work_file.tags),
+                duration: Duration::from_secs(2),
+                location: HudLocation::InfoText,
+                ..Default::default()
+            });
         }
 
         let et = time.elapsed_secs_f64();

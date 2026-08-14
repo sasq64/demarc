@@ -10,6 +10,7 @@ use tracing::{debug, info};
 
 use crate::{
     Args, CbmSystem,
+    emu_file::EmuFile,
     frontend::system_dir,
     libloader,
     utils::{cue_has_data_track, is_gba_rom, is_snes_rom, read_header},
@@ -215,8 +216,8 @@ pub fn get_full_info(work_file: &WorkingFile) -> String {
     format!("\"{title}\"\n{group}\n{system}{year}\nMem: {ram}\n Size: {len}")
 }
 
-pub fn get_info_text(work_file: &WorkingFile) -> String {
-    let system = get_system_name(work_file);
+pub fn get_info_text(work_file: &EmuFile, tags: &HashMap<String, String>) -> String {
+    let system = tags.get("system").cloned().unwrap_or("???".to_string()); //get_system_name(work_file);
     let GameInfo {
         title,
         group,
@@ -228,7 +229,7 @@ pub fn get_info_text(work_file: &WorkingFile) -> String {
     } else {
         format!(" ({year})")
     };
-    let desc = if typ.is_empty() { &system } else { typ };
+    let desc = if typ.is_empty() { &system } else { &typ };
 
     format!("\"{title}\"\n{group}\n{desc}{year}")
 }

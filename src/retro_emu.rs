@@ -100,7 +100,7 @@ pub trait Backend {
 
     fn run_frames(&mut self, count: u32) {
         self.skip_frames(count);
-        for i in 0..count {
+        for _ in 0..count {
             while !self.run() {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -906,9 +906,6 @@ impl RetroCoreDirect {
     }
 }
 
-/// Thin delegation to [`RetroCore`]'s inherent methods. Fully-qualified calls
-/// (`RetroCore::method(self, ..)`) are used so the inherent method is selected
-/// rather than recursing into the trait method of the same name.
 impl Backend for RetroCoreDirect {
     fn run(&mut self) -> bool {
         RetroCoreDirect::run(self);

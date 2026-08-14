@@ -9,7 +9,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::EmuFile;
+use crate::emu_file::EmuFile;
 #[cfg(feature = "flash")]
 use crate::flash_emu::FlashEmu;
 use crate::frontend::system_dir;
@@ -564,7 +564,6 @@ impl Emulator {
         self.core = None;
         //let tags = load_tags(&work_file, &self.tags);
         //
-        // let core = newsys::use
         // let core = create_core(
         //     work_file.system_type,
         //     &work_file.path,
