@@ -13,11 +13,9 @@
 //! on the frontend's thread, driven by the same [`FRAME_RATE`] pacing the
 //! frontend already applies to every other core.
 //!
-//! Nothing reaches this backend at the moment: the `newsys` loader that replaced
-//! `create_core` has no music path yet, so every item below is unreferenced
-//! until it is wired back in. Kept whole — and silenced rather than deleted —
-//! because the port still needs it.
-#![allow(dead_code)]
+//! Reached through `newsys::music::MusicSystem`, the last system the loader
+//! tries: `musix` recognises a lot of files, so anything a real machine
+//! can run is claimed before it gets here.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -517,6 +515,58 @@ impl Backend for MusicEmu {
     fn set_joypad(&mut self, _port: u32, _id: u32, _down: bool) {}
 }
 
+/// Build a minimal but valid 4-channel ProTracker module: one instrument
+/// holding a loud square wave, and a pattern that plays it on channel 1.
+/// Generating the file keeps the test self-contained — no binary asset, and
+/// nothing borrowed from the `musix` checkout.
+#[cfg(test)]
+pub(crate) fn write_test_mod(path: &Path) {
+    const SAMPLE_WORDS: usize = 16;
+    let mut m = Vec::new();
+    m.extend_from_slice(&[0u8; 20]); // song title
+    for i in 0..31 {
+        m.extend_from_slice(&[0u8; 22]); // sample name
+        // Length in words, finetune, volume, loop start/length in words.
+        // Only the first sample carries any data; a loop covering the whole
+        // sample keeps it sounding for the note's full length.
+        let (len, vol, loop_len) = if i == 0 {
+            (SAMPLE_WORDS as u16, 64u8, SAMPLE_WORDS as u16)
+        } else {
+            (0, 0, 1)
+        };
+        m.extend_from_slice(&len.to_be_bytes());
+        m.push(0);
+        m.push(vol);
+        m.extend_from_slice(&0u16.to_be_bytes());
+        m.extend_from_slice(&loop_len.to_be_bytes());
+    }
+    m.push(1); // song length in patterns
+    m.push(127); // restart position (unused)
+    let mut order = [0u8; 128];
+    order[0] = 0;
+    m.extend_from_slice(&order);
+    m.extend_from_slice(b"M.K.");
+
+    // 64 rows x 4 channels x 4 bytes. Row 0 plays sample 1 at period 428
+    // (C-2) on the first channel; every other slot stays empty. The sample
+    // number is split across two nibbles: the high one shares a byte with
+    // the period's top bits, the low one shares a byte with the effect.
+    let mut pattern = vec![0u8; 64 * 4 * 4];
+    let period: u16 = 428;
+    let sample: u8 = 1;
+    pattern[0] = (sample & 0xf0) | ((period >> 8) as u8 & 0x0f);
+    pattern[1] = (period & 0xff) as u8;
+    pattern[2] = sample << 4;
+    m.extend_from_slice(&pattern);
+
+    // Sample data: a full-scale square wave.
+    for i in 0..SAMPLE_WORDS * 2 {
+        m.push(if (i / 4) % 2 == 0 { 127 } else { 129 });
+    }
+
+    std::fs::write(path, m).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,56 +807,6 @@ mod tests {
         assert!(samples.is_empty(), "silence produced audio");
     }
 
-    /// Build a minimal but valid 4-channel ProTracker module: one instrument
-    /// holding a loud square wave, and a pattern that plays it on channel 1.
-    /// Generating the file keeps the test self-contained — no binary asset, and
-    /// nothing borrowed from the `musix` checkout.
-    fn write_test_mod(path: &Path) {
-        const SAMPLE_WORDS: usize = 16;
-        let mut m = Vec::new();
-        m.extend_from_slice(&[0u8; 20]); // song title
-        for i in 0..31 {
-            m.extend_from_slice(&[0u8; 22]); // sample name
-            // Length in words, finetune, volume, loop start/length in words.
-            // Only the first sample carries any data; a loop covering the whole
-            // sample keeps it sounding for the note's full length.
-            let (len, vol, loop_len) = if i == 0 {
-                (SAMPLE_WORDS as u16, 64u8, SAMPLE_WORDS as u16)
-            } else {
-                (0, 0, 1)
-            };
-            m.extend_from_slice(&len.to_be_bytes());
-            m.push(0);
-            m.push(vol);
-            m.extend_from_slice(&0u16.to_be_bytes());
-            m.extend_from_slice(&loop_len.to_be_bytes());
-        }
-        m.push(1); // song length in patterns
-        m.push(127); // restart position (unused)
-        let mut order = [0u8; 128];
-        order[0] = 0;
-        m.extend_from_slice(&order);
-        m.extend_from_slice(b"M.K.");
-
-        // 64 rows x 4 channels x 4 bytes. Row 0 plays sample 1 at period 428
-        // (C-2) on the first channel; every other slot stays empty. The sample
-        // number is split across two nibbles: the high one shares a byte with
-        // the period's top bits, the low one shares a byte with the effect.
-        let mut pattern = vec![0u8; 64 * 4 * 4];
-        let period: u16 = 428;
-        let sample: u8 = 1;
-        pattern[0] = (sample & 0xf0) | ((period >> 8) as u8 & 0x0f);
-        pattern[1] = (period & 0xff) as u8;
-        pattern[2] = sample << 4;
-        m.extend_from_slice(&pattern);
-
-        // Sample data: a full-scale square wave.
-        for i in 0..SAMPLE_WORDS * 2 {
-            m.push(if (i / 4) % 2 == 0 { 127 } else { 129 });
-        }
-
-        std::fs::write(path, m).unwrap();
-    }
 
     /// The `musix` data directory in this checkout. Only some formats need it,
     /// and the module used here is not one of them, so a missing directory is

@@ -5,6 +5,7 @@ use crate::newsys::atari_st::AtariStSystem;
 use crate::newsys::gba::GBASystem;
 use crate::newsys::images::ImageSystem;
 use crate::newsys::megadrive::MegadriveSystem;
+use crate::newsys::music::MusicSystem;
 use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
 use crate::newsys::snes::SNESSystem;
@@ -34,6 +35,7 @@ mod gameboy;
 mod gba;
 mod images;
 mod megadrive;
+mod music;
 mod playstation;
 mod sinclair;
 mod snes;
@@ -209,6 +211,9 @@ impl NewSys {
             Box::new(AmstradSystem {}),
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
+            // Last: `musix` recognises a lot of files, and anything a real
+            // system can run should go to that system instead.
+            Box::new(MusicSystem {}),
         ]
     }
     pub fn new(args: &Args) -> Self {
@@ -322,6 +327,21 @@ mod tests {
         assert!(res.work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));
         assert!(res.work_file.tags.get("puae_model") == Some(&"A1200".to_string()));
     }
+    /// A bare music file has no system of its own, so it falls through every
+    /// other system to [`MusicSystem`] — both on its own and as the only
+    /// playable thing in a directory.
+    #[test]
+    fn test_music() {
+        let dir = std::env::temp_dir().join("newsys_music_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let song = dir.join("tune.mod");
+        crate::music_emu::write_test_mod(&song);
+
+        test_load(&song, "Music");
+        test_load(&dir, "Music");
+    }
+
     #[test]
     fn test_psx() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
