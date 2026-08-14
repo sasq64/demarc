@@ -511,7 +511,7 @@ fn run_retro(
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
             let game = settings.files[settings.current_game as usize].clone();
-            match emu.load(&time, &game) {
+            match emu.load(&time, &settings.system, &game) {
                 Err(e) => {
                     let text = format!(
                         "Could not load {}: {}",

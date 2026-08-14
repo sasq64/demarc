@@ -60,6 +60,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::emu_file::EmuFile;
 use crate::files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
+use crate::newsys::NewSys;
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -424,6 +425,7 @@ struct RenderSettings {
 
 #[derive(Resource, Default)]
 struct AppSettings {
+    system: NewSys,
     show_info: bool,
     files: Vec<EmuFile>,
     current_game: isize,
@@ -733,7 +735,9 @@ fn main() {
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
+    let sys = NewSys::new(&args);
     let settings = AppSettings {
+        system: sys,
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
@@ -756,6 +760,7 @@ fn main() {
         // Drive the update loop as fast as possible regardless of window focus.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
+
     // `main` installs its own tracing subscriber above, so the default one is
     // dropped — except in a profiling build, where `LogPlugin` owns the
     // subscriber (it carries the chrome-trace layer) and gets our writer.

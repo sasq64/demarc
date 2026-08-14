@@ -140,15 +140,28 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     }
     Ok(true)
 }
-/// Read up to `len` bytes from the start of `path`. Returns fewer bytes if the
-/// file is shorter.
+/// Read exactly `len` bytes from the start of `path`. Fails with
+/// [`std::io::ErrorKind::UnexpectedEof`] if the file is shorter.
 pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {
-    read_at(path, 0, len)
+    let got = read_at(path, 0, len)?;
+    if got.len() < len {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "{}: expected {} byte header, file is only {} bytes",
+                path.display(),
+                len,
+                got.len()
+            ),
+        ))
+    } else {
+        Ok(got)
+    }
 }
 
 /// Read up to `len` bytes of `path` starting at `offset`. Returns fewer bytes
 /// if the file ends first.
-fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
+pub fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut buf = vec![0u8; len];
     let mut file = fs::File::open(path)?;

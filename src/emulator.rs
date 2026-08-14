@@ -10,7 +10,7 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 use crate::audio::AudioSink;
 use crate::emu_file::EmuFile;
 use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
-use crate::newsys;
+use crate::newsys::NewSys;
 use crate::retro_emu::Backend;
 use crate::workfile::WorkFile;
 
@@ -448,7 +448,7 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
-    pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
+    pub fn load(&mut self, time: &Time, sys: &NewSys, emu_file: &EmuFile) -> Result<()> {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
@@ -466,7 +466,7 @@ impl Emulator {
         for (key, val) in &self.tags {
             tags.insert(key.clone(), val.clone());
         }
-        let res = newsys::load_file(&path, &tags)?;
+        let res = sys.load_file(&path, &tags)?;
 
         // let work_file = prepare_file(emu_file, &self.tags)?;
         // let tags = resolve_tags(&work_file);

@@ -92,10 +92,6 @@ impl System for AmigaSystem {
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut images = vec![];
         let mut exes = vec![];
-        println!("LOAD Amiga: {file:?}");
-        for (key, val) in self.default_tags() {
-            file.set_tag(key, val);
-        }
 
         if self.aga {
             file.set_tag("puae_model", "A1200");

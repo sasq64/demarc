@@ -20,26 +20,26 @@ pub enum SystemType {
     Amstrad,
     AtariST,
     Megadrive,
-    Atari2600,
     SuperNintendo,
     ZXSpectrum,
+    Ilbm,
+    Degas,
+    Gfx,
+    Gameboy,
+    Gba,
+    Psx,
+    Atari2600,
+
     AtariXL,
     Tic80,
     Pico8,
     Flash,
-    Gameboy,
-    Gba,
-    Psx,
     NeoGeo,
-    Ilbm,
-    Degas,
-    Gfx,
     #[default]
     Unknown,
 }
 
-impl SystemType {
-}
+impl SystemType {}
 
 #[derive(Default, Debug, Clone)]
 pub struct GameInfo {

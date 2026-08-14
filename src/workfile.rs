@@ -89,6 +89,7 @@ impl WorkFile {
     pub fn into_parts(self) -> (PathBuf, Option<TempDir>) {
         (self.path, self.temp_dir)
     }
+
 }
 
 impl std::ops::Deref for WorkFile {

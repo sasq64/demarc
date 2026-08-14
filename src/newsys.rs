@@ -1,12 +1,19 @@
 use crate::m3u::M3u;
+use crate::newsys::amstrad::AmstradSystem;
+use crate::newsys::atari_2600::Atari2600System;
 use crate::newsys::atari_st::AtariStSystem;
+use crate::newsys::gba::GBASystem;
 use crate::newsys::images::ImageSystem;
+use crate::newsys::megadrive::MegadriveSystem;
 use crate::newsys::playstation::PSXSystem;
-use crate::newsys::utils::{copy_dir_all, has_extension, read_header};
+use crate::newsys::sinclair::SinclairSystem;
+use crate::newsys::snes::SNESSystem;
+use crate::newsys::tic80::Tic80System;
+use crate::newsys::utils::{copy_dir_all, has_extension, read_at};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
 use crate::workfile::WorkFile;
-use crate::libloader;
+use crate::{Args, libloader};
 use amiga::AmigaSystem;
 use anyhow::{Result, bail};
 use c64::C64System;
@@ -19,11 +26,18 @@ use utils::{is_archive, unpack_into};
 mod utils;
 
 mod amiga;
+mod amstrad;
+mod atari_2600;
 mod atari_st;
 mod c64;
 mod gameboy;
+mod gba;
 mod images;
+mod megadrive;
 mod playstation;
+mod sinclair;
+mod snes;
+mod tic80;
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for
 /// a particular (or series of) computer or console.
@@ -75,7 +89,9 @@ pub fn walk_dir(
     for f in walkdir::WalkDir::new(dir).into_iter() {
         let file = f?;
         if file.path().is_file() {
-            let header = read_header(file.path(), header_size)?;
+            // Short files are still worth handing to the callback, so take
+            // whatever is there rather than demanding a full header.
+            let header = read_at(file.path(), 0, header_size)?;
             let ext = file
                 .path()
                 .extension()
@@ -89,10 +105,24 @@ pub fn walk_dir(
     Ok(())
 }
 
-pub trait System {
+pub fn get_ext(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// `Send + Sync` so that `Box<dyn System>` — and with it [`NewSys`] — can be
+/// held by a Bevy resource. All implementors are plain data, so this costs
+/// nothing, and it keeps this module free of any bevy dependency.
+pub trait System: Send + Sync {
     // NOTE: Is the useful?
     fn extensions(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    fn handles_ext(&self, path: &Path) -> bool {
+        self.extensions().contains(&get_ext(path).as_str())
     }
 
     // The libretro core to use, if any
@@ -107,18 +137,12 @@ pub trait System {
     }
 
     fn can_load(&self, path: &Path) -> bool {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        self.extensions().contains(&ext.as_str())
+        self.handles_ext(path)
     }
 
     fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
         for entry in fs::read_dir(dir)? {
             let path = entry?.path();
-            println!("{path:?}");
             if path.is_dir() {
                 if let Some(found) = self.get_first_file(&path)? {
                     return Ok(Some(found));
@@ -157,75 +181,100 @@ pub trait System {
             false,
         )?))
     }
-
 }
 
-fn get_systems() -> Vec<Box<dyn System>> {
-    vec![
-        Box::new(AmigaSystem::new()),
-        Box::new(AtariStSystem::new()),
-        Box::new(C64System {}),
-        Box::new(GameboySystem {}),
-        Box::new(PSXSystem {}),
-        Box::new(ImageSystem {}),
-    ]
+#[derive(Default)]
+pub struct NewSys {
+    systems: Vec<Box<dyn System>>,
 }
-
 pub struct LoadResult {
     pub backend: Box<dyn Backend + Send + Sync>,
     pub name: String,
     pub work_file: WorkFile,
 }
 
-pub fn load_file(path: &Path, tags: &HashMap<String, String>) -> Result<LoadResult> {
-    println!("LOAD_FILE: {path:?}");
-    let mut wf = WorkFile::new(path);
-    wf.tags = tags.clone();
-    if path.is_file() {
-        if is_archive(path)? {
-            let tags = wf.tags;
-            wf = WorkFile::new_dir()?;
-            wf.tags = tags;
-            println!("UNPACK {path:?} to {wf:?}");
-            unpack_into(path, &wf).unwrap();
-        } else if has_extension(path, "m3u") {
-            let m3u = M3u::from_file(path)?;
-            wf.path = path.parent().unwrap().to_owned();
-            for (key, value) in m3u.tags {
-                wf.tags.insert(key, value);
-            }
+impl NewSys {
+    fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
+        vec![
+            Box::new(Tic80System {}),
+            Box::new(AmigaSystem::new()),
+            Box::new(AtariStSystem::new()),
+            Box::new(C64System {}),
+            Box::new(GameboySystem {}),
+            Box::new(GBASystem::new(args)),
+            Box::new(MegadriveSystem::new(args)),
+            Box::new(SNESSystem::new(args)),
+            Box::new(PSXSystem {}),
+            Box::new(ImageSystem {}),
+            Box::new(AmstradSystem {}),
+            Box::new(SinclairSystem {}),
+            Box::new(Atari2600System {}),
+        ]
+    }
+    pub fn new(args: &Args) -> Self {
+        NewSys {
+            systems: Self::get_systems(args),
         }
     }
-    println!("CHECK");
-    for sys in get_systems() {
-        if sys.load(&mut wf).unwrap() {
-            println!("Loading {:?}", &wf.path);
-            if let Some(dir) = &wf.temp_dir {
-                for entry in fs::read_dir(dir)? {
-                    let path = entry?.path();
-                    println!("  {path:?}");
+
+    pub fn load_file(&self, path: &Path, tags: &HashMap<String, String>) -> Result<LoadResult> {
+        println!("LOAD_FILE: {path:?}");
+        let mut wf = WorkFile::new(path);
+        wf.tags = tags.clone();
+        if path.is_file() {
+            if is_archive(path)? {
+                let tags = wf.tags;
+                wf = WorkFile::new_dir()?;
+                wf.tags = tags;
+                println!("UNPACK {path:?} to {wf:?}");
+                unpack_into(path, &wf).unwrap();
+            } else if has_extension(path, "m3u") {
+                let m3u = M3u::from_file(path)?;
+                wf.path = path.parent().unwrap().to_owned();
+                for (key, value) in m3u.tags {
+                    wf.tags.insert(key, value);
                 }
-            };
-            println!("TAGS: {:?}", &wf.tags);
-
-            if let Some(td) = wf.temp_dir.as_ref() {
-                copy_dir_all(td.path(), Path::new("last"))?;
             }
-            wf.set_tag("system", sys.name());
-
-            return Ok(LoadResult {
-                backend: sys.create(&wf)?,
-                work_file: wf,
-                name: sys.name().into(),
-            });
         }
+        println!("CHECK");
+        for sys in &self.systems {
+            if sys.load(&mut wf).unwrap() {
+                println!("Loading {:?}", &wf.path);
+                if let Some(dir) = &wf.temp_dir {
+                    for entry in fs::read_dir(dir)? {
+                        let path = entry?.path();
+                        println!("  {path:?}");
+                    }
+                };
+
+                for (key, val) in sys.default_tags() {
+                    if !wf.has_tag(key) {
+                        wf.set_tag(key, val);
+                    }
+                }
+
+                println!("TAGS: {:?}", &wf.tags);
+
+                if let Some(td) = wf.temp_dir.as_ref() {
+                    copy_dir_all(td.path(), Path::new("last"))?;
+                }
+                wf.set_tag("system", sys.name());
+
+                return Ok(LoadResult {
+                    backend: sys.create(&wf)?,
+                    work_file: wf,
+                    name: sys.name().into(),
+                });
+            }
+        }
+        bail!("NO")
     }
-    bail!("NO")
 }
 
 #[cfg(test)]
 mod tests {
 
+    use clap::Parser;
     use tracing_subscriber::{EnvFilter, fmt};
 
     use super::*;
@@ -238,7 +287,10 @@ mod tests {
     }
 
     fn test_load(path: &Path, name: &str) -> LoadResult {
-        let mut result = load_file(path, &HashMap::new()).unwrap();
+        let args = Args::parse_from(["demarc"]);
+        let s = NewSys::new(&args);
+
+        let mut result = s.load_file(path, &HashMap::new()).unwrap();
         println!("{:?}", result.work_file.tags);
         assert_eq!(result.name, name);
         result.backend.run();
