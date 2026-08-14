@@ -75,7 +75,6 @@ pub struct Emulator {
     pub match_fps: bool,
     pub show_info: bool,
     pub match_frames: usize,
-    pub tags: HashMap<String, String>,
     pub sink: AudioSink,
     pub key_map: HashMap<KeyCode, libretro::retro_key>,
     pub audio_rate_adjust: f64,
@@ -245,7 +244,6 @@ impl Emulator {
 
     pub fn new(
         images: &mut Assets<Image>,
-        tags: HashMap<String, String>,
         max_time: Option<usize>,
         match_fps: bool,
         speed_test: bool,
@@ -272,7 +270,6 @@ impl Emulator {
 
         let handle = images.add(image);
         Emulator {
-            tags,
             max_time,
             run_next: true,
             key_map: Self::build_keycode_map(),
@@ -455,9 +452,6 @@ impl Emulator {
         let mut tags = emu_file.tags.clone();
 
         self.retro_replay = 0;
-        for (key, val) in &self.tags {
-            tags.insert(key.clone(), val.clone());
-        }
         let res = sys.load_file(&path, &tags)?;
         self.retro_replay = 0;
         if res

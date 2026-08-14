@@ -19,7 +19,7 @@ use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::systems::{get_info_text, tags_from_args};
+use crate::systems::get_info_text;
 use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
 
@@ -159,7 +159,7 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
 
-    let mut tags = tags_from_args(args);
+    //    let mut tags = tags_from_args(args);
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
@@ -169,20 +169,13 @@ fn setup_retro(world: &mut World) {
     let cells = grid_layout(args);
 
     if cells.is_empty() {
-        spawn_emulator(world, tags, match_fps, max_time, speed_test, None);
+        spawn_emulator(world, match_fps, max_time, speed_test, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
         // pcsx rearmed can only run 3 instances at one time
-        tags.insert("psx_core".into(), "beetle".into());
+        // tags.insert("psx_core".into(), "beetle".into());
         for (i, cell) in cells.into_iter().enumerate() {
-            spawn_emulator(
-                world,
-                tags.clone(),
-                match_fps,
-                max_time,
-                speed_test,
-                Some((i, cell)),
-            );
+            spawn_emulator(world, match_fps, max_time, speed_test, Some((i, cell)));
         }
     }
 
@@ -221,14 +214,13 @@ fn handle_textlist(
 /// so [`update_grid_viewports`] keeps its viewport sized to that cell.
 fn spawn_emulator(
     world: &mut World,
-    tags: HashMap<String, String>,
     match_fps: bool,
     max_time: Option<usize>,
     speed_test: bool,
     cell: Option<(usize, GridCell)>,
 ) {
     let mut res = world.resource_mut::<Assets<Image>>();
-    let emu = Emulator::new(&mut res, tags, max_time, match_fps, speed_test);
+    let emu = Emulator::new(&mut res, max_time, match_fps, speed_test);
     let handle = emu.image.clone();
     world.spawn(emu);
 

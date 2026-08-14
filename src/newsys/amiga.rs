@@ -4,7 +4,7 @@ use tracing::debug;
 
 use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
 
-use crate::{frontend::system_dir, newsys::walk_dir, workfile::WorkFile};
+use crate::{Args, frontend::system_dir, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
@@ -13,11 +13,17 @@ const CORE_NAME_UAE: &str = "puae";
 #[derive(Default)]
 pub struct AmigaSystem {
     aga: bool,
+    xmem: bool,
+    fast: bool,
 }
 
 impl AmigaSystem {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(args: &Args) -> Self {
+        Self {
+            aga: args.aga,
+            xmem: args.xmem,
+            fast: args.fast,
+        }
     }
 }
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
@@ -115,6 +121,23 @@ impl System for AmigaSystem {
             }
             Ok(())
         })?;
+
+        if self.xmem {
+            file.set_tag("puae_z3mem_size", "128");
+            file.set_tag("puae_chipmem_size", "4");
+            file.set_tag("puae_fastmem_size", "8");
+        }
+
+        if file.get_tag("puae_model", "") == "date" {
+            file.set_tag("puae_model", "A500");
+            if let Ok(year) = file.get_tag("year", "").parse::<u32>() {
+                if year < 1990 {
+                    file.set_tag("puae_kickstart", "kick33180.A500");
+                } else if year >= 1993 {
+                    file.set_tag("puae_model", "A1200");
+                }
+            }
+        }
 
         if is_dir {
             return Ok(true);
