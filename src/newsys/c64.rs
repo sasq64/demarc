@@ -4,7 +4,7 @@ use tracing::warn;
 
 use super::utils::{build_m3u, unpack_into};
 
-use crate::{cbmconvert, newsys::walk_dir, workfile::WorkFile};
+use crate::{Args, cbmconvert, newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 
@@ -15,9 +15,16 @@ const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
 // const CORE_NAME_VICE_C16: &str = "vice_xplus4";
 // const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
 
-pub struct C64System {}
+pub struct C64System {
+    fast_load: bool,
+}
 
 impl C64System {
+    fn new(args: &Args) -> Self {
+        Self {
+            fast_load: args.fast_load,
+        }
+    }
 }
 
 impl System for C64System {
