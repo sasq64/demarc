@@ -18,6 +18,9 @@ impl System for MegadriveSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["32x", "gen", "smd"]
     }
+    fn is_console(&self) -> bool {
+        true
+    }
 
     fn can_load(&self, path: &Path) -> bool {
         self.handles_ext(path)

@@ -631,6 +631,10 @@ impl System for PSXSystem {
         "PSX"
     }
 
+    fn is_console(&self) -> bool {
+        true
+    }
+
     fn default_tags(&self) -> HashMap<&str, &str> {
         [
             ("pcsx_rearmed_bios", "HLE"),

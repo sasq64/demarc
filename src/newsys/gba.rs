@@ -64,6 +64,9 @@ impl System for GBASystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["gba", "agb"]
     }
+    fn is_console(&self) -> bool {
+        true
+    }
 
     fn can_load(&self, path: &Path) -> bool {
         self.handles_ext(path)

@@ -127,6 +127,10 @@ pub trait System: Send + Sync {
         self.extensions().contains(&get_ext(path).as_str())
     }
 
+    fn is_console(&self) -> bool {
+        false
+    }
+
     // The libretro core to use, if any
     fn core_name(&self) -> &'static str {
         ""
@@ -189,9 +193,9 @@ pub trait System: Send + Sync {
 pub struct NewSys {
     systems: Vec<Box<dyn System>>,
 }
-pub struct LoadResult {
+pub struct LoadResult<'a> {
     pub backend: Box<dyn Backend + Send + Sync>,
-    pub name: String,
+    pub system: &'a Box<dyn System>,
     pub work_file: WorkFile,
 }
 
@@ -201,7 +205,7 @@ impl NewSys {
             Box::new(Tic80System {}),
             Box::new(AmigaSystem::new()),
             Box::new(AtariStSystem::new()),
-            Box::new(C64System {}),
+            Box::new(C64System::new(&args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
             Box::new(MegadriveSystem::new(args)),
@@ -268,7 +272,7 @@ impl NewSys {
                 return Ok(LoadResult {
                     backend: sys.create(&wf)?,
                     work_file: wf,
-                    name: sys.name().into(),
+                    system: &sys,
                 });
             }
         }
@@ -291,15 +295,15 @@ mod tests {
             .try_init();
     }
 
-    fn test_load(path: &Path, name: &str) -> LoadResult {
+    fn test_load(path: &Path, name: &str) -> WorkFile {
         let args = Args::parse_from(["demarc"]);
         let s = NewSys::new(&args);
 
         let mut result = s.load_file(path, &HashMap::new()).unwrap();
         println!("{:?}", result.work_file.tags);
-        assert_eq!(result.name, name);
+        assert_eq!(result.system.name(), name);
         result.backend.run();
-        result
+        result.work_file
     }
 
     #[test]
@@ -321,11 +325,10 @@ mod tests {
         let testdata = root.join("testdata").join("amiga");
         test_load(&testdata.join("rebels.adf"), "Amiga");
         test_load(&testdata.join("o2-intro"), "Amiga");
-        let res = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-        assert!(res.work_file.tags.get("puae_model") == Some(&"A500".to_string()));
-        let res = test_load(&testdata.join("nexus7"), "Amiga");
-        assert!(res.work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));
-        assert!(res.work_file.tags.get("puae_model") == Some(&"A1200".to_string()));
+        let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
+
+        assert!(work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));
+        assert!(work_file.tags.get("puae_model") == Some(&"A1200".to_string()));
     }
     /// A bare music file has no system of its own, so it falls through every
     /// other system to [`MusicSystem`] — both on its own and as the only

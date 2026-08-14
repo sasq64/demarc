@@ -455,59 +455,28 @@ impl Emulator {
         let mut tags = emu_file.tags.clone();
 
         self.retro_replay = 0;
-        // if work_file.system_type == SystemType::C64
-        //     && (tags.get("fast_load") == Some(&"on".to_string()) && is_disk_image(&work_file.path)
-        //         || has_extension(&work_file.path, "m3u"))
-        // {
-        //     tags.insert("vice_cartridge".into(), "rr38ppal-auto.crt".into());
-        //     tags.insert("vice_autostart".into(), "disabled".into());
-        //     self.retro_replay = 1;
-        // }
         for (key, val) in &self.tags {
             tags.insert(key.clone(), val.clone());
         }
         let res = sys.load_file(&path, &tags)?;
-
-        // let work_file = prepare_file(emu_file, &self.tags)?;
-        // let tags = resolve_tags(&work_file);
+        self.retro_replay = 0;
+        if res
+            .work_file
+            .get_tag("vice_cartridge", "")
+            .starts_with("rr")
+        {
+            self.retro_replay = 1;
+        }
 
         self.core = None;
-        //let tags = load_tags(&work_file, &self.tags);
-        //
-        // let core = create_core(
-        //     work_file.system_type,
-        //     &work_file.path,
-        //     tags,
-        //     self.speed_test,
-        // )?;
         let core = res.backend;
-        // let t = work_file.system_type;
-        // if t == SystemType::Megadrive
-        //     || t == SystemType::SuperNintendo
-        //     || t == SystemType::Atari2600
-        //     || t == SystemType::Gameboy
-        //     || t == SystemType::Gba
-        //     || t == SystemType::Psx
-        // {
-        //     self.input_mode = InputMode::Joystick1;
-        // }
-        // if t == SystemType::Ilbm {
-        //     self.is_image = true;
-        //     let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
-        //     self.paused = !cycle_enabled;
-        // } else {
-        //     // Loading a real emulator must clear any lingering still-image state
-        //     // from a previously opened ILBM, otherwise the fresh core inherits
-        //     // the image's paused flag and never runs.
-        //     self.is_image = false;
-        //     self.paused = false;
-        // }
+        if res.system.is_console() {
+            self.input_mode = InputMode::Joystick1;
+        }
 
         self.core = Some(core);
         self.work_file = res.work_file;
-        // The new backend's serial has nothing to do with the old one's, so
-        // start from "nothing uploaded yet". A backend that begins at 0 does so
-        // with a blank frame, which is exactly what the texture already holds.
+
         self.frame_hash = 0;
         self.run_next = false;
         self.audio_seen = false;

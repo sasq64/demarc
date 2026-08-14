@@ -20,7 +20,7 @@ pub struct C64System {
 }
 
 impl C64System {
-    fn new(args: &Args) -> Self {
+    pub fn new(args: &Args) -> Self {
         Self {
             fast_load: args.fast_load,
         }
@@ -70,6 +70,10 @@ impl System for C64System {
         })?;
 
         if !images.is_empty() {
+            if self.fast_load {
+                file.set_tag("vice_cartridge", "rr38ppal-auto.crt");
+                file.set_tag("vice_autostart", "disabled");
+            }
             let m3u = build_m3u(&images, file)?;
             file.path = m3u;
         } else if !prgs.is_empty() {

@@ -93,6 +93,9 @@ impl System for SNESSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["smc", "sfc", "swc", "fig"]
     }
+    fn is_console(&self) -> bool {
+        true
+    }
 
     fn can_load(&self, path: &Path) -> bool {
         self.handles_ext(path) || is_snes_rom(path)
