@@ -215,13 +215,11 @@ impl NewSys {
             Box::new(MegadriveSystem::new(args)),
             Box::new(SNESSystem::new(args)),
             Box::new(PSXSystem {}),
-            Box::new(ImageSystem {}),
             Box::new(AmstradSystem {}),
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
-            // Last: `musix` recognises a lot of files, and anything a real
-            // system can run should go to that system instead.
             Box::new(MusicSystem {}),
+            Box::new(ImageSystem {}),
         ]
     }
     pub fn new(args: &Args) -> Self {

@@ -16,16 +16,33 @@ impl System for ImageSystem {
         let mut images = vec![];
         walk_dir(&file.path.clone(), 12, |path, ext, header| {
             println!("{path:?} {ext:?}");
-            if ["iff", "ilbm"].contains(&ext)
+            if ["iff", "ilbm", "png", "bmp", "jpg", "jpeg", "gif"].contains(&ext)
                 || &header[0..4] == b"FORM" && &header[8..12] == b"ILBM"
             {
                 images.push(path.to_owned());
             }
             Ok(())
         })?;
+        if images.is_empty() {
+            return Ok(false);
+        }
 
-        Ok(if images.is_empty() { false } else { true })
+        // Prefer IFF/ILBM images over other formats
+        images.sort_by_key(|path| {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            match ext.as_str() {
+                "iff" | "ilbm" | "lbm" => 0,
+                _ => 1,
+            }
+        });
+        file.path = images[0].clone();
+        Ok(true)
     }
+
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         println!("PATH {path:?}");
         let backend = Box::new(ImageEmu::new(&path)?);
