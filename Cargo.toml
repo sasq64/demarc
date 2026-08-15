@@ -117,6 +117,12 @@ libc = "0.2"
 zbus = { version = "5", features = ["tokio"] }
 # Runtime that drives the MPRIS D-Bus listener in src/media_keys.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Preferred screen-saver inhibition path under Wayland: `zwp_idle_inhibit_v1`
+# talks straight to the compositor, so it doesn't need a D-Bus idle daemon to be
+# running (see src/screensaver.rs). All three are already in the tree via winit.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+raw-window-handle = "0.6"
 
 [profile.release]
 lto = "thin"
