@@ -2,6 +2,7 @@ use crate::m3u::M3u;
 use crate::newsys::amstrad::AmstradSystem;
 use crate::newsys::atari_2600::Atari2600System;
 use crate::newsys::atari_st::AtariStSystem;
+use crate::newsys::atari_xl::AtariXlSystem;
 use crate::newsys::gba::GBASystem;
 use crate::newsys::images::ImageSystem;
 use crate::newsys::megadrive::MegadriveSystem;
@@ -22,6 +23,7 @@ use gameboy::GameboySystem;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::info;
 use utils::{is_archive, unpack_into};
 
 mod utils;
@@ -30,6 +32,7 @@ mod amiga;
 mod amstrad;
 mod atari_2600;
 mod atari_st;
+mod atari_xl;
 mod c64;
 mod gameboy;
 mod gba;
@@ -101,7 +104,7 @@ pub fn walk_dir(
                 .to_str()
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            call(file.path(), &ext, &header);
+            call(file.path(), &ext, &header)?;
         }
     }
     Ok(())
@@ -203,8 +206,9 @@ impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
             Box::new(Tic80System {}),
-            Box::new(AmigaSystem::new()),
+            Box::new(AmigaSystem::new(&args)),
             Box::new(AtariStSystem::new()),
+            Box::new(AtariXlSystem::new(&args)),
             Box::new(C64System::new(&args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
@@ -226,7 +230,7 @@ impl NewSys {
         }
     }
 
-    pub fn load_file(&self, path: &Path, tags: &HashMap<String, String>) -> Result<LoadResult> {
+    pub fn load_file(&self, path: &Path, tags: &HashMap<String, String>) -> Result<LoadResult<'_>> {
         println!("LOAD_FILE: {path:?}");
         let mut wf = WorkFile::new(path);
         wf.tags = tags.clone();
@@ -236,7 +240,14 @@ impl NewSys {
                 wf = WorkFile::new_dir()?;
                 wf.tags = tags;
                 println!("UNPACK {path:?} to {wf:?}");
-                unpack_into(path, &wf).unwrap();
+                unpack_into(path, &wf)?;
+                walk_dir(&wf, 4, |f, _, _| {
+                    if is_archive(f)? {
+                        info!("Double packed");
+                        unpack_into(f, &wf)?;
+                    }
+                    Ok(())
+                })?;
             } else if has_extension(path, "m3u") {
                 let m3u = M3u::from_file(path)?;
                 wf.path = path.parent().unwrap().to_owned();

@@ -289,7 +289,6 @@ pub fn tags_from_args(args: &Args) -> HashMap<String, String> {
     set_var("latency", &args.latency.to_string());
     set_var("fuse_machine", "Spectrum 128K");
     set_var("atari800_ntscpal", "PAL");
-    //set_var("atari800_system", "Modern XL/XE(576K)");
     set_var("atari800_system", "Modern XL/XE(1088K)");
     set_var(
         "cbm_variant",

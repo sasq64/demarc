@@ -59,32 +59,34 @@ fn is_disk_image(path: &Path) -> bool {
 ///
 /// A release listing often mixes the actual program with extras (music rips,
 /// scans, ...). If any URL is a disk image, the release is disk based and only
-/// disk images of that same kind are kept — that way a multi-disk set stays
+/// disk images of that same *system* are kept — that way a multi-disk set stays
 /// together without dragging in, say, an `.adf` version of a `.d64` release.
 /// Otherwise only the obviously non-loadable extras are dropped.
+///
+/// Matching on the system rather than the exact extension matters for sets
+/// whose disks are archived in different formats: Hardwired by The Silents &
+/// Crionics has side A as a `.dms` and side B as an `.adf`, and keying on the
+/// extension alone would silently fetch only one of the two.
 pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
 
-    let disk_ext = urls
-        .iter()
-        .find(|u| is_disk_image(Path::new(u.path())))
-        .and_then(url_extension);
+    //let disk_system = urls.iter().find_map(disk_image_system);
 
-    let filtered: Vec<Url> = match &disk_ext {
-        Some(ext) => urls
-            .iter()
-            .filter(|u| url_extension(u).as_ref() == Some(ext))
-            .cloned()
-            .collect(),
-        None => urls
+    let mut images: Vec<Url> = urls
+        .iter()
+        .filter(|u| is_disk_image(Path::new(u.path())))
+        .cloned()
+        .collect();
+
+    if images.is_empty() {
+        images = urls
             .iter()
             .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
             .cloned()
-            .collect(),
+            .collect();
     };
-
-    if filtered.is_empty() { urls } else { filtered }
+    images
 }
 
 impl FileSource {

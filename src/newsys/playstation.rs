@@ -645,11 +645,7 @@ impl System for PSXSystem {
     }
 
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        println!("LOAD PSX: {file:?}");
         let mut iso = None;
-        for (key, val) in self.default_tags() {
-            file.set_tag(key, val);
-        }
 
         walk_dir(&file.path.clone(), 4, |path, ext, _header| {
             println!("{path:?} {ext:?}");

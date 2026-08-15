@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
-use std::fs;
+use anyhow::Result;
+use std::{collections::HashMap, fs};
 use tracing::warn;
 
-use super::utils::{build_m3u, unpack_into};
+use super::utils::build_m3u;
 
 use crate::{Args, cbmconvert, newsys::walk_dir, workfile::WorkFile};
 
@@ -40,21 +40,35 @@ impl System for C64System {
         let mut images = vec![];
         let mut prgs = vec![];
         println!("LOAD C64: {file:?}");
+        let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
+        let mut need_conv = false;
+        walk_dir(file, 4, |_, ext, _| {
+            if conversions.contains_key(ext) {
+                need_conv = true;
+            }
+            Ok(())
+        })?;
+        if need_conv {
+            file.make_temp()?;
+            // NOTE: If incoming was single file, we now switch to the parent dir
+            file.path = file.temp_dir.as_ref().unwrap().path().to_owned();
+        }
+        println!("{file:?} {:?}", file.path);
         walk_dir(file, 4, |path, ext, _header| {
             println!("{path:?} {ext:?}");
-            if ext == "t64" {
+            if let Some(flag) = conversions.get(ext) {
                 println!("Converting {path:?}");
                 let parent = path.parent().unwrap();
                 let _guard = cbmconvert::CwdGuard::enter(parent);
-                let code = cbmconvert::run(["-t", "-N", path.to_string_lossy().as_ref()]);
+                let code = cbmconvert::run([flag, "-N", path.to_string_lossy().as_ref()]);
+                println!("Done");
                 if code != 0 {
                     warn!("cbmconvert failed on {path:?} (exit code {code})");
                 } else {
-                    fs::remove_file(path).unwrap();
+                    if fs::remove_file(path).is_err() {
+                        warn!("Could not remove {path:?}");
+                    }
                 }
-            } else if ext == "gz" {
-                unpack_into(path, &path.parent().context("Expect file to have parent")?)?;
-                fs::remove_file(path)?;
             }
             Ok(())
         })?;

@@ -449,7 +449,7 @@ impl Emulator {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
-        let mut tags = emu_file.tags.clone();
+        let tags = emu_file.tags.clone();
 
         self.retro_replay = 0;
         let res = sys.load_file(&path, &tags)?;

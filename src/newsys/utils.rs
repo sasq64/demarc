@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::{
+    collections::BTreeMap,
     fs,
     io::{BufReader, Write},
     path::{Path, PathBuf},
@@ -206,4 +207,222 @@ pub fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
             .is_some_and(|n| n.eq_ignore_ascii_case(name));
         matches.then_some(path)
     })
+}
+
+// Sort disk images. Procedure:
+// - Iterate and decide the number of each disk.
+//  The digit just before the dot if no digit before it OR
+//  The uppercase letter before the dot if not upper case before it OR
+//  The last separate digit in the file name unless at the start
+//
+//  example
+//
+//  disk3.adf -> 3
+//  45degreesA.adf -> 1
+//  3witches.dsk -> None
+//  game_B.DMS -> 2
+//  GOA.dsk -> None
+//
+// After this step, if there are gaps in the list (normally the 1st slot)
+// select one of the non sorted disk for the empty slot, preferring the one
+// who starts with the same letters as the first sorted disk
+//
+//  space.adf -> None
+//  Space_disk2.adf -> 2
+//  extra.adf -> None
+//
+//  Selects "space.adf" as slot 1
+//
+// If multiple disks end up in the same slot then the preference is the same,
+// use digits over letters
+//
+//  disk_A.adf
+//  disk_1.adf
+//  disk_B.adf
+//  disk_2.adf
+//
+//  -> [ disk_1.adf, disk_2.adf]
+//
+pub fn sort_disks(paths: &mut [PathBuf]) {
+    if paths.len() < 2 {
+        return;
+    }
+
+    let stems: Vec<String> = paths
+        .iter()
+        .map(|p| {
+            p.file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+
+    // Walk the names in a fixed order so that claims the rules can't separate
+    // (`disk_1.adf` vs `disk_2.adf` both wanting slot 1 by their letter) always
+    // resolve the same way, whatever order the directory listing arrived in.
+    let mut order: Vec<usize> = (0..paths.len()).collect();
+    order.sort_by_key(|&i| stems[i].to_lowercase());
+
+    // slot number -> (index into `paths`, claimed by a digit)
+    let mut slots: BTreeMap<u32, (usize, bool)> = BTreeMap::new();
+    let mut leftover: Vec<usize> = Vec::new();
+    for &i in &order {
+        let Some(claim) = disk_slot(&stems[i]) else {
+            leftover.push(i);
+            continue;
+        };
+        match slots.get_mut(&claim.number()) {
+            // A digit is a stronger claim than a letter; the loser drops back
+            // into the unsorted pile.
+            Some(held) if claim.is_digit() && !held.1 => {
+                leftover.push(std::mem::replace(held, (i, true)).0);
+            }
+            Some(_) => leftover.push(i),
+            None => {
+                slots.insert(claim.number(), (i, claim.is_digit()));
+            }
+        }
+    }
+
+    // Fill any hole below the highest numbered disk (usually slot 1, left empty
+    // because the first disk of a set is often named without a number) from the
+    // unsorted pile, preferring a name that starts like the first sorted disk.
+    if let Some((&first_slot, &(first, _))) = slots.iter().next() {
+        let start = if first_slot == 0 { 0 } else { 1 };
+        let last = *slots.keys().next_back().expect("slots is not empty");
+        let gaps: Vec<u32> = (start..last).filter(|s| !slots.contains_key(s)).collect();
+        for gap in gaps {
+            let mut best: Option<(usize, usize)> = None; // (position in leftover, prefix len)
+            for (pos, &i) in leftover.iter().enumerate() {
+                let shared = common_prefix_len(&stems[i], &stems[first]);
+                if best.is_none_or(|(_, top)| shared > top) {
+                    best = Some((pos, shared));
+                }
+            }
+            let Some((pos, _)) = best else { break };
+            slots.insert(gap, (leftover.remove(pos), false));
+        }
+    }
+
+    let sorted: Vec<PathBuf> = slots
+        .values()
+        .map(|&(i, _)| i)
+        .chain(leftover)
+        .map(|i| paths[i].clone())
+        .collect();
+    paths.clone_from_slice(&sorted);
+}
+
+/// A disk name's claim on a slot in the set. Two names can claim the same slot,
+/// in which case the digit wins — see [`sort_disks`].
+#[derive(Clone, Copy)]
+enum DiskSlot {
+    Digit(u32),
+    Letter(u32),
+}
+
+impl DiskSlot {
+    fn number(self) -> u32 {
+        match self {
+            Self::Digit(n) | Self::Letter(n) => n,
+        }
+    }
+
+    fn is_digit(self) -> bool {
+        matches!(self, Self::Digit(_))
+    }
+}
+
+/// Which disk of a set `stem` (a file name without its extension) names, if any.
+fn disk_slot(stem: &str) -> Option<DiskSlot> {
+    let chars: Vec<char> = stem.chars().collect();
+    let last = *chars.last()?;
+    let prev = chars.len().checked_sub(2).map(|i| chars[i]);
+
+    // `disk3` -- a trailing digit, as long as it's a digit on its own and not
+    // the tail of a longer number (`shadow1992`).
+    if last.is_ascii_digit() && !prev.is_some_and(|c| c.is_ascii_digit()) {
+        return last.to_digit(10).map(DiskSlot::Digit);
+    }
+    // `game_B` -- a trailing capital, as long as it isn't just the end of a
+    // word already in capitals (`GOA`).
+    if last.is_ascii_uppercase() && !prev.is_some_and(|c| c.is_ascii_uppercase()) {
+        return Some(DiskSlot::Letter(last as u32 - 'A' as u32 + 1));
+    }
+    // Otherwise the last standalone digit anywhere in the name (`disk2_[cr]`),
+    // but never one that opens it -- `3witches` is a title, not a disk number.
+    let mut found = None;
+    for (i, &c) in chars.iter().enumerate() {
+        let standalone = i > 0
+            && c.is_ascii_digit()
+            && !chars[i - 1].is_ascii_digit()
+            && !chars.get(i + 1).is_some_and(|c| c.is_ascii_digit());
+        if standalone && let Some(d) = c.to_digit(10) {
+            found = Some(DiskSlot::Digit(d));
+        }
+    }
+    found
+}
+
+/// How many leading characters `a` and `b` share, ignoring case.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+        .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slot(name: &str) -> Option<u32> {
+        disk_slot(Path::new(name).file_stem()?.to_str()?).map(DiskSlot::number)
+    }
+
+    fn sorted(names: &[&str]) -> Vec<String> {
+        let mut paths: Vec<PathBuf> = names.iter().map(PathBuf::from).collect();
+        sort_disks(&mut paths);
+        paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn numbers_disks() {
+        assert_eq!(slot("disk3.adf"), Some(3));
+        assert_eq!(slot("45degreesA.adf"), Some(1));
+        assert_eq!(slot("3witches.dsk"), None);
+        assert_eq!(slot("game_B.DMS"), Some(2));
+        assert_eq!(slot("GOA.dsk"), None);
+        assert_eq!(slot("disk2_[cr].adf"), Some(2));
+        assert_eq!(slot("shadow1992.adf"), None);
+    }
+
+    #[test]
+    fn fills_first_slot_from_unnumbered_disks() {
+        assert_eq!(
+            sorted(&["extra.adf", "Space_disk2.adf", "space.adf"]),
+            ["space.adf", "Space_disk2.adf", "extra.adf"]
+        );
+    }
+
+    #[test]
+    fn prefers_digits_over_letters() {
+        assert_eq!(
+            sorted(&["disk_A.adf", "disk_1.adf", "disk_B.adf", "disk_2.adf"]),
+            ["disk_1.adf", "disk_2.adf", "disk_A.adf", "disk_B.adf"]
+        );
+    }
+
+    #[test]
+    fn keeps_every_disk() {
+        assert_eq!(
+            sorted(&["b.adf", "a.adf"]),
+            ["a.adf", "b.adf"],
+            "nothing to sort by, but no disk may be dropped"
+        );
+    }
 }
