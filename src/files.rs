@@ -266,6 +266,8 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             .next()
             .unwrap_or_default()
             .to_string();
+        let ys = format!("{year}");
+        tags.insert("year", &ys);
         out.push(EmuFile {
             path: FileSource::Url(urls),
             system_type: SystemType::Unknown,

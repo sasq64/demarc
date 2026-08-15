@@ -254,7 +254,7 @@ impl NewSys {
                 }
             }
         }
-        println!("CHECK");
+        println!("LOAD TAGS {:?}", wf.tags);
         for sys in &self.systems {
             if sys.load(&mut wf).unwrap() {
                 println!("Loading {:?}", &wf.path);
