@@ -258,7 +258,14 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
 
         let title = tags.get("title").copied().unwrap_or("");
         let author = tags.get("author").copied().unwrap_or("");
-
+        let year = tags
+            .get("date")
+            .copied()
+            .unwrap_or("")
+            .split(['-', '/', '.'])
+            .next()
+            .unwrap_or_default()
+            .to_string();
         out.push(EmuFile {
             path: FileSource::Url(urls),
             system_type: SystemType::Unknown,
@@ -269,6 +276,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             game_info: GameInfo {
                 title: title.into(),
                 group: author.into(),
+                year,
                 ..Default::default()
             },
         });
