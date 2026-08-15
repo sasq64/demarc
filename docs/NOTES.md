@@ -30,6 +30,18 @@ Always single file or directory
 
 Meta data from disk or db, handled by frontend.
 
+All fields go into -> tags
+Remove GameInfo
+
+title
+author
+date
+party
+category
+tags
+download
+
+
 
 
 

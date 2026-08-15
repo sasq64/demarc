@@ -66,77 +66,21 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     })
 }
 
-/// The scene metadata one db line carries, however the line spells it out.
-#[derive(Default)]
-struct DbRecord<'a> {
-    title: &'a str,
-    group: &'a str,
-    date: &'a str,
-    party: &'a str,
-    demo_type: &'a str,
-    tag_list: &'a str,
-    url: &'a str,
-    /// Platform prefixed to the type, when the line names one itself.
-    platform: Option<&'a str>,
-}
-
-/// Map a named field onto the [`DbRecord`] slot it fills, or `None` if the name
-/// isn't one we know (`id`, for instance, is parsed but unused).
-fn db_field<'a, 'r>(rec: &'r mut DbRecord<'a>, key: &str) -> Option<&'r mut &'a str> {
-    Some(match key {
-        "title" => &mut rec.title,
-        "author" | "group" => &mut rec.group,
-        "date" => &mut rec.date,
-        "party" => &mut rec.party,
-        "category" | "type" => &mut rec.demo_type,
-        "tags" => &mut rec.tag_list,
-        "download" | "url" => &mut rec.url,
-        _ => return None,
-    })
-}
-
 /// Parse a `key:value`-per-field line, e.g.
 /// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`. Returns `None` when the line isn't
 /// in that format, so the caller can fall back to the positional one.
 ///
 /// Only the first `:` splits a field, leaving values (URLs above all) intact,
 /// and fields may appear in any order.
-fn parse_named_db_line(line: &str) -> Option<DbRecord<'_>> {
-    let mut rec = DbRecord::default();
-    let mut named = false;
+fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
+    let mut result = vec![];
     for field in line.split('\t') {
         let Some((key, val)) = field.split_once(':') else {
             continue;
         };
-        if key == "platform" {
-            rec.platform = Some(val);
-            named = true;
-        } else if let Some(slot) = db_field(&mut rec, key) {
-            *slot = val;
-            named = true;
-        } else if key == "id" {
-            named = true;
-        }
+        result.push((key, val));
     }
-    named.then_some(rec)
-}
-
-/// Parse the older order-based line: `id, title, group, date, party, type,
-/// tags, url` separated by tabs.
-fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
-    let mut fields = line.split('\t');
-    let mut next = || fields.next().unwrap_or_default();
-    let _id = next();
-    DbRecord {
-        title: next(),
-        group: next(),
-        date: next(),
-        party: next(),
-        demo_type: next(),
-        tag_list: next(),
-        url: next(),
-        platform: None,
-    }
+    result
 }
 
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
@@ -245,7 +189,7 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
 fn parse_db_header<'a>(
     comment: &'a str,
     platform: &mut Option<&'a str>,
-    tags: &mut HashMap<String, String>,
+    tags: &mut HashMap<&'a str, &'a str>,
 ) {
     let Some(fields) = comment
         .split_whitespace()
@@ -261,7 +205,7 @@ fn parse_db_header<'a>(
         if key.eq_ignore_ascii_case("platform") {
             *platform = Some(val);
         } else {
-            tags.insert(key.to_string(), val.to_string());
+            tags.insert(key, val);
         }
     }
 }
@@ -271,7 +215,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
     let mut file_platform: Option<&str> = None;
 
     // Tags from header comments, applied to every entry below them.
-    let mut file_tags = HashMap::<String, String>::new();
+    let mut file_tags = HashMap::<&str, &str>::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -286,57 +230,46 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
         if !filter.keeps(line) {
             continue;
         }
-        let rec = parse_named_db_line(line).unwrap_or_else(|| parse_positional_db_line(line));
+        let fields = parse_named_db_line(line);
 
-        let demo_type = match rec.platform.or(file_platform) {
-            Some(platform) if !platform.is_empty() => format!("{platform} {}", rec.demo_type),
-            _ => rec.demo_type.to_string(),
-        };
-        let url = rec.url.trim();
-        if url.is_empty() {
-            continue;
-        }
-        let urls: Vec<Url> = url
-            .split(';')
-            .filter_map(|p| match Url::parse(p) {
-                Ok(u) => Some(u),
-                Err(err) => {
-                    warn!("Skipping unparseable URL {p:?}: {err}");
-                    None
+        let mut tags = file_tags.clone();
+        let mut urls = vec![];
+        for (key, val) in fields {
+            if key == "download" {
+                if val.trim().is_empty() {
+                    continue;
                 }
-            })
-            .collect();
+                urls = val
+                    .split(';')
+                    .filter_map(|p| match Url::parse(p) {
+                        Ok(u) => Some(u),
+                        Err(err) => {
+                            warn!("Skipping unparseable URL {p:?}: {err}");
+                            None
+                        }
+                    })
+                    .collect();
+            }
+            tags.insert(key.into(), val.into());
+        }
         if urls.is_empty() {
             continue;
         }
 
-        let year = rec
-            .date
-            .split(['-', '/', '.'])
-            .next()
-            .unwrap_or_default()
-            .to_string();
-        // Header tags first, so anything the line itself names wins.
-        let mut tags = file_tags.clone();
-        for (key, val) in [
-            ("party", rec.party),
-            ("type", demo_type.as_str()),
-            ("tags", rec.tag_list),
-        ] {
-            if !val.is_empty() {
-                tags.insert(key.to_string(), val.to_string());
-            }
-        }
+        let title = tags.get("title").copied().unwrap_or("");
+        let author = tags.get("author").copied().unwrap_or("");
 
         out.push(EmuFile {
             path: FileSource::Url(urls),
             system_type: SystemType::Unknown,
-            tags,
+            tags: tags
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             game_info: GameInfo {
-                title: rec.title.to_string(),
-                group: rec.group.to_string(),
-                year,
-                typ: demo_type,
+                title: title.into(),
+                group: author.into(),
+                ..Default::default()
             },
         });
     }
@@ -941,5 +874,4 @@ mod tests {
             vec!["https://x.com/a.sid", "https://x.com/b.pdf"]
         );
     }
-
 }
