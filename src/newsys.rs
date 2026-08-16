@@ -405,5 +405,8 @@ mod tests {
         let testdata = root.join("testdata").join("psx");
         test_load(&testdata.join("paradox").join("pdx-051.psx"), "PSX");
         test_load(&testdata.join("monophobia"), "PSX");
+        // A bare data track with no cue beside it, named `.bin` like any other
+        // dump, is recognised from the disc's own contents.
+        test_load(&testdata.join("thisispsx"), "PSX");
     }
 }
