@@ -2,21 +2,12 @@ use std::collections::HashMap;
 
 use super::System;
 use super::utils::build_m3u;
-use crate::{Args, newsys::walk_dir, workfile::WorkFile};
+use crate::{newsys::walk_dir, workfile::WorkFile};
 use anyhow::Result;
 
 const CORE_NAME_CAP32: &str = "cap32";
 
 pub struct AmstradSystem {}
-
-impl AmstradSystem {
-    fn new(_args: &Args) -> Self {
-        // if args.silent_drive {
-        //     self.set_var("cap32_floppy_sound", "disabled");
-        // }
-        Self {}
-    }
-}
 
 impl System for AmstradSystem {
     fn core_name(&self) -> &'static str {

@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::{
     fetch::{fetch_url, fetch_urls},
-    systems::{GameInfo, SystemType},
+    systems::GameInfo,
 };
 
 /// Where an [`EmuFile`]'s data comes from: either an already-local path or one

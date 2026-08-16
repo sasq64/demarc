@@ -46,18 +46,6 @@ impl InputMode {
     }
 }
 
-pub enum EmuAction {
-    LeftClick,
-    RightClick,
-    Key(KeyCode),
-    Disk(u32),
-}
-
-pub struct EmuEvent {
-    frame: u32,
-    what: EmuAction,
-}
-
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
@@ -100,7 +88,6 @@ pub struct Emulator {
     pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
-    pub events: Vec<EmuEvent>,
     pub retro_replay: u32,
 }
 
@@ -411,12 +398,6 @@ impl Emulator {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
         let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
-        if left {
-            self.events.push(EmuEvent {
-                frame: self.core.as_ref().unwrap().frames_stepped() as u32,
-                what: EmuAction::LeftClick,
-            });
-        }
         self.core.as_mut().unwrap().set_mouse_buttons(
             left,
             mouse_buttons.pressed(MouseButton::Right),
@@ -434,10 +415,6 @@ impl Emulator {
     }
 
     pub fn set_disk(&mut self, no: u32) {
-        self.events.push(EmuEvent {
-            frame: self.core.as_ref().unwrap().frames_stepped() as u32,
-            what: crate::emulator::EmuAction::Disk(no),
-        });
         self.core.as_mut().unwrap().set_disk(no);
     }
 

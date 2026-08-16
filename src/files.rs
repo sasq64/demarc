@@ -12,8 +12,9 @@ use url::Url;
 
 use crate::{
     emu_file::{EmuFile, FileSource},
-    systems::{GameInfo, SystemType},
-    utils::{is_disk_image, parse_m3u, unpack_if_packed},
+    m3u::M3u,
+    systems::GameInfo,
+    utils::{is_disk_image, unpack_if_packed},
 };
 
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
@@ -22,7 +23,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut year: u32 = 0;
     let mut tags = HashMap::new();
 
-    let m3u = parse_m3u(in_path)?;
+    let m3u = M3u::from_file(in_path)?;
 
     let path = (if m3u.files.is_empty() {
         in_path.parent().unwrap()
@@ -307,8 +308,6 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     };
     let mut files = vec![];
     let mut dirs = vec![];
-    let mut found_type = SystemType::Unknown;
-    let mut mixed = many;
     let mut disk_images = true;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -330,18 +329,13 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
         }
     }
 
-    // Mixed types in directory, add every valid file one by one
-    // Amiga and Atari ST: Always add parent dir (to get data files) — both
-    // cores can mount the whole directory as a hard drive.
-    let whole_dir = matches!(found_type, SystemType::Amiga | SystemType::AtariST);
-    if mixed || ((!disk_images) && !whole_dir) {
-        //out.extend(files.iter().map(|f| handle_file(f)?));
+    // Mixed types in directory, add every valid file one by one. A directory
+    // holding nothing but disk images is left to the loader, which mounts the
+    // whole set rather than each image on its own.
+    if many || !disk_images {
         for f in files {
             out.push(collect_file(&f)?);
         }
-    } else if found_type != SystemType::Unknown {
-        out.push(collect_file(dir)?);
-        return Ok(());
     }
     for dir in dirs {
         collect_files(&dir, out, many)?;
@@ -354,15 +348,6 @@ mod tests {
     use crate::emu_file::filter_release_urls;
 
     use super::*;
-
-    /// The local path behind a source. Everything below collects real files, so
-    /// a URL here means the test itself is wrong.
-    fn local_path(source: &FileSource) -> &Path {
-        match source {
-            FileSource::Path(p) => p,
-            FileSource::Url(urls) => panic!("expected a local path, got {urls:?}"),
-        }
-    }
 
     #[test]
     fn missing_directory_is_an_error() {

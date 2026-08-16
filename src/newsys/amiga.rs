@@ -229,7 +229,6 @@ fn parse_exe<R: Read + Seek>(reader: &mut HunkReader<R>) -> Option<()> {
 pub struct AmigaSystem {
     aga: bool,
     xmem: bool,
-    fast: bool,
 }
 
 impl AmigaSystem {
@@ -237,7 +236,6 @@ impl AmigaSystem {
         Self {
             aga: args.aga,
             xmem: args.xmem,
-            fast: args.fast,
         }
     }
 }

@@ -1,18 +1,12 @@
 use std::{fs, path::Path};
 
-use crate::{Args, newsys::get_ext};
+use crate::newsys::get_ext;
 
 use super::System;
 
 const CORE_NAME_STELLA: &str = "stella";
 
 pub struct Atari2600System {}
-
-impl Atari2600System {
-    pub fn new(_args: &Args) -> Self {
-        Self {}
-    }
-}
 
 impl System for Atari2600System {
     fn can_load(&self, path: &Path) -> bool {
