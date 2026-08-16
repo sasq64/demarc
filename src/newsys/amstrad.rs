@@ -17,7 +17,7 @@ impl System for AmstradSystem {
     fn name(&self) -> &'static str {
         "Amstrad"
     }
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [("cap32_statusbar", "disabled")].into()
     }
 

@@ -345,8 +345,8 @@ fn entry_name(file: &EmuFile) -> String {
 /// where it comes from. Empty fields are left out rather than shown blank.
 fn entry_info(file: &EmuFile, width: usize) -> String {
     let mut lines = Vec::new();
-    let platform = file.tag("platform");
-    let category = file.tag("category");
+    let platform = file.get_meta("platform");
+    let category = file.get_meta("category");
     let year = file.game_info.year;
     let year = if year == 0 {
         "".to_string()
@@ -358,10 +358,10 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     } else {
         lines.push(format!("{platform} {category}{year}"));
     }
-    if let Some(party) = file.tags.get("party").filter(|p| !p.is_empty()) {
+    if let Some(party) = file.meta.get("party").filter(|p| !p.is_empty()) {
         lines.push(format!("Party: {party}"));
     }
-    if let Some(tags) = file.tags.get("tags").filter(|t| !t.is_empty()) {
+    if let Some(tags) = file.meta.get("tags").filter(|t| !t.is_empty()) {
         lines.push(format!("Tags: {tags}"));
     }
 
@@ -505,7 +505,7 @@ fn handle_cmd(
             if show_info && i == settings.current_emu {
                 let game = &settings.files[settings.current_game as usize];
                 writer.write(SetHudText {
-                    text: get_info_text(game, &emu.work_file.tags),
+                    text: get_info_text(game, &emu.work_file.meta),
                     duration: Duration::from_secs(2),
                     location: HudLocation::InfoText,
                     ..Default::default()

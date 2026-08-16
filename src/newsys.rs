@@ -68,7 +68,7 @@ mod tic80;
 ///
 /// demo.cue
 /// Systems must parse cue and look at corresponding bin/iso to detect PSX or Neo Geo. If
-/// uncertain, prefer more common PSX. Tags can predecide if necessary
+/// uncertain, prefer more common PSX. Meta can predecide if necessary
 ///
 /// DIRECTORY (MOST COMMON):
 /// Possible outcomes:
@@ -79,11 +79,11 @@ mod tic80;
 ///
 /// What frontend can help with: Smart dir walk
 ///
-/// TAGS
+/// META
 ///
-/// Frontend merges argument tags with m3u tags first, according to "some" logic
+/// Frontend merges argument meta with m3u tags first, according to "some" logic
 ///
-/// System adds default tags that has not been set, and adds tags depending on content.
+/// System adds default meta that has not been set, and adds meta depending on content.
 ///
 ///
 pub fn walk_dir(
@@ -141,7 +141,7 @@ pub trait System: Send + Sync {
     // Name of the system
     fn name(&self) -> &'static str;
 
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         HashMap::new()
     }
 
@@ -186,7 +186,7 @@ pub trait System: Send + Sync {
             &core,
             system_dir(),
             Some(path),
-            path.tags.clone(),
+            path.meta.clone(),
             false,
         )?))
     }
@@ -195,7 +195,7 @@ pub trait System: Send + Sync {
 #[derive(Default)]
 pub struct NewSys {
     systems: Vec<Box<dyn System>>,
-    tags: HashMap<String, String>,
+    meta: HashMap<String, String>,
 }
 pub struct LoadResult<'a> {
     pub backend: Box<dyn Backend + Send + Sync>,
@@ -224,30 +224,30 @@ impl NewSys {
         ]
     }
     pub fn new(args: &Args) -> Self {
-        let mut tags = HashMap::<String, String>::new();
+        let mut meta = HashMap::<String, String>::new();
         for opt in &args.extra_options {
             if let Some((key, val)) = opt.split_once("=") {
-                tags.insert(key.trim().into(), val.trim().into());
+                meta.insert(key.trim().into(), val.trim().into());
             }
         }
         NewSys {
             systems: Self::get_systems(args),
-            tags,
+            meta,
         }
     }
 
-    pub fn load_file(&self, path: &Path, tags: &HashMap<String, String>) -> Result<LoadResult<'_>> {
+    pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
         println!("LOAD_FILE: {path:?}");
         let mut wf = WorkFile::new(path);
-        wf.tags = tags.clone();
-        for (key, val) in &self.tags {
-            wf.tags.insert(key.into(), val.into());
+        wf.meta = meta.clone();
+        for (key, val) in &self.meta {
+            wf.meta.insert(key.into(), val.into());
         }
         if path.is_file() {
             if is_archive(path)? {
-                let tags = wf.tags;
+                let meta = wf.meta;
                 wf = WorkFile::new_dir()?;
-                wf.tags = tags;
+                wf.meta = meta;
                 println!("UNPACK {path:?} to {wf:?}");
                 unpack_into(path, &wf)?;
                 walk_dir(&wf, 4, |f, _, _| {
@@ -261,11 +261,11 @@ impl NewSys {
                 let m3u = M3u::from_file(path)?;
                 wf.path = path.parent().unwrap().to_owned();
                 for (key, value) in m3u.tags {
-                    wf.tags.insert(key, value);
+                    wf.meta.insert(key, value);
                 }
             }
         }
-        println!("LOAD TAGS {:?}", wf.tags);
+        println!("LOAD META {:?}", wf.meta);
         for sys in &self.systems {
             if sys.load(&mut wf).unwrap() {
                 println!("Loading {:?}", &wf.path);
@@ -276,18 +276,18 @@ impl NewSys {
                     }
                 };
 
-                for (key, val) in sys.default_tags() {
-                    if !wf.has_tag(key) {
-                        wf.set_tag(key, val);
+                for (key, val) in sys.default_meta() {
+                    if !wf.has_meta(key) {
+                        wf.set_meta(key, val);
                     }
                 }
 
-                println!("TAGS: {:?}", &wf.tags);
+                println!("META: {:?}", &wf.meta);
 
                 if let Some(td) = wf.temp_dir.as_ref() {
                     copy_dir_all(td.path(), Path::new("last"))?;
                 }
-                wf.set_tag("system", sys.name());
+                wf.set_meta("system", sys.name());
 
                 return Ok(LoadResult {
                     backend: sys.create(&wf)?,
@@ -320,7 +320,7 @@ mod tests {
         let s = NewSys::new(&args);
 
         let mut result = s.load_file(path, &HashMap::new()).unwrap();
-        println!("{:?}", result.work_file.tags);
+        println!("{:?}", result.work_file.meta);
         assert_eq!(result.system.name(), name);
         result.backend.run();
         result.work_file
@@ -349,14 +349,14 @@ mod tests {
         // A plain executable is booted from a generated startup-sequence on a
         // stock A500, not through WHDLoad.
         let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-        assert!(work_file.tags.get("puae_use_whdload") == Some(&"disabled".to_string()));
-        assert!(work_file.tags.get("puae_model") == Some(&"A500".to_string()));
+        assert!(work_file.meta.get("puae_use_whdload") == Some(&"disabled".to_string()));
+        assert!(work_file.meta.get("puae_model") == Some(&"A500".to_string()));
 
         // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
         // needs an A1200.
         let work_file = test_load(&testdata.join("nexus7"), "Amiga");
-        assert!(work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));
-        assert!(work_file.tags.get("puae_model") == Some(&"A1200".to_string()));
+        assert!(work_file.meta.get("puae_use_whdload") == Some(&"enabled".to_string()));
+        assert!(work_file.meta.get("puae_model") == Some(&"A1200".to_string()));
     }
     /// A bare music file has no system of its own, so it falls through every
     /// other system to [`MusicSystem`] — both on its own and as the only

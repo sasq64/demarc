@@ -1534,8 +1534,8 @@ mod tests {
             .unwrap();
         let game_path = root("demos/pdx-dlcm.psx");
 
-        let mut tags = HashMap::new();
-        tags.insert("beetle_psx_region".to_string(), "pal".to_string());
+        let mut meta = HashMap::new();
+        meta.insert("beetle_psx_region".to_string(), "pal".to_string());
         for f in [
             "scph5500.bin",
             "scph5501.bin",
@@ -1545,7 +1545,7 @@ mod tests {
             std::fs::copy(root("system").join(f), system_dir.path().join(f)).unwrap();
         }
         let mut emu =
-            RetroCoreDirect::new(&core_path, system_dir.path(), Some(&game_path), tags).unwrap();
+            RetroCoreDirect::new(&core_path, system_dir.path(), Some(&game_path), meta).unwrap();
         for _ in 0..150 {
             emu.run();
         }

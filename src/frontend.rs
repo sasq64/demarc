@@ -158,7 +158,7 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
 
-    //    let mut tags = tags_from_args(args);
+    //    let mut meta = meta_from_args(args);
 
     let match_fps = args.force_vsync;
     let max_time = args.max_time;
@@ -172,7 +172,7 @@ fn setup_retro(world: &mut World) {
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
         // pcsx rearmed can only run 3 instances at one time
-        // tags.insert("psx_core".into(), "beetle".into());
+        // meta.insert("psx_core".into(), "beetle".into());
         for (i, cell) in cells.into_iter().enumerate() {
             spawn_emulator(world, match_fps, max_time, speed_test, Some((i, cell)));
         }
@@ -527,7 +527,7 @@ fn run_retro(
                     emu.run_prev = false;
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
-                            text: get_info_text(&game, &emu.work_file.tags),
+                            text: get_info_text(&game, &emu.work_file.meta),
                             delay: Duration::from_secs(settings.info_delay),
                             duration: Duration::from_secs(settings.info_duration),
                             location: HudLocation::InfoText,
@@ -541,7 +541,7 @@ fn run_retro(
         if show_info && i == settings.current_emu {
             let game = settings.files[settings.current_game as usize].clone();
             writer.write(SetHudText {
-                text: get_info_text(&game, &emu.work_file.tags),
+                text: get_info_text(&game, &emu.work_file.meta),
                 duration: Duration::from_secs(2),
                 location: HudLocation::InfoText,
                 ..Default::default()

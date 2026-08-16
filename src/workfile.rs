@@ -15,7 +15,7 @@ pub struct WorkFile {
     pub path: PathBuf,
     // If Some, must be parent of PathBuf or PathBuf
     pub temp_dir: Option<TempDir>,
-    pub tags: HashMap<String, String>,
+    pub meta: HashMap<String, String>,
 }
 
 impl WorkFile {
@@ -23,7 +23,7 @@ impl WorkFile {
         Self {
             path: path.into(),
             temp_dir: None,
-            tags: HashMap::new(),
+            meta: HashMap::new(),
         }
     }
 
@@ -32,20 +32,27 @@ impl WorkFile {
         Ok(Self {
             path: temp_dir.path().into(),
             temp_dir: Some(temp_dir),
-            tags: HashMap::new(),
+            meta: HashMap::new(),
         })
     }
 
-    pub fn set_tag(&mut self, key: &str, val: impl Into<String>) {
-        self.tags.insert(key.into(), val.into());
+    pub fn set_meta(&mut self, key: &str, val: impl Into<String>) {
+        self.meta.insert(key.into(), val.into());
     }
 
-    pub fn has_tag(&self, key: &str) -> bool {
-        self.tags.contains_key(&key.to_string())
+    pub fn has_meta(&self, key: &str) -> bool {
+        self.meta.contains_key(&key.to_string())
     }
 
-    pub fn get_tag(&self, arg: &str, def: impl Into<String>) -> String {
-        self.tags.get(arg).map_or(def.into(), |s| s.to_string())
+    pub fn get_meta(&self, arg: &str, def: impl Into<String>) -> String {
+        self.meta.get(arg).map_or(def.into(), |s| s.to_string())
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.meta
+            .get("tags")
+            .map(|t| t.contains(tag))
+            .unwrap_or(false)
     }
 
     pub fn as_path(&self) -> &Path {

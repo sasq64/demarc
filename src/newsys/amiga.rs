@@ -242,7 +242,7 @@ impl AmigaSystem {
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 {
-        wf.set_tag("puae_model", "A1200");
+        wf.set_meta("puae_model", "A1200");
     }
 
     let target_dir = WorkFile::new_dir()?;
@@ -252,7 +252,7 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     fs::create_dir(&c_dir)?;
     fs::copy(system_dir().join("c").join("echo"), c_dir.join("echo"))?;
     let mut text: String = "".into();
-    let model = wf.get_tag("puae_model", "");
+    let model = wf.get_meta("puae_model", "");
     if model == "A1200" || model == "A4000" {
         fs::copy(
             system_dir().join("c").join("SetPatch"),
@@ -274,7 +274,7 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     }
     wf.path = target_dir.path;
     wf.temp_dir = target_dir.temp_dir;
-    wf.set_tag("puae_use_whdload", "disabled");
+    wf.set_meta("puae_use_whdload", "disabled");
 
     Ok(())
 }
@@ -291,7 +291,7 @@ impl System for AmigaSystem {
         "Amiga"
     }
 
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("puae_model", "A500"),
             ("puae_crop", "smaller"),
@@ -315,28 +315,28 @@ impl System for AmigaSystem {
         // resort so a release that only ships a mangled exe behaves as before.
         let mut broken = vec![];
 
-        if file.get_tag("puae_model", "") == "date" {
-            file.set_tag("puae_model", "A500");
-            if let Ok(year) = file.get_tag("year", "").parse::<u32>() {
+        if file.get_meta("puae_model", "") == "date" {
+            file.set_meta("puae_model", "A500");
+            if let Ok(year) = file.get_meta("year", "").parse::<u32>() {
                 if year < 1990 {
-                    file.set_tag("puae_kickstart", "kick33180.A500");
+                    file.set_meta("puae_kickstart", "kick33180.A500");
                 } else {
                     if year >= 1993 {
-                        file.set_tag("puae_model", "A1200");
+                        file.set_meta("puae_model", "A1200");
                     }
                     if year >= 1995 {
-                        file.set_tag("puae_cpu_model", "68030");
+                        file.set_meta("puae_cpu_model", "68030");
                     }
                     if year >= 1997 {
-                        file.set_tag("hatari_ramsize", "8");
-                        file.set_tag("puae_z3mem_size", "128");
-                        file.set_tag("puae_fpu_model", "68882");
+                        file.set_meta("hatari_ramsize", "8");
+                        file.set_meta("puae_z3mem_size", "128");
+                        file.set_meta("puae_fpu_model", "68882");
                     }
                 }
             }
         }
         if self.aga {
-            file.set_tag("puae_model", "A1200");
+            file.set_meta("puae_model", "A1200");
         }
 
         let mut is_dir = false;
@@ -345,8 +345,8 @@ impl System for AmigaSystem {
             if ["adf", "dms"].contains(&ext) {
                 images.push(path.to_owned());
             } else if ext == "slave" {
-                file.set_tag("puae_model", "A1200");
-                file.set_tag("puae_use_whdload", "enabled");
+                file.set_meta("puae_model", "A1200");
+                file.set_meta("puae_use_whdload", "enabled");
                 is_dir = true;
             } else if header.starts_with(&HUNK_MAGIC) {
                 if is_amiga_exe(path) {
@@ -358,7 +358,7 @@ impl System for AmigaSystem {
             } else if path.ends_with("s/startup-sequence") {
                 // Auto-booting
                 info!("Auto-booting");
-                file.set_tag("puae_use_whdload", "disabled");
+                file.set_meta("puae_use_whdload", "disabled");
                 if let Some(p) = path.parent()
                     && let Some(p) = p.parent()
                 {
@@ -370,13 +370,13 @@ impl System for AmigaSystem {
         })?;
 
         if self.xmem {
-            file.set_tag("puae_z3mem_size", "128");
-            file.set_tag("puae_chipmem_size", "4");
-            file.set_tag("puae_fastmem_size", "8");
+            file.set_meta("puae_z3mem_size", "128");
+            file.set_meta("puae_chipmem_size", "4");
+            file.set_meta("puae_fastmem_size", "8");
         }
 
-        if file.get_tag("platform", "").contains("AGA") {
-            file.set_tag("puae_model", "A1200");
+        if file.get_meta("platform", "").contains("AGA") {
+            file.set_meta("puae_model", "A1200");
         }
 
         if is_dir {

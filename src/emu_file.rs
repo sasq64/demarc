@@ -125,13 +125,13 @@ impl FileSource {
 #[derive(Default, Clone, Debug)]
 pub struct EmuFile {
     pub path: FileSource,
-    pub tags: HashMap<String, String>,
+    pub meta: HashMap<String, String>,
     pub game_info: GameInfo,
 }
 
 impl EmuFile {
-    pub fn tag(&self, name: impl Into<String>) -> String {
-        self.tags
+    pub fn get_meta(&self, name: impl Into<String>) -> String {
+        self.meta
             .get(&name.into())
             .map_or("".into(), |s| s.to_string())
     }

@@ -23,7 +23,7 @@ impl System for AtariXlSystem {
     fn name(&self) -> &'static str {
         "Atari XL"
     }
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("atari800_ntscpal", "PAL"),
             ("atari800_system", "Modern XL/XE(1088K)"),

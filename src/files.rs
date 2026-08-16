@@ -21,7 +21,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut title: String = "".into();
     let mut group: String = "".into();
     let mut year: u32 = 0;
-    let mut tags = HashMap::new();
+    let mut meta = HashMap::new();
 
     let m3u = M3u::from_file(in_path)?;
 
@@ -41,12 +41,12 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         } else if key == "year" {
             year = val.parse::<u32>().unwrap_or(0);
         } else {
-            tags.insert(key, val);
+            meta.insert(key, val);
         }
     }
     Ok(EmuFile {
         path: path.into(),
-        tags,
+        meta,
         game_info: GameInfo {
             title,
             group,
@@ -77,16 +77,16 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// `out`.
 ///
 /// Each non-blank line holds `key:value` fields separated by tabs, in any order
-/// (`id:1\ttitle:Zentro 4\tauthor:Zenith\t…`). Every field becomes a tag of the
+/// (`id:1\ttitle:Zentro 4\tauthor:Zenith\t…`). Every field becomes meta on the
 /// entry; `title`, `author` and the year — the first `-`/`/`/`.`-delimited part
 /// of `date` — additionally fill in its [`GameInfo`]. The `download` field
 /// becomes the entry's path and is fetched on demand the first time it's loaded
 /// (see [`FileSource::resolve`]). Lines with no URL are skipped.
 ///
 /// A `# Platform:<name>` header line applies to every line below it, becoming a
-/// `platform` tag on each entry that doesn't name one itself. A header line may
-/// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
-/// likewise become tags on every entry below it — see [`parse_db_header`].
+/// `platform` meta on each entry that doesn't name one itself. A header line
+/// may carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
+/// likewise become meta on every entry below it — see [`parse_db_header`].
 ///
 /// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
 /// first, so it can be loaded exactly like the plain text file.
@@ -122,7 +122,7 @@ fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
 /// A line has to match *every* `include` pattern and must not match *any*
 /// `exclude` pattern, so repeating `-I` narrows the selection down while
 /// repeating `-X` widens what is thrown away. Header comments are always read,
-/// so the platform and tags they set still apply to the lines that survive.
+/// so the platform and meta they set still apply to the lines that survive.
 #[derive(Default)]
 pub struct DbFilter<'a> {
     pub include: &'a [Regex],
@@ -170,15 +170,15 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
 
 /// Read a header comment such as `# Platform:Amiga puae_model:A500`, which
 /// applies to every line below it: `Platform` names the platform the entries
-/// are for, and every other pair becomes a tag merged into each entry (a
+/// are for, and every other pair becomes meta merged into each entry (a
 /// db can this way set emulator settings for all its lines at once).
 ///
 /// Only a comment made up entirely of `key:value` pairs is a header, so an
-/// ordinary prose comment never turns into tags.
+/// ordinary prose comment never turns into meta.
 fn parse_db_header<'a>(
     comment: &'a str,
     platform: &mut Option<&'a str>,
-    tags: &mut HashMap<&'a str, &'a str>,
+    meta: &mut HashMap<&'a str, &'a str>,
 ) {
     let Some(fields) = comment
         .split_whitespace()
@@ -194,7 +194,7 @@ fn parse_db_header<'a>(
         if key.eq_ignore_ascii_case("platform") {
             *platform = Some(val);
         } else {
-            tags.insert(key, val);
+            meta.insert(key, val);
         }
     }
 }
@@ -203,8 +203,8 @@ fn parse_db_header<'a>(
 pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&str> = None;
 
-    // Tags from header comments, applied to every entry below them.
-    let mut file_tags = HashMap::<&str, &str>::new();
+    // Meta from header comments, applied to every entry below them.
+    let mut file_meta = HashMap::<&str, &str>::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -213,7 +213,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             continue;
         }
         if let Some(comment) = line.strip_prefix('#') {
-            parse_db_header(comment, &mut file_platform, &mut file_tags);
+            parse_db_header(comment, &mut file_platform, &mut file_meta);
             continue;
         }
         if !filter.keeps(line) {
@@ -221,10 +221,10 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
         }
         let fields = parse_named_db_line(line);
 
-        let mut tags = file_tags.clone();
+        let mut meta = file_meta.clone();
         if let Some(platform) = file_platform.filter(|p| !p.is_empty()) {
             // A `platform` field on the line itself is inserted below and wins.
-            tags.insert("platform", platform);
+            meta.insert("platform", platform);
         }
         let mut urls = vec![];
         for (key, val) in fields {
@@ -243,15 +243,15 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
                     })
                     .collect();
             }
-            tags.insert(key.into(), val.into());
+            meta.insert(key.into(), val.into());
         }
         if urls.is_empty() {
             continue;
         }
 
-        let title = tags.get("title").copied().unwrap_or("");
-        let author = tags.get("author").copied().unwrap_or("");
-        let year = tags
+        let title = meta.get("title").copied().unwrap_or("");
+        let author = meta.get("author").copied().unwrap_or("");
+        let year = meta
             .get("date")
             .copied()
             .unwrap_or("")
@@ -262,7 +262,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             .unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
-            tags: tags
+            meta: meta
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
@@ -357,7 +357,7 @@ mod tests {
     }
 
     /// Every field spells out its name, so order doesn't matter and a value may
-    /// hold `:` itself (every URL does). The fields become tags, with the title,
+    /// hold `:` itself (every URL does). The fields become meta, with the title,
     /// group and year lifted into the entry's `GameInfo`. Blank lines and
     /// URL-less lines are skipped.
     #[test]
@@ -392,16 +392,16 @@ mod tests {
         assert_eq!(zentro.game_info.title, "Zentro 4");
         assert_eq!(zentro.game_info.group, "Zenith");
         assert_eq!(zentro.game_info.year, 1992);
-        assert_eq!(zentro.tags.get("category").unwrap(), "Demo");
-        assert_eq!(zentro.tags.get("party").unwrap(), "The Party 1992");
-        assert_eq!(zentro.tags.get("tags").unwrap(), "has effects");
+        assert_eq!(zentro.meta.get("category").unwrap(), "Demo");
+        assert_eq!(zentro.meta.get("party").unwrap(), "The Party 1992");
+        assert_eq!(zentro.meta.get("tags").unwrap(), "has effects");
 
         // Fields in any order, missing ones simply left empty.
         let nexus = &out[1];
         assert_eq!(nexus.game_info.title, "Nexus 7");
         assert_eq!(nexus.game_info.group, "Andromeda");
         assert_eq!(nexus.game_info.year, 1994);
-        assert!(!nexus.tags.contains_key("party"));
+        assert!(!nexus.meta.contains_key("party"));
     }
 
     /// A packed db loads exactly like the plain text one it was made from — the
@@ -420,8 +420,8 @@ mod tests {
             assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
             assert_eq!(eod.game_info.year, 2008, "{packed}");
             // The `# Platform:C64` header applies just as it does unpacked.
-            assert_eq!(eod.tags.get("platform").unwrap(), "C64", "{packed}");
-            assert_eq!(eod.tags.get("category").unwrap(), "demo", "{packed}");
+            assert_eq!(eod.meta.get("platform").unwrap(), "C64", "{packed}");
+            assert_eq!(eod.meta.get("category").unwrap(), "demo", "{packed}");
             let FileSource::Url(urls) = &eod.path else {
                 panic!("db entries stay URLs until loaded, got {:?}", eod.path)
             };
@@ -447,9 +447,9 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].game_info.title, "Speedball Demo");
-        assert_eq!(out[0].tags.get("category").unwrap(), "Demo");
+        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
         assert!(
-            !out[0].tags.contains_key("platform"),
+            !out[0].meta.contains_key("platform"),
             "no header, no platform"
         );
     }
@@ -484,7 +484,7 @@ mod tests {
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
         assert_eq!(
-            out[0].tags.get("platform").unwrap(),
+            out[0].meta.get("platform").unwrap(),
             "Amiga",
             "header still applies"
         );
@@ -593,19 +593,19 @@ mod tests {
         let mut out = vec![];
         collect_db(&db, &DbFilter::default(), &mut out).unwrap();
         assert_eq!(
-            out[0].tags.get("platform").unwrap(),
+            out[0].meta.get("platform").unwrap(),
             "Amiga",
             "header applies"
         );
-        assert_eq!(out[0].tags.get("category").unwrap(), "Demo");
+        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
         assert_eq!(
-            out[1].tags.get("platform").unwrap(),
+            out[1].meta.get("platform").unwrap(),
             "C64",
             "line overrides header"
         );
     }
 
-    /// The other pairs of a header line become tags on every entry below it,
+    /// The other pairs of a header line become meta on every entry below it,
     /// while a plain prose comment is left alone.
     #[test]
     fn collect_db_applies_header_tags() {
@@ -620,16 +620,16 @@ mod tests {
             &mut out,
         );
 
-        assert_eq!(out[0].tags.get("platform").unwrap(), "Amiga");
-        assert_eq!(out[0].tags.get("puae_model").unwrap(), "A500");
-        assert!(!out[0].tags.contains_key("Just"));
-        assert!(!out[0].tags.contains_key("comment"));
+        assert_eq!(out[0].meta.get("platform").unwrap(), "Amiga");
+        assert_eq!(out[0].meta.get("puae_model").unwrap(), "A500");
+        assert!(!out[0].meta.contains_key("Just"));
+        assert!(!out[0].meta.contains_key("comment"));
 
         // A later header overrides, and the platform from the first one still
         // applies.
-        assert_eq!(out[1].tags.get("puae_model").unwrap(), "A1200");
-        assert_eq!(out[1].tags.get("tags").unwrap(), "aga");
-        assert_eq!(out[1].tags.get("platform").unwrap(), "Amiga");
+        assert_eq!(out[1].meta.get("puae_model").unwrap(), "A1200");
+        assert_eq!(out[1].meta.get("tags").unwrap(), "aga");
+        assert_eq!(out[1].meta.get("platform").unwrap(), "Amiga");
     }
 
     fn filter(urls: &[&str]) -> Vec<String> {

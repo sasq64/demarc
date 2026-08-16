@@ -426,14 +426,14 @@ impl Emulator {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
-        let tags = emu_file.tags.clone();
+        let meta = emu_file.meta.clone();
 
         self.retro_replay = 0;
-        let res = sys.load_file(&path, &tags)?;
+        let res = sys.load_file(&path, &meta)?;
         self.retro_replay = 0;
         if res
             .work_file
-            .get_tag("vice_cartridge", "")
+            .get_meta("vice_cartridge", "")
             .starts_with("rr")
         {
             self.retro_replay = 1;

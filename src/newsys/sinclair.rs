@@ -9,7 +9,7 @@ impl System for SinclairSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["tap", "scl", "trd"]
     }
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [("fuse_machine", "Spectrum 128K")].into()
     }
     fn core_name(&self) -> &'static str {

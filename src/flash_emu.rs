@@ -137,7 +137,7 @@ pub struct FlashEmu {
 }
 
 impl FlashEmu {
-    pub fn new(game: &Path, _tags: std::collections::HashMap<String, String>) -> Result<Self> {
+    pub fn new(game: &Path, _meta: std::collections::HashMap<String, String>) -> Result<Self> {
         let game = game.to_path_buf();
         let (cmd_tx, cmd_rx) = channel::<FlashCmd>();
         let (update_tx, update_rx) = sync_channel::<FlashUpdate>(UPDATE_QUEUE);

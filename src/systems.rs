@@ -10,8 +10,8 @@ pub struct GameInfo {
     pub category: String,
 }
 
-pub fn get_info_text(work_file: &EmuFile, tags: &HashMap<String, String>) -> String {
-    let system = tags.get("system").cloned().unwrap_or("???".to_string()); //get_system_name(work_file);
+pub fn get_info_text(work_file: &EmuFile, meta: &HashMap<String, String>) -> String {
+    let system = meta.get("system").cloned().unwrap_or("???".to_string()); //get_system_name(work_file);
     let GameInfo {
         title,
         group,

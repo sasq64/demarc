@@ -602,7 +602,7 @@ fn handle_exe(work_file: &Path) -> Result<PathBuf> {
         debug!("FMT: PSX executable wrapped in disc image {disc:?}");
         return Ok(disc);
     } else {
-        //work_file.tags.insert("psx_core".into(), "beetle".into());
+        //work_file.meta.insert("psx_core".into(), "beetle".into());
         // A scene exe whose header undercounts its text section doesn't
         // load at all, so patch the header before the core sees it. The
         // file we were handed isn't ours to write to unless it already
@@ -635,7 +635,7 @@ impl System for PSXSystem {
         true
     }
 
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("pcsx_rearmed_bios", "HLE"),
             ("pcsx_rearmed_region", "PAL"),
