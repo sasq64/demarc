@@ -29,14 +29,14 @@ Always single file or directory
 "GAME" INFO
 
 Meta data from disk or db, handled by frontend.
+GameInfo for database / display
 
-All fields go into -> tags
-Remove GameInfo
 
 title
 author
 date
 party
+platform
 category
 tags
 download

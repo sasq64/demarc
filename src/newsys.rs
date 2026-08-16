@@ -195,6 +195,7 @@ pub trait System: Send + Sync {
 #[derive(Default)]
 pub struct NewSys {
     systems: Vec<Box<dyn System>>,
+    tags: HashMap<String, String>,
 }
 pub struct LoadResult<'a> {
     pub backend: Box<dyn Backend + Send + Sync>,
@@ -223,8 +224,15 @@ impl NewSys {
         ]
     }
     pub fn new(args: &Args) -> Self {
+        let mut tags = HashMap::<String, String>::new();
+        for opt in &args.extra_options {
+            if let Some((key, val)) = opt.split_once("=") {
+                tags.insert(key.trim().into(), val.trim().into());
+            }
+        }
         NewSys {
             systems: Self::get_systems(args),
+            tags,
         }
     }
 
@@ -232,6 +240,9 @@ impl NewSys {
         println!("LOAD_FILE: {path:?}");
         let mut wf = WorkFile::new(path);
         wf.tags = tags.clone();
+        for (key, val) in &self.tags {
+            wf.tags.insert(key.into(), val.into());
+        }
         if path.is_file() {
             if is_archive(path)? {
                 let tags = wf.tags;
@@ -334,8 +345,16 @@ mod tests {
         let testdata = root.join("testdata").join("amiga");
         test_load(&testdata.join("rebels.adf"), "Amiga");
         test_load(&testdata.join("o2-intro"), "Amiga");
-        let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
 
+        // A plain executable is booted from a generated startup-sequence on a
+        // stock A500, not through WHDLoad.
+        let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
+        assert!(work_file.tags.get("puae_use_whdload") == Some(&"disabled".to_string()));
+        assert!(work_file.tags.get("puae_model") == Some(&"A500".to_string()));
+
+        // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
+        // needs an A1200.
+        let work_file = test_load(&testdata.join("nexus7"), "Amiga");
         assert!(work_file.tags.get("puae_use_whdload") == Some(&"enabled".to_string()));
         assert!(work_file.tags.get("puae_model") == Some(&"A1200".to_string()));
     }

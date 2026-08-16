@@ -15,8 +15,7 @@ use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::systems::SystemType;
-use crate::systems::{get_info_text, system_name};
+use crate::systems::get_info_text;
 use crate::{AppSettings, RenderSettings};
 use crate::{EmuFile, emu_file::FileSource};
 
@@ -345,40 +344,20 @@ fn entry_name(file: &EmuFile) -> String {
 /// group, what it is and when, the party it was released at, its tags, and
 /// where it comes from. Empty fields are left out rather than shown blank.
 fn entry_info(file: &EmuFile, width: usize) -> String {
-    let game = &file.game_info;
     let mut lines = Vec::new();
-    let title = if game.title.is_empty() {
-        "???".to_string()
+    let platform = file.tag("platform");
+    let category = file.tag("category");
+    let year = file.game_info.year;
+    let year = if year == 0 {
+        "".to_string()
     } else {
-        game.title.clone()
+        format!(" ({year})")
     };
-    let group = if game.group.is_empty() {
-        "".into()
+    if platform.is_empty() {
+        lines.push(format!("{category}{year}"));
     } else {
-        format!(" / {}", game.group)
-    };
-    lines.push(format!("{title}{group}"));
-
-    // A db entry names its own type ("Amiga Demo") and only learns its system
-    // type once it is prepared for loading, so prefer the type and fall back to
-    // the system for entries scanned off disk.
-    let desc = if !game.typ.is_empty() {
-        game.typ.clone()
-    } else if file.system_type != SystemType::Unknown {
-        system_name(file.system_type, &file.tags)
-    } else {
-        String::new()
-    };
-    let dated = match (desc.is_empty(), game.year.is_empty()) {
-        (true, true) => String::new(),
-        (true, false) => game.year.clone(),
-        (false, true) => desc,
-        (false, false) => format!("{desc} ({})", game.year),
-    };
-    if !dated.is_empty() {
-        lines.push(dated);
+        lines.push(format!("{platform} {category}{year}"));
     }
-
     if let Some(party) = file.tags.get("party").filter(|p| !p.is_empty()) {
         lines.push(format!("Party: {party}"));
     }
@@ -386,8 +365,6 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
         lines.push(format!("Tags: {tags}"));
     }
 
-    // Last, so it is what gets clipped if the field runs out of room. A long
-    // download URL is shortened rather than wrapped over several lines.
     let source = match &file.path {
         FileSource::Path(p) => p
             .file_name()
@@ -401,7 +378,6 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     if !source.is_empty() {
         lines.push(source);
     }
-
     lines.join("\n")
 }
 

@@ -59,19 +59,19 @@ fn is_disk_image(path: &Path) -> bool {
 ///
 /// A release listing often mixes the actual program with extras (music rips,
 /// scans, ...). If any URL is a disk image, the release is disk based and only
-/// disk images of that same *system* are kept — that way a multi-disk set stays
-/// together without dragging in, say, an `.adf` version of a `.d64` release.
-/// Otherwise only the obviously non-loadable extras are dropped.
+/// the disk images are kept, so a multi-disk set stays together. Otherwise only
+/// the obviously non-loadable extras are dropped.
 ///
-/// Matching on the system rather than the exact extension matters for sets
-/// whose disks are archived in different formats: Hardwired by The Silents &
-/// Crionics has side A as a `.dms` and side B as an `.adf`, and keying on the
-/// extension alone would silently fetch only one of the two.
+/// Disk images are kept whatever their format, since the disks of one set may
+/// well be archived differently: Hardwired by The Silents & Crionics has side A
+/// as a `.dms` and side B as an `.adf`, and keying on the extension alone would
+/// silently fetch only one of the two.
+///
+/// Filtering everything away would leave nothing to fetch, so a filter that
+/// empties the list is dropped and the URLs are returned as they came in.
 pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
-
-    //let disk_system = urls.iter().find_map(disk_image_system);
 
     let mut images: Vec<Url> = urls
         .iter()
@@ -86,7 +86,7 @@ pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
             .cloned()
             .collect();
     };
-    images
+    if images.is_empty() { urls } else { images }
 }
 
 impl FileSource {
@@ -126,6 +126,13 @@ impl FileSource {
 pub struct EmuFile {
     pub path: FileSource,
     pub tags: HashMap<String, String>,
-    pub system_type: SystemType,
     pub game_info: GameInfo,
+}
+
+impl EmuFile {
+    pub fn tag(&self, name: impl Into<String>) -> String {
+        self.tags
+            .get(&name.into())
+            .map_or("".into(), |s| s.to_string())
+    }
 }

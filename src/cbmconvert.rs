@@ -84,11 +84,11 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// Convert `testdata/BADALM.T64` (a C64 tape image) to a raw `.prg` file and
-    /// verify cbmconvert produced it with the expected `$0801` load address.
+    /// Convert `testdata/c64/BADALM.T64` (a C64 tape image) to a raw `.prg` file
+    /// and verify cbmconvert produced it with the expected `$0801` load address.
     #[test]
     fn t64_to_prg() {
-        let t64 = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/BADALM.T64");
+        let t64 = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/c64/BADALM.T64");
         assert!(t64.is_file(), "missing test fixture: {}", t64.display());
 
         // cbmconvert writes output relative to the CWD, so run inside a temp dir.

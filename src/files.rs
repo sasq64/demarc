@@ -12,27 +12,17 @@ use url::Url;
 
 use crate::{
     emu_file::{EmuFile, FileSource},
-    systems::{GameInfo, SystemType, get_system_type},
+    systems::{GameInfo, SystemType},
     utils::{is_disk_image, parse_m3u, unpack_if_packed},
 };
 
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut title: String = "".into();
     let mut group: String = "".into();
-    let mut year: String = "".into();
-    let mut system_type = SystemType::Unknown;
+    let mut year: u32 = 0;
     let mut tags = HashMap::new();
 
     let m3u = parse_m3u(in_path)?;
-    for f in &m3u.files {
-        let t = get_system_type(f);
-        if system_type != SystemType::Unknown && t != system_type {
-            // Mixed
-            system_type = SystemType::Unknown;
-            break;
-        }
-        system_type = t;
-    }
 
     let path = (if m3u.files.is_empty() {
         in_path.parent().unwrap()
@@ -48,27 +38,26 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         } else if key == "group" {
             group = val.clone();
         } else if key == "year" {
-            year = val.clone();
+            year = val.parse::<u32>().unwrap_or(0);
         } else {
             tags.insert(key, val);
         }
     }
     Ok(EmuFile {
         path: path.into(),
-        system_type,
         tags,
         game_info: GameInfo {
             title,
             group,
             year,
-            typ: "".into(),
+            category: "".into(),
         },
     })
 }
 
 /// Parse a `key:value`-per-field line, e.g.
-/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`. Returns `None` when the line isn't
-/// in that format, so the caller can fall back to the positional one.
+/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`, into its pairs. Fields without a
+/// `:` are skipped.
 ///
 /// Only the first `:` splits a field, leaving values (URLs above all) intact,
 /// and fields may appear in any order.
@@ -86,18 +75,17 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
 ///
-/// Each non-blank line holds the fields `id, title/author (group), date, party,
-/// category (type), tags, download (url)`, either prefixed with their names
-/// (`title:Zentro 4`, any order) or, in older db files, in that fixed order.
-/// The `url` becomes the entry's path and is downloaded on demand the first
-/// time it's loaded (see [`prepare_file`]); the year is the first `-`/`/`/`.`
-/// -delimited part of `date`. The remaining scene metadata (`party`, `type`,
-/// `tags`) is kept under matching keys. Lines with no URL are skipped.
+/// Each non-blank line holds `key:value` fields separated by tabs, in any order
+/// (`id:1\ttitle:Zentro 4\tauthor:Zenith\t…`). Every field becomes a tag of the
+/// entry; `title`, `author` and the year — the first `-`/`/`/`.`-delimited part
+/// of `date` — additionally fill in its [`GameInfo`]. The `download` field
+/// becomes the entry's path and is fetched on demand the first time it's loaded
+/// (see [`FileSource::resolve`]). Lines with no URL are skipped.
 ///
-/// A `platform` field, or a `# Platform:<name>` header line applying to every
-/// line below it, prefixes the type (`Demo` → `Amiga Demo`). A header line may
+/// A `# Platform:<name>` header line applies to every line below it, becoming a
+/// `platform` tag on each entry that doesn't name one itself. A header line may
 /// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
-/// become tags on every entry below it — see [`parse_db_header`].
+/// likewise become tags on every entry below it — see [`parse_db_header`].
 ///
 /// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
 /// first, so it can be loaded exactly like the plain text file.
@@ -180,8 +168,8 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
 }
 
 /// Read a header comment such as `# Platform:Amiga puae_model:A500`, which
-/// applies to every line below it: `Platform` names the platform prefixed to
-/// the type, and every other pair becomes a tag merged into each entry (a
+/// applies to every line below it: `Platform` names the platform the entries
+/// are for, and every other pair becomes a tag merged into each entry (a
 /// db can this way set emulator settings for all its lines at once).
 ///
 /// Only a comment made up entirely of `key:value` pairs is a header, so an
@@ -233,6 +221,10 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
         let fields = parse_named_db_line(line);
 
         let mut tags = file_tags.clone();
+        if let Some(platform) = file_platform.filter(|p| !p.is_empty()) {
+            // A `platform` field on the line itself is inserted below and wins.
+            tags.insert("platform", platform);
+        }
         let mut urls = vec![];
         for (key, val) in fields {
             if key == "download" {
@@ -265,12 +257,10 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             .split(['-', '/', '.'])
             .next()
             .unwrap_or_default()
-            .to_string();
-        let ys = format!("{year}");
-        tags.insert("year", &ys);
+            .parse::<u32>()
+            .unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
-            system_type: SystemType::Unknown,
             tags: tags
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into()))
@@ -332,18 +322,11 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
             out.push(handle_m3u(&path)?);
             return Ok(());
         } else {
-            let t = get_system_type(&path);
             // NOTE: Images on disk are assumed to be screenshots
-            if t != SystemType::Unknown && t != SystemType::Gfx {
-                if found_type != SystemType::Unknown && found_type != t {
-                    mixed = true;
-                }
-                if !is_disk_image(&path) {
-                    disk_images = false;
-                }
-                found_type = t;
-                files.push(path);
+            if !is_disk_image(&path) {
+                disk_images = false;
             }
+            files.push(path);
         }
     }
 
@@ -381,130 +364,6 @@ mod tests {
         }
     }
 
-    /// Collect `<crate root>/<dir>`, with paths made relative again so the
-    /// assertions below don't depend on where the checkout lives. `read_dir`
-    /// order is unspecified, so everything is sorted before comparing.
-    fn collect(dir: &str, many: bool) -> Vec<(String, SystemType)> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut out = vec![];
-        collect_files(&root.join(dir), &mut out, many).unwrap();
-        let mut found: Vec<(String, SystemType)> = out
-            .iter()
-            .map(|f| {
-                let path = local_path(&f.path);
-                let rel = path.strip_prefix(root).unwrap_or(path);
-                (rel.to_string_lossy().into_owned(), f.system_type)
-            })
-            .collect();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
-        found
-    }
-
-    fn type_of(found: &[(String, SystemType)], path: &str) -> SystemType {
-        found
-            .iter()
-            .find(|(p, _)| p == path)
-            .unwrap_or_else(|| panic!("{path} not collected, got {found:#?}"))
-            .1
-    }
-
-    /// The demos dir mixes systems, so every file is listed on its own. The two
-    /// subdirectories don't expand into files: the Amiga demo needs its whole
-    /// directory (for the data files next to the executable), and nexus7's
-    /// `.m3u` carries only metadata, so it stands in for the directory.
-    #[test]
-    fn collects_demos() {
-        let found = collect("demos", false);
-        assert_eq!(
-            found,
-            vec![
-                ("demos/natrium.prg".into(), SystemType::AtariST),
-                ("demos/nexus7".into(), SystemType::Unknown),
-                ("demos/nightmode.gb".into(), SystemType::Gameboy),
-                ("demos/o2-intro".into(), SystemType::Unknown),
-                ("demos/pdx-dlcm.psx".into(), SystemType::Psx),
-                ("demos/quantum_icc2026_v1p.prg".into(), SystemType::C64),
-                ("demos/rebels.adf".into(), SystemType::Amiga),
-                ("demos/still_rising.dsk".into(), SystemType::Amstrad),
-                ("demos/triad.smc".into(), SystemType::SuperNintendo),
-            ]
-        );
-    }
-
-    /// A directory holding an `.m3u` is represented by that playlist alone; the
-    /// files next to it must not also show up as entries of their own. This one
-    /// lists no files, so the entry is the directory rather than the playlist —
-    /// the whole WHDLoad install is what gets loaded.
-    #[test]
-    fn m3u_replaces_its_directory() {
-        let found = collect("demos", false);
-        assert_eq!(
-            found
-                .iter()
-                .filter(|(p, _)| p.starts_with("demos/nexus7"))
-                .count(),
-            1
-        );
-        assert_eq!(type_of(&found, "demos/nexus7"), SystemType::Unknown);
-    }
-
-    /// `many` splits a directory of same-system files into separate entries,
-    /// so the Amiga demo dir becomes the executable inside it.
-    #[test]
-    fn many_expands_amiga_directory() {
-        let found = collect("demos", true);
-        assert_eq!(type_of(&found, "demos/o2-intro/o2intro"), SystemType::Amiga);
-        assert!(!found.iter().any(|(p, _)| p == "demos/o2-intro"));
-    }
-
-    /// testdata is recursed into: the C64 intros (mixed with `.png` previews)
-    /// and the IFF images all come out individually, while the archives at the
-    /// top level are not recognised as loadable files at all.
-    #[test]
-    fn collects_testdata() {
-        let found = collect("testdata", false);
-
-        assert_eq!(type_of(&found, "testdata/test.iff"), SystemType::Ilbm);
-        assert_eq!(
-            type_of(&found, "testdata/intros/0/007-01.prg"),
-            SystemType::C64
-        );
-        assert_eq!(type_of(&found, "testdata/iffILBM/24.iff"), SystemType::Ilbm);
-        assert_eq!(type_of(&found, "testdata/fr018.bin"), SystemType::Gba);
-
-        // Detection is by content as well as extension, so extension-less and
-        // oddly-named IFFs still count.
-        assert_eq!(type_of(&found, "testdata/iffILBM/ghost"), SystemType::Ilbm);
-        assert_eq!(
-            type_of(&found, "testdata/iffILBM/firestarter.256"),
-            SystemType::Ilbm
-        );
-
-        for (path, system_type) in &found {
-            assert!(!path.ends_with(".png"), "preview image collected: {path}");
-            assert!(
-                !(path.ends_with(".zip") || path.ends_with(".lha")),
-                "archive collected: {path}"
-            );
-            assert_ne!(*system_type, SystemType::Unknown, "{path}");
-        }
-
-        // No `.m3u` anywhere here, so nothing collapses to a directory.
-        for (path, _) in &found {
-            assert!(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join(path).is_file(),
-                "expected a file, got {path}"
-            );
-        }
-    }
-
-    /// `many` makes no difference for testdata — every directory in it is
-    /// already mixed or non-Amiga.
-    #[test]
-    fn testdata_is_unaffected_by_many() {
-        assert_eq!(collect("testdata", false), collect("testdata", true));
-    }
-
     #[test]
     fn missing_directory_is_an_error() {
         let mut out = vec![];
@@ -512,76 +371,10 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    /// An ST release directory is collected as the directory itself, the way an
-    /// Amiga one is, so the data files next to the program come along.
-    #[test]
-    fn collects_atari_dir_whole() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let release = dir.path().join("release");
-        fs::create_dir(&release).unwrap();
-        fs::copy(root.join("demos/natrium.prg"), release.join("NATRIUM.PRG")).unwrap();
-        fs::copy(root.join("demos/natrium.prg"), release.join("PART2.PRG")).unwrap();
-
-        let mut out = vec![];
-        collect_files(dir.path(), &mut out, false).unwrap();
-        assert_eq!(out.len(), 1);
-        assert_eq!(local_path(&out[0].path), release);
-
-        // `many` splits the same directory back into its programs.
-        let mut out = vec![];
-        collect_files(dir.path(), &mut out, true).unwrap();
-        assert_eq!(out.len(), 2);
-    }
-
-    /// A tab-separated db line becomes an `EmuFile` whose path is the URL and
-    /// whose metadata is split out of the fields (year from the date, scene tags
-    /// preserved). Blank lines and URL-less lines are skipped.
-    #[test]
-    fn collect_db_parses_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("demos.txt");
-        fs::write(
-            &db,
-            "1\tEdge of Disgrace\tBooze Design\t2008-04-01\tBreakpoint\tdemo\tc64,fav\thttps://example.com/eod.d64\n\
-             \n\
-             2\tNo URL\tGroup\t1994\tParty\tintro\t\t\n\
-             3\tNexus 7\tAndromeda\t1994/12/30\t\t\t\thttps://example.com/nexus7.zip\n",
-        )
-        .unwrap();
-
-        let mut out = vec![];
-        collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-        assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
-
-        let eod = &out[0];
-        let FileSource::Url(urls) = &eod.path else {
-            panic!("db entries stay URLs until loaded, got {:?}", eod.path)
-        };
-        assert_eq!(
-            urls.iter().map(Url::as_str).collect::<Vec<_>>(),
-            ["https://example.com/eod.d64"]
-        );
-        // The system type is only determined once the URL is fetched (see
-        // `prepare_file`), so collection leaves it Unknown.
-        assert_eq!(eod.system_type, SystemType::Unknown);
-        assert_eq!(eod.game_info.title, "Edge of Disgrace");
-        assert_eq!(eod.game_info.group, "Booze Design");
-        assert_eq!(eod.game_info.year, "2008");
-        assert_eq!(eod.tags.get("party").unwrap(), "Breakpoint");
-        assert_eq!(eod.tags.get("type").unwrap(), "demo");
-        assert_eq!(eod.tags.get("tags").unwrap(), "c64,fav");
-
-        let nexus = &out[1];
-        assert_eq!(nexus.game_info.title, "Nexus 7");
-        assert_eq!(nexus.game_info.year, "1994");
-        //println!("{:?}", nexus.tags);
-        //assert!(nexus.tags.is_empty(), "empty scene fields left out");
-    }
-
-    /// The named format spells out each field, so order doesn't matter and a
-    /// value may hold `:` itself (every URL does). Field names line up with the
-    /// same metadata the positional format carries.
+    /// Every field spells out its name, so order doesn't matter and a value may
+    /// hold `:` itself (every URL does). The fields become tags, with the title,
+    /// group and year lifted into the entry's `GameInfo`. Blank lines and
+    /// URL-less lines are skipped.
     #[test]
     fn collect_db_parses_named_fields() {
         let dir = tempfile::tempdir().unwrap();
@@ -613,17 +406,16 @@ mod tests {
         );
         assert_eq!(zentro.game_info.title, "Zentro 4");
         assert_eq!(zentro.game_info.group, "Zenith");
-        assert_eq!(zentro.game_info.year, "1992");
-        assert_eq!(zentro.game_info.typ, "Demo");
+        assert_eq!(zentro.game_info.year, 1992);
+        assert_eq!(zentro.tags.get("category").unwrap(), "Demo");
         assert_eq!(zentro.tags.get("party").unwrap(), "The Party 1992");
-        assert_eq!(zentro.tags.get("type").unwrap(), "Demo");
         assert_eq!(zentro.tags.get("tags").unwrap(), "has effects");
 
         // Fields in any order, missing ones simply left empty.
         let nexus = &out[1];
         assert_eq!(nexus.game_info.title, "Nexus 7");
         assert_eq!(nexus.game_info.group, "Andromeda");
-        assert_eq!(nexus.game_info.year, "1994");
+        assert_eq!(nexus.game_info.year, 1994);
         assert!(!nexus.tags.contains_key("party"));
     }
 
@@ -641,9 +433,10 @@ mod tests {
             let eod = &out[0];
             assert_eq!(eod.game_info.title, "Edge of Disgrace", "{packed}");
             assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
-            assert_eq!(eod.game_info.year, "2008", "{packed}");
+            assert_eq!(eod.game_info.year, 2008, "{packed}");
             // The `# Platform:C64` header applies just as it does unpacked.
-            assert_eq!(eod.game_info.typ, "C64 demo", "{packed}");
+            assert_eq!(eod.tags.get("platform").unwrap(), "C64", "{packed}");
+            assert_eq!(eod.tags.get("category").unwrap(), "demo", "{packed}");
             let FileSource::Url(urls) = &eod.path else {
                 panic!("db entries stay URLs until loaded, got {:?}", eod.path)
             };
@@ -669,7 +462,11 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].game_info.title, "Speedball Demo");
-        assert_eq!(out[0].game_info.typ, "Demo");
+        assert_eq!(out[0].tags.get("category").unwrap(), "Demo");
+        assert!(
+            !out[0].tags.contains_key("platform"),
+            "no header, no platform"
+        );
     }
 
     /// `--include`/`--exclude` drop non-matching lines while collecting, but
@@ -701,7 +498,11 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
-        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header still applies");
+        assert_eq!(
+            out[0].tags.get("platform").unwrap(),
+            "Amiga",
+            "header still applies"
+        );
 
         let exclude = re("category:Musicdisk");
         let (kept, _) = titles(&DbFilter {
@@ -789,10 +590,11 @@ mod tests {
         );
     }
 
-    /// A `platform` field, or a `# Platform:` header covering the lines below
-    /// it, prefixes the type so entries from different scenes stay apart.
+    /// A `# Platform:` header covers the lines below it, giving each one a
+    /// `platform` tag, and a line naming a platform of its own overrides it —
+    /// that way entries from different scenes stay apart.
     #[test]
-    fn collect_db_prefixes_platform() {
+    fn collect_db_platform_tags_lines() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("demos.txt");
         fs::write(
@@ -805,8 +607,17 @@ mod tests {
 
         let mut out = vec![];
         collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header applies");
-        assert_eq!(out[1].game_info.typ, "C64 Demo", "line overrides header");
+        assert_eq!(
+            out[0].tags.get("platform").unwrap(),
+            "Amiga",
+            "header applies"
+        );
+        assert_eq!(out[0].tags.get("category").unwrap(), "Demo");
+        assert_eq!(
+            out[1].tags.get("platform").unwrap(),
+            "C64",
+            "line overrides header"
+        );
     }
 
     /// The other pairs of a header line become tags on every entry below it,
@@ -824,7 +635,7 @@ mod tests {
             &mut out,
         );
 
-        assert_eq!(out[0].game_info.typ, "Amiga Demo");
+        assert_eq!(out[0].tags.get("platform").unwrap(), "Amiga");
         assert_eq!(out[0].tags.get("puae_model").unwrap(), "A500");
         assert!(!out[0].tags.contains_key("Just"));
         assert!(!out[0].tags.contains_key("comment"));
@@ -833,7 +644,7 @@ mod tests {
         // applies.
         assert_eq!(out[1].tags.get("puae_model").unwrap(), "A1200");
         assert_eq!(out[1].tags.get("tags").unwrap(), "aga");
-        assert_eq!(out[1].game_info.typ, "Amiga Demo");
+        assert_eq!(out[1].tags.get("platform").unwrap(), "Amiga");
     }
 
     fn filter(urls: &[&str]) -> Vec<String> {
@@ -844,8 +655,9 @@ mod tests {
             .collect()
     }
 
-    /// A disk image among the URLs makes the release disk based: the extras and
-    /// any disk image of another kind go away, the rest of the set stays.
+    /// A disk image among the URLs makes the release disk based: everything
+    /// that isn't a disk image goes away and the whole set stays, whatever
+    /// format its disks are in.
     #[test]
     fn disk_images_win() {
         assert_eq!(
@@ -856,7 +668,11 @@ mod tests {
                 "https://x.com/a.adf",
                 "https://x.com/readme.txt",
             ]),
-            vec!["https://x.com/a1.d64", "https://x.com/a2.D64"]
+            vec![
+                "https://x.com/a1.d64",
+                "https://x.com/a2.D64",
+                "https://x.com/a.adf"
+            ]
         );
     }
 

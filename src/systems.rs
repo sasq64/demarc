@@ -45,8 +45,8 @@ impl SystemType {}
 pub struct GameInfo {
     pub title: String,
     pub group: String,
-    pub year: String,
-    pub typ: String,
+    pub year: u32,
+    pub category: String,
 }
 
 #[derive(Debug, Default)]
@@ -64,120 +64,15 @@ pub struct WorkingFile {
     pub temp_dir: Option<TempDir>,
 }
 
-pub fn get_memory(work_file: &WorkingFile) -> String {
-    let tags = &work_file.settings;
-    let reu = tags.get("vice_ram_expansion_unit");
-    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let chip = tags
-        .get("puae_chipmem_size")
-        .map(|c| c.parse::<u32>().unwrap_or_default())
-        .unwrap_or(if a1200 { 4 } else { 1 })
-        * 512;
-
-    //let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
-    match work_file.system_type {
-        SystemType::C64 => {
-            if let Some(reu) = reu {
-                format!("64K + REU {}", reu)
-            } else {
-                "64K".to_string()
-            }
-        }
-        SystemType::Amiga => format!("CHIP:{}K", chip),
-        SystemType::Amstrad => "128K".to_string(),
-        SystemType::Megadrive => "64K + VRAM:64K".to_string(),
-        SystemType::ZXSpectrum => "128K".to_string(),
-        SystemType::AtariST => "".to_string(),
-        SystemType::Atari2600 => "128B".to_string(),
-        SystemType::SuperNintendo => "128K".to_string(),
-        SystemType::AtariXL => "Atari XL".to_string(),
-        SystemType::Tic80 => "272KB".to_string(),
-        SystemType::Pico8 => "?".to_string(),
-        SystemType::Flash => "?".to_string(),
-        _ => "?".to_string(),
-    }
-}
-
-pub fn get_system_name(work_file: &WorkingFile) -> String {
-    system_name(work_file.system_type, &work_file.settings)
-}
-
-/// The display name of a system, refined by the tags that distinguish its
-/// variants (an STE from an ST, an AGA Amiga from an A500). Takes the parts
-/// rather than a [`WorkingFile`] so it also works for an
-/// [`EmuFile`](crate::files::EmuFile) that hasn't been prepared for loading yet.
-pub fn system_name(system_type: SystemType, tags: &HashMap<String, String>) -> String {
-    let ste = tags.get("hatari_machinetype").is_some_and(|v| v == "ste");
-    let a1200 = tags.get("puae_model").is_some_and(|v| v == "A1200");
-    let mut base = match system_type {
-        SystemType::C64 => "C64",
-        SystemType::Amiga => "Amiga",
-        SystemType::Amstrad => "Amstrad CPC",
-        SystemType::Megadrive => "Megadrive",
-        SystemType::ZXSpectrum => "ZX Spectrum",
-        SystemType::AtariST => {
-            if ste {
-                "Atari STE"
-            } else {
-                "Atari ST"
-            }
-        }
-        SystemType::Atari2600 => "Atari 2600",
-        SystemType::SuperNintendo => "SNES",
-        SystemType::AtariXL => "Atari XL",
-        SystemType::Tic80 => "Tic-80",
-        SystemType::Pico8 => "Pico8",
-        SystemType::Flash => "Flash",
-        SystemType::Gameboy => "Gameboy",
-        SystemType::Gba => "GBA",
-        SystemType::Psx => "PlayStation",
-        SystemType::NeoGeo => "Neo Geo",
-        SystemType::Ilbm => "Amiga Gfx",
-        SystemType::Degas => "Atari Gfx",
-        SystemType::Gfx => "Gfx",
-        SystemType::Unknown => "Unknown",
-    }
-    .to_string();
-    if system_type == SystemType::Amiga {
-        if a1200 {
-            base += " (AGA)";
-        } else {
-            base += " 500";
-        }
-    }
-    base
-}
-
-#[expect(dead_code)]
-pub fn get_full_info(work_file: &WorkingFile) -> String {
-    let system = get_system_name(work_file);
-    let ram = get_memory(work_file);
-    let len = fs::metadata(&work_file.path).unwrap().len();
-
-    let GameInfo {
-        title,
-        group,
-        year,
-        typ: _,
-    } = &work_file.game_info;
-    let year = if year.is_empty() {
-        "".into()
-    } else {
-        format!(" ({year})")
-    };
-
-    format!("\"{title}\"\n{group}\n{system}{year}\nMem: {ram}\n Size: {len}")
-}
-
 pub fn get_info_text(work_file: &EmuFile, tags: &HashMap<String, String>) -> String {
     let system = tags.get("system").cloned().unwrap_or("???".to_string()); //get_system_name(work_file);
     let GameInfo {
         title,
         group,
         year,
-        typ,
+        category: typ,
     } = &work_file.game_info;
-    let year = if year.is_empty() {
+    let year = if *year == 0 {
         "".into()
     } else {
         format!(" ({year})")
