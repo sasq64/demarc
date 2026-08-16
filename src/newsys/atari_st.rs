@@ -9,7 +9,10 @@ use tracing::debug;
 use super::utils::{build_m3u, copy_dir_all};
 
 use crate::{
-    newsys::{utils::find_child, walk_dir},
+    newsys::{
+        utils::{find_child, sort_disks},
+        walk_dir,
+    },
     workfile::WorkFile,
 };
 
@@ -108,7 +111,7 @@ impl System for AtariStSystem {
         "Atari ST"
     }
 
-    fn default_tags(&self) -> HashMap<&str, &str> {
+    fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("hatari_forcerefresh", "2"),
             ("hatari_start_in_mouse_mode", "false"),
@@ -122,8 +125,19 @@ impl System for AtariStSystem {
         let mut images = vec![];
         let mut exes = vec![];
         println!("LOAD {}: {file:?}", self.core_name());
-        for (key, val) in self.default_tags() {
-            file.set_tag(key, val);
+        for (key, val) in self.default_meta() {
+            file.set_meta(key, val);
+        }
+
+        if file.has_tag("ste") {
+            file.set_meta("hatari_machinetype", "ste");
+        }
+        if file.has_tag("requires-4mb") {
+            file.set_meta("hatari_ramsize", "4");
+        } else if file.has_tag("requires-2mb") {
+            file.set_meta("hatari_ramsize", "2");
+        } else if file.has_tag("requires-1mb") {
+            file.set_meta("hatari_ramsize", "1");
         }
 
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
@@ -138,6 +152,7 @@ impl System for AtariStSystem {
 
         if !images.is_empty() {
             if images.len() > 1 {
+                sort_disks(&mut images);
                 let m3u = build_m3u(&images, file)?;
                 file.path = m3u;
             } else {
