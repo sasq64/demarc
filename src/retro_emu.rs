@@ -1149,15 +1149,8 @@ fn worker_loop(
         frames.fetch_add(1, Ordering::Relaxed);
         if core.skip_frames > 0 {
             core.skip_frames -= 1;
-            // if core.skip_frames == 0 {
-            //     core.with_audio(|_| {});
-            //     let update = RetroUpdate {
-            //         ..Default::default()
-            //     };
-            //     if update_tx.send(update).is_err() {
-            //         return; // main side gone
-            //     }
-            // }
+            // Throw away the audio the core just produced.
+            core.with_audio(|_| {});
             continue;
         }
 
