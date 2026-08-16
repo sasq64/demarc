@@ -373,6 +373,32 @@ mod tests {
         test_load(&dir, "Music");
     }
 
+    /// DEGAS pictures reach [`ImageSystem`] both by extension and, since they
+    /// are as often named after the release as `.pi1`, by content. A screenshot
+    /// next to one doesn't win over it.
+    #[test]
+    fn test_degas_images() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let testdata = root.join("testdata").join("degas");
+        test_load(&testdata.join("FUSE.PI1"), "Images");
+        test_load(&testdata.join("BOLEK3.PC1"), "Images");
+
+        let dir = std::env::temp_dir().join("newsys_degas_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // Named so the walk reaches the screenshot first, and with the
+        // extension stripped so only the sniff can find the picture.
+        fs::copy(testdata.join("FUSE.PI1"), dir.join("zz-picture")).unwrap();
+        fs::write(dir.join("aa-shot.png"), b"not really a png").unwrap();
+
+        let work_file = test_load(&dir, "Images");
+        assert!(
+            work_file.path.ends_with("zz-picture"),
+            "picked {:?} over the DEGAS picture",
+            work_file.path
+        );
+    }
+
     #[test]
     fn test_psx() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));

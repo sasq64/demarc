@@ -153,7 +153,10 @@ impl Changed<'_, '_> {
             ("Visibility", self.visibility.iter().count()),
             ("Camera", self.camera.iter().count()),
             ("PostProcess", self.post_process.iter().count()),
-            ("PostProcessUniform", self.post_process_uniform.iter().count()),
+            (
+                "PostProcessUniform",
+                self.post_process_uniform.iter().count(),
+            ),
             ("BorderScissor", self.border_scissor.iter().count()),
         ]
     }

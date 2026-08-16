@@ -95,5 +95,4 @@ mod tests {
         assert_eq!(m3u.tags.get("DISK"), None);
         assert_eq!(m3u.files, vec![PathBuf::from("disk1.d64")]);
     }
-
 }

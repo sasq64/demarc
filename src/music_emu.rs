@@ -807,7 +807,6 @@ mod tests {
         assert!(samples.is_empty(), "silence produced audio");
     }
 
-
     /// The `musix` data directory in this checkout. Only some formats need it,
     /// and the module used here is not one of them, so a missing directory is
     /// fine — [`init_musix`] warns and carries on.
