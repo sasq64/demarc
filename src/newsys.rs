@@ -346,7 +346,17 @@ impl NewSys {
                 });
             }
         }
-        bail!("NO")
+        let dir_list = if wf.path.is_dir() {
+            fs::read_dir(wf.path)?
+                .into_iter()
+                .filter_map(Result::ok)
+                .fold("DIR:\n".to_string(), |t, f| {
+                    format!("{t}  {}\n", f.file_name().to_string_lossy())
+                })
+        } else {
+            wf.path.file_name().unwrap().to_string_lossy().to_string()
+        };
+        bail!("No system recognized for: {dir_list}");
     }
 }
 
