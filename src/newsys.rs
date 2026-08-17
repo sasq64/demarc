@@ -13,7 +13,7 @@ use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
 use crate::newsys::snes::SNESSystem;
 use crate::newsys::tic80::Tic80System;
-use crate::newsys::utils::{copy_dir_all, has_extension, read_at};
+use crate::newsys::utils::{has_extension, read_at};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
 use crate::workfile::WorkFile;
@@ -25,7 +25,7 @@ use gameboy::GameboySystem;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use utils::{is_archive, unpack_into};
 
 pub(crate) mod utils;
@@ -171,7 +171,6 @@ pub trait System: Send + Sync {
     // Try to load a program with this system. WorkFile may change. On successful
     // result, WorkFile can be used with create() to actually start emulation.
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        println!("LOAD: {file:?}");
         if file.is_dir() {
             if let Some(path) = self.get_first_file(file)? {
                 file.path = path;
@@ -184,7 +183,6 @@ pub trait System: Send + Sync {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        println!("PATH {path:?}");
         let core = libloader::get_libretro(self.core_name()).unwrap();
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
@@ -243,11 +241,10 @@ impl NewSys {
     }
 
     pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
-        println!("LOAD_FILE: {path:?}");
+        debug!("LOAD_FILE: {path:?}");
         let mut wf = WorkFile::new(path);
         wf.meta = meta.clone();
         for (key, val) in &self.meta {
-            println!("XTRA: {key}={val}");
             wf.meta.insert(key.into(), val.into());
         }
         if path.is_file() {
@@ -255,7 +252,7 @@ impl NewSys {
                 let meta = wf.meta;
                 wf = WorkFile::new_dir()?;
                 wf.meta = meta;
-                println!("UNPACK {path:?} to {wf:?}");
+                debug!("UNPACK {path:?} to {wf:?}");
                 unpack_into(path, &wf)?;
                 walk_dir(&wf, 4, |f, _, _| {
                     if is_archive(f)? {
@@ -300,8 +297,8 @@ impl NewSys {
                 wf.path = cue;
             }
         }
-        println!("LOAD META {:?}", wf.meta);
         for sys in &self.systems {
+            debug!("Try to load {:?} with {}", path, sys.name());
             if sys.load(&mut wf).unwrap() {
                 // Whichever system claimed the release, a cue's MP3 audio tracks
                 // are unplayable to every core here — they read the compressed
@@ -318,27 +315,14 @@ impl NewSys {
                     }
                 }
 
-                println!("Loading {:?}", &wf.path);
-                if let Some(dir) = &wf.temp_dir {
-                    for entry in fs::read_dir(dir)? {
-                        let path = entry?.path();
-                        println!("  {path:?}");
-                    }
-                };
-
                 for (key, val) in sys.default_meta() {
                     if !wf.has_meta(key) {
                         wf.set_meta(key, val);
                     }
                 }
-
-                println!("META: {:?}", &wf.meta);
-
-                if let Some(td) = wf.temp_dir.as_ref() {
-                    copy_dir_all(td.path(), Path::new("last"))?;
-                }
                 wf.set_meta("system", sys.name());
 
+                debug!("Creating {:?} with meta {:?}", &wf.path, wf.meta);
                 return Ok(LoadResult {
                     backend: sys.create(&wf)?,
                     work_file: wf,

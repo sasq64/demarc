@@ -124,7 +124,6 @@ impl System for AtariStSystem {
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut images = vec![];
         let mut exes = vec![];
-        println!("LOAD {}: {file:?}", self.core_name());
         for (key, val) in self.default_meta() {
             file.set_meta(key, val);
         }
@@ -165,7 +164,6 @@ impl System for AtariStSystem {
         }
 
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
-            println!("{path:?} {ext:?}");
             if ["msa", "st"].contains(&ext) {
                 images.push(path.to_owned());
             } else if header[0..2] == GEMDOS_MAGIC {

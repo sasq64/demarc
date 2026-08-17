@@ -365,7 +365,6 @@ impl System for AmigaSystem {
 
         let mut is_dir = false;
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
-            println!("{path:?} {ext:?}");
             if ["adf", "dms"].contains(&ext) {
                 images.push(path.to_owned());
             } else if ext == "slave" {
