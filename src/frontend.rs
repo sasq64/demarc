@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, LoadStatus};
 use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
@@ -491,6 +491,10 @@ fn run_retro(
 
         let flen = settings.files.len() as isize;
 
+        // `load_async` takes `run_next`/`run_prev` as it starts, so this fires
+        // once per request rather than on every frame of a long download — and
+        // a request that arrives *during* one (the file selector, a hotkey)
+        // still gets through and replaces the load in flight.
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
             1
         } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
@@ -501,40 +505,55 @@ fn run_retro(
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
             let game = settings.files[settings.current_game as usize].clone();
-            match emu.load(&time, &settings.system, &game) {
-                Err(e) => {
-                    let text = format!(
-                        "Could not load {}: {}",
-                        game.game_info.title,
-                        crate::load_error::classify(&e).reason()
-                    );
+            emu.load_async(&game);
+            continue;
+        }
 
-                    if !settings.tv_mode {
-                        emu.run_next = false;
-                        emu.run_prev = false;
-                        writer.write(SetHudText {
-                            text,
-                            delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(4),
-                            location: HudLocation::Error,
-                        });
-                    }
-                    error!("{e:?}");
-                }
-                Ok(()) => {
+        // Completes whichever load `load_async` started, on the frame its
+        // download finishes. Until then the previously loaded core keeps
+        // running, so a slow mirror no longer freezes the picture.
+        //
+        // Bound rather than matched in place: the scrutinee's borrows of `emu`
+        // and `settings` would otherwise last the whole match, which the arms
+        // below write to.
+        let status = emu.update_load(&time, &settings.system);
+        match status {
+            LoadStatus::Idle | LoadStatus::Pending => {}
+            LoadStatus::Done {
+                title,
+                result: Err(e),
+            } => {
+                let text = format!(
+                    "Could not load {title}: {}",
+                    crate::load_error::classify(&e).reason()
+                );
+
+                if !settings.tv_mode {
                     emu.run_next = false;
                     emu.run_prev = false;
-                    if settings.show_info && settings.maximized {
-                        writer.write(SetHudText {
-                            text: emu.get_info(),
-                            delay: Duration::from_secs(settings.info_delay),
-                            duration: Duration::from_secs(settings.info_duration),
-                            location: HudLocation::InfoText,
-                        });
-                    }
+                    writer.write(SetHudText {
+                        text,
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(4),
+                        location: HudLocation::Error,
+                    });
                 }
-            };
-            continue;
+                error!("{e:?}");
+                continue;
+            }
+            LoadStatus::Done { result: Ok(()), .. } => {
+                emu.run_next = false;
+                emu.run_prev = false;
+                if settings.show_info && settings.maximized {
+                    writer.write(SetHudText {
+                        text: emu.get_info(),
+                        delay: Duration::from_secs(settings.info_delay),
+                        duration: Duration::from_secs(settings.info_duration),
+                        location: HudLocation::InfoText,
+                    });
+                }
+                continue;
+            }
         }
 
         if show_info && i == settings.current_emu {

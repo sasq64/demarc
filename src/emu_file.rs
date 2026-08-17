@@ -6,7 +6,7 @@ use std::{
 
 use url::Url;
 
-use crate::fetch::{fetch_url, fetch_urls};
+use crate::fetch::{OnProgress, fetch_url_with_progress, fetch_urls};
 
 /// Where an [`EmuFile`]'s data comes from: either an already-local path or one
 /// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).
@@ -88,9 +88,23 @@ pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
 
 impl FileSource {
     /// Ensure the data is available locally — downloading the URL (cached, see
-    /// [`fetch_url`]) the first time — and return the resulting local path. A
-    /// [`FileSource::Path`] is returned as-is.
+    /// [`crate::fetch::fetch_url`]) the first time — and return the resulting
+    /// local path. A [`FileSource::Path`] is returned as-is.
+    ///
+    /// This blocks for as long as the download takes, so on the main thread it
+    /// is only safe for a source that is already a path. Loads that may hit the
+    /// network go through [`Emulator::load_async`](crate::emulator::Emulator::load_async),
+    /// which runs this on the I/O pool.
     pub fn resolve(&mut self) -> Result<&PathBuf> {
+        self.resolve_with_progress(&|_, _| {})
+    }
+
+    /// [`resolve`](Self::resolve) reporting download progress, for the
+    /// background job that a URL-backed load runs on.
+    ///
+    /// A multi-disk set reports nothing: it is several downloads in a row, and
+    /// forwarding each one's byte count would restart the bar on every disk.
+    pub fn resolve_with_progress(&mut self, on_progress: OnProgress<'_>) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory
@@ -99,7 +113,7 @@ impl FileSource {
             let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
                 fetch_urls(&urls)?
             } else {
-                fetch_url(urls.first().unwrap().as_ref())?
+                fetch_url_with_progress(urls.first().unwrap().as_ref(), on_progress)?
             };
             *self = FileSource::Path(p);
         }

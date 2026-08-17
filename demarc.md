@@ -27,17 +27,17 @@ C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Ata
 
 ## Install (Linux, Mac)
 
-`curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.sh | sh`
+`curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.sh | sh`
 
 ## Install (Windows)
 
 _IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
 
-`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-installer.ps1 | iex"`
+`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
 
 (the above is usually blocked by Windows. You can try downloading the ps1 script manually and executing it).
 
-Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.3.1/demarc-x86_64-pc-windows-msvc.zip)
+Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-x86_64-pc-windows-msvc.zip)
 ## Rust source install
 
 If you don't already have it, install [rust](https://rustup.rs).

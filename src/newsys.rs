@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use utils::{is_archive, unpack_into};
 
-mod utils;
+pub(crate) mod utils;
 
 mod amiga;
 mod amstrad;

@@ -143,6 +143,19 @@ impl System for AtariStSystem {
         if file.has_tag("ste") {
             file.set_meta("hatari_machinetype", "ste");
         }
+
+        // Hatari sizes its internal "desktop" from the libretro core's
+        // retrow/retroh, which only the ST/STE renderer ever updates — the
+        // Falcon/TT Videl path never does. Left at the core's low-res default
+        // (392x248) every Videl mode is larger than that fake desktop, so
+        // hostscreen.c halves it ("too large screen size 640x480 -> divided by
+        // 2x2") and draws the shrunken image into the top-left of the frame we
+        // are handed. Hires raises it to 832x548, which covers the usual Falcon
+        // modes.
+        let machine = file.get_meta("hatari_machinetype", "");
+        if (machine == "falcon" || machine == "tt") && !file.has_meta("hatari_video_hires") {
+            file.set_meta("hatari_video_hires", "true");
+        }
         if file.has_tag("requires-4mb") {
             file.set_meta("hatari_ramsize", "4");
         } else if file.has_tag("requires-2mb") {

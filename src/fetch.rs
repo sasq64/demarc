@@ -46,6 +46,20 @@ pub fn is_url(s: &str) -> bool {
 /// temp file that is renamed into place on success, so an interrupted transfer
 /// never leaves a truncated file masquerading as a valid cache hit.
 pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
+    fetch_url_with_progress(url, &|_, _| {})
+}
+
+/// Reports `(bytes written so far, total size if the server declared one)` as a
+/// download runs. Called once per write, so on every chunk `std::io::copy`
+/// moves — cheap enough for an atomic store, too often for anything expensive.
+pub type OnProgress<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
+
+/// [`fetch_url`] with progress reporting, for callers that can display it (see
+/// [`crate::jobs::Jobs::download`]).
+///
+/// `on_progress` is not called at all for a cache hit — there is nothing to
+/// download — so a progress bar should not assume it will ever fire.
+pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow::Result<PathBuf> {
     let name = url_filename(url);
     let dir = downloads_dir().join(url_hash(url));
     std::fs::create_dir_all(&dir)?;
@@ -58,7 +72,7 @@ pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
         return Ok(path);
     }
 
-    download_to(url, &path)?;
+    download_to(url, &path, on_progress)?;
     Ok(path)
 }
 
@@ -200,14 +214,14 @@ fn entry_stats(path: &Path) -> (u64, SystemTime) {
 /// Download `url` to `path`, writing first to a sibling `.part` file that is
 /// renamed into place on success so an interrupted transfer never leaves a
 /// truncated file masquerading as a complete one.
-fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
+fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
     let tmp = path.with_file_name(format!(".{name}.part"));
     let mut file = std::fs::File::create(&tmp)?;
-    download(url, &mut file)?;
+    download(url, &mut file, on_progress)?;
     file.flush()?;
     drop(file);
     std::fs::rename(&tmp, path)?;
@@ -224,10 +238,10 @@ fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
 /// URLs are downloaded exactly as the db gives them: the rewrites that point a
 /// link at a faster or still-living mirror live in the db generators (see
 /// `URL_REWRITES` in demodb's demozoo.py), so what is exported is what works.
-fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
+fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     info!("Downloading {url}...");
     if url.starts_with("ftp://") {
-        return fetch_ftp(url, out);
+        return fetch_ftp(url, out, on_progress);
     }
 
     let mut current = url.to_string();
@@ -251,14 +265,24 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
                 .and_then(|base| base.join(location))
                 .with_context(|| format!("invalid redirect target: {location}"))?;
             if next.scheme() == "ftp" {
-                return fetch_ftp(next.as_str(), out);
+                return fetch_ftp(next.as_str(), out, on_progress);
             }
             info!("Redirected to {next}");
             current = next.into();
             continue;
         }
+        // `Content-Length` is the transfer size, which is the file size only
+        // when the body isn't compressed. Scene archives are already-compressed
+        // binaries that servers hand over as-is, so in practice it matches; if
+        // one ever does gzip a response the bar just tops out early.
+        let total = response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
         let mut reader = response.into_body().into_reader();
-        std::io::copy(&mut reader, out)?;
+        let mut out = CountingWriter::new(out, total, on_progress);
+        std::io::copy(&mut reader, &mut out)?;
         return Ok(());
     }
     anyhow::bail!("too many redirects while fetching {url}");
@@ -276,7 +300,7 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
 /// encoded either because the db has them that way or because `Url::join`
 /// encoded a redirect `Location` that contained raw spaces — which is exactly
 /// what files.scene.org's `/get/...` links redirect to.
-fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
+fn fetch_ftp(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     use std::net::ToSocketAddrs;
 
     use suppaftp::FtpStream;
@@ -324,13 +348,50 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     let _ = ftp.get_ref().set_write_timeout(Some(RESPONSE_TIMEOUT));
     ftp.login(&user, &pass).context("FTP login failed")?;
     ftp.transfer_type(FileType::Binary)?;
+    // Not every server implements SIZE; without it the download just reports an
+    // unknown total and progress stays indeterminate.
+    let total = ftp.size(&path).ok().map(|size| size as u64);
+    let mut out = CountingWriter::new(out, total, on_progress);
     ftp.retr(&path, |reader| {
-        std::io::copy(reader, out).map_err(suppaftp::FtpError::ConnectionError)?;
+        std::io::copy(reader, &mut out).map_err(suppaftp::FtpError::ConnectionError)?;
         Ok(())
     })
     .with_context(|| format!("failed to retrieve {path}"))?;
     let _ = ftp.quit();
     Ok(())
+}
+
+/// Wraps the download's output and reports the running byte count through an
+/// [`OnProgress`] callback, so the transfer loop stays plain `std::io::copy`.
+struct CountingWriter<'a, W> {
+    inner: W,
+    done: u64,
+    total: Option<u64>,
+    on_progress: OnProgress<'a>,
+}
+
+impl<'a, W: Write> CountingWriter<'a, W> {
+    fn new(inner: W, total: Option<u64>, on_progress: OnProgress<'a>) -> Self {
+        Self {
+            inner,
+            done: 0,
+            total,
+            on_progress,
+        }
+    }
+}
+
+impl<W: Write> Write for CountingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.done += written as u64;
+        (self.on_progress)(self.done, self.total);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// Hash the whole URL into a hex string used as its cache subdirectory.
@@ -382,6 +443,11 @@ fn url_filename(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `download` with progress reporting discarded.
+    fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
+        super::download(url, out, &|_, _| {})
+    }
+
     #[test]
     fn detects_urls() {
         assert!(is_url("https://example.com/a.zip"));
@@ -430,6 +496,24 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 46596);
         // Second call is a cache hit on the same path, no re-download.
         assert_eq!(fetch_url(url).unwrap(), path);
+    }
+
+    /// The byte count reported to `on_progress` accumulates across writes and
+    /// carries the declared total, which is what drives a download's progress
+    /// bar.
+    #[test]
+    fn counts_bytes_written() {
+        let seen = std::sync::Mutex::new(Vec::new());
+        let mut sink = Vec::new();
+        let report = |done, total| seen.lock().unwrap().push((done, total));
+        {
+            let mut writer = CountingWriter::new(&mut sink, Some(4), &report);
+            // Copy in two chunks so the running total has to be additive.
+            std::io::copy(&mut &b"ab"[..], &mut writer).unwrap();
+            std::io::copy(&mut &b"cd"[..], &mut writer).unwrap();
+        }
+        assert_eq!(sink, b"abcd");
+        assert_eq!(seen.into_inner().unwrap(), vec![(2, Some(4)), (4, Some(4))]);
     }
 
     #[test]
