@@ -18,7 +18,6 @@ use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::systems::get_info_text;
 use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
 
@@ -527,7 +526,7 @@ fn run_retro(
                     emu.run_prev = false;
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
-                            text: get_info_text(&game, &emu.work_file.meta),
+                            text: emu.get_info(),
                             delay: Duration::from_secs(settings.info_delay),
                             duration: Duration::from_secs(settings.info_duration),
                             location: HudLocation::InfoText,
@@ -539,9 +538,8 @@ fn run_retro(
         }
 
         if show_info && i == settings.current_emu {
-            let game = settings.files[settings.current_game as usize].clone();
             writer.write(SetHudText {
-                text: get_info_text(&game, &emu.work_file.meta),
+                text: emu.get_info(),
                 duration: Duration::from_secs(2),
                 location: HudLocation::InfoText,
                 ..Default::default()

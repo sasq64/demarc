@@ -41,7 +41,6 @@ mod profiling;
 mod retro_emu;
 mod screensaver;
 mod speed_test;
-mod systems;
 mod text_input;
 mod utils;
 mod workfile;

@@ -11,9 +11,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    emu_file::{EmuFile, FileSource},
+    emu_file::{EmuFile, FileSource, GameInfo},
     m3u::M3u,
-    systems::GameInfo,
     utils::{is_disk_image, unpack_if_packed},
 };
 

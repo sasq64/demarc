@@ -8,7 +8,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::emu_file::EmuFile;
+use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
 use crate::newsys::NewSys;
 use crate::retro_emu::Backend;
@@ -89,6 +89,7 @@ pub struct Emulator {
     pub last_active_time: f32,
     pub idle_time: f32,
     pub retro_replay: u32,
+    pub title_info: GameInfo,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;
@@ -422,11 +423,36 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
+    pub fn get_info(&self) -> String {
+        let system = self
+            .work_file
+            .meta
+            .get("system")
+            .cloned()
+            .unwrap_or("???".to_string());
+        let GameInfo {
+            title,
+            group,
+            year,
+            category: typ,
+        } = &self.title_info;
+        let year = if *year == 0 {
+            "".into()
+        } else {
+            format!(" ({year})")
+        };
+        let desc = if typ.is_empty() { &system } else { &typ };
+
+        format!("\"{title}\"\n{group}\n{desc}{year}")
+    }
+
     pub fn load(&mut self, time: &Time, sys: &NewSys, emu_file: &EmuFile) -> Result<()> {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
         let meta = emu_file.meta.clone();
+
+        self.title_info = emu_file.game_info.clone();
 
         self.retro_replay = 0;
         let res = sys.load_file(&path, &meta)?;

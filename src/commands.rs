@@ -15,7 +15,6 @@ use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
 use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::systems::get_info_text;
 use crate::{AppSettings, RenderSettings};
 use crate::{EmuFile, emu_file::FileSource};
 
@@ -503,9 +502,8 @@ fn handle_cmd(
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
             if show_info && i == settings.current_emu {
-                let game = &settings.files[settings.current_game as usize];
                 writer.write(SetHudText {
-                    text: get_info_text(game, &emu.work_file.meta),
+                    text: emu.get_info(),
                     duration: Duration::from_secs(2),
                     location: HudLocation::InfoText,
                     ..Default::default()

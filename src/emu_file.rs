@@ -6,10 +6,7 @@ use std::{
 
 use url::Url;
 
-use crate::{
-    fetch::{fetch_url, fetch_urls},
-    systems::GameInfo,
-};
+use crate::fetch::{fetch_url, fetch_urls};
 
 /// Where an [`EmuFile`]'s data comes from: either an already-local path or one
 /// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).
@@ -111,6 +108,14 @@ impl FileSource {
             FileSource::Url(_) => unreachable!("just converted to Path above"),
         }
     }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct GameInfo {
+    pub title: String,
+    pub group: String,
+    pub year: u32,
+    pub category: String,
 }
 
 // EmuFile can be:
