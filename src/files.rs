@@ -251,15 +251,15 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
 
         let title = meta.get("title").copied().unwrap_or("");
         let author = meta.get("author").copied().unwrap_or("");
-        let year = meta
+        let year_s = meta
             .get("date")
             .copied()
             .unwrap_or("")
             .split(['-', '/', '.'])
             .next()
-            .unwrap_or_default()
-            .parse::<u32>()
-            .unwrap_or(0);
+            .unwrap_or_default();
+        meta.insert("year", year_s);
+        let year = year_s.parse::<u32>().unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
             meta: meta

@@ -241,6 +241,7 @@ impl NewSys {
         let mut wf = WorkFile::new(path);
         wf.meta = meta.clone();
         for (key, val) in &self.meta {
+            println!("XTRA: {key}={val}");
             wf.meta.insert(key.into(), val.into());
         }
         if path.is_file() {

@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::utils::{build_m3u, copy_dir_all};
 
@@ -127,6 +127,17 @@ impl System for AtariStSystem {
         println!("LOAD {}: {file:?}", self.core_name());
         for (key, val) in self.default_meta() {
             file.set_meta(key, val);
+        }
+
+        if file.get_meta("hatari_machinetype", "") == "date" {
+            info!("#### DATE");
+            file.set_meta("puae_model", "st");
+            if let Ok(year) = file.get_meta("year", "").parse::<u32>() {
+                if year > 1994 {
+                    file.set_meta("hatari_machinetype", "ste");
+                    file.set_meta("hatari_ramsize", "4");
+                }
+            }
         }
 
         if file.has_tag("ste") {
