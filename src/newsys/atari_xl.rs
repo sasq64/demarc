@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
 use super::System;
-use super::utils::{build_m3u, sort_disks};
-use crate::{Args, newsys::walk_dir, workfile::WorkFile};
+use super::utils::build_m3u;
+use crate::{
+    Args,
+    newsys::{utils::sort_disks, walk_dir},
+    workfile::WorkFile,
+};
 use anyhow::Result;
 
 const CORE_NAME_ATARIXL: &str = "atari800";

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use super::System;
 use super::utils::build_m3u;
-use crate::{newsys::walk_dir, workfile::WorkFile};
+use crate::{
+    newsys::{utils::sort_disks, walk_dir},
+    workfile::WorkFile,
+};
 use anyhow::Result;
 
 const CORE_NAME_CAP32: &str = "cap32";
@@ -17,8 +20,14 @@ impl System for AmstradSystem {
     fn name(&self) -> &'static str {
         "Amstrad"
     }
+
     fn default_meta(&self) -> HashMap<&str, &str> {
-        [("cap32_statusbar", "disabled")].into()
+        [
+            //("cap32_model", "6128"),
+            //("cap32_ram", "512"),
+            ("cap32_statusbar", "disabled"),
+        ]
+        .into()
     }
 
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
@@ -32,8 +41,13 @@ impl System for AmstradSystem {
         })?;
 
         if !images.is_empty() {
-            let m3u = build_m3u(&images, file)?;
-            file.path = m3u;
+            if images.len() > 1 {
+                sort_disks(&mut images);
+                let m3u = build_m3u(&images, file)?;
+                file.path = m3u;
+            } else {
+                file.path = images[0].clone();
+            }
         } else {
             return Ok(false);
         }

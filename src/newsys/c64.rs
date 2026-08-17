@@ -4,7 +4,11 @@ use tracing::warn;
 
 use super::utils::build_m3u;
 
-use crate::{Args, cbmconvert, newsys::walk_dir, workfile::WorkFile};
+use crate::{
+    Args, cbmconvert,
+    newsys::{utils::sort_disks, walk_dir},
+    workfile::WorkFile,
+};
 
 use super::System;
 
@@ -88,6 +92,7 @@ impl System for C64System {
                 file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
                 file.set_meta("vice_autostart", "disabled");
             }
+            sort_disks(&mut images);
             let m3u = build_m3u(&images, file)?;
             file.path = m3u;
         } else if !prgs.is_empty() {
