@@ -328,7 +328,7 @@ impl System for AmigaSystem {
                         file.set_meta("puae_cpu_model", "68030");
                     }
                     if year >= 1997 {
-                        file.set_meta("hatari_ramsize", "8");
+                        file.set_meta("puae_fastmem_size", "8");
                         file.set_meta("puae_z3mem_size", "128");
                         file.set_meta("puae_fpu_model", "68882");
                     }
@@ -338,6 +338,8 @@ impl System for AmigaSystem {
         if self.aga {
             file.set_meta("puae_model", "A1200");
         }
+
+        let copy_all = !file.is_file();
 
         let mut is_dir = false;
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
@@ -395,7 +397,7 @@ impl System for AmigaSystem {
             }
         } else if let Some(exe) = exes.first().or_else(|| broken.first()) {
             file.path = exe.clone();
-            handle_exe(file, true)?;
+            handle_exe(file, copy_all)?;
         } else {
             return Ok(false);
         }
