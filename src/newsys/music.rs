@@ -21,8 +21,13 @@ pub struct MusicSystem {}
 impl System for MusicSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &[
-            "sid", "mod", "xm", "s3m", "it", "sndh", "sap", "nsf", "gbs", "spc", "psf", "ahx",
-            "mp3", "flac", "ogg",
+            "sid", // C64
+            "mod", "xm", "s3m", "it", // Trackers
+            "snd", "sndh", "sap", // Atari
+            "nsf", "gbs", "spc", "psf", // Console
+            "mp3", "flac", // Streaming
+            "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
+            "smod", "dm2", "ahx", // Amiga
         ]
     }
 
