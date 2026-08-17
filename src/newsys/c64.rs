@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use super::utils::build_m3u;
@@ -18,6 +18,26 @@ const CORE_NAME_VICE_64SC: &str = "vice_x64sc";
 // const CORE_NAME_VICE_128: &str = "vice_x128";
 // const CORE_NAME_VICE_C16: &str = "vice_xplus4";
 // const CORE_NAME_VICE_VIC20: &str = "vice_xvic";
+
+/// A PRG is a 2-byte little endian load address followed by the data to place
+/// there, so it can never reach past the top of the C64's 64K address space.
+/// VICE rejects anything that does, and other systems use the same extension
+/// (Neo Geo, for one), so check the range instead of trusting the name.
+fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
+    let [lo, hi, ..] = header else { return false };
+    if ext != "prg" && !(*lo == 0x01 && *hi == 0x08) {
+        return false;
+    }
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    // Load address plus at least one byte of data.
+    let Some(data_size) = meta.len().checked_sub(2).filter(|n| *n > 0) else {
+        return false;
+    };
+    let start_addr = u64::from(u16::from_le_bytes([*lo, *hi]));
+    start_addr + data_size <= 0x1_0000
+}
 
 pub struct C64System {
     fast_load: bool,
@@ -81,7 +101,7 @@ impl System for C64System {
             println!("{path:?} {ext:?}");
             if ["d64", "d81"].contains(&ext) {
                 images.push(path.to_owned());
-            } else if ext == "prg" || (header[0] == 0x1 && header[1] == 0x8) {
+            } else if is_c64_prg(path, ext, header) {
                 prgs.push(path.to_owned());
             }
             Ok(())
