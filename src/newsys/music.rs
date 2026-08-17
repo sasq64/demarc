@@ -19,6 +19,7 @@ fn music_data_dir() -> PathBuf {
 pub struct MusicSystem {}
 
 impl System for MusicSystem {
+    // Only allow these extensions to avoid crashes
     fn extensions(&self) -> &'static [&'static str] {
         &[
             "sid", // C64
@@ -36,7 +37,7 @@ impl System for MusicSystem {
     }
 
     fn can_load(&self, path: &Path) -> bool {
-        music_emu::can_handle(path, &music_data_dir())
+        self.handles_ext(path) && music_emu::can_handle(path, &music_data_dir())
     }
 
     /// A directory is left as it is rather than resolved down to a single song:
