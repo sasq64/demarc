@@ -226,6 +226,7 @@ pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
     })
 }
 
+#[allow(dead_code)]
 /// Load a DEGAS image from a file (see [`load_indexed_from_memory`]).
 pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {
     load_indexed_from_memory(&fs::read(path.as_ref())?)
