@@ -244,6 +244,12 @@ struct Args {
     /// Duration of info showing for new file
     #[arg(long, default_value_t = 8)]
     info_duration: u64,
+
+    /// Turn the CRT filter off when the image is magnified less than this
+    /// factor, e.g. `2` disables it whenever a 320x240 screen is shown smaller
+    /// than 640x480. `0` (the default) never disables it.
+    #[arg(long, default_value_t = 0.0)]
+    crt_limit: f32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -445,6 +451,16 @@ struct AppSettings {
     idle_timeout: i32,
     info_delay: u64,
     info_duration: u64,
+    /// Minimum magnification (on-screen pixels per source pixel) the CRT filter
+    /// needs to stay on. Below it the effect is bypassed even when
+    /// [`RenderSettings::crt_effect`] is set, because the scanlines/phosphor
+    /// mask alias into mud at low magnification — most visibly in grid mode,
+    /// where each cell is a fraction of the window. `0` disables the check.
+    ///
+    /// Applied per emulator view (see `post_process::compute_uniform`), so the
+    /// same core can render without the filter in a small grid cell and with it
+    /// once maximized.
+    crt_limit: f32,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -747,6 +763,7 @@ fn main() {
         idle_timeout: args.idle_timeout,
         info_delay: args.info_delay,
         info_duration: args.info_duration,
+        crt_limit: args.crt_limit,
         ..Default::default()
     };
 

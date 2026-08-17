@@ -37,7 +37,7 @@ use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use crate::RenderSettings;
+use crate::{AppSettings, RenderSettings};
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
@@ -145,7 +145,12 @@ pub struct PostProcess {
 pub struct PostProcessUniform {
     uv_scale: Vec2,
     uv_offset: Vec2,
-    /// `1` when the CRT effect is active, `0` for a plain passthrough blit.
+    /// `1` when the CRT effect is active for *this view*, `0` for a plain
+    /// passthrough blit. Decided per camera in [`compute_uniform`]: the global
+    /// [`RenderSettings::crt_effect`] toggle, further gated by
+    /// [`AppSettings::crt_limit`] against this view's magnification. The slangp
+    /// backend reads it back off the extracted component to pick its filter
+    /// chain, so both backends agree on a single decision.
     crt_enabled: u32,
 }
 
@@ -169,6 +174,7 @@ pub struct BorderScissor(pub Option<URect>);
 fn update_post_process_uniform(
     images: Res<Assets<Image>>,
     settings: Res<RenderSettings>,
+    app_settings: Res<AppSettings>,
     mut commands: Commands,
     mut query: Query<(
         Entity,
@@ -179,7 +185,7 @@ fn update_post_process_uniform(
     )>,
 ) {
     for (entity, pp, camera, existing, existing_scissor) in &mut query {
-        let uniform = compute_uniform(pp, &settings, camera, &images);
+        let uniform = compute_uniform(pp, &settings, app_settings.crt_limit, camera, &images);
         let scissor = BorderScissor(compute_scissor(&uniform, &settings, camera));
         match existing {
             Some(mut u) => {
@@ -231,6 +237,7 @@ fn compute_scissor(
 fn compute_uniform(
     pp: &PostProcess,
     settings: &RenderSettings,
+    crt_limit: f32,
     camera: &Camera,
     images: &Assets<Image>,
 ) -> PostProcessUniform {
@@ -239,14 +246,11 @@ fn compute_uniform(
     // that quadrant. `physical_viewport_size` falls back to the full target
     // when no viewport is set (single-emulator case).
     let viewport = camera.physical_viewport_size();
-    let (mut uv_scale, mut uv_offset) = match (viewport, images.get(&pp.source)) {
-        (Some(target), Some(source)) => scale_offset(
-            target,
-            source.size(),
-            pp.aspect,
-            pp.aspect_tweak,
-            settings.scale_mode,
-        ),
+    let src = images.get(&pp.source).map(|source| source.size());
+    let (mut uv_scale, mut uv_offset) = match (viewport, src) {
+        (Some(target), Some(src)) => {
+            scale_offset(target, src, pp.aspect, pp.aspect_tweak, settings.scale_mode)
+        }
         _ => (Vec2::ONE, Vec2::ZERO),
     };
     // Snap the composite transform to the intermediate's integer pixel grid so
@@ -267,11 +271,38 @@ fn compute_uniform(
         uv_scale = inter / target;
         uv_offset = (uv_offset * target).round() / target;
     }
+    // The effect is on only if it's globally enabled *and* this view magnifies
+    // the source enough for the scanlines/mask to resolve. Both the viewport and
+    // the source size are per-camera, so a grid cell can fall below the limit
+    // while the same core, maximized, stays above it.
+    let crt_enabled = settings.crt_effect
+        && match (viewport, src) {
+            (Some(target), Some(src)) => pixel_ratio(target, src, uv_scale) >= crt_limit,
+            // Source not loaded yet: keep the global setting rather than
+            // flickering the effect off for a frame.
+            _ => true,
+        };
     PostProcessUniform {
         uv_scale,
         uv_offset,
-        crt_enabled: settings.crt_effect as u32,
+        crt_enabled: crt_enabled as u32,
     }
+}
+
+/// How many screen pixels the source gets per source pixel in this view, taken
+/// on the *tighter* of the two axes.
+///
+/// `uv_scale ⊙ target` is the image's on-screen footprint in pixels (the same
+/// `inter_size` the librashader intermediate is sized to), so dividing by the
+/// source dimensions gives the magnification per axis. The two differ whenever
+/// the pixel aspect isn't square — an Amiga half-width frame is stretched twice
+/// as far horizontally as vertically — and the effect is limited by whichever
+/// axis has the least room, so take the minimum.
+fn pixel_ratio(target: UVec2, src: UVec2, uv_scale: Vec2) -> f32 {
+    if src.x == 0 || src.y == 0 {
+        return f32::INFINITY;
+    }
+    (uv_scale * target.as_vec2() / src.as_vec2()).min_element()
 }
 
 /// The letterbox/pillarbox transform for showing a `src`-sized source in a
@@ -373,6 +404,7 @@ fn post_process_pass(
     view: ViewQuery<(
         &ViewTarget,
         &PostProcess,
+        &PostProcessUniform,
         &DynamicUniformIndex<PostProcessUniform>,
         &ExtractedCamera,
         &BorderScissor,
@@ -387,7 +419,12 @@ fn post_process_pass(
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
-    let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
+    let (view_target, post_process, uniform, uniform_index, camera, border_scissor) =
+        view.into_inner();
+    // Per-view decision made in `compute_uniform` (the global `crt_effect`
+    // toggle gated by `crt_limit`), not `settings.crt_effect` directly — in grid
+    // mode the answer differs from camera to camera.
+    let crt_enabled = uniform.crt_enabled != 0;
 
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
         return;
@@ -459,11 +496,7 @@ fn post_process_pass(
                 target,
                 frame_count,
             } = source_chains;
-            let chain = if settings.crt_effect {
-                effect
-            } else {
-                passthrough
-            };
+            let chain = if crt_enabled { effect } else { passthrough };
             // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
             // 24px tiles). When render_width / tile_size is an even integer, a tile
             // boundary lands exactly on the screen center, where the mask's manual
@@ -475,7 +508,7 @@ fn post_process_pass(
             // tile size near 24px whose center offset is furthest from a boundary. This
             // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
             // the seam off-center. No-op on presets without this parameter.
-            if settings.crt_effect {
+            if crt_enabled {
                 use librashader::runtime::FilterChainParameters;
                 let width = inter_size.x as f32;
                 let mut best_tile = 24i32;
@@ -774,4 +807,48 @@ fn init_blit_pipeline(
         sampler_black,
         pipeline_id,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The magnification the `crt_limit` check sees for showing `src` in a
+    /// `target`-sized viewport under `mode`, with square source pixels.
+    fn ratio(target: UVec2, src: UVec2, mode: ScaleMode) -> f32 {
+        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
+        pixel_ratio(target, src, uv_scale)
+    }
+
+    #[test]
+    fn ratio_is_the_on_screen_magnification() {
+        let src = UVec2::new(320, 240);
+        // Exactly 2x — the boundary a `crt_limit` of 2.0 tests against.
+        assert!((ratio(UVec2::new(640, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
+        // Pillarboxed in a wider window: the constrained axis still sets it.
+        assert!((ratio(UVec2::new(1280, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
+        // A grid cell of a 1920x1080 window at 5x4 lands below 2x.
+        assert!(ratio(UVec2::new(384, 270), src, ScaleMode::Fit) < 2.0);
+        // Maximized to the whole window, the same core is above it.
+        assert!(ratio(UVec2::new(1920, 1080), src, ScaleMode::Fit) >= 2.0);
+    }
+
+    #[test]
+    fn fixed_scale_ratio_matches_the_factor() {
+        let r = ratio(
+            UVec2::new(1920, 1080),
+            UVec2::new(320, 240),
+            ScaleMode::Fixed(3.0),
+        );
+        assert!((r - 3.0).abs() < 1e-4);
+    }
+
+    /// Non-square source pixels stretch the axes differently; the check takes
+    /// the tighter one (here vertical, on a half-width Amiga frame).
+    #[test]
+    fn ratio_uses_the_tighter_axis() {
+        let src = UVec2::new(320, 256);
+        let r = ratio(UVec2::new(1280, 512), src, ScaleMode::Fixed(2.0));
+        assert!((r - 2.0).abs() < 1e-4);
+    }
 }
