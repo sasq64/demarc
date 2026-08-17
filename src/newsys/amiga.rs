@@ -229,6 +229,9 @@ fn parse_exe<R: Read + Seek>(reader: &mut HunkReader<R>) -> Option<()> {
 pub struct AmigaSystem {
     aga: bool,
     xmem: bool,
+    fast: bool,
+    fast_load: bool,
+    silent_drive: bool,
 }
 
 impl AmigaSystem {
@@ -236,6 +239,9 @@ impl AmigaSystem {
         Self {
             aga: args.aga,
             xmem: args.xmem,
+            fast: args.fast,
+            fast_load: args.fast_load,
+            silent_drive: args.silent_drive,
         }
     }
 }
@@ -295,6 +301,7 @@ impl System for AmigaSystem {
         [
             ("puae_model", "A500"),
             ("puae_crop", "smaller"),
+            ("puae_autoloadfastforward", "enabled"),
             ("puae_horizontal_pos", "-5"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
@@ -337,6 +344,21 @@ impl System for AmigaSystem {
         }
         if self.aga {
             file.set_meta("puae_model", "A1200");
+        }
+        if self.fast_load {
+            file.set_meta("puae_floppy_speed", "0");
+        }
+        if self.xmem {
+            file.set_meta("puae_fastmem_size", "8");
+            file.set_meta("puae_z3mem_size", "128");
+        }
+        if self.fast {
+            file.set_meta("puae_model", "A1200");
+            file.set_meta("puae_fpu_model", "68882");
+        }
+        if self.silent_drive {
+            file.set_meta("puae_floppy_sound", "100");
+            file.set_meta("vice_drive_sound_emulation", "disabled");
         }
 
         let copy_all = !file.is_file();

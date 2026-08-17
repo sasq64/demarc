@@ -235,6 +235,7 @@ impl NewSys {
                 meta.insert(key.trim().into(), val.trim().into());
             }
         }
+        meta.insert("latency".into(), args.latency.to_string());
         NewSys {
             systems: Self::get_systems(args),
             meta,

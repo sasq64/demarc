@@ -41,12 +41,14 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
 
 pub struct C64System {
     fast_load: bool,
+    reu: bool,
 }
 
 impl C64System {
     pub fn new(args: &Args) -> Self {
         Self {
             fast_load: args.fast_load,
+            reu: args.reu,
         }
     }
 }
@@ -64,6 +66,11 @@ impl System for C64System {
         let mut images = vec![];
         let mut prgs = vec![];
         println!("LOAD C64: {file:?}");
+
+        if self.reu {
+            file.set_meta("vice_ram_expansion_unit", "16384kB");
+        }
+
         let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
         let mut need_conv = false;
         walk_dir(file, 4, |_, ext, _| {
