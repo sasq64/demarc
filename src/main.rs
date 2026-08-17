@@ -462,6 +462,7 @@ struct AppSettings {
     /// same core can render without the filter in a small grid cell and with it
     /// once maximized.
     crt_limit: f32,
+    load_delay: usize,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {

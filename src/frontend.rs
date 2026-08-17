@@ -478,6 +478,10 @@ fn run_retro(
         }
     }
 
+    if settings.load_delay > 0 {
+        settings.load_delay -= 1;
+    }
+
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         // Read-only probe. The mutable borrow that the frame copy needs is taken
         // further down, only when the core has something new: `get_mut` marks the
@@ -516,43 +520,47 @@ fn run_retro(
         // Bound rather than matched in place: the scrutinee's borrows of `emu`
         // and `settings` would otherwise last the whole match, which the arms
         // below write to.
-        let status = emu.update_load(&time, &settings.system);
-        match status {
-            LoadStatus::Idle | LoadStatus::Pending => {}
-            LoadStatus::Done {
-                title,
-                result: Err(e),
-            } => {
-                let text = format!(
-                    "Could not load {title}: {}",
-                    crate::load_error::classify(&e).reason()
-                );
+        if settings.load_delay == 0 {
+            let status = emu.update_load(&time, &settings.system);
+            match status {
+                LoadStatus::Idle | LoadStatus::Pending => {}
+                LoadStatus::Done {
+                    title,
+                    result: Err(e),
+                } => {
+                    let text = format!(
+                        "Could not load {title}: {}",
+                        crate::load_error::classify(&e).reason()
+                    );
 
-                if !settings.tv_mode {
+                    if !settings.tv_mode {
+                        emu.run_next = false;
+                        emu.run_prev = false;
+                        writer.write(SetHudText {
+                            text,
+                            delay: Duration::from_secs(0),
+                            duration: Duration::from_secs(4),
+                            location: HudLocation::Error,
+                        });
+                    }
+                    error!("{e:?}");
+                    settings.load_delay = 1;
+                    continue;
+                }
+                LoadStatus::Done { result: Ok(()), .. } => {
                     emu.run_next = false;
                     emu.run_prev = false;
-                    writer.write(SetHudText {
-                        text,
-                        delay: Duration::from_secs(0),
-                        duration: Duration::from_secs(4),
-                        location: HudLocation::Error,
-                    });
+                    if settings.show_info && settings.maximized {
+                        writer.write(SetHudText {
+                            text: emu.get_info(),
+                            delay: Duration::from_secs(settings.info_delay),
+                            duration: Duration::from_secs(settings.info_duration),
+                            location: HudLocation::InfoText,
+                        });
+                    }
+                    settings.load_delay = 5;
+                    continue;
                 }
-                error!("{e:?}");
-                continue;
-            }
-            LoadStatus::Done { result: Ok(()), .. } => {
-                emu.run_next = false;
-                emu.run_prev = false;
-                if settings.show_info && settings.maximized {
-                    writer.write(SetHudText {
-                        text: emu.get_info(),
-                        delay: Duration::from_secs(settings.info_delay),
-                        duration: Duration::from_secs(settings.info_duration),
-                        location: HudLocation::InfoText,
-                    });
-                }
-                continue;
             }
         }
 
