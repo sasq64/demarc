@@ -7,6 +7,7 @@ use crate::newsys::gba::GBASystem;
 use crate::newsys::images::ImageSystem;
 use crate::newsys::megadrive::MegadriveSystem;
 use crate::newsys::music::MusicSystem;
+use crate::newsys::neo_geo::NeoGeoSystem;
 use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
 use crate::newsys::snes::SNESSystem;
@@ -39,6 +40,7 @@ mod gba;
 mod images;
 mod megadrive;
 mod music;
+mod neo_geo;
 mod playstation;
 mod sinclair;
 mod snes;
@@ -219,6 +221,7 @@ impl NewSys {
             Box::new(AmstradSystem {}),
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
+            Box::new(NeoGeoSystem {}),
             Box::new(MusicSystem {}),
             Box::new(ImageSystem {}),
         ]
