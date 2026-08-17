@@ -620,8 +620,21 @@ impl Emulator {
         self.title_info = emu_file.game_info.clone();
 
         self.retro_replay = 0;
+
+        // Before `load_file`, which builds the new backend at the end of it: a
+        // backend may own something the machine only has one of, and the next
+        // one cannot take it until this one has let go. `musix`'s sc68 plugin
+        // is the case that bites — libsc68 has a process-wide init that the
+        // plugin claims per song, so a second SNDH loaded while the first is
+        // still alive fails to init and no plugin is found for the file — but
+        // libretro cores are widely non-reentrant in the same way.
+        //
+        // The cost is that a load which fails leaves nothing running rather
+        // than the previous entry; the frontend already draws that state (it
+        // skips an emulator with no core), and tv mode steps on to the next.
+        self.core = None;
+
         let res = sys.load_file(&path, &meta)?;
-        self.retro_replay = 0;
         if res
             .work_file
             .get_meta("vice_cartridge", "")
@@ -630,7 +643,6 @@ impl Emulator {
             self.retro_replay = 1;
         }
 
-        self.core = None;
         let core = res.backend;
         if res.system.is_console() {
             self.input_mode = InputMode::Joystick1;

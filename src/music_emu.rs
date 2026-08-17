@@ -883,6 +883,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Two songs may be alive at once — the frontend builds the next one before
+    /// letting go of the one playing — and no format may take that as a reason
+    /// to refuse. SNDH is the one that did: `musix`'s sc68 plugin used to claim
+    /// libsc68's process-wide init per song, so the second SNDH found the
+    /// library already initialised, failed to load, and came back as "no plugin
+    /// for file" while every other format was fine.
+    #[test]
+    fn a_second_sndh_loads_while_the_first_is_playing() {
+        let song = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/music/Pushover.sndh");
+        let mut first = MusicEmu::new(&song, &data_dir()).expect("first SNDH");
+        let mut second = MusicEmu::new(&song, &data_dir()).expect("second SNDH");
+
+        // And neither is left mute by the other's existence: tearing one down
+        // must not pull the library out from under the other, either.
+        let plays = |emu: &mut MusicEmu| {
+            let mut samples = Vec::new();
+            for _ in 0..8 {
+                emu.run();
+                emu.with_audio(&mut |s| samples.extend_from_slice(s));
+            }
+            samples.iter().any(|&s| s != 0)
+        };
+        assert!(plays(&mut first), "the first SNDH is silent");
+        drop(first);
+        assert!(plays(&mut second), "the second SNDH is silent");
+    }
+
     #[test]
     fn renders_audio_and_a_scope() {
         let song = test_song();
