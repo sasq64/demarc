@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use tracing::info;
 
 use crate::music_emu::{self, MusicEmu};
 use crate::retro_emu::Backend;
@@ -27,8 +28,8 @@ impl System for MusicSystem {
             "snd", "sndh", "sap", // Atari
             "nsf", "gbs", "spc", "psf", // Console
             "mp3", "flac", // Streaming
-            "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
-            "smod", "dm2", "ahx", // Amiga
+            "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
+            "smod", "dm2", "ahx", "aon", "mt2", "mon", // Amiga
         ]
     }
 
@@ -37,17 +38,20 @@ impl System for MusicSystem {
     }
 
     fn can_load(&self, path: &Path) -> bool {
-        self.handles_ext(path) && music_emu::can_handle(path, &music_data_dir())
-    }
-
-    /// A directory is left as it is rather than resolved down to a single song:
-    /// [`MusicEmu`] picks the file to play out of it, by the same rule
-    /// [`music_emu::can_handle`] used to say yes here.
-    fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        Ok(self.can_load(file))
+        let prefix = path
+            .file_name()
+            .and_then(|p| p.to_str())
+            .and_then(|p| p.split('.').next())
+            .map(|p| p.to_lowercase())
+            .unwrap_or_default();
+        let name_match = self.handles_ext(path)
+            || (prefix == "mod" || prefix == "mdat" || prefix == "xm" || prefix == "stk");
+        info!("{path:?} => {prefix} => {name_match}");
+        name_match && music_emu::can_handle(path, &music_data_dir())
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        info!("MUSIC CREATE {path:?}");
         Ok(Box::new(MusicEmu::new(path, &music_data_dir())?))
     }
 }
