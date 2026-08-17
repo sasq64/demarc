@@ -11,7 +11,7 @@ use super::utils::read_header;
 use crate::{newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
-use super::disc::{DiscImage, ISO_SECTOR, IsoSpec, build_iso, cue_data_tracks};
+use super::disc::{DiscImage, ISO_SECTOR, IsoSpec, build_iso, cue_data_tracks, cue_is_complete};
 
 const CORE_NAME_PSX: &str = "pcsx_rearmed";
 pub struct PSXSystem {}
@@ -146,8 +146,12 @@ pub fn is_psx_disc(path: &Path) -> bool {
 /// Whether the cue sheet at `path` describes a PlayStation disc, judged by the
 /// data track it names. A sheet holding nothing but audio tracks is a CD, and
 /// one whose data track belongs to another console isn't ours either.
+///
+/// A sheet missing any of its files is no use to the core whatever it describes,
+/// so it doesn't count as one — leaving the walk to reach the bare data track
+/// beside it instead.
 pub fn is_psx_cue(path: &Path) -> bool {
-    cue_data_tracks(path).iter().any(|track| is_psx_disc(track))
+    cue_is_complete(path) && cue_data_tracks(path).iter().any(|track| is_psx_disc(track))
 }
 
 /// The fixed size of a PSX executable's header. Everything after it is the

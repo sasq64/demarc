@@ -271,6 +271,34 @@ impl NewSys {
                 }
             }
         }
+
+        // Sort out which side of a disc release we were pointed at before any
+        // system looks at it, since a directory holding a cue and its tracks is
+        // handed to us as one file at a time.
+        if wf.path.is_file() {
+            let ext = get_ext(&wf.path);
+            if ext == "cue" {
+                // A sheet that can't find one of its files is unloadable — no
+                // core will open it — so step over it to the directory it sits
+                // in and let the systems find the image on their own.
+                if !disc::cue_is_complete(&wf.path)
+                    && let Some(dir) = wf.path.parent()
+                {
+                    warn!(
+                        "Skipping {:?}: it references files that aren't there",
+                        wf.path
+                    );
+                    wf.path = dir.to_owned();
+                }
+            } else if disc::TRACK_EXTENSIONS.contains(&ext.as_str())
+                && let Some(cue) = disc::cue_for_track(&wf.path)
+            {
+                // The track on its own leaves the disc's CD audio behind, and
+                // the sheet beside it doesn't.
+                info!("Loading {:?} through {cue:?}", wf.path);
+                wf.path = cue;
+            }
+        }
         println!("LOAD META {:?}", wf.meta);
         for sys in &self.systems {
             if sys.load(&mut wf).unwrap() {

@@ -6,7 +6,9 @@ use std::{
 use tracing::{debug, info, warn};
 
 use super::System;
-use super::disc::{DiscImage, IsoSpec, build_iso, cue_data_tracks, iso_name};
+use super::disc::{
+    DiscImage, IsoSpec, TRACK_EXTENSIONS, build_iso, cue_data_tracks, cue_is_complete, iso_name,
+};
 use crate::{newsys::walk_dir, workfile::WorkFile};
 
 const CORE_NAME_GEOLITH: &str = "geolith";
@@ -46,11 +48,13 @@ fn is_neogeo_cd_disc(path: &Path) -> bool {
 
 /// Whether the cue sheet at `path` describes a Neo Geo CD, judged by the data
 /// track it names. A sheet of nothing but audio tracks is a plain CD, and one
-/// whose data track belongs to another console isn't ours.
+/// whose data track belongs to another console isn't ours. One that can't find
+/// all of its files is no use to the core at all, so it isn't taken either.
 fn is_neogeo_cd_cue(path: &Path) -> bool {
-    cue_data_tracks(path)
-        .iter()
-        .any(|track| is_neogeo_cd_disc(track))
+    cue_is_complete(path)
+        && cue_data_tracks(path)
+            .iter()
+            .any(|track| is_neogeo_cd_disc(track))
 }
 
 /// The file names [`IPL_NAME`] asks the BIOS to load, upper cased. Only used to
@@ -199,10 +203,7 @@ impl System for NeoGeoSystem {
                 if cue.is_none() && is_neogeo_cd_cue(path) {
                     cue = Some(path.to_owned());
                 }
-            } else if disc.is_none()
-                && ["iso", "bin", "img"].contains(&ext)
-                && is_neogeo_cd_disc(path)
-            {
+            } else if disc.is_none() && TRACK_EXTENSIONS.contains(&ext) && is_neogeo_cd_disc(path) {
                 disc = Some(path.to_owned());
             }
             Ok(())

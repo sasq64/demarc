@@ -427,23 +427,87 @@ pub fn parse_cue_files(text: &str) -> Vec<CueFile<'_>> {
     out
 }
 
-/// The data tracks a cue sheet names, as paths on disk. Audio tracks are left
-/// out: the question the callers ask is which console the disc belongs to, and
-/// only a data track can answer it.
-pub fn cue_data_tracks(cue_path: &Path) -> Vec<PathBuf> {
+/// The extensions a disc image turns up under when it isn't described by a cue
+/// sheet: the raw track of a rip, a plain filesystem dump, and the CloneCD
+/// spelling of the former.
+pub const TRACK_EXTENSIONS: &[&str] = &["bin", "iso", "img"];
+
+/// Every `FILE` a cue sheet names, as its track kind and where the file turned
+/// out to be on disk — `None` for one the directory doesn't hold at all.
+fn cue_entries(cue_path: &Path) -> Vec<(String, Option<PathBuf>)> {
     let Ok(text) = fs::read_to_string(cue_path) else {
         return vec![];
     };
     let dir = cue_path.parent().unwrap_or(Path::new("."));
     parse_cue_files(&text)
         .iter()
-        .filter(|f| {
+        .map(|f| (f.kind.clone(), resolve_ignoring_case(dir, &f.name)))
+        .collect()
+}
+
+/// The data tracks a cue sheet names, as paths on disk. Audio tracks are left
+/// out: the question the callers ask is which console the disc belongs to, and
+/// only a data track can answer it.
+pub fn cue_data_tracks(cue_path: &Path) -> Vec<PathBuf> {
+    cue_entries(cue_path)
+        .into_iter()
+        .filter(|(kind, _)| {
             ["BINARY", "MOTOROLA"]
                 .iter()
-                .any(|k| f.kind.eq_ignore_ascii_case(k))
+                .any(|k| kind.eq_ignore_ascii_case(k))
         })
-        .filter_map(|f| resolve_ignoring_case(dir, &f.name))
+        .filter_map(|(_, path)| path)
         .collect()
+}
+
+/// Whether the cue sheet at `path` names at least one file and every file it
+/// names is really there.
+///
+/// A core opens a sheet by opening all of its tracks, so a single name that
+/// resolves to nothing makes the whole sheet unloadable — and a release does
+/// arrive that way, with the sheet from the original burn but only the data
+/// track kept. The bare track beside it is the better thing to load, so a sheet
+/// that fails this is one to step over.
+pub fn cue_is_complete(cue_path: &Path) -> bool {
+    let entries = cue_entries(cue_path);
+    !entries.is_empty() && entries.iter().all(|(_, path)| path.is_some())
+}
+
+/// `path` with symlinks and `..` resolved, or as it stands if it can't be —
+/// enough to tell whether two paths reached from different directions are the
+/// same file.
+fn same_file_key(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
+/// The cue sheet beside `track` that names it, if there is one that can be
+/// loaded. A sheet describes the whole disc — the data track plus any CD audio
+/// — so it is worth more than the track on its own, which is all a `.bin` or
+/// `.iso` ever is.
+///
+/// Sheets that can't find all of their files are passed over; see
+/// [`cue_is_complete`].
+pub fn cue_for_track(track: &Path) -> Option<PathBuf> {
+    let dir = track.parent()?;
+    let wanted = same_file_key(track);
+
+    let mut cues: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cue")))
+        .collect();
+    // A release shipping more than one sheet for the same track must pick the
+    // same one every run, or the disc cache fills up with copies of it.
+    cues.sort();
+
+    cues.into_iter().find(|cue| {
+        cue_is_complete(cue)
+            && cue_entries(cue)
+                .iter()
+                .filter_map(|(_, path)| path.as_deref())
+                .any(|path| same_file_key(path) == wanted)
+    })
 }
 
 /// Find `name` in `dir` however it happens to be cased on disk. Cue sheets are
@@ -734,6 +798,52 @@ mod tests {
 
         let mut disc = DiscImage::open(&path).expect("written image is a data disc");
         assert_eq!(disc.root_names(), names);
+    }
+
+    /// A sheet is only worth loading if everything it names is there, and the
+    /// track it names is worth loading through it — including when the sheet's
+    /// spelling of the name isn't the one on disk, which is the usual state of
+    /// a disc unpacked onto a case-sensitive filesystem.
+    #[test]
+    fn finds_the_cue_for_a_track() {
+        let dir = std::env::temp_dir().join("demarc_cue_track_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("game.bin"), b"data track").unwrap();
+        fs::write(dir.join("game.wav"), b"audio track").unwrap();
+
+        let full = dir.join("game.cue");
+        fs::write(
+            &full,
+            "FILE \"GAME.BIN\" BINARY\n  TRACK 01 MODE2/2352\n\
+             FILE \"GAME.WAV\" WAVE\n  TRACK 02 AUDIO\n",
+        )
+        .unwrap();
+        assert!(cue_is_complete(&full));
+        assert_eq!(cue_for_track(&dir.join("game.bin")).as_ref(), Some(&full));
+
+        // The audio track was never kept, so nothing can open this sheet — and
+        // the bare track beside it must not be loaded through it.
+        let broken = dir.join("aa-broken.cue");
+        fs::write(
+            &broken,
+            "FILE \"game.bin\" BINARY\n  TRACK 01 MODE2/2352\n\
+             FILE \"gone.wav\" WAVE\n  TRACK 02 AUDIO\n",
+        )
+        .unwrap();
+        assert!(!cue_is_complete(&broken));
+        // Sorts ahead of `game.cue`, so a sheet picked without the check would
+        // be this one.
+        assert_eq!(cue_for_track(&dir.join("game.bin")).as_ref(), Some(&full));
+
+        // A sheet naming no files at all describes no disc.
+        let empty = dir.join("empty.cue");
+        fs::write(&empty, "REM nothing here\n").unwrap();
+        assert!(!cue_is_complete(&empty));
+
+        // A track no sheet mentions is loaded as itself.
+        fs::write(dir.join("other.iso"), b"unrelated").unwrap();
+        assert_eq!(cue_for_track(&dir.join("other.iso")), None);
     }
 
     /// Level 1 is 8.3 and upper case, and a name that misses is one the boot
