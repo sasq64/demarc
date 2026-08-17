@@ -1,30 +1,6 @@
 
-* Joystick support
-
-disk-turbo on/off
-
-Fix warp
-
-HUD for Warp, Pause, Shader,Border,Screenshot
-
-
-* Statusbar
-  (Disk activity, LED, Frame rate, fixed, disk)
-
-
-* Select menu for shortcuts and files
-
-
-STEPS
-
-Populate Info at startup.
-
-* meta data from m3u
-
-LOAD does not need m3u
-
-
-TAGS
-
-
-
+- [ ] Whitelist/blacklist for audio formats
+- [ ] hatari detects SMPL (turrican) as exe
+- [ ] Default CRT limit?
+- [ ] Toggle CRT On/Limited/Off if limit set
+- [ ] Use beetle flag
