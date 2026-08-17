@@ -550,7 +550,7 @@ impl Emulator {
         trace!("DELTA {delta} vs {}", self.display_fps,);
 
         if occupied_len > AUDIO_BUF_MAX {
-            warn!("Dropping frame");
+            trace!("Dropping frame");
             self.next_frame += frame_time;
             return true;
         }
@@ -571,7 +571,7 @@ impl Emulator {
         // otherwise the buffer is always empty and this would fire every frame.
         if has_audio && !self.skipping && occupied_len < AUDIO_BUF_MIN {
             result &= core.run();
-            warn!("Duplicating frame");
+            trace!("Duplicating frame");
         }
         let got_audio = self.update();
 
