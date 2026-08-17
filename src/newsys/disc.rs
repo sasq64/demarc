@@ -1,13 +1,16 @@
 //! CD image handling shared by the disc-based systems: reading an ISO9660
 //! filesystem out of a dump in whatever sector layout it arrived in, writing a
-//! minimal one from a set of files, and picking apart a cue sheet.
+//! minimal one from a set of files, picking apart a cue sheet, and putting a
+//! disc into a shape the cores can actually read.
 //!
-//! Both users want the same three things and for the same reason — a release
-//! turns up either as a disc image to identify or as the loose files that were
-//! meant to be burned onto one — so the format lives here and the console
-//! specifics ([`super::playstation`], [`super::neo_geo`]) stay with the system.
+//! Both users want the same things and for the same reason — a release turns up
+//! either as a disc image to identify or as the loose files that were meant to
+//! be burned onto one — so the format lives here and the console specifics
+//! ([`super::playstation`], [`super::neo_geo`]) stay with the system.
 
+use anyhow::{Result, bail};
 use std::{fs, path::Path, path::PathBuf};
+use tracing::{debug, info, warn};
 
 /// One sector of an ISO9660 image: the user-data half of a CD-ROM data sector,
 /// and the unit every address in the format counts in.
@@ -459,6 +462,242 @@ pub fn resolve_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
             p.file_name()
                 .is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name))
         })
+}
+
+/// CD audio is 44.1 kHz 16-bit stereo; a cue's audio tracks must match, because
+/// the core seeks past the WAV header and reads the rest as raw PCM.
+const CDDA_RATE: u32 = 44100;
+
+/// Decode an MP3 to 44.1 kHz 16-bit stereo and write it as a WAV.
+fn transcode_mp3_to_wav(src: &Path, dest: &Path) -> Result<()> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let file = fs::File::open(src)?;
+    let stream = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension("mp3");
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        stream,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow::anyhow!("no audio track in {src:?}"))?;
+    let track_id = track.id;
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    let mut pcm: Vec<i16> = Vec::new();
+    let mut rate = CDDA_RATE;
+    let mut channels = 2usize;
+    let mut buf: Option<SampleBuffer<i16>> = None;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            // Symphonia signals end-of-stream as an IO error.
+            Err(symphonia::core::errors::Error::IoError(_)) => break,
+            Err(e) => return Err(e.into()),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            // A truncated or slightly corrupt frame shouldn't lose the track.
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+            Err(e) => return Err(e.into()),
+        };
+        let spec = *decoded.spec();
+        rate = spec.rate;
+        channels = spec.channels.count();
+        let sbuf =
+            buf.get_or_insert_with(|| SampleBuffer::<i16>::new(decoded.capacity() as u64, spec));
+        sbuf.copy_interleaved_ref(decoded);
+        pcm.extend_from_slice(sbuf.samples());
+    }
+
+    // Force the shape CD audio requires. Both are no-ops for the 44.1 kHz stereo
+    // MP3s scene discs actually ship, but silently wrong speed or a half-length
+    // track is a nasty way to find out otherwise.
+    if channels == 1 {
+        warn!("{src:?} is mono; duplicating to stereo for CD audio");
+        pcm = pcm.iter().flat_map(|&s| [s, s]).collect();
+        channels = 2;
+    } else if channels > 2 {
+        warn!("{src:?} has {channels} channels; keeping the first two");
+        pcm = pcm.chunks(channels).flat_map(|f| [f[0], f[1]]).collect();
+        channels = 2;
+    }
+    if rate != CDDA_RATE {
+        warn!("{src:?} is {rate} Hz; resampling to {CDDA_RATE} Hz for CD audio");
+        let frames = pcm.len() / channels;
+        let out_frames = (frames as u64 * CDDA_RATE as u64 / rate.max(1) as u64) as usize;
+        let mut out = Vec::with_capacity(out_frames * 2);
+        for i in 0..out_frames {
+            let pos = i as f64 * rate as f64 / CDDA_RATE as f64;
+            let idx = (pos as usize).min(frames.saturating_sub(1));
+            out.push(pcm[idx * 2]);
+            out.push(pcm[idx * 2 + 1]);
+        }
+        pcm = out;
+    }
+
+    write_wav(dest, &pcm)
+}
+
+/// Write interleaved 16-bit stereo samples as a canonical 44-byte-header WAV.
+fn write_wav(dest: &Path, pcm: &[i16]) -> Result<()> {
+    const _: () = assert!(cfg!(target_endian = "little"), "write_wav assumes LE");
+
+    use std::io::Write;
+    let data_len = (pcm.len() * 2) as u32;
+    let byte_rate = CDDA_RATE * 2 * 2;
+
+    let mut header = [0u8; 44];
+    let mut put = |at: usize, bytes: &[u8]| header[at..at + bytes.len()].copy_from_slice(bytes);
+    put(0, b"RIFF");
+    put(4, &(36 + data_len).to_le_bytes());
+    put(8, b"WAVEfmt ");
+    put(16, &16u32.to_le_bytes()); // PCM fmt chunk size
+    put(20, &1u16.to_le_bytes()); // PCM
+    put(22, &2u16.to_le_bytes()); // stereo
+    put(24, &CDDA_RATE.to_le_bytes());
+    put(28, &byte_rate.to_le_bytes());
+    put(32, &4u16.to_le_bytes()); // block align
+    put(34, &16u16.to_le_bytes()); // bits per sample
+    put(36, b"data");
+    put(40, &data_len.to_le_bytes());
+
+    // SAFETY: `i16` has no padding or invalid bit patterns, and `u8`'s alignment
+    // is weaker, so any `[i16]` is also a valid `[u8]` of twice the length.
+    let samples = unsafe { std::slice::from_raw_parts(pcm.as_ptr().cast::<u8>(), pcm.len() * 2) };
+
+    let mut out = fs::File::create(dest)?;
+    out.write_all(&header)?;
+    out.write_all(samples)?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Link `src` into `dest`, falling back to a copy across filesystems. Data
+/// tracks run to hundreds of megabytes, so a hard link is worth trying first.
+fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
+    if dest.exists() {
+        return Ok(());
+    }
+    if fs::hard_link(src, dest).is_ok() {
+        return Ok(());
+    }
+    fs::copy(src, dest)?;
+    Ok(())
+}
+
+/// No libretro core here decodes MP3 audio tracks — they read the compressed
+/// bytes straight through as PCM, which comes out as full-scale noise. If a cue
+/// references any, build a parallel disc directory in the cache with those
+/// tracks decoded to WAV and the sheet rewritten to match. Data tracks are hard
+/// linked, so the copy is nearly free.
+///
+/// The same rewrite fixes a sheet whose names don't match the files' actual
+/// case, which is what a disc burned from upper-case names and then unpacked
+/// onto a case-sensitive filesystem leaves behind.
+///
+/// Returns the rewritten cue, or `None` if every track is already playable.
+pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
+    let text = fs::read_to_string(cue_path)?;
+    let files = parse_cue_files(&text);
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let dir = cue_path.parent().unwrap_or(Path::new("."));
+
+    // Resolve every referenced name first: the sheet's spelling may differ from
+    // the file's, and the rewrite has to use what's actually on disk.
+    let mut resolved = Vec::new();
+    for f in &files {
+        let Some(src) = resolve_ignoring_case(dir, &f.name) else {
+            bail!("cue references missing file {:?}", dir.join(&f.name));
+        };
+        let actual = src
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        resolved.push((f, src, actual));
+    }
+
+    let has_mp3 = files.iter().any(|f| f.kind.eq_ignore_ascii_case("MP3"));
+    let miscased = resolved.iter().any(|(f, _, actual)| f.name != *actual);
+    if !has_mp3 && !miscased {
+        return Ok(None);
+    }
+    if miscased {
+        debug!("Cue file names don't match on-disk case; rewriting {cue_path:?}");
+    }
+
+    // Key the cache on the disc's *contents* — never its path or mtime. A disc
+    // unpacked from a zip lands in a fresh temp dir each run and the extractor
+    // doesn't restore the archived timestamps, so either would miss the cache
+    // every launch and pile up another copy of the transcoded audio.
+    let mut key = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    text.hash(&mut key);
+    for (f, src, actual) in &resolved {
+        actual.hash(&mut key);
+        if let Ok(meta) = fs::metadata(src) {
+            meta.len().hash(&mut key);
+        }
+        // Size alone would let an edited track reuse stale audio. Hash the bytes
+        // of the tracks we actually decode; they're a few MB, unlike the data
+        // track, which can be most of a gigabyte.
+        if f.kind.eq_ignore_ascii_case("MP3")
+            && let Ok(bytes) = fs::read(src)
+        {
+            bytes.hash(&mut key);
+        }
+    }
+    let stem = cue_path.file_stem().unwrap_or_default().to_string_lossy();
+    let out_dir = dirs::cache_dir()
+        .unwrap_or_default()
+        .join("demarc")
+        .join("cdda")
+        .join(format!("{stem}-{:016x}", key.finish()));
+    let out_cue = out_dir.join("disc.cue");
+    if out_cue.is_file() {
+        debug!("Using cached disc {out_dir:?}");
+        return Ok(Some(out_cue));
+    }
+    fs::create_dir_all(&out_dir)?;
+
+    let mut new_text = text.clone();
+    for (f, src, actual) in &resolved {
+        if f.kind.eq_ignore_ascii_case("MP3") {
+            let wav_name = format!(
+                "{}.wav",
+                Path::new(actual)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            );
+            info!("Transcoding CD audio track {actual:?} -> {wav_name}");
+            transcode_mp3_to_wav(src, &out_dir.join(&wav_name))?;
+            new_text = new_text.replace(f.line, &format!("FILE \"{wav_name}\" WAVE"));
+        } else {
+            link_or_copy(src, &out_dir.join(actual))?;
+            // Quote the name so bare names parse, and use the on-disk spelling.
+            new_text = new_text.replace(f.line, &format!("FILE \"{actual}\" {}", f.kind));
+        }
+    }
+    fs::write(&out_cue, new_text)?;
+    Ok(Some(out_cue))
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ use gameboy::GameboySystem;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::info;
+use tracing::{info, warn};
 use utils::{is_archive, unpack_into};
 
 mod utils;
@@ -274,6 +274,21 @@ impl NewSys {
         println!("LOAD META {:?}", wf.meta);
         for sys in &self.systems {
             if sys.load(&mut wf).unwrap() {
+                // Whichever system claimed the release, a cue's MP3 audio tracks
+                // are unplayable to every core here — they read the compressed
+                // bytes straight through as PCM — so the sheet is rewritten with
+                // those decoded before the core opens it. A disc that needs
+                // nothing comes back untouched.
+                if get_ext(&wf.path) == "cue" {
+                    match disc::prepare_disc(&wf.path) {
+                        Ok(Some(prepared)) => wf.path = prepared,
+                        Ok(None) => {}
+                        // A sheet we can't rewrite is still worth handing over
+                        // as it stands; the core may make more of it than we do.
+                        Err(err) => warn!("Could not prepare {:?}: {err}", wf.path),
+                    }
+                }
+
                 println!("Loading {:?}", &wf.path);
                 if let Some(dir) = &wf.temp_dir {
                     for entry in fs::read_dir(dir)? {
