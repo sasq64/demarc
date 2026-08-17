@@ -11,6 +11,10 @@ use super::utils::read_header;
 use crate::{newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
+use super::disc::{
+    DiscImage, ISO_SECTOR, IsoSpec, build_iso, cue_data_tracks, parse_cue_files,
+    resolve_ignoring_case,
+};
 
 const CORE_NAME_PSX: &str = "pcsx_rearmed";
 pub struct PSXSystem {}
@@ -20,38 +24,6 @@ impl PSXSystem {}
 /// CD audio is 44.1 kHz 16-bit stereo; a cue's audio tracks must match, because
 /// the core seeks past the WAV header and reads the rest as raw PCM.
 const CDDA_RATE: u32 = 44100;
-
-/// One `FILE "<name>" <kind>` line from a cue sheet.
-struct CueFile<'a> {
-    line: &'a str,
-    name: String,
-    kind: String,
-}
-
-/// Pull the `FILE` lines out of a cue sheet. Handles both quoted and bare names
-/// (scene sheets use either); the kind is always the last token on the line.
-fn parse_cue_files(text: &str) -> Vec<CueFile<'_>> {
-    let mut out = vec![];
-    for line in text.lines() {
-        let rest = match line.trim().strip_prefix("FILE ") {
-            Some(rest) => rest.trim(),
-            None => continue,
-        };
-        let (name, kind) = if let Some(after) = rest.strip_prefix('"') {
-            match after.split_once('"') {
-                Some((name, kind)) => (name.to_string(), kind.trim().to_string()),
-                None => continue,
-            }
-        } else {
-            match rest.rsplit_once(char::is_whitespace) {
-                Some((name, kind)) => (name.trim().to_string(), kind.trim().to_string()),
-                None => continue,
-            }
-        };
-        out.push(CueFile { line, name, kind });
-    }
-    out
-}
 
 /// Decode an MP3 to 44.1 kHz 16-bit stereo and write it as a WAV.
 fn transcode_mp3_to_wav(src: &Path, dest: &Path) -> Result<()> {
@@ -172,25 +144,6 @@ fn write_wav(dest: &Path, pcm: &[i16]) -> Result<()> {
     Ok(())
 }
 
-/// Find `name` in `dir`, tolerating a mismatched case. Scene sheets are often
-/// written against an ISO9660 listing (upper case) while the files ship lower
-/// case — harmless on Windows, but the core can't open them on a case-sensitive
-/// filesystem.
-fn resolve_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
-    let direct = dir.join(name);
-    if direct.is_file() {
-        return Some(direct);
-    }
-    fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name))
-        })
-}
-
 /// Link `src` into `dest`, falling back to a copy across filesystems. Data
 /// tracks run to hundreds of megabytes, so a hard link is worth trying first.
 fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
@@ -204,119 +157,10 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// One sector of an ISO9660 image: the user-data half of a CD-ROM data sector,
-/// and the unit every address in the format counts in.
-const ISO_SECTOR: usize = 2048;
-
-/// Where each piece of a [`build_psx_iso`] image lives. The first 16 sectors are
-/// the system area — a pressed disc keeps Sony's licence data there, but nothing
-/// reads it here, since the core boots with an HLE BIOS — and the rest is the
-/// smallest filesystem that still describes two files.
-const LBA_PVD: u32 = 16;
-const LBA_TERMINATOR: u32 = 17;
-const LBA_PATH_TABLE_L: u32 = 18;
-const LBA_PATH_TABLE_M: u32 = 19;
-const LBA_ROOT_DIR: u32 = 20;
-const LBA_SYSTEM_CNF: u32 = 21;
-const LBA_EXE: u32 = 22;
-
 /// The name the executable is given on the disc. Both the BIOS and every core
 /// fall back to this one when a disc has no `SYSTEM.CNF`, so it is also what
 /// makes the image boot if the sheet is ever ignored.
-const ISO_EXE_NAME: &[u8] = b"PSX.EXE;1";
-
-/// An ISO9660 32-bit field: the value little endian, then big endian again.
-/// Sizes and addresses are all stored twice so a reader of either byte order can
-/// take the half it likes.
-fn both_endian32(value: u32) -> [u8; 8] {
-    let mut out = [0u8; 8];
-    out[0..4].copy_from_slice(&value.to_le_bytes());
-    out[4..8].copy_from_slice(&value.to_be_bytes());
-    out
-}
-
-/// [`both_endian32`] for the format's 16-bit fields.
-fn both_endian16(value: u16) -> [u8; 4] {
-    let mut out = [0u8; 4];
-    out[0..2].copy_from_slice(&value.to_le_bytes());
-    out[2..4].copy_from_slice(&value.to_be_bytes());
-    out
-}
-
-/// Write `text` into `buf` at `at` as a fixed-width, space-padded field, which
-/// is how ISO9660 stores every string.
-fn put_padded(buf: &mut [u8], at: usize, len: usize, text: &str) {
-    buf[at..at + len].fill(b' ');
-    let n = text.len().min(len);
-    buf[at..at + n].copy_from_slice(&text.as_bytes()[..n]);
-}
-
-/// An ISO9660 directory record naming `len` bytes at `lba`. `name` is the
-/// identifier exactly as it goes on the disc, so files keep the `;1` version
-/// suffix and the `.`/`..` entries are the single bytes 0 and 1.
-///
-/// Records are padded to an even length, which is what makes the one-byte-named
-/// entries — and so the copy of the root's record inside the volume descriptor —
-/// 34 bytes.
-fn dir_record(name: &[u8], lba: u32, len: u32, is_dir: bool) -> Vec<u8> {
-    let mut rec = vec![0u8; 33 + name.len()];
-    rec[2..10].copy_from_slice(&both_endian32(lba));
-    rec[10..18].copy_from_slice(&both_endian32(len));
-    // Recording time, as years-since-1900 down to seconds plus a timezone in
-    // quarter hours. Nothing on the PlayStation side reads it; a fixed
-    // 1980-01-01 GMT keeps the image byte-identical between builds, which the
-    // content-keyed cache below relies on.
-    rec[18..25].copy_from_slice(&[80, 1, 1, 0, 0, 0, 0]);
-    rec[25] = if is_dir { 0x02 } else { 0x00 };
-    rec[28..32].copy_from_slice(&both_endian16(1)); // volume sequence number
-    rec[32] = name.len() as u8;
-    rec[33..].copy_from_slice(name);
-    if !rec.len().is_multiple_of(2) {
-        rec.push(0);
-    }
-    rec[0] = rec.len() as u8;
-    rec
-}
-
-/// The primary volume descriptor: the sector at a fixed 16 that every reader
-/// starts from, and which points at the root directory's own record.
-fn primary_volume_descriptor(total_sectors: u32, path_table_size: u32, root: &[u8]) -> Vec<u8> {
-    let mut pvd = vec![0u8; ISO_SECTOR];
-    pvd[0] = 1; // primary volume descriptor
-    pvd[1..6].copy_from_slice(b"CD001");
-    pvd[6] = 1; // descriptor version
-    // A pressed PlayStation disc says exactly this, and some tools identify one
-    // by it. Nothing refuses to boot without it, but it costs 11 bytes.
-    put_padded(&mut pvd, 8, 32, "PLAYSTATION");
-    put_padded(&mut pvd, 40, 32, "DEMARC");
-    pvd[80..88].copy_from_slice(&both_endian32(total_sectors));
-    pvd[120..124].copy_from_slice(&both_endian16(1)); // volume set size
-    pvd[124..128].copy_from_slice(&both_endian16(1)); // volume sequence number
-    pvd[128..132].copy_from_slice(&both_endian16(ISO_SECTOR as u16));
-    pvd[132..140].copy_from_slice(&both_endian32(path_table_size));
-    // The two path tables are the one pair of fields stored as a plain value in
-    // each byte order rather than both-endian.
-    pvd[140..144].copy_from_slice(&LBA_PATH_TABLE_L.to_le_bytes());
-    pvd[148..152].copy_from_slice(&LBA_PATH_TABLE_M.to_be_bytes());
-    pvd[156..156 + root.len()].copy_from_slice(root);
-    for (at, len) in [(190, 128), (318, 128), (446, 128), (574, 128)] {
-        put_padded(&mut pvd, at, len, "");
-    }
-    for at in [702, 739, 776] {
-        put_padded(&mut pvd, at, 37, "");
-    }
-    // Creation and modification, then expiration and effective, as
-    // YYYYMMDDHHMMSSCC plus a timezone byte. All zeros means "unspecified",
-    // which is what a disc that never expires records.
-    for at in [813, 830] {
-        pvd[at..at + 17].copy_from_slice(b"1980010100000000\0");
-    }
-    for at in [847, 864] {
-        pvd[at..at + 17].copy_from_slice(b"0000000000000000\0");
-    }
-    pvd[881] = 1; // file structure version
-    pvd
-}
+const ISO_EXE_NAME: &str = "PSX.EXE";
 
 /// Lay `exe` out as a bootable PlayStation disc image: a `SYSTEM.CNF` naming the
 /// boot file and the executable itself, in a filesystem with nothing else in it.
@@ -328,64 +172,31 @@ fn primary_volume_descriptor(total_sectors: u32, path_table_size: u32, root: &[u
 /// 0x800-byte header, which is why the executable goes on the disc unaltered.
 /// Cores that HLE the BIOS (pcsx_rearmed) walk the same structures themselves.
 fn build_psx_iso(exe: &[u8]) -> Vec<u8> {
-    const CNF_NAME: &[u8] = b"SYSTEM.CNF;1";
     // `BOOT` is the only line a core reads; the rest is what a real disc carries
     // and what the console's own BIOS would set up from.
     const CNF: &str = "BOOT = cdrom:\\PSX.EXE;1\r\nTCB = 4\r\nEVENT = 10\r\nSTACK = 801FFFF0\r\n";
 
-    let exe_sectors = exe.len().div_ceil(ISO_SECTOR) as u32;
-    let mut total_sectors = LBA_EXE + exe_sectors;
+    let files = [
+        ("SYSTEM.CNF".to_string(), CNF.as_bytes().to_vec()),
+        (ISO_EXE_NAME.to_string(), exe.to_vec()),
+    ];
+    let mut spec = IsoSpec {
+        // A pressed PlayStation disc says exactly this, and some tools identify
+        // one by it. Nothing refuses to boot without it, but it costs 11 bytes.
+        system_id: "PLAYSTATION",
+        volume_id: "DEMARC",
+        files: &files,
+        ..Default::default()
+    };
+    let image = build_iso(&spec);
     // pcsx_rearmed tells a 2048-byte-sector image from a raw 2352-byte one by
     // the file's length alone, so a length that divides evenly by both would be
     // read as the wrong kind of disc — which only happens at a multiple of 147
     // sectors. An extra empty sector steps past it.
-    if total_sectors.is_multiple_of(147) {
-        total_sectors += 1;
+    if (image.len() / ISO_SECTOR).is_multiple_of(147) {
+        spec.pad_sectors = 1;
+        return build_iso(&spec);
     }
-
-    // The root directory: itself, its parent (itself again, since it is the
-    // root), and the two files. One sector holds all four with room to spare.
-    let mut root_dir = Vec::with_capacity(ISO_SECTOR);
-    for rec in [
-        dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
-        dir_record(&[1], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
-        dir_record(CNF_NAME, LBA_SYSTEM_CNF, CNF.len() as u32, false),
-        dir_record(ISO_EXE_NAME, LBA_EXE, exe.len() as u32, false),
-    ] {
-        root_dir.extend_from_slice(&rec);
-    }
-
-    // The path table, listing the one directory there is: a one-byte name (the
-    // root's, which is the single zero byte), parented to itself.
-    let mut path_l = vec![1u8, 0];
-    path_l.extend_from_slice(&LBA_ROOT_DIR.to_le_bytes());
-    path_l.extend_from_slice(&1u16.to_le_bytes());
-    path_l.extend_from_slice(&[0, 0]); // name, then padding to an even length
-    let mut path_m = vec![1u8, 0];
-    path_m.extend_from_slice(&LBA_ROOT_DIR.to_be_bytes());
-    path_m.extend_from_slice(&1u16.to_be_bytes());
-    path_m.extend_from_slice(&[0, 0]);
-
-    let root_record = dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true);
-    let pvd = primary_volume_descriptor(total_sectors, path_l.len() as u32, &root_record);
-
-    let mut terminator = vec![0u8; ISO_SECTOR];
-    terminator[0] = 0xff; // volume descriptor set terminator
-    terminator[1..6].copy_from_slice(b"CD001");
-    terminator[6] = 1;
-
-    let mut image = vec![0u8; total_sectors as usize * ISO_SECTOR];
-    let mut put = |lba: u32, bytes: &[u8]| {
-        let at = lba as usize * ISO_SECTOR;
-        image[at..at + bytes.len()].copy_from_slice(bytes);
-    };
-    put(LBA_PVD, &pvd);
-    put(LBA_TERMINATOR, &terminator);
-    put(LBA_PATH_TABLE_L, &path_l);
-    put(LBA_PATH_TABLE_M, &path_m);
-    put(LBA_ROOT_DIR, &root_dir);
-    put(LBA_SYSTEM_CNF, CNF.as_bytes());
-    put(LBA_EXE, exe);
     image
 }
 
@@ -540,136 +351,11 @@ pub fn is_psx_exe(path: &Path) -> bool {
     read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }
 
-/// The sector layouts a disc image turns up in, as the bytes one sector takes
-/// in the file and where its 2048 bytes of user data start inside that.
-///
-/// A `.iso` holds the user data and nothing else. The `.bin` a cue names holds
-/// whole CD sectors: a 12-byte sync pattern and a 4-byte address in front, then
-/// — for Mode 2, which is what PlayStation discs are pressed as — an 8-byte XA
-/// subheader, with error correction after the data. A CloneCD `.img` adds 96
-/// bytes of subchannel per sector on top of that.
-///
-/// Order matters: the first layout whose sector 16 looks like a volume
-/// descriptor is the one taken, and Mode 2 is the common case here.
-const SECTOR_LAYOUTS: &[(u64, usize)] = &[
-    (2352, 24), // Mode 2 Form 1
-    (2352, 16), // Mode 1
-    (2048, 0),  // user data only
-    (2336, 8),  // Mode 2 with the sync and address stripped
-    (2448, 24), // Mode 2 Form 1 plus subchannel
-    (2448, 16), // Mode 1 plus subchannel
-];
-
-/// Sectors of the root directory [`DiscImage::root_names`] will read before
-/// giving up. Only enough to see the boot files matters, and a corrupt length
-/// field shouldn't turn a sniff into a long read.
-const MAX_ROOT_SECTORS: usize = 16;
-
 /// A pressed PlayStation disc keeps Sony's licence text in the system area, the
 /// 16 sectors ahead of the filesystem. It is the one marker that needs no
 /// filesystem at all — but scene images often have it stripped, since a rip of
 /// just the data track tends to zero it, so its absence proves nothing.
 const PSX_LICENCE: &[u8] = b"Sony Computer Entertainment";
-
-/// A disc image opened in whatever sector layout it turned out to be stored in.
-/// One only exists for a file that really holds an ISO9660 filesystem, since
-/// finding the volume descriptor is what identifies the layout in the first
-/// place.
-struct DiscImage {
-    file: fs::File,
-    sector_size: u64,
-    data_offset: usize,
-}
-
-impl DiscImage {
-    /// Open `path` as a disc image, or `None` if no [`SECTOR_LAYOUTS`] entry
-    /// puts a primary volume descriptor at sector 16 — which is to say, if it
-    /// isn't a data disc at all.
-    fn open(path: &Path) -> Option<Self> {
-        let mut disc = DiscImage {
-            file: fs::File::open(path).ok()?,
-            sector_size: 0,
-            data_offset: 0,
-        };
-        for &(sector_size, data_offset) in SECTOR_LAYOUTS {
-            disc.sector_size = sector_size;
-            disc.data_offset = data_offset;
-            if disc
-                .read_sector(LBA_PVD)
-                .is_some_and(|pvd| pvd[0] == 1 && pvd[1..6] == *b"CD001")
-            {
-                return Some(disc);
-            }
-        }
-        None
-    }
-
-    /// The user data of sector `lba`, or `None` past the end of the image.
-    fn read_sector(&mut self, lba: u32) -> Option<Vec<u8>> {
-        use std::io::{Read, Seek, SeekFrom};
-        let at = lba as u64 * self.sector_size + self.data_offset as u64;
-        let mut buf = vec![0u8; ISO_SECTOR];
-        self.file.seek(SeekFrom::Start(at)).ok()?;
-        self.file.read_exact(&mut buf).ok()?;
-        Some(buf)
-    }
-
-    /// Whether the system area carries [`PSX_LICENCE`].
-    fn has_licence(&mut self) -> bool {
-        (0..LBA_PVD).any(|lba| {
-            self.read_sector(lba)
-                .is_some_and(|sector| sector.windows(PSX_LICENCE.len()).any(|w| w == PSX_LICENCE))
-        })
-    }
-
-    /// The names in the root directory, upper cased and with the `;1` version
-    /// suffix dropped.
-    ///
-    /// This walks the directory itself rather than going through a filesystem
-    /// crate: every crate on offer reads a plain 2048-byte-sector image, so a
-    /// raw MODE2/2352 track — which is what a PlayStation disc actually is —
-    /// would need the sector translation above wrapped around it anyway, and
-    /// the question here is only which names the root holds.
-    fn root_names(&mut self) -> Vec<String> {
-        let Some(pvd) = self.read_sector(LBA_PVD) else {
-            return vec![];
-        };
-        // The root's own directory record sits inside the volume descriptor, at
-        // the fixed offset every reader picks it up from. See [`dir_record`] for
-        // the layout of the fields read here.
-        let root = &pvd[156..190];
-        let field = |at: usize| u32::from_le_bytes(root[at..at + 4].try_into().unwrap());
-        let lba = field(2);
-        let sectors = (field(10) as usize)
-            .div_ceil(ISO_SECTOR)
-            .min(MAX_ROOT_SECTORS);
-
-        let mut names = vec![];
-        for i in 0..sectors as u32 {
-            let Some(sector) = self.read_sector(lba + i) else {
-                break;
-            };
-            let mut at = 0;
-            // Records never straddle a sector; the leftover is zeroed, and a
-            // zero length is what marks the end of the ones in this sector.
-            while at + 33 < ISO_SECTOR {
-                let rec_len = sector[at] as usize;
-                let name_len = sector[at + 32] as usize;
-                if rec_len < 34 || at + rec_len > ISO_SECTOR || 33 + name_len > rec_len {
-                    break;
-                }
-                // The one-byte names 0 and 1 are `.` and `..`, which every
-                // directory has and no file is called.
-                if name_len > 1 {
-                    let name = String::from_utf8_lossy(&sector[at + 33..at + 33 + name_len]);
-                    names.push(name.split(';').next().unwrap_or_default().to_uppercase());
-                }
-                at += rec_len;
-            }
-        }
-        names
-    }
-}
 
 /// Whether `path` is a PlayStation disc image — the data track of a cue/bin, an
 /// `.iso`, or the same thing under any other name.
@@ -684,31 +370,19 @@ pub fn is_psx_disc(path: &Path) -> bool {
     let Some(mut disc) = DiscImage::open(path) else {
         return false;
     };
-    if disc.has_licence() {
+    if disc.system_area_has(PSX_LICENCE) {
         return true;
     }
     disc.root_names()
         .iter()
-        .any(|name| name == "SYSTEM.CNF" || name == "PSX.EXE")
+        .any(|name| name == "SYSTEM.CNF" || name == ISO_EXE_NAME)
 }
 
 /// Whether the cue sheet at `path` describes a PlayStation disc, judged by the
 /// data track it names. A sheet holding nothing but audio tracks is a CD, and
 /// one whose data track belongs to another console isn't ours either.
 pub fn is_psx_cue(path: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
-    };
-    let dir = path.parent().unwrap_or(Path::new("."));
-    parse_cue_files(&text)
-        .iter()
-        .filter(|f| {
-            ["BINARY", "MOTOROLA"]
-                .iter()
-                .any(|k| f.kind.eq_ignore_ascii_case(k))
-        })
-        .filter_map(|f| resolve_ignoring_case(dir, &f.name))
-        .any(|track| is_psx_disc(&track))
+    cue_data_tracks(path).iter().any(|track| is_psx_disc(track))
 }
 
 /// The fixed size of a PSX executable's header. Everything after it is the
@@ -878,27 +552,20 @@ mod tests {
     /// console's disc looks like from the outside, down to the MODE2/2352
     /// wrapper when `raw` is set.
     fn other_disc(dir: &Path, name: &str, raw: bool) -> PathBuf {
-        let mut root_dir = Vec::new();
-        for rec in [
-            dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
-            dir_record(&[1], LBA_ROOT_DIR, ISO_SECTOR as u32, true),
-            dir_record(b"DATA.BIN;1", LBA_ROOT_DIR + 1, ISO_SECTOR as u32, false),
-        ] {
-            root_dir.extend_from_slice(&rec);
-        }
-        let total = LBA_ROOT_DIR + 2;
-        let root = dir_record(&[0], LBA_ROOT_DIR, ISO_SECTOR as u32, true);
-        let pvd = primary_volume_descriptor(total, 10, &root);
-
-        let mut image = vec![0u8; total as usize * ISO_SECTOR];
-        image[LBA_PVD as usize * ISO_SECTOR..][..ISO_SECTOR].copy_from_slice(&pvd);
-        image[LBA_ROOT_DIR as usize * ISO_SECTOR..][..root_dir.len()].copy_from_slice(&root_dir);
+        let files = [("DATA.BIN".to_string(), vec![0u8; ISO_SECTOR])];
+        let mut image = build_iso(&IsoSpec {
+            system_id: "OTHER",
+            volume_id: "OTHER",
+            files: &files,
+            ..Default::default()
+        });
 
         if raw {
             // Wrap each sector the way a cue's bin does: sync pattern, address,
             // XA subheader, user data, then room for the error correction.
-            let mut sectors = vec![0u8; total as usize * 2352];
-            for lba in 0..total as usize {
+            let total = image.len() / ISO_SECTOR;
+            let mut sectors = vec![0u8; total * 2352];
+            for lba in 0..total {
                 let at = lba * 2352;
                 sectors[at] = 0;
                 sectors[at + 1..at + 12].fill(0xff);
