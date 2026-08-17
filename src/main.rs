@@ -45,6 +45,7 @@ mod speed_test;
 mod text_input;
 mod utils;
 mod workfile;
+mod zx_scr;
 
 use commands::CommandPlugin;
 use commands::FilePickerSource;

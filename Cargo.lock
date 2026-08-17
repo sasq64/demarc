@@ -2943,6 +2943,7 @@ dependencies = [
  "dirs",
  "fatfs",
  "image",
+ "image-extras",
  "libc",
  "libloading 0.9.0",
  "librashader",
@@ -4391,6 +4392,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "image-extras"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60d02eb2c9ccbbab470538fce34c7bc3be7b4e59268e65a3171367b296cdb842"
+dependencies = [
+ "image",
+ "pcx",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5115,8 +5126,8 @@ dependencies = [
 
 [[package]]
 name = "musix"
-version = "0.3.5"
-source = "git+https://github.com/sasq64/musicplayer?branch=demarc-version#00562d1d6261dac6ed7f0d942a68e4e2b761f351"
+version = "0.3.6"
+source = "git+https://github.com/sasq64/musicplayer?branch=demarc-version#13743699302c96cd4787448a1e8de47f003346bd"
 dependencies = [
  "cc",
  "claxon",
@@ -5941,6 +5952,15 @@ checksum = "112d82ceb8c5bf524d9af484d4e4970c9fd5a0cc15ba14ad93dccd28873b0629"
 dependencies = [
  "digest 0.11.3",
  "hmac",
+]
+
+[[package]]
+name = "pcx"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dffa08d8cdb97709f15a9cf1bc0edd439a96e8c1d05687272b430b7a3cd8a64b"
+dependencies = [
+ "byteorder",
 ]
 
 [[package]]
@@ -7520,7 +7540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

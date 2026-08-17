@@ -41,6 +41,14 @@ image = { version = "0.25.10", default-features = false, features = [
     "jpeg",
     "gif",
     "tiff",
+    "tga",
+] }
+# PCX, which `image` itself doesn't carry. From the image-rs org, and it plugs
+# into `image` through its decoding/sniffing hooks (see `image_emu::load_image`)
+# rather than being a decoder we drive ourselves. Only the `pcx` format is
+# enabled; the rest of the crate's formats would pull in dependencies of their own.
+image-extras = { version = "0.1.1", default-features = false, features = [
+    "pcx",
 ] }
 tracing-subscriber = "0.3.23"
 ringbuf = "0.5.0"
