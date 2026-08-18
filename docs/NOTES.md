@@ -42,6 +42,17 @@ tags
 download
 
 
+## HANDLING IMAGES
+
+Incoming is DIR or SINGLE IMAGE
+DIR can be temp or not
+
+Collect images
+
+Write m3u where?
+
+
+
 
 
 

@@ -12,6 +12,7 @@ use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
 use crate::{
     Args,
     frontend::system_dir,
+    m3u::M3u,
     newsys::{utils::sort_disks, walk_dir},
     workfile::WorkFile,
 };
@@ -411,8 +412,9 @@ impl System for AmigaSystem {
                 info!("IMAGES {images:?}");
                 sort_disks(&mut images);
                 info!("IMAGES {images:?}");
-                let m3u = build_m3u(&images, file)?;
-                file.path = m3u;
+                let m3u = M3u::build(&images)?;
+                file.make_temp()?;
+                m3u.relocate(&file.parent().unwrap())?;
             } else {
                 file.path = images[0].clone();
             }

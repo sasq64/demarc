@@ -383,6 +383,8 @@ mod tests {
         test_load(&testdata.join("DEMO060A.rar"), "C64");
         test_load(&testdata.join("Maniacs of Noise Logo.t64.gz"), "C64");
         test_load(&testdata.join("cd"), "C64");
+        assert!(!testdata.join("cd").join("demo.m3u").exists());
+        test_load(&testdata.join("cd/The_Violators-CD_s1.d64"), "C64");
         test_load(&testdata.join("Skaaneland.zip"), "C64");
     }
 
@@ -391,6 +393,9 @@ mod tests {
         init_tracing();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let testdata = root.join("testdata").join("amiga");
+        test_load(&testdata.join("desert"), "Amiga");
+        assert!(!testdata.join("desert").join("demo.m3u").exists());
+        test_load(&testdata.join("desert").join("disk1.adf"), "Amiga");
         test_load(&testdata.join("rebels.adf"), "Amiga");
         test_load(&testdata.join("o2-intro"), "Amiga");
 
