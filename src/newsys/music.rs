@@ -46,7 +46,6 @@ impl System for MusicSystem {
             .unwrap_or_default();
         let name_match = self.handles_ext(path)
             || (prefix == "mod" || prefix == "mdat" || prefix == "xm" || prefix == "stk");
-        info!("{path:?} => {prefix} => {name_match}");
         name_match && music_emu::can_handle(path, &music_data_dir())
     }
 

@@ -659,7 +659,7 @@ fn run_retro(
         let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
 
         if (w != bg_w || h != bg_h) && w > 0 && h > 0 {
-            debug!("SIZE CHANGE TO {w} {h}");
+            debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
             // The texture below is replaced with a blank one, so whatever was

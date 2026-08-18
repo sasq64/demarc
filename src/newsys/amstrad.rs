@@ -33,7 +33,6 @@ impl System for AmstradSystem {
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut images = vec![];
         walk_dir(file, 4, |path, ext, _header| {
-            println!("{path:?} {ext:?}");
             if ["dsk"].contains(&ext) {
                 images.push(path.to_owned());
             }

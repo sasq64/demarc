@@ -65,7 +65,6 @@ impl System for C64System {
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut images = vec![];
         let mut prgs = vec![];
-        println!("LOAD C64: {file:?}");
 
         if self.reu {
             file.set_meta("vice_ram_expansion_unit", "16384kB");
@@ -84,15 +83,11 @@ impl System for C64System {
             // NOTE: If incoming was single file, we now switch to the parent dir
             file.path = file.temp_dir.as_ref().unwrap().path().to_owned();
         }
-        println!("{file:?} {:?}", file.path);
         walk_dir(file, 4, |path, ext, _header| {
-            println!("{path:?} {ext:?}");
             if let Some(flag) = conversions.get(ext) {
-                println!("Converting {path:?}");
                 let parent = path.parent().unwrap();
                 let _guard = cbmconvert::CwdGuard::enter(parent);
                 let code = cbmconvert::run([flag, "-N", path.to_string_lossy().as_ref()]);
-                println!("Done");
                 if code != 0 {
                     warn!("cbmconvert failed on {path:?} (exit code {code})");
                 } else {
@@ -105,7 +100,6 @@ impl System for C64System {
         })?;
 
         walk_dir(file, 4, |path, ext, header| {
-            println!("{path:?} {ext:?}");
             if ["d64", "d81"].contains(&ext) {
                 images.push(path.to_owned());
             } else if is_c64_prg(path, ext, header) {

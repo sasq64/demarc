@@ -39,7 +39,6 @@ impl System for ImageSystem {
         // over a screenshot sitting in the same directory.
         let mut images: Vec<(u8, PathBuf)> = vec![];
         walk_dir(&file.path.clone(), HEADER_LEN, |path, ext, header| {
-            println!("{path:?} {ext:?}");
             if ext == "neo" {
                 // TODO: Add NEO support
                 return Ok(());
@@ -75,7 +74,6 @@ impl System for ImageSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        println!("PATH {path:?}");
         let backend = Box::new(ImageEmu::new(&path)?);
         Ok(backend)
     }

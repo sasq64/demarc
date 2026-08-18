@@ -60,7 +60,6 @@ impl System for AtariXlSystem {
         let mut images = vec![];
         let mut exes = vec![];
         walk_dir(&file.path.clone(), HEADER_LEN, |path, ext, header| {
-            println!("{path:?} {ext:?}");
             if ["atr", "atx", "xfd", "dcm"].contains(&ext) {
                 images.push(path.to_owned());
             } else if is_atari_binary(header) {

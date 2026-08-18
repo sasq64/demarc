@@ -84,7 +84,6 @@ fn update_relative_text_size(
         for (rel, mut text_font) in &mut query {
             let size = event.height * rel.fraction;
             text_font.font_size = FontSize::Px(size);
-            info!("{} x {} => {}", event.height, rel.fraction, size);
         }
     }
 }

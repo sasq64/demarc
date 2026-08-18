@@ -605,7 +605,7 @@ impl RetroCoreDirect {
                             p = p.add(1);
                         }
                     }
-                    debug!("{:?}", self.vars);
+                    //debug!("{:?}", self.vars);
                 }
                 RETRO_ENVIRONMENT_GET_VARIABLE => {
                     let var = &mut *(data as *mut retro_variable);
@@ -745,7 +745,6 @@ impl RetroCoreDirect {
             // friends do it later) and whenever it reads them back.
             for (key, val) in settings.iter() {
                 retro_emu.set_var(key, val);
-                println!("{key} = {val}");
             }
 
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
@@ -756,7 +755,6 @@ impl RetroCoreDirect {
             retro_set_input_poll(Self::input_poll_cb);
             retro_set_input_state(Self::input_state_cb);
 
-            info!("retro_init()");
             retro_init();
 
             if let Some(game) = game {
@@ -780,7 +778,7 @@ impl RetroCoreDirect {
             retro_emu.state.sample_rate = av_info.timing.sample_rate;
             retro_emu.state.fps = av_info.timing.fps;
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
-            info!("avinfo: {:?}", av_info);
+            info!("Got avinfo: {:?}", av_info);
 
             retro_emu.lib = Some(lib);
             Ok(retro_emu)

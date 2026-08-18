@@ -145,7 +145,7 @@ impl TextInput {
                 for key in &keys {
                     if matches!(key.state, ButtonState::Pressed) {
                         let pos = b.pos;
-                        info!("{:?}", key);
+                        trace!("{:?}", key);
                         match &key.logical_key {
                             Key::Backspace => {
                                 if pos > 0 {
@@ -188,7 +188,7 @@ impl TextInput {
                             }
                             _ => {
                                 if let Some(text) = &key.text {
-                                    info!("TEXT: {text}");
+                                    trace!("TEXT: {text}");
                                     b.buffer.insert(pos, text.to_string());
                                     b.pos += 1;
                                 }
