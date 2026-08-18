@@ -253,7 +253,8 @@ fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> any
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_recv_response(Some(RESPONSE_TIMEOUT))
             .build()
-            .call()?;
+            .call()
+            .context(format!("{url:?} failed"))?;
         if response.status().is_redirection() {
             let location = response
                 .headers()

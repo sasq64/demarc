@@ -56,10 +56,11 @@ impl System for ImageSystem {
                 "scr" => zx_scr::is_screen(len),
                 _ => INDEXED_EXTENSIONS.contains(&ext) || is_ilbm || degas::is_degas(header, len),
             };
+            let n = path.components().count() as u8;
             if indexed {
-                images.push((0, path.to_owned()));
+                images.push((n, path.to_owned()));
             } else if SCREENSHOT_EXTENSIONS.contains(&ext) {
-                images.push((1, path.to_owned()));
+                images.push((10 + n, path.to_owned()));
             }
             Ok(())
         })?;

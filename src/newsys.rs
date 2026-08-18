@@ -71,6 +71,14 @@ pub fn walk_dir_find<T>(
 ) -> Result<Option<T>> {
     for f in walkdir::WalkDir::new(dir).into_iter() {
         let file = f?;
+        if file
+            .file_name()
+            .to_str()
+            .unwrap_or_default()
+            .starts_with(".")
+        {
+            continue;
+        }
         if file.path().is_file() {
             let header = read_at(file.path(), 0, header_size)?;
             if header.len() == header_size {
