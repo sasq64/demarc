@@ -816,8 +816,8 @@ fn main() {
                     task_pool_options: bevy::app::TaskPoolOptions {
                         compute: bevy::app::TaskPoolThreadAssignmentPolicy {
                             min_threads: 1,
-                            max_threads: 4,
-                            percent: 0.25,
+                            max_threads: 24,
+                            percent: 0.5,
                             on_thread_spawn: None,
                             on_thread_destroy: None,
                         },
