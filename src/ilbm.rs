@@ -808,6 +808,77 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
     })
 }
 
+/// One-line description of an IFF image's format, size and colour mode, for
+/// the frontend's info display — e.g. `Amiga IFF 320x400 (HAM8)`. Only the
+/// header chunks are read, never the BODY, so it is cheap and describes an
+/// image whichever of the two decode paths it goes down. Best effort: a file
+/// whose headers say nothing useful is just called an IFF image.
+pub fn describe(bytes: &[u8]) -> String {
+    const UNKNOWN: &str = "IFF image";
+    if bytes.len() < 12 {
+        return UNKNOWN.into();
+    }
+    let form = Chunk { data: bytes };
+    if form.id() != "FORM" {
+        return UNKNOWN.into();
+    }
+    let form_type = form
+        .data()
+        .get(0..4)
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    let name = match form_type.as_str() {
+        "ILBM" => "Amiga IFF",
+        "ACBM" => "Amiga ACBM",
+        "PBM " => "PC IFF",
+        "RGB8" => "Impulse RGB8",
+        "RGBN" => "Impulse RGBN",
+        _ => return UNKNOWN.into(),
+    };
+    let Some(header) = form
+        .find("BMHD")
+        .and_then(|c| BmHeader::parse(c.data()).ok())
+    else {
+        return name.into();
+    };
+    let width = header.width as usize;
+    let height = header.height as usize;
+    let num_planes = header.num_planes as usize;
+    let camg = form
+        .find("CAMG")
+        .and_then(|c| {
+            c.data()
+                .get(0..4)
+                .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        })
+        .unwrap_or(0);
+
+    let mut mode = match form_type.as_str() {
+        // The truecolour forms carry their depth in the form type itself; the
+        // plane count doesn't describe them.
+        "RGB8" => "24-bit".to_string(),
+        "RGBN" => "12-bit".to_string(),
+        _ if camg & CAMG_HAM != 0 => format!("HAM{num_planes}"),
+        _ if camg & CAMG_EHB != 0 => "EHB, 64 colors".to_string(),
+        // A deep ILBM's planes are colour bits rather than register bits.
+        _ if num_planes >= 24 => format!("{num_planes}-bit"),
+        _ => format!("{} colors", 1usize << num_planes),
+    };
+    // A dynamic-palette chunk is what makes such a picture what it is, so name
+    // the one in play (see [`attach_line_palettes`]).
+    if let Some(chunk) = ["SHAM", "CTBL", "BEAM", "PCHG"]
+        .into_iter()
+        .find(|id| form.find(id).is_some())
+    {
+        mode = format!("{mode}, {chunk}");
+    }
+
+    // The displayed size, not the stored one: aspect correction replicates
+    // pixels, and that is the picture the frontend shows.
+    let (xscale, yscale) = display_scale(&form_type, width, height, camg);
+    format!("{name} {}x{} ({mode})", width * xscale, height * yscale)
+}
+
 /// Decode an in-memory IFF image into an RGBA image (colours resolved, cycling
 /// not applied).
 pub fn load_from_memory(bytes: &[u8]) -> Result<RgbaImage> {
@@ -920,11 +991,13 @@ fn ham_pixel(index: usize, num_planes: usize, palette: &[[u8; 3]], prev: &mut [u
     *prev
 }
 
+#[allow(dead_code)]
 /// Load an ILBM/IFF image from a file into an RGBA image.
 pub fn load(path: impl AsRef<Path>) -> Result<RgbaImage> {
     load_from_memory(&fs::read(path.as_ref())?)
 }
 
+#[allow(dead_code)]
 /// Load an ILBM/IFF image from a file into an [`IndexedImage`] (see
 /// [`load_indexed_from_memory`]).
 pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {

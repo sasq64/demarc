@@ -132,6 +132,10 @@ pub trait Backend {
     fn is_idle(&self) -> bool {
         false
     }
+
+    fn get_info(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture
@@ -1024,6 +1028,7 @@ pub struct RetroCoreThreaded {
     /// Emulated frames stepped by the worker so far (shared with the worker
     /// thread); read by `--speed-test`.
     frames: Arc<AtomicU64>,
+    info: String,
 }
 
 struct SetupResult {
@@ -1038,15 +1043,17 @@ impl RetroCoreThreaded {
         core_path: &Path,
         system_dir: &Path,
         game: Option<&Path>,
-        settings: HashMap<String, String>,
+        meta: HashMap<String, String>,
         speed_test: bool,
     ) -> Result<Self> {
         let core_path = core_path.to_path_buf();
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
 
+        let title = meta.get("title").map_or("???".into(), |s| s.to_string());
+
         let mut latency = 3;
-        if let Some(l) = settings.get("latency") {
+        if let Some(l) = meta.get("latency") {
             latency = l.parse().unwrap_or(3);
         }
 
@@ -1063,26 +1070,22 @@ impl RetroCoreThreaded {
             // process down with a SIGSEGV that looks nothing like a stack overflow.
             .stack_size(WORKER_STACK_SIZE)
             .spawn(move || {
-                let mut core = match RetroCoreDirect::new(
-                    &core_path,
-                    &system_dir,
-                    game.as_deref(),
-                    settings,
-                ) {
-                    Ok(mut core) => {
-                        let _ = setup_tx.send(Ok(SetupResult {
-                            fps: core.fps(),
-                            width: core.get_frame_size().0,
-                            height: core.get_frame_size().1,
-                            disks: core.get_number_of_disks(),
-                        }));
-                        core
-                    }
-                    Err(e) => {
-                        let _ = setup_tx.send(Err(e.to_string()));
-                        return;
-                    }
-                };
+                let mut core =
+                    match RetroCoreDirect::new(&core_path, &system_dir, game.as_deref(), meta) {
+                        Ok(mut core) => {
+                            let _ = setup_tx.send(Ok(SetupResult {
+                                fps: core.fps(),
+                                width: core.get_frame_size().0,
+                                height: core.get_frame_size().1,
+                                disks: core.get_number_of_disks(),
+                            }));
+                            core
+                        }
+                        Err(e) => {
+                            let _ = setup_tx.send(Err(e.to_string()));
+                            return;
+                        }
+                    };
                 worker_loop(&mut core, &cmd_rx, &update_tx, &worker_frames, speed_test);
                 // `core` is dropped here, running retro_deinit on this thread.
             })?;
@@ -1110,6 +1113,7 @@ impl RetroCoreThreaded {
                 fps,
                 disk_count: disks,
                 frames,
+                info: "".into(),
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();

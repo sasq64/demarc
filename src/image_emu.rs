@@ -36,18 +36,39 @@ const CRNG_RATE_60HZ: f64 = 16384.0;
 const FRAME_RATE: f64 = 60.0;
 
 /// Decode a still image (PNG, BMP, JPEG, …) into an RGBA frame via the `image`
-/// crate. The format is sniffed from the file contents rather than trusting the
+/// crate, along with a one-line description of it for [`Backend::get_info`].
+/// The format is sniffed from the file contents rather than trusting the
 /// extension, so a mis-named file still decodes — except for TGA, which has no
-/// signature to sniff and so falls back to the extension the reader was opened with.
-fn load_image(game: &Path) -> Result<image::RgbaImage> {
+/// signature to sniff and so falls back to the extension the reader was opened
+/// with.
+fn load_image(game: &Path) -> Result<(image::RgbaImage, String)> {
     // Teaches the `image` crate to decode PCX, both by extension and by
     // signature. Idempotent and internally guarded by a `Once`, so calling it
     // per load keeps it next to the code that needs it.
     image_extras::register();
-    let img = image::ImageReader::open(game)?
-        .with_guessed_format()?
-        .decode()?;
-    Ok(img.into_rgba8())
+    let reader = image::ImageReader::open(game)?.with_guessed_format()?;
+    // Name the format while the reader still exists; decoding consumes it. The
+    // first extension of the sniffed format is its common name (PNG, JPG, …),
+    // and where nothing was sniffed the file's own extension is the best guess.
+    let name = reader
+        .format()
+        .and_then(|f| f.extensions_str().first().copied())
+        .map(str::to_uppercase)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| match crate::newsys::get_ext(game).to_uppercase() {
+            ext if ext.is_empty() => "Image".into(),
+            ext => ext,
+        });
+    let img = reader.decode()?;
+    // The depth of the decoded pixels rather than of the file: a paletted image
+    // arrives here already expanded.
+    let info = format!(
+        "{name} {}x{} ({}-bit)",
+        img.width(),
+        img.height(),
+        img.color().bits_per_pixel()
+    );
+    Ok((img.into_rgba8(), info))
 }
 
 /// Presents a single decoded image as a "frame". For colour-cycling images the
@@ -70,15 +91,20 @@ pub struct ImageEmu {
     /// Bumped by each redraw. Starts at 1 because both constructors leave a
     /// rendered frame behind. See [`Backend::frame_serial`].
     serial: u64,
+    /// What the file turned out to be, as shown by [`Backend::get_info`].
+    info: String,
 }
 
 impl ImageEmu {
     pub fn new(game: &Path) -> Result<Self> {
+        // Read once: every decoder below is offered the same bytes, and so is
+        // the format description that `get_info` hands back.
+        let bytes = fs::read(game)?;
         // A ZX screen is identified by its size alone (see [`crate::zx_scr`]),
         // which a file of another format can hit by chance — so unlike the
         // formats below it, it is only decoded when the name says so too.
-        let zx = |game: &Path| match crate::newsys::get_ext(game).as_str() {
-            "scr" => zx_scr::load_indexed(game),
+        let zx = |bytes: &[u8]| match crate::newsys::get_ext(game).as_str() {
+            "scr" => zx_scr::load_indexed_from_memory(bytes),
             ext => bail!("not a ZX Spectrum screen: extension is {ext:?}"),
         };
         // DEGAS has no signature either — its header is a resolution word
@@ -88,25 +114,27 @@ impl ImageEmu {
         // data, so it would happily turn the head of any large file into a
         // screenful of noise; the full sniff, which also weighs the palette
         // nibbles and the exact file size, is what keeps it to real pictures.
-        let degas = |game: &Path| {
-            let bytes = fs::read(game)?;
+        let degas = |bytes: &[u8]| {
             let named = matches!(
                 crate::newsys::get_ext(game).as_str(),
                 "pi1" | "pi2" | "pi3" | "pc1" | "pc2" | "pc3"
             );
-            if !named && !degas::is_degas(&bytes, bytes.len()) {
+            if !named && !degas::is_degas(bytes, bytes.len()) {
                 bail!("not a DEGAS image");
             }
-            degas::load_indexed_from_memory(&bytes)
+            degas::load_indexed_from_memory(bytes)
         };
         // Every paletted format lands in the same indexed representation, so
         // colour cycling works the same for an Amiga CRNG, a DEGAS Elite colour
         // animation and a ZX Spectrum's flashing attributes.
-        match ilbm::load_indexed(game)
-            .or_else(|_| degas(game))
-            .or_else(|_| zx(game))
+        // Each decoder is paired with its own description of the file, so the
+        // one that wins names the format `get_info` reports.
+        match ilbm::load_indexed_from_memory(&bytes)
+            .map(|img| (img, ilbm::describe(&bytes)))
+            .or_else(|_| degas(&bytes).map(|img| (img, degas::describe(&bytes))))
+            .or_else(|_| zx(&bytes).map(|img| (img, zx_scr::describe())))
         {
-            Ok(img) => {
+            Ok((img, info)) => {
                 let width = img.width as usize;
                 let height = img.height as usize;
                 // Keep only ranges that actually animate and stay within the
@@ -133,6 +161,7 @@ impl ImageEmu {
                     frames: 0,
                     last_offsets: Vec::new(),
                     serial: 1,
+                    info,
                 };
                 // Render the initial (unrotated) frame so the first presented
                 // frame is correct even before any time has elapsed.
@@ -144,7 +173,10 @@ impl ImageEmu {
                 // Not an indexed ILBM or DEGAS. Try the full IFF decoder (HAM, deep,
                 // dynamic-palette, …); if that also fails the file isn't IFF at
                 // all, so fall back to the `image` crate for PNG/BMP/JPEG.
-                let img = ilbm::load(game).or_else(|_| load_image(game))?;
+                let (img, info) = match ilbm::load_from_memory(&bytes) {
+                    Ok(img) => (img, ilbm::describe(&bytes)),
+                    Err(_) => load_image(game)?,
+                };
                 let (w, h) = img.dimensions();
                 Ok(Self {
                     width: w as usize,
@@ -160,6 +192,7 @@ impl ImageEmu {
                     frames: 0,
                     last_offsets: Vec::new(),
                     serial: 1,
+                    info,
                 })
             }
         }
@@ -264,6 +297,12 @@ impl Backend for ImageEmu {
     fn set_mouse_buttons(&mut self, _left: bool, _right: bool, _middle: bool) {}
     fn set_joypad(&mut self, _port: u32, _id: u32, _down: bool) {}
     fn skip_frames(&mut self, _frames: u32) {}
+
+    // What the picture is, rather than what it depicts: the format it was
+    // decoded from, its displayed size and its colour mode.
+    fn get_info(&self) -> Option<String> {
+        Some(self.info.clone())
+    }
 }
 
 #[cfg(test)]
@@ -275,6 +314,58 @@ mod tests {
     /// directory for its duration (see `cbmconvert::CwdGuard`).
     fn root(rel: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    }
+
+    /// [`get_info`](Backend::get_info) names the format the file turned out to
+    /// be, the size it is displayed at (aspect correction included) and its
+    /// colour mode — for every decoder the image path can end up in.
+    #[test]
+    fn get_info_names_the_format() {
+        let cases = [
+            // Indexed ILBM, HAM (which takes the fixed-RGBA path instead), a
+            // per-scanline palette, a truecolour IFF, and both DEGAS variants.
+            ("testdata/test.iff", "Amiga IFF 640x512 (256 colors)"),
+            ("testdata/iffILBM/FearFace.HAM8", "Amiga IFF 640x512 (HAM8)"),
+            (
+                "testdata/iffILBM/sham.iff",
+                "Amiga IFF 640x512 (HAM6, SHAM)",
+            ),
+            (
+                "testdata/iffILBM/Vogel_Kamera.24",
+                "Impulse RGB8 148x262 (24-bit)",
+            ),
+            ("testdata/degas/FUSE.PI1", "Atari DEGAS 320x200 (16 colors)"),
+            (
+                "testdata/degas/BOLEK3.PC1",
+                "Atari DEGAS Elite 320x200 (16 colors)",
+            ),
+        ];
+        for (file, expected) in cases {
+            let emu = ImageEmu::new(&root(file)).unwrap();
+            assert_eq!(emu.get_info().as_deref(), Some(expected), "{file}");
+        }
+
+        // A ZX screen has no header to describe, so it is always the same line.
+        let mut bytes = vec![0b1111_0000u8; 6144];
+        bytes.resize(6912, 0x80 | 0x40 | 0x06 | (1 << 3));
+        let path = std::env::temp_dir().join("image_emu_info.scr");
+        std::fs::write(&path, &bytes).unwrap();
+        let emu = ImageEmu::new(&path).unwrap();
+        assert_eq!(
+            emu.get_info().as_deref(),
+            Some("ZX Spectrum Screen 256x192")
+        );
+        let _ = std::fs::remove_file(&path);
+
+        // The `image` crate fallback names the format it sniffed, not the
+        // extension — so a PNG saved under the wrong name is still a PNG.
+        let src = image::RgbImage::new(8, 6);
+        let path = std::env::temp_dir().join("image_emu_info.bmp");
+        src.save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let emu = ImageEmu::new(&path).unwrap();
+        assert_eq!(emu.get_info().as_deref(), Some("PNG 8x6 (24-bit)"));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

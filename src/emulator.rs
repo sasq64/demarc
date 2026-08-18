@@ -463,6 +463,10 @@ impl Emulator {
     }
 
     pub fn get_info(&self) -> String {
+        if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
+            return info;
+        }
+
         let system = self.work_file.get_meta("system", "???");
         let GameInfo {
             title,

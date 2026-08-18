@@ -226,6 +226,33 @@ pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
     })
 }
 
+/// One-line description of a DEGAS image's format, size and colour mode, for
+/// the frontend's info display — e.g. `Atari DEGAS 320x200 (16 colors)`. Only
+/// the resolution word is read, so it costs nothing. Best effort: a file whose
+/// header says nothing useful is just called a DEGAS image.
+pub fn describe(bytes: &[u8]) -> String {
+    if bytes.len() < 2 {
+        return "Atari DEGAS".into();
+    }
+    let res = be16(bytes, 0);
+    // Only DEGAS Elite wrote the compressed variant, so the compression bit
+    // names the program that saved the picture.
+    let name = if res & 0x8000 != 0 {
+        "Atari DEGAS Elite"
+    } else {
+        "Atari DEGAS"
+    };
+    let Ok(mode) = mode_for(res & 0x7fff) else {
+        return name.into();
+    };
+    format!(
+        "{name} {}x{} ({} colors)",
+        mode.width,
+        mode.height * mode.yscale,
+        1 << mode.planes
+    )
+}
+
 #[allow(dead_code)]
 /// Load a DEGAS image from a file (see [`load_indexed_from_memory`]).
 pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {

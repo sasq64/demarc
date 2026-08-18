@@ -195,9 +195,17 @@ pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
     })
 }
 
+#[allow(dead_code)]
 /// Load a ZX Spectrum screen from a file (see [`load_indexed_from_memory`]).
 pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {
     load_indexed_from_memory(&fs::read(path.as_ref())?)
+}
+
+/// One-line description of the format for the frontend's info display. A `.SCR`
+/// has no header, no palette and one fixed size, so there is nothing to read
+/// out of the file: every screen is described the same way.
+pub fn describe() -> String {
+    format!("ZX Spectrum Screen {WIDTH}x{HEIGHT}")
 }
 
 /// Whether a file of this length can be a screen dump, which is as much as can

@@ -9,4 +9,4 @@
 - [ ] Fix TV-mode/Max-time
 - [ ] Wire up color cycle flag
 - [ ] Full music info
-
+- [ ] Speed up shader creation, maybe share shaders between emulators
