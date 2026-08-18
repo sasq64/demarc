@@ -44,16 +44,25 @@ use crate::{AppSettings, RenderSettings};
 /// `TextureFormat::bevy_default()`).
 const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
+/// The bundled DREZ downsample preset, relative to the `system` dir. Swapped in
+/// for the effect preset on views that minify the source (see `--downsample`).
+pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
+
 /// Which post-process backend to run, selected on the command line.
 #[derive(Resource, Clone)]
 pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect plus a plain
+    /// librashader `.slangp` filter chains: the visible effect, a plain
     /// passthrough (`stock.slangp`) used when the CRT/LCD effect is toggled
-    /// off. Absolute paths, resolved from the `system` dir (or a user-supplied
+    /// off, and an optional downsampler for views that minify the source.
+    /// Absolute paths, resolved from the `system` dir (or a user-supplied
     /// `--slangp`) in `main`.
     Slangp {
         effect: PathBuf,
         passthrough: PathBuf,
+        /// DREZ downsample preset, substituted for `effect` on views that show
+        /// the source *smaller* than its native resolution (see `--downsample`).
+        /// `None` disables the substitution.
+        downsample: Option<PathBuf>,
     },
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
@@ -305,6 +314,15 @@ fn pixel_ratio(target: UVec2, src: UVec2, uv_scale: Vec2) -> f32 {
     (uv_scale * target.as_vec2() / src.as_vec2()).min_element()
 }
 
+/// Whether the image's on-screen footprint is smaller than the source frame on
+/// either axis, i.e. the view throws source pixels away. Taken per axis rather
+/// than on the aspect-corrected magnification, because a frame stretched on one
+/// axis and squeezed on the other (a half-width Amiga screen shown at 1:1) still
+/// aliases on the squeezed one.
+fn is_minified(inter: UVec2, src: UVec2) -> bool {
+    inter.x < src.x || inter.y < src.y
+}
+
 /// The letterbox/pillarbox transform for showing a `src`-sized source in a
 /// `target`-sized viewport under `scale_mode`. The shader (and the pointer
 /// mapping in `retro.rs`) map a screen-uv to the source with
@@ -493,10 +511,26 @@ fn post_process_pass(
             let SourceChains {
                 effect,
                 passthrough,
+                downsample,
                 target,
                 frame_count,
             } = source_chains;
-            let chain = if crt_enabled { effect } else { passthrough };
+            // Minification — the on-screen image is smaller than the source on
+            // at least one axis — is the one case the CRT/LCD presets can't
+            // help with: there are no spare display pixels for a scanline or a
+            // phosphor mask to live in, and squeezing the frame down drops
+            // source pixels outright, which aliases. The DREZ preset replaces
+            // the effect there; it band-limits the frame as it resamples, so
+            // the detail that can't be shown is filtered away instead of
+            // beating against the pixel grid. Independent of `crt_enabled`:
+            // `crt_limit` has almost always switched the effect off by the time
+            // we're minifying, and this is a resampler, not a look.
+            let downsampling = is_minified(inter_size, src_size) && downsample.is_some();
+            let chain = match downsample.as_mut().filter(|_| downsampling) {
+                Some(downsample) => downsample,
+                None if crt_enabled => effect,
+                None => passthrough,
+            };
             // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
             // 24px tiles). When render_width / tile_size is an even integer, a tile
             // boundary lands exactly on the screen center, where the mask's manual
@@ -508,7 +542,7 @@ fn post_process_pass(
             // tile size near 24px whose center offset is furthest from a boundary. This
             // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
             // the seam off-center. No-op on presets without this parameter.
-            if crt_enabled {
+            if crt_enabled && !downsampling {
                 use librashader::runtime::FilterChainParameters;
                 let width = inter_size.x as f32;
                 let mut best_tile = 24i32;
@@ -635,13 +669,17 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
     IntermediateTarget { size, view }
 }
 
-/// One emulator's librashader state: its own effect and passthrough chains, its
-/// intermediate target, and its frame counter.
+/// One emulator's librashader state: its own effect, passthrough and (optional)
+/// downsample chains, its intermediate target, and its frame counter.
 struct SourceChains {
     /// The visible effect preset (CRT/LCD), selected on the command line.
     effect: FilterChain,
     /// Plain passthrough (`stock.slangp`), used when the effect is toggled off.
     passthrough: FilterChain,
+    /// DREZ downsample preset, used instead of `effect` when the view minifies
+    /// the source. `None` when `--downsample` is off (or the preset failed to
+    /// load), which falls the view back to the effect/passthrough pair.
+    downsample: Option<FilterChain>,
     /// Intermediate render target, recreated on resize.
     target: IntermediateTarget,
     /// RetroArch-style frame counter fed to the shaders (feedback/animation).
@@ -666,6 +704,8 @@ struct SlangChains {
     effect_path: PathBuf,
     /// Path of the passthrough preset (`stock.slangp`), loaded per source.
     passthrough_path: PathBuf,
+    /// Path of the DREZ downsample preset, or `None` with `--downsample` off.
+    downsample_path: Option<PathBuf>,
     /// One set of chains + target per emulator, keyed by its source image.
     sources: HashMap<AssetId<Image>, SourceChains>,
 }
@@ -703,9 +743,18 @@ impl SlangChains {
                 let passthrough = load(&self.passthrough_path)
                     .inspect_err(|err| error!("failed to load passthrough preset: {err}"))
                     .ok()?;
+                // Unlike the other two, a downsample preset that won't load is
+                // not fatal for the source: drop it and keep rendering with the
+                // effect/passthrough pair.
+                let downsample = self.downsample_path.as_ref().and_then(|path| {
+                    load(path)
+                        .inspect_err(|err| error!("failed to load downsample preset: {err}"))
+                        .ok()
+                });
                 Some(e.insert(SourceChains {
                     effect,
                     passthrough,
+                    downsample,
                     target: build_target(device, size),
                     frame_count: 0,
                 }))
@@ -723,6 +772,7 @@ fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     let ShaderPath::Slangp {
         effect,
         passthrough,
+        downsample,
     } = &*shader_path
     else {
         return;
@@ -730,6 +780,7 @@ fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     commands.insert_resource(SlangChains {
         effect_path: effect.clone(),
         passthrough_path: passthrough.clone(),
+        downsample_path: downsample.clone(),
         sources: HashMap::new(),
     });
 }
@@ -850,5 +901,58 @@ mod tests {
         let src = UVec2::new(320, 256);
         let r = ratio(UVec2::new(1280, 512), src, ScaleMode::Fixed(2.0));
         assert!((r - 2.0).abs() < 1e-4);
+    }
+
+    /// The bundled downsample preset has to parse and reference a shader that
+    /// is actually in the `system` tree — a preset that only fails at
+    /// `FilterChain::load_from_path` time shows up as a log line at runtime and
+    /// silently leaves minified views unfiltered.
+    #[test]
+    fn bundled_downsample_preset_resolves() {
+        use librashader::presets::ShaderPreset;
+        let path = crate::frontend::system_dir().join(DOWNSAMPLE_PRESET);
+        let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
+            .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
+        let pass = preset.passes.first().expect("preset should have a pass");
+        assert!(pass.path.is_file(), "missing shader {:?}", pass.path);
+    }
+
+    /// The on-screen footprint the downsample check sees for showing `src` in a
+    /// `target`-sized viewport under `mode`, with square source pixels.
+    fn footprint(target: UVec2, src: UVec2, mode: ScaleMode) -> UVec2 {
+        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
+        (target.as_vec2() * uv_scale)
+            .round()
+            .as_uvec2()
+            .max(UVec2::ONE)
+    }
+
+    #[test]
+    fn minification_is_detected_per_axis() {
+        let src = UVec2::new(320, 240);
+        // 1:1 and up are not minification — the boundary is exclusive.
+        assert!(!is_minified(
+            footprint(UVec2::new(320, 240), src, ScaleMode::Fit),
+            src
+        ));
+        assert!(!is_minified(
+            footprint(UVec2::new(1920, 1080), src, ScaleMode::Fit),
+            src
+        ));
+        // A 5x4 grid of a 1920x1080 window still shows it above 1:1 — well
+        // under the 1.5x `crt_limit`, but with nothing to filter away.
+        assert!(!is_minified(
+            footprint(UVec2::new(384, 270), src, ScaleMode::Fit),
+            src
+        ));
+        // An 8x6 grid does squeeze it below its source resolution.
+        assert!(is_minified(
+            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
+            src
+        ));
+        // A half-width Amiga frame stretched to 1:1 vertically is still
+        // squeezed horizontally, and aliases there.
+        let amiga = UVec2::new(640, 256);
+        assert!(is_minified(UVec2::new(512, 512), amiga));
     }
 }

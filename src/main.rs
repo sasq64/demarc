@@ -53,7 +53,7 @@ use commands::FilePickerSource;
 use frontend::{RetroPlugin, system_dir};
 use fuzzy_list::FuzzyListPlugin;
 use hud::HudPlugin;
-use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
+use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
 use text_input::TextInputPlugin;
@@ -257,6 +257,14 @@ struct Args {
     /// than 640x480. `0` (the default) never disables it.
     #[arg(long, default_value_t = 1.5)]
     crt_limit: f32,
+
+    /// Filter the image with the DREZ downsampler instead of the CRT/LCD
+    /// shader whenever it is shown *smaller* than its source resolution (a
+    /// small grid cell, say). Pass `--downsample false` to keep the plain
+    /// nearest-sampled minification. Only applies to the `.slangp` backends,
+    /// and is independent of the CRT on/off hotkey.
+    #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    downsample: bool,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -737,10 +745,14 @@ fn main() {
     // else a `.slangp` preset run through librashader. The slangp passthrough
     // (`stock.slangp`) is always the bundled one.
     let passthrough = system_dir().join("shaders/slangp/stock.slangp");
+    let downsample = args
+        .downsample
+        .then(|| system_dir().join(DOWNSAMPLE_PRESET));
     let shader_path = match &args.slangp {
         Some(path) => ShaderPath::Slangp {
             effect: path.clone(),
             passthrough,
+            downsample,
         },
         None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
             asset_path: shader.path().into(),
@@ -748,6 +760,7 @@ fn main() {
         None => ShaderPath::Slangp {
             effect: system_dir().join(shader.path()),
             passthrough,
+            downsample,
         },
     };
 
