@@ -107,6 +107,17 @@ nucleo-matcher = "0.3"
 regex = "1"
 unarc-rs = "0.6.1"
 walkdir = "2.5.0"
+# Luau, for the music visualization script (src/music_vis.rs). Luau rather than
+# PUC-Lua for its native `buffer` type: the script draws into a byte-addressed
+# block with `buffer.writeu32` instead of crossing the FFI once per pixel.
+# `luau` builds the interpreter from C++ source via `luau0-src`; no `vendored`
+# feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
+# `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
+mlua = { version = "0.11", features = ["luau", "send"] }
+# Hot-reload for that script. Already in the tree via bevy's `file_watcher`.
+notify = "8"
+# `get_spectrum()` for the script. Already in the tree via `rubato`.
+realfft = "3.5"
 
 [features]
 default = []

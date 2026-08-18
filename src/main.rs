@@ -35,6 +35,7 @@ mod load_error;
 mod m3u;
 mod media_keys;
 mod music_emu;
+mod music_vis;
 mod newsys;
 mod post_process;
 #[cfg(feature = "profile")]
@@ -134,6 +135,10 @@ struct Args {
     /// `--shader`.
     #[arg(long)]
     slangp: Option<PathBuf>,
+
+    /// Path to lua script used for music visualization
+    #[arg(long)]
+    lua: Option<PathBuf>,
 
     /// Only load db entries with a field matching this regex, e.g.
     /// `-I '(Demo|Intro)'`. Matched against each field of the db line on its

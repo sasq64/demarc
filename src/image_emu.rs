@@ -444,10 +444,7 @@ mod tests {
         assert_eq!(emu.get_frame_size(), (200, 100));
         assert!(emu.palette.is_empty(), "TGA took the indexed path");
         emu.with_frame(&mut |_, _, frame| {
-            let expected: Vec<u32> = src
-                .pixels()
-                .map(|px| u32::from_ne_bytes(px.0))
-                .collect();
+            let expected: Vec<u32> = src.pixels().map(|px| u32::from_ne_bytes(px.0)).collect();
             assert_eq!(frame, expected, "TGA pixels did not survive decoding");
         });
         let _ = std::fs::remove_file(&path);

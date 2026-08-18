@@ -4,9 +4,13 @@
 //! [`MusicEmu`] implements [`Backend`] so a bare music file slots into the same
 //! frontend plumbing as a libretro core: [`run`](Backend::run) renders one
 //! frame's worth of interleaved i16 stereo, which [`with_audio`](Backend::with_audio)
-//! hands to the audio sink, and each frame also draws an oscilloscope of those
-//! very samples so there is something on screen — a music file has no video of
-//! its own, and a black window looks like a failed load.
+//! hands to the audio sink, and each frame also draws a picture of those very
+//! samples so there is something on screen — a music file has no video of its
+//! own, and a black window looks like a failed load.
+//!
+//! The picture itself belongs to a Luau script (see [`crate::music_vis`]); this
+//! module keeps the audio work, including the delay line that makes what is
+//! drawn line up with what the speakers are playing.
 //!
 //! Unlike the libretro and Flash backends this one needs no worker thread: a
 //! frame of chip audio costs microseconds to render, so it is generated inline
@@ -23,8 +27,9 @@ use std::sync::OnceLock;
 
 use anyhow::{Result, anyhow};
 use musix::MusixPlayer;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
+use crate::music_vis::Visualizer;
 use crate::retro_emu::Backend;
 
 /// Rate the frontend paces [`run`](Backend::run) at. Nothing in the music
@@ -32,8 +37,8 @@ use crate::retro_emu::Backend;
 /// per call, and so how often the scope is redrawn.
 const FRAME_RATE: f64 = 60.0;
 
-/// Size of the oscilloscope frame. 4:3 to match the machines this music came
-/// from, and small enough that clearing and redrawing it every frame costs
+/// Size of the frame handed to the script. 4:3 to match the machines this music
+/// came from, and small enough that clearing and redrawing it every frame costs
 /// nothing next to the audio rendering.
 const WIDTH: usize = 320;
 const HEIGHT: usize = 240;
@@ -78,11 +83,24 @@ const MAX_QUEUED_AUDIO: usize = 96000;
 /// top) needs it raised. This is the knob for that.
 const SCOPE_DELAY: f64 = 0.14;
 
-const BACKGROUND: u32 = rgb(0x08, 0x08, 0x10);
-/// Baseline drawn at the vertical centre of each channel's band.
-const AXIS: u32 = rgb(0x20, 0x20, 0x30);
-const LEFT_TRACE: u32 = rgb(0x50, 0xe0, 0xa0);
-const RIGHT_TRACE: u32 = rgb(0xe0, 0x90, 0x50);
+/// What a frame is filled with when there is no script, or the script failed.
+/// Whatever went wrong is in the log; the song still plays.
+const BLANK: u32 = rgb(0, 0, 0);
+
+/// Metadata keys snapshotted for the script's `get_meta()`. `musix` only offers
+/// these through a `&mut self` call, which a `'static` Lua closure cannot hold,
+/// so they are read here and handed over through [`crate::music_vis::VisData`].
+const META_KEYS: &[&str] = &[
+    "title",
+    "sub_title",
+    "game",
+    "composer",
+    "format",
+    "channels",
+    "song",
+    "startSong",
+    "length",
+];
 
 /// Initialise `musix` exactly once per process, against the data directory that
 /// holds the bits some plugins need at runtime (UADE's players, the sc68
@@ -196,8 +214,24 @@ pub struct MusicEmu {
     /// far end of it rather than the samples just rendered, which are still
     /// queued ahead of the speakers.
     scope: Vec<i16>,
-    /// The oscilloscope image handed to the frontend.
+    /// The image handed to the frontend, drawn by [`Self::vis`].
     frame: Vec<u32>,
+    /// The script that draws [`Self::frame`]. `None` when no script was found
+    /// or it failed to load — the song still plays, the picture is just blank.
+    vis: Option<Visualizer>,
+    /// Set once a render error has been logged, so a script that throws every
+    /// frame says so once instead of sixty times a second.
+    vis_failed: bool,
+    /// Frames drawn since load, and seconds of song played. Passed to the
+    /// script for animation that is not driven by the waveform alone.
+    frame_count: u64,
+    /// Player metadata for the script's `get_meta()`, refreshed whenever the
+    /// player reports a change. See [`META_KEYS`].
+    meta: Vec<(String, String)>,
+    /// Whether [`Self::meta`] has moved since it was last handed to the script.
+    /// Metadata changes a handful of times a song; copying it across on every
+    /// frame instead would be a dozen string allocations at 60Hz for nothing.
+    meta_dirty: bool,
     /// Bumped on every redraw. See [`Backend::frame_hash`].
     serial: u64,
     /// Set once the player has stopped producing samples for long enough to
@@ -209,15 +243,29 @@ pub struct MusicEmu {
 // Safety: every player `musix::load_song` can return (`ChipPlayer`, wrapping an
 // opaque C++ player, and `FlacPlayer`) is declared `Send + Sync` upstream; only
 // the `Box<dyn MusixPlayer>` erasure loses that, since the trait itself carries
-// no bounds. `MusicEmu` adds nothing but plain buffers on top, and the frontend
-// needs the `Send + Sync` for the Bevy component that owns the backend.
+// no bounds. The frontend needs the `Send + Sync` for the Bevy component that
+// owns the backend.
+//
+// The `Visualizer` is the one field that is not a plain buffer. Its `mlua::Lua`
+// is `Send` (that is what the crate's `send` feature buys) but never `Sync`, so
+// the `Sync` impl below is only sound because nothing reaches the interpreter
+// except through `&mut self`: `run`, `skip_frames` and `reset`. A shared
+// `&MusicEmu` genuinely can exist on two threads — `Emulator::core` is read
+// through `&Emulator` in `speed_test` while `run_retro` holds it mutably
+// elsewhere — but none of the `&self` methods (`with_frame`, `frame_hash`,
+// `get_frame_size`, …) touch Lua. Keep it that way.
 unsafe impl Send for MusicEmu {}
 unsafe impl Sync for MusicEmu {}
 
 impl MusicEmu {
     /// Load `song`, with `data_dir` naming the `musix` data directory (see
-    /// [`init_musix`]).
-    pub fn new(song: &Path, data_dir: &Path) -> Result<Self> {
+    /// [`init_musix`]) and `script` the Luau file that draws the picture.
+    ///
+    /// A `script` that is `None`, missing or broken is not a load failure: the
+    /// song plays and the window stays blank, which is the same call
+    /// [`init_musix`] makes about a missing data directory. Only the song
+    /// itself failing to load is worth refusing over.
+    pub fn new(song: &Path, data_dir: &Path, script: Option<&Path>) -> Result<Self> {
         init_musix(data_dir)?;
         let file = playable_file(song)
             .ok_or_else(|| anyhow!("No music file musix can play in {}", song.display()))?;
@@ -250,7 +298,14 @@ impl MusicEmu {
             hz => hz as f64,
         };
 
-        Ok(Self::from_player(player, sample_rate, channels))
+        let mut emu = Self::from_player(player, sample_rate, channels);
+        emu.vis = script.and_then(|path| {
+            Visualizer::new(path, WIDTH, HEIGHT)
+                .inspect_err(|e| error!("No visualization: {e:#}"))
+                .ok()
+        });
+        emu.refresh_meta(META_KEYS);
+        Ok(emu)
     }
 
     fn from_player(player: Box<dyn MusixPlayer>, sample_rate: f64, channels: u32) -> Self {
@@ -265,9 +320,31 @@ impl MusicEmu {
             empty_reads: 0,
             frame_samples: Vec::new(),
             scope: Vec::new(),
-            frame: vec![BACKGROUND; WIDTH * HEIGHT],
+            frame: vec![BLANK; WIDTH * HEIGHT],
+            vis: None,
+            vis_failed: false,
+            frame_count: 0,
+            meta: Vec::new(),
+            meta_dirty: true,
             serial: 1,
             ended: false,
+        }
+    }
+
+    /// Re-read `keys` from the player into [`Self::meta`]. Called at load for
+    /// everything in [`META_KEYS`], and afterwards for whichever key the player
+    /// says has changed.
+    fn refresh_meta(&mut self, keys: &[&str]) {
+        for key in keys {
+            let Some(value) = self.player.get_meta_string(key) else {
+                continue;
+            };
+            match self.meta.iter_mut().find(|(k, _)| k == key) {
+                Some(slot) if slot.1 == value => continue,
+                Some(slot) => slot.1 = value,
+                None => self.meta.push(((*key).to_string(), value)),
+            }
+            self.meta_dirty = true;
         }
     }
 
@@ -335,10 +412,17 @@ impl MusicEmu {
         self.pending_pos += avail;
 
         // Subsong changes and streamed titles arrive as meta updates while the
-        // song plays; nothing consumes them yet, but leaving them unread lets
-        // the queue grow for the whole playback.
+        // song plays. Draining the queue is not optional — left unread it grows
+        // for the whole playback — and what comes out keeps the script's
+        // `get_meta()` current.
+        let mut changed = Vec::new();
         while let Some(what) = self.player.get_changed_meta() {
             debug!("Meta changed: {what}");
+            changed.push(what);
+        }
+        if !changed.is_empty() {
+            let keys: Vec<&str> = changed.iter().map(String::as_str).collect();
+            self.refresh_meta(&keys);
         }
 
         avail
@@ -352,7 +436,7 @@ impl MusicEmu {
 
     /// Add the frame just rendered to the scope history, dropping whatever has
     /// aged out of the delay window. Keeps one frame more than the delay
-    /// itself, which is the window [`Self::draw_scope`] reads.
+    /// itself, which is the window [`Self::scope_range`] picks out.
     fn push_scope_history(&mut self) {
         if self.scope.is_empty() {
             // A song starts with nothing yet on its way to the speakers, so the
@@ -368,55 +452,68 @@ impl MusicEmu {
         }
     }
 
-    /// Draw one frame's worth of the scope history as a two-channel
-    /// oscilloscope: left in the top half of the frame, right in the bottom.
-    /// Consecutive samples are joined by a vertical span so a fast waveform
-    /// reads as a continuous trace rather than a dotted line.
-    fn draw_scope(&mut self) {
-        self.frame.fill(BACKGROUND);
-        let band = HEIGHT / 2;
-        let half = band as i32 / 2;
-        // The window ends where playback has reached: a whole delay back from
-        // the samples just rendered. Until the history has filled — the first
-        // few frames of a song — that is simply the oldest audio there is.
+    /// The window of scope history the script should draw: one frame's worth,
+    /// ending where playback has actually reached — a whole [`SCOPE_DELAY`]
+    /// back from the samples just rendered. Until the history has filled (the
+    /// first few frames of a song) that is simply the oldest audio there is.
+    fn scope_range(&self) -> std::ops::Range<usize> {
         let width = self.frame_samples.len();
+        // Rounded to a whole stereo pair, so the window keeps left on the left.
         let start = self
             .scope
             .len()
             .saturating_sub(self.delay_samples() + width)
             & !1;
+        start..(start + width).min(self.scope.len())
+    }
 
-        for (channel, colour) in [(0usize, LEFT_TRACE), (1usize, RIGHT_TRACE)] {
-            let top = channel * band;
-            // Baseline first, so the trace draws over it.
-            for x in 0..WIDTH {
-                self.frame[(top + half as usize) * WIDTH + x] = AXIS;
-            }
+    /// Hand the current window to the script and take its picture.
+    ///
+    /// With no script — or once one has failed — the frame goes blank. It is
+    /// deliberately not the last good frame: a script erroring every frame
+    /// should look broken rather than look like a paused song.
+    fn draw_frame(&mut self) {
+        self.frame_count += 1;
+        self.serial += 1;
 
-            let pairs = width.min(self.scope.len() - start) / 2;
-            if pairs == 0 {
-                continue;
-            }
+        // Everything the script reads is gathered before the call, so the Lua
+        // closures need no access to `self` (which they could not outlive).
+        let time = self.frame_count as f64 / FRAME_RATE;
+        let sample_rate = self.sample_rate;
+        let window = self.scope_range();
+        let meta_dirty = std::mem::take(&mut self.meta_dirty);
+        let Some(vis) = &mut self.vis else {
+            self.frame.fill(BLANK);
+            return;
+        };
 
-            // One column per horizontal pixel, sampling the frame's waveform at
-            // even intervals. A frame is ~735 samples against 320 columns, so
-            // this decimates; the exact peaks matter less than the shape.
-            let mut prev: Option<i32> = None;
-            for x in 0..WIDTH {
-                let idx = start + x * pairs / WIDTH * 2 + channel;
-                let sample = self.scope[idx] as i32;
-                // i16 range -> half the band, centred on the baseline.
-                let y = half - (sample * half / i16::MAX as i32);
-                let y = y.clamp(0, band as i32 - 1);
-                let from = prev.unwrap_or(y).min(y);
-                let to = prev.unwrap_or(y).max(y);
-                for py in from..=to {
-                    self.frame[(top + py as usize) * WIDTH + x] = colour;
-                }
-                prev = Some(y);
+        {
+            let mut data = vis.data();
+            data.samples.clear();
+            data.samples.extend(
+                self.scope[window]
+                    .iter()
+                    // i16::MIN maps to just past -1.0; dividing by 32768 rather
+                    // than i16::MAX keeps the scale exact for the common case.
+                    .map(|&s| s as f32 / 32768.0),
+            );
+            data.frame_count = self.frame_count;
+            data.time = time;
+            data.sample_rate = sample_rate;
+            if meta_dirty {
+                data.meta.clone_from(&self.meta);
             }
         }
-        self.serial += 1;
+
+        if let Err(e) = vis.render(&mut self.frame) {
+            if !self.vis_failed {
+                self.vis_failed = true;
+                error!("Visualization script failed: {e:#}");
+            }
+            self.frame.fill(BLANK);
+        } else {
+            self.vis_failed = false;
+        }
     }
 }
 
@@ -424,8 +521,8 @@ impl Backend for MusicEmu {
     fn run(&mut self) -> bool {
         if self.render_frame() == 0 {
             // No audio this frame: either the player has not started yet, or
-            // the song is over. Either way the last scope stays on screen — a
-            // sudden flat line would read as a decoding fault — and the frontend
+            // the song is over. Either way the last frame stays on screen — a
+            // sudden blank would read as a decoding fault — and the frontend
             // is told about the end through `is_idle`.
             return true;
         }
@@ -438,7 +535,7 @@ impl Backend for MusicEmu {
             let excess = self.audio.len() - MAX_QUEUED_AUDIO;
             self.audio.drain(..excess);
         }
-        self.draw_scope();
+        self.draw_frame();
         true
     }
 
@@ -502,6 +599,10 @@ impl Backend for MusicEmu {
         self.pending_pos = 0;
         self.empty_reads = 0;
         self.ended = false;
+        self.frame_count = 0;
+        // A script that failed on the old position gets another chance.
+        self.vis_failed = false;
+        self.meta_dirty = true;
     }
 
     // A song has no disks, no keyboard, no joypad and no mouse.
@@ -604,6 +705,24 @@ mod tests {
             target.fill(1000);
             target.len()
         }
+    }
+
+    /// The shipped visualization script. `from_player` attaches none, and
+    /// `MusicEmu::new` only takes one if it is handed the path, so the tests
+    /// that care about pixels ask for it explicitly.
+    fn script() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("system/lua/scope.lua")
+    }
+
+    /// The colour `scope.lua` draws the left channel in. Written out through
+    /// Lua's `rgb()` and read back as native bytes, it must land on exactly
+    /// what the Rust `rgb` here produces — which makes every assertion on it
+    /// a check of the byte order too.
+    const LEFT_TRACE: u32 = rgb(0x50, 0xe0, 0xa0);
+
+    fn with_script(mut emu: MusicEmu) -> MusicEmu {
+        emu.vis = Some(Visualizer::new(&script(), WIDTH, HEIGHT).expect("shipped scope.lua"));
+        emu
     }
 
     fn fake(empty_reads: u32, always_empty: bool) -> (MusicEmu, Arc<Mutex<Vec<usize>>>) {
@@ -715,15 +834,13 @@ mod tests {
             left: frame,
             files: Vec::new(),
         };
-        let mut emu = MusicEmu::from_player(Box::new(player), 44100.0, 2);
+        let mut emu = with_script(MusicEmu::from_player(Box::new(player), 44100.0, 2));
 
         // The trace sits on the baseline while the window holds silence, and
         // jumps to the top of the band while the burst is passing through.
         let burst_on_screen = |emu: &MusicEmu| {
             let band = HEIGHT / 2;
-            emu.frame[..band * WIDTH / 2]
-                .iter()
-                .any(|&px| px == LEFT_TRACE)
+            emu.frame[..band * WIDTH / 2].contains(&LEFT_TRACE)
         };
 
         // Whole frames of delay: the window moves a frame at a time, so the
@@ -841,7 +958,7 @@ mod tests {
         assert_eq!(playable_file(&dir), Some(dir.join("b_first.mod")));
 
         // And it really loads through the directory path.
-        let mut emu = MusicEmu::new(&dir, &data_dir()).unwrap();
+        let mut emu = MusicEmu::new(&dir, &data_dir(), None).unwrap();
         assert!(emu.run());
         let mut samples = Vec::new();
         emu.with_audio(&mut |s| samples.extend_from_slice(s));
@@ -878,7 +995,7 @@ mod tests {
         std::fs::write(dir.join("readme.txt"), b"nothing to play here").unwrap();
 
         assert!(!can_handle(&dir, &data_dir()));
-        assert!(MusicEmu::new(&dir, &data_dir()).is_err());
+        assert!(MusicEmu::new(&dir, &data_dir(), None).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -892,8 +1009,8 @@ mod tests {
     #[test]
     fn a_second_sndh_loads_while_the_first_is_playing() {
         let song = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/music/Pushover.sndh");
-        let mut first = MusicEmu::new(&song, &data_dir()).expect("first SNDH");
-        let mut second = MusicEmu::new(&song, &data_dir()).expect("second SNDH");
+        let mut first = MusicEmu::new(&song, &data_dir(), None).expect("first SNDH");
+        let mut second = MusicEmu::new(&song, &data_dir(), None).expect("second SNDH");
 
         // And neither is left mute by the other's existence: tearing one down
         // must not pull the library out from under the other, either.
@@ -915,7 +1032,7 @@ mod tests {
         let song = test_song();
         assert!(can_handle(&song, &data_dir()), "musix rejected the module");
 
-        let mut emu = MusicEmu::new(&song, &data_dir()).unwrap();
+        let mut emu = MusicEmu::new(&song, &data_dir(), Some(&script())).unwrap();
         assert!(emu.sample_rate() > 0.0);
         assert_eq!(emu.get_frame_size(), (WIDTH, HEIGHT));
 
@@ -938,10 +1055,7 @@ mod tests {
         emu.with_frame(&mut |w, h, frame| {
             assert_eq!((w, h), (WIDTH, HEIGHT));
             assert_eq!(frame.len(), w * h);
-            assert!(
-                frame.iter().any(|&px| px == LEFT_TRACE),
-                "no waveform drawn"
-            );
+            assert!(frame.contains(&LEFT_TRACE), "no waveform drawn");
             first = frame.to_vec();
         });
         let hash = emu.frame_hash();
@@ -951,12 +1065,55 @@ mod tests {
         let _ = std::fs::remove_file(&song);
     }
 
+    /// A song with no script still plays. The picture is blank rather than
+    /// stale or garbage, and nothing about the audio path notices.
+    #[test]
+    fn a_song_without_a_script_still_plays() {
+        let song = test_song();
+        let mut emu = MusicEmu::new(&song, &data_dir(), None).unwrap();
+
+        assert!(emu.run());
+        let mut samples = Vec::new();
+        emu.with_audio(&mut |s| samples.extend_from_slice(s));
+        assert!(samples.iter().any(|&s| s != 0), "no audio without a script");
+
+        emu.with_frame(&mut |_, _, frame| {
+            assert!(
+                frame.iter().all(|&px| px == BLANK),
+                "something was drawn without a script"
+            );
+        });
+
+        let _ = std::fs::remove_file(&song);
+    }
+
+    /// A script that cannot be loaded is not a load failure for the song — the
+    /// same call `init_musix` makes about a missing data directory.
+    #[test]
+    fn a_broken_script_does_not_stop_the_song() {
+        let song = test_song();
+        let missing = std::env::temp_dir().join("music_emu_no_such_script.lua");
+        let _ = std::fs::remove_file(&missing);
+
+        let mut emu = MusicEmu::new(&song, &data_dir(), Some(&missing))
+            .expect("a missing script must not fail the load");
+        assert!(emu.run());
+        let mut samples = Vec::new();
+        emu.with_audio(&mut |s| samples.extend_from_slice(s));
+        assert!(
+            samples.iter().any(|&s| s != 0),
+            "a bad script muted the song"
+        );
+
+        let _ = std::fs::remove_file(&song);
+    }
+
     /// The frame length must average out to the sample rate over time, however
     /// the per-frame count rounds.
     #[test]
     fn frame_lengths_track_the_sample_rate() {
         let song = test_song();
-        let mut emu = MusicEmu::new(&song, &data_dir()).unwrap();
+        let mut emu = MusicEmu::new(&song, &data_dir(), None).unwrap();
 
         for _ in 0..FRAME_RATE as usize {
             emu.run();

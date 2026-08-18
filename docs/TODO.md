@@ -8,3 +8,5 @@
 - [ ] LZX packed files
 - [ ] Fix TV-mode/Max-time
 - [ ] Wire up color cycle flag
+- [ ] Full music info
+

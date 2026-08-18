@@ -221,7 +221,7 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
-            Box::new(MusicSystem {}),
+            Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
         ]
     }

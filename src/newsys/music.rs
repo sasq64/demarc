@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tracing::info;
 
+use crate::Args;
 use crate::music_emu::{self, MusicEmu};
 use crate::retro_emu::Backend;
 use crate::system_dir;
@@ -17,7 +18,42 @@ fn music_data_dir() -> PathBuf {
     system_dir().join("musix")
 }
 
-pub struct MusicSystem {}
+/// The Luau script that draws the picture for a song (see [`crate::music_vis`]).
+///
+/// `--lua` wins outright, and is taken as given rather than probed for: someone
+/// who named a script on the command line wants to hear about a typo in it (as
+/// a load error from the visualizer) rather than to silently get the default.
+/// Failing that, a copy in the user's config directory wins, so a visualization
+/// can be worked on without touching the installed files; otherwise the one
+/// shipped in `system/` is used. `build.rs` packs that whole directory into the
+/// embedded `system.zip`, so the default is always there — but debug builds
+/// read the repo's `system/` in place, which is what makes editing it
+/// worthwhile.
+fn vis_script(from_args: Option<&Path>) -> Option<PathBuf> {
+    if let Some(chosen) = from_args {
+        return Some(chosen.to_path_buf());
+    }
+    if let Some(user) = dirs::config_dir().map(|d| d.join("demarc/scope.lua"))
+        && user.is_file()
+    {
+        return Some(user);
+    }
+    let bundled = system_dir().join("lua/scope.lua");
+    bundled.is_file().then_some(bundled)
+}
+
+pub struct MusicSystem {
+    /// `--lua`, if it was given.
+    lua: Option<PathBuf>,
+}
+
+impl MusicSystem {
+    pub fn new(args: &Args) -> Self {
+        Self {
+            lua: args.lua.clone(),
+        }
+    }
+}
 
 impl System for MusicSystem {
     // Only allow these extensions to avoid crashes
@@ -51,6 +87,10 @@ impl System for MusicSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         info!("MUSIC CREATE {path:?}");
-        Ok(Box::new(MusicEmu::new(path, &music_data_dir())?))
+        Ok(Box::new(MusicEmu::new(
+            path,
+            &music_data_dir(),
+            vis_script(self.lua.as_deref()).as_deref(),
+        )?))
     }
 }
