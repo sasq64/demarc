@@ -19,7 +19,7 @@ use crate::system_dir;
 use crate::workfile::WorkFile;
 use crate::{Args, libloader};
 use amiga::AmigaSystem;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use c64::C64System;
 use gameboy::GameboySystem;
 use std::collections::HashMap;
@@ -47,6 +47,37 @@ mod playstation;
 mod sinclair;
 mod snes;
 mod tic80;
+
+pub fn walk_dir(
+    dir: &Path,
+    header_size: usize,
+    mut call: impl FnMut(&Path, &str, &[u8]) -> Result<()>,
+) -> Result<()> {
+    for f in walkdir::WalkDir::new(dir).into_iter() {
+        let file = f?;
+        if file.path().is_file() {
+            let header = read_at(file.path(), 0, header_size)?;
+            if header.len() == header_size {
+                let ext = file
+                    .path()
+                    .extension()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                call(file.path(), &ext, &header)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn get_ext(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for
 /// a particular (or series of) computer or console.
@@ -89,38 +120,6 @@ mod tic80;
 ///
 /// System adds default meta that has not been set, and adds meta depending on content.
 ///
-///
-pub fn walk_dir(
-    dir: &Path,
-    header_size: usize,
-    mut call: impl FnMut(&Path, &str, &[u8]) -> Result<()>,
-) -> Result<()> {
-    for f in walkdir::WalkDir::new(dir).into_iter() {
-        let file = f?;
-        if file.path().is_file() {
-            // Short files are still worth handing to the callback, so take
-            // whatever is there rather than demanding a full header.
-            let header = read_at(file.path(), 0, header_size)?;
-            let ext = file
-                .path()
-                .extension()
-                .unwrap_or_default()
-                .to_str()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            call(file.path(), &ext, &header)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn get_ext(path: &Path) -> String {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-}
-
 /// `Send + Sync` so that `Box<dyn System>` — and with it [`NewSys`] — can be
 /// held by a Bevy resource. All implementors are plain data, so this costs
 /// nothing, and it keeps this module free of any bevy dependency.
@@ -183,7 +182,7 @@ pub trait System: Send + Sync {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let core = libloader::get_libretro(self.core_name()).unwrap();
+        let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
             system_dir(),
@@ -241,7 +240,7 @@ impl NewSys {
     }
 
     pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
-        debug!("LOAD_FILE: {path:?}");
+        debug!("Trying to load: {path:?}");
         let mut wf = WorkFile::new(path);
         wf.meta = meta.clone();
         for (key, val) in &self.meta {
@@ -252,18 +251,19 @@ impl NewSys {
                 let meta = wf.meta;
                 wf = WorkFile::new_dir()?;
                 wf.meta = meta;
-                debug!("UNPACK {path:?} to {wf:?}");
+                debug!("Unpacking {path:?} to {wf:?}");
                 unpack_into(path, &wf)?;
                 walk_dir(&wf, 4, |f, _, _| {
                     if is_archive(f)? {
-                        info!("Double packed");
+                        debug!("File was double packed");
                         unpack_into(f, &wf)?;
                     }
                     Ok(())
                 })?;
             } else if has_extension(path, "m3u") {
+                // TODO: We should not collect m3us
                 let m3u = M3u::from_file(path)?;
-                wf.path = path.parent().unwrap().to_owned();
+                wf.path = path.parent().unwrap_or(path).to_owned();
                 for (key, value) in m3u.tags {
                     wf.meta.insert(key, value);
                 }
@@ -298,8 +298,8 @@ impl NewSys {
             }
         }
         for sys in &self.systems {
-            debug!("Try to load {:?} with {}", path, sys.name());
-            if sys.load(&mut wf).unwrap() {
+            if sys.load(&mut wf)? {
+                debug!("System {} can load {:?}", sys.name(), path);
                 // Whichever system claimed the release, a cue's MP3 audio tracks
                 // are unplayable to every core here — they read the compressed
                 // bytes straight through as PCM — so the sheet is rewritten with
@@ -338,7 +338,11 @@ impl NewSys {
                     format!("{t}  {}\n", f.file_name().to_string_lossy())
                 })
         } else {
-            wf.path.file_name().unwrap().to_string_lossy().to_string()
+            wf.path
+                .file_name()
+                .context("Path has no filename")?
+                .to_string_lossy()
+                .to_string()
         };
         bail!("No system recognized for: {dir_list}");
     }

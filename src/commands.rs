@@ -169,7 +169,6 @@ fn handle_textlist(
     // `settings.files`, independent of the current search filter.
     for &FuzzyListSelect { id, item, .. } in file_reader.read() {
         if id == 1 {
-            debug!("START {item}");
             if let Some(e) = settings.file_list.take() {
                 commands.entity(e).despawn();
             }
@@ -396,7 +395,7 @@ fn handle_cmd(
     let count = emus.iter().count();
     let multi = count > 1;
     for cmd in cmds.read() {
-        debug!("CMD: {:?}", cmd.0);
+        debug!("Received command: {:?}", cmd.0);
         match cmd.0 {
             Cmd::ToggleCrt => {
                 render.crt_effect = !render.crt_effect;
@@ -479,7 +478,6 @@ fn handle_cmd(
                     settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
                 let size = window.resolution.size();
-                info!("SIZE: {size} / {}", window.resolution.physical_size());
 
                 let count = (size.y / 50.0) as usize;
                 let width = size.y;
@@ -558,7 +556,7 @@ fn handle_cmd(
                         }
                         let disk_no = emu.disk_no;
                         emu.set_disk(disk_no);
-                        let floppy = false; //emu.work_file.system_type == SystemType::C64;
+                        let floppy = emu.work_file.get_meta("system", "").starts_with("C64");
                         let d = emu.disk_no + 1;
 
                         writer.write(SetHudText {
@@ -582,12 +580,12 @@ fn handle_cmd(
                                 ..Default::default()
                             });
                         } else {
-                            // writer.write(SetHudText {
-                            //     text: get_info_text(&emu.work_file),
-                            //     delay: Duration::from_secs(0),
-                            //     duration: Duration::from_secs(5000),
-                            //     location: HudLocation::InfoText,
-                            // });
+                            writer.write(SetHudText {
+                                text: emu.get_info(),
+                                delay: Duration::from_secs(0),
+                                duration: Duration::from_secs(5000),
+                                location: HudLocation::InfoText,
+                            });
                         }
                         emu.show_info = !emu.show_info;
                     }

@@ -648,6 +648,9 @@ impl Emulator {
             self.input_mode = InputMode::Joystick1;
         }
 
+        self.is_image = res.system.name().starts_with("Image");
+        self.paused = self.is_image;
+
         self.core = Some(core);
         self.work_file = res.work_file;
 
@@ -667,7 +670,7 @@ impl Emulator {
         core.skip_frames(frames);
         info!("SKIPPING");
         self.skipping = true;
-        self.paused = false;
+        self.paused = self.is_image;
     }
 
     pub fn run(&mut self, time: &Time) -> bool {

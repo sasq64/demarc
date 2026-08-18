@@ -250,7 +250,7 @@ struct Args {
     /// Turn the CRT filter off when the image is magnified less than this
     /// factor, e.g. `2` disables it whenever a 320x240 screen is shown smaller
     /// than 640x480. `0` (the default) never disables it.
-    #[arg(long, default_value_t = 0.0)]
+    #[arg(long, default_value_t = 1.5)]
     crt_limit: f32,
 }
 
