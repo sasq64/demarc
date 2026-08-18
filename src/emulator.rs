@@ -458,12 +458,7 @@ impl Emulator {
     }
 
     pub fn get_info(&self) -> String {
-        let system = self
-            .work_file
-            .meta
-            .get("system")
-            .cloned()
-            .unwrap_or("???".to_string());
+        let system = self.work_file.get_meta("system", "???");
         let GameInfo {
             title,
             group,

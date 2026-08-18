@@ -7,12 +7,12 @@ use std::{
 };
 use tracing::{debug, info};
 
-use super::utils::{build_m3u, copy_dir_all, has_any_extension, read_header};
+use super::utils::{copy_dir_all, has_any_extension, read_header};
 
 use crate::{
     Args,
     frontend::system_dir,
-    newsys::{utils::sort_disks, walk_dir},
+    newsys::{collect_disk_images, walk_dir},
     workfile::WorkFile,
 };
 
@@ -407,15 +407,7 @@ impl System for AmigaSystem {
         }
 
         if !images.is_empty() {
-            if images.len() > 1 {
-                info!("IMAGES {images:?}");
-                sort_disks(&mut images);
-                info!("IMAGES {images:?}");
-                let m3u = build_m3u(&images, file)?;
-                file.path = m3u;
-            } else {
-                file.path = images[0].clone();
-            }
+            collect_disk_images(file, &mut images)?;
         } else if let Some(exe) = exes.first().or_else(|| broken.first()) {
             file.path = exe.clone();
             handle_exe(file, copy_all)?;

@@ -10,12 +10,12 @@ use tempfile::TempDir;
 use crate::utils::copy_dir_all;
 
 #[derive(Default)]
-/// Used to pass around files that can be temporary.
+/// Used to pass around files or dirs that can be temporary.
 pub struct WorkFile {
     pub path: PathBuf,
     // If Some, must be parent of PathBuf or PathBuf
     pub temp_dir: Option<TempDir>,
-    pub meta: HashMap<String, String>,
+    meta: HashMap<String, String>,
 }
 
 impl WorkFile {
@@ -27,12 +27,29 @@ impl WorkFile {
         }
     }
 
+    pub fn new_with_meta(path: impl Into<PathBuf>, meta: HashMap<String, String>) -> Self {
+        Self {
+            path: path.into(),
+            temp_dir: None,
+            meta,
+        }
+    }
+
     pub fn new_dir() -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
         Ok(Self {
             path: temp_dir.path().into(),
             temp_dir: Some(temp_dir),
             meta: HashMap::new(),
+        })
+    }
+
+    pub fn new_dir_with_meta(meta: HashMap<String, String>) -> Result<Self> {
+        let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
+        Ok(Self {
+            path: temp_dir.path().into(),
+            temp_dir: Some(temp_dir),
+            meta,
         })
     }
 
@@ -48,6 +65,10 @@ impl WorkFile {
         self.meta.get(arg).map_or(def.into(), |s| s.to_string())
     }
 
+    pub fn get_all_meta(&self) -> HashMap<String, String> {
+        self.meta.clone()
+    }
+
     pub fn has_tag(&self, tag: &str) -> bool {
         self.meta
             .get("tags")
@@ -57,6 +78,10 @@ impl WorkFile {
 
     pub fn as_path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn temp_dir(&self) -> Option<PathBuf> {
+        self.temp_dir.as_ref().map(|d| d.path().to_owned())
     }
 
     // Make sure 'path' is in a temp dir and can be modified

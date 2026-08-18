@@ -13,7 +13,7 @@ use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
 use crate::newsys::snes::SNESSystem;
 use crate::newsys::tic80::Tic80System;
-use crate::newsys::utils::{has_extension, read_at};
+use crate::newsys::utils::{has_extension, read_at, sort_disks};
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
 use crate::workfile::WorkFile;
@@ -48,11 +48,27 @@ mod sinclair;
 mod snes;
 mod tic80;
 
+/// Walk `dir`, calling `call` with the path, lowercased extension and the
+/// first `header_size` bytes of every file big enough to have them.
 pub fn walk_dir(
     dir: &Path,
     header_size: usize,
     mut call: impl FnMut(&Path, &str, &[u8]) -> Result<()>,
 ) -> Result<()> {
+    walk_dir_find(dir, header_size, |path, ext, header| {
+        call(path, ext, header)?;
+        Ok(None::<()>)
+    })?;
+    Ok(())
+}
+
+/// [`walk_dir`] for searches: the first `Some` the callback returns ends the
+/// walk and comes back as the result.
+pub fn walk_dir_find<T>(
+    dir: &Path,
+    header_size: usize,
+    mut call: impl FnMut(&Path, &str, &[u8]) -> Result<Option<T>>,
+) -> Result<Option<T>> {
     for f in walkdir::WalkDir::new(dir).into_iter() {
         let file = f?;
         if file.path().is_file() {
@@ -65,8 +81,33 @@ pub fn walk_dir(
                     .to_str()
                     .unwrap_or_default()
                     .to_ascii_lowercase();
-                call(file.path(), &ext, &header)?;
+                if let Some(res) = call(file.path(), &ext, &header)? {
+                    return Ok(Some(res));
+                }
             }
+        }
+    }
+    Ok(None)
+}
+
+pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Result<()> {
+    if !images.is_empty() {
+        if images.len() > 1 {
+            info!("IMAGES {images:?}");
+            sort_disks(images);
+            info!("IMAGES {images:?}");
+            // images can be in a non-writeable or temp dir
+            let m3u = M3u::build(&images)?;
+            file.make_temp()?;
+            let demo_m3u = file
+                .temp_dir()
+                .context("Should now be in tempdir")?
+                .join("demo.m3u");
+            info!("m3u: {demo_m3u:?}");
+            m3u.relocate(&demo_m3u)?;
+            file.path = demo_m3u;
+        } else {
+            file.path = images[0].clone();
         }
     }
     Ok(())
@@ -187,7 +228,7 @@ pub trait System: Send + Sync {
             &core,
             system_dir(),
             Some(path),
-            path.meta.clone(),
+            path.get_all_meta(),
             false,
         )?))
     }
@@ -241,16 +282,13 @@ impl NewSys {
 
     pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
         debug!("Trying to load: {path:?}");
-        let mut wf = WorkFile::new(path);
-        wf.meta = meta.clone();
+        let mut wf = WorkFile::new_with_meta(path, meta.clone());
         for (key, val) in &self.meta {
-            wf.meta.insert(key.into(), val.into());
+            wf.set_meta(key, val);
         }
         if path.is_file() {
             if is_archive(path)? {
-                let meta = wf.meta;
-                wf = WorkFile::new_dir()?;
-                wf.meta = meta;
+                wf = WorkFile::new_dir_with_meta(meta.clone())?;
                 debug!("Unpacking {path:?} to {wf:?}");
                 unpack_into(path, &wf)?;
                 walk_dir(&wf, 4, |f, _, _| {
@@ -265,7 +303,7 @@ impl NewSys {
                 let m3u = M3u::from_file(path)?;
                 wf.path = path.parent().unwrap_or(path).to_owned();
                 for (key, value) in m3u.tags {
-                    wf.meta.insert(key, value);
+                    wf.set_meta(&key, value);
                 }
             }
         }
@@ -322,7 +360,7 @@ impl NewSys {
                 }
                 wf.set_meta("system", sys.name());
 
-                debug!("Creating {:?} with meta {:?}", &wf.path, wf.meta);
+                debug!("Creating {:?} with meta {:?}", &wf.path, wf.get_all_meta());
                 return Ok(LoadResult {
                     backend: sys.create(&wf)?,
                     work_file: wf,
@@ -368,7 +406,7 @@ mod tests {
         let s = NewSys::new(&args);
 
         let mut result = s.load_file(path, &HashMap::new()).unwrap();
-        println!("{:?}", result.work_file.meta);
+        println!("{:?}", result.work_file.get_all_meta());
         assert_eq!(result.system.name(), name);
         result.backend.run();
         result.work_file
@@ -383,6 +421,8 @@ mod tests {
         test_load(&testdata.join("DEMO060A.rar"), "C64");
         test_load(&testdata.join("Maniacs of Noise Logo.t64.gz"), "C64");
         test_load(&testdata.join("cd"), "C64");
+        assert!(!testdata.join("cd").join("demo.m3u").exists());
+        test_load(&testdata.join("cd/The_Violators-CD_s1.d64"), "C64");
         test_load(&testdata.join("Skaaneland.zip"), "C64");
     }
 
@@ -391,20 +431,24 @@ mod tests {
         init_tracing();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let testdata = root.join("testdata").join("amiga");
+        test_load(&testdata.join("desert"), "Amiga");
+        assert!(!testdata.join("desert").join("demo.m3u").exists());
+        test_load(&testdata.join("desert").join("disk1.adf"), "Amiga");
+        test_load(&testdata.join("desert.zip"), "Amiga");
         test_load(&testdata.join("rebels.adf"), "Amiga");
         test_load(&testdata.join("o2-intro"), "Amiga");
 
         // A plain executable is booted from a generated startup-sequence on a
         // stock A500, not through WHDLoad.
         let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-        assert!(work_file.meta.get("puae_use_whdload") == Some(&"disabled".to_string()));
-        assert!(work_file.meta.get("puae_model") == Some(&"A500".to_string()));
+        assert!(work_file.get_meta("puae_use_whdload", "") == "disabled");
+        assert!(work_file.get_meta("puae_model", "") == "A500");
 
         // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
         // needs an A1200.
         let work_file = test_load(&testdata.join("nexus7"), "Amiga");
-        assert!(work_file.meta.get("puae_use_whdload") == Some(&"enabled".to_string()));
-        assert!(work_file.meta.get("puae_model") == Some(&"A1200".to_string()));
+        assert!(work_file.get_meta("puae_use_whdload", "") == "enabled");
+        assert!(work_file.get_meta("puae_model", "") == "A1200");
     }
     /// A bare music file has no system of its own, so it falls through every
     /// other system to [`MusicSystem`] — both on its own and as the only

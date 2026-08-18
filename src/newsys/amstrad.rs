@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use super::System;
-use super::utils::build_m3u;
 use crate::{
-    newsys::{utils::sort_disks, walk_dir},
+    newsys::{collect_disk_images, walk_dir},
     workfile::WorkFile,
 };
 use anyhow::Result;
@@ -40,13 +39,7 @@ impl System for AmstradSystem {
         })?;
 
         if !images.is_empty() {
-            if images.len() > 1 {
-                sort_disks(&mut images);
-                let m3u = build_m3u(&images, file)?;
-                file.path = m3u;
-            } else {
-                file.path = images[0].clone();
-            }
+            collect_disk_images(file, &mut images)?;
         } else {
             return Ok(false);
         }

@@ -2,11 +2,9 @@ use anyhow::Result;
 use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
-use super::utils::build_m3u;
-
 use crate::{
     Args, cbmconvert,
-    newsys::{utils::sort_disks, walk_dir},
+    newsys::{collect_disk_images, walk_dir},
     workfile::WorkFile,
 };
 
@@ -79,6 +77,7 @@ impl System for C64System {
             Ok(())
         })?;
         if need_conv {
+            // NOTE:
             file.make_temp()?;
             // NOTE: If incoming was single file, we now switch to the parent dir
             file.path = file.temp_dir.as_ref().unwrap().path().to_owned();
@@ -113,9 +112,7 @@ impl System for C64System {
                 file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
                 file.set_meta("vice_autostart", "disabled");
             }
-            sort_disks(&mut images);
-            let m3u = build_m3u(&images, file)?;
-            file.path = m3u;
+            collect_disk_images(file, &mut images)?;
         } else if !prgs.is_empty() {
             file.path = prgs[0].clone();
         } else {
