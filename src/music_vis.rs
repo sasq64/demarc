@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow};
-use mlua::{AnyUserData, Buffer, Function, Lua, LuaOptions, StdLib, Table, UserData};
+use mlua::{AnyUserData, Buffer, Function, Lua, LuaOptions, StdLib, Table, UserData, Variadic};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use realfft::num_complex::Complex32;
 use realfft::{RealFftPlanner, RealToComplex};
@@ -425,7 +425,59 @@ fn register(lua: &Lua, width: usize, height: usize, shared: &Arc<Mutex<VisData>>
         lua.create_function(move |_, ()| Ok(data.lock().unwrap_or_else(|e| e.into_inner()).time))?,
     )?;
 
+    register_noise(lua)?;
+
     register_drawing(lua, width, height)
+}
+
+/// `noise([...])`: a pseudo-random number in `0.0..1.0`.
+///
+/// Called with no arguments it draws from a stream, so every call is a fresh
+/// value -- sparks, dust, jitter. Called with numbers it is a *hash* of them:
+/// the same arguments always give the same result, which is what a script wants
+/// for anything that must stay put from one frame to the next (the brightness
+/// of a star at `noise(x, y)`, the phase of a bar at `noise(bin)`) and which a
+/// stream cannot give without storing a number per thing.
+///
+/// Luau's `math.random` is registered too and is the better tool for a plain
+/// die roll; this exists for the hashed form, and for the fact that the stream
+/// survives nothing -- a reload starts a new Lua state either way.
+fn register_noise(lua: &Lua) -> Result<()> {
+    /// SplitMix64's finalizer: enough avalanche that neighbouring pixel
+    /// coordinates give unrelated values, which is the whole point of hashing
+    /// them rather than scaling them.
+    fn mix(mut x: u64) -> u64 {
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    // The stream's state. Arbitrary but fixed, so a script that looks right
+    // once looks right again.
+    let state = Arc::new(Mutex::new(0x853c_49e6_748f_ea9bu64));
+    lua.globals().set(
+        "noise",
+        lua.create_function(move |_, args: Variadic<f64>| {
+            let bits = if args.is_empty() {
+                let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+                *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                mix(*state)
+            } else {
+                // Folded rather than summed so that `noise(1, 2)` and
+                // `noise(2, 1)` differ, and `+ 0.0` so that a coordinate that
+                // came out as -0.0 hashes like the 0.0 it equals.
+                args.iter().fold(0xcbf2_9ce4_8422_2325, |acc, &v| {
+                    mix(acc ^ (v + 0.0).to_bits())
+                })
+            };
+            // The top 53 bits are the ones a double can hold exactly, so this
+            // is every representable value in [0, 1) with equal probability.
+            Ok((bits >> 11) as f64 / (1u64 << 53) as f64)
+        })?,
+    )?;
+    Ok(())
 }
 
 /// A bitmap font in the headerless "raw" format Amiga font packs ship in: 256
@@ -452,10 +504,10 @@ const FONT_WIDTH: usize = 8;
 /// means a visualization draws text whether or not the system directory
 /// survived being moved. See src/fonts/README for provenance.
 const FONTS: &[(&str, &[u8])] = &[
-    // Kickstart 1.x topaz.font -- the one on a stock A500.
-    ("topaz", include_bytes!("fonts/topaz.raw")),
     // Kickstart 2.x/3.x topaz.font, thinner and squarer.
-    ("topaz1200", include_bytes!("fonts/topaz1200.raw")),
+    ("topaz", include_bytes!("fonts/topaz1200.raw")),
+    ("potnoodle", include_bytes!("fonts/pot_noodle.raw")),
+    ("microknight", include_bytes!("fonts/microknight.raw")),
 ];
 
 impl Font {
@@ -1124,6 +1176,45 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// `noise()` stays in range, hands back something different every call,
+    /// and -- given arguments -- the *same* thing every time, which is what a
+    /// script placing stars relies on.
+    #[test]
+    fn noise_is_in_range_and_hashes_its_arguments() {
+        let (mut v, path) = vis(
+            "noise",
+            r#"
+            function Render(buf)
+                local lo, hi, distinct = 1, 0, {}
+                for i = 1, 1000 do
+                    local n = noise()
+                    assert(n >= 0 and n < 1, "out of range: " .. tostring(n))
+                    lo, hi = math.min(lo, n), math.max(hi, n)
+                    distinct[n] = true
+                end
+                local count = 0
+                for _ in pairs(distinct) do count = count + 1 end
+                assert(count > 990, "the stream repeats itself: " .. count)
+                assert(lo < 0.05 and hi > 0.95, "not spread over 0..1")
+
+                assert(noise(1, 2) == noise(1, 2), "hashed noise is not stable")
+                assert(noise(1, 2) ~= noise(2, 1), "argument order is ignored")
+                assert(noise(3) ~= noise(4), "neighbours hash the same")
+                assert(noise(0) == noise(-0), "-0 and 0 hash differently")
+                clear(buf, rgb(math.floor(noise(7) * 255), 0, 0))
+            end
+            "#,
+        )
+        .unwrap();
+        let mut frame = vec![0u32; 4 * 2];
+        v.render(&mut frame).unwrap();
+        // Frame to frame the hashed value is the same, so the colour is too.
+        let first = frame[0];
+        v.render(&mut frame).unwrap();
+        assert_eq!(frame[0], first, "noise(7) changed between frames");
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// Every embedded font is the shape the drawing code assumes.
     #[test]
     fn the_embedded_fonts_decode() {
@@ -1137,5 +1228,4 @@ mod tests {
             );
         }
     }
-
 }
