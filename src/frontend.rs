@@ -13,7 +13,7 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
-use crate::emulator::{Emulator, LoadStatus};
+use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
 use crate::post_process::PostProcess;
@@ -478,9 +478,7 @@ fn run_retro(
         }
     }
 
-    if settings.load_delay > 0 {
-        settings.load_delay -= 1;
-    }
+    let now = time.elapsed_secs_f64();
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         // Read-only probe. The mutable borrow that the frame copy needs is taken
@@ -520,7 +518,7 @@ fn run_retro(
         // Bound rather than matched in place: the scrutinee's borrows of `emu`
         // and `settings` would otherwise last the whole match, which the arms
         // below write to.
-        if settings.load_delay == 0 {
+        if now >= emu.load_delay_until {
             let status = emu.update_load(&time, &settings.system);
             match status {
                 LoadStatus::Idle | LoadStatus::Pending => {}
@@ -544,7 +542,7 @@ fn run_retro(
                         });
                     }
                     error!("{e:?}");
-                    settings.load_delay = 1;
+                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
                     continue;
                 }
                 LoadStatus::Done { result: Ok(()), .. } => {
@@ -558,7 +556,7 @@ fn run_retro(
                             location: HudLocation::InfoText,
                         });
                     }
-                    settings.load_delay = 5;
+                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
                     continue;
                 }
             }
@@ -573,10 +571,9 @@ fn run_retro(
             });
         }
 
-        let et = time.elapsed_secs_f64();
         if let Some(mt) = emu.max_time
-            && et > emu.start_time + (mt as f64)
-            && (et - settings.last_draw) > 1.0
+            && now > emu.start_time + (mt as f64)
+            && (now - settings.last_draw) > 1.0
         {
             emu.run_next = true;
         };

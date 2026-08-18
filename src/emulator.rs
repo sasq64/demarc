@@ -124,7 +124,12 @@ pub struct Emulator {
     pub title_info: GameInfo,
     /// Download in flight for the next game, driven by [`Emulator::update_load`].
     pending_load: Option<PendingLoad>,
+    pub load_delay_until: f64,
 }
+
+/// How long [`Emulator::load_delay_until`] holds off the next poll. Roughly the
+/// handful of frames this used to be at 60Hz, but no longer tied to frame rate.
+pub const LOAD_SETTLE_SECS: f64 = 0.1;
 
 const AUDIO_BUF_MIN: usize = 3000;
 const AUDIO_BUF_MAX: usize = 15000;
