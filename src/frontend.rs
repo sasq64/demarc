@@ -4,7 +4,6 @@ use std::time::Duration;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
-    camera::Viewport,
     camera::visibility::RenderLayers,
     image::Image,
     input::mouse::AccumulatedMouseMotion,
@@ -16,7 +15,7 @@ use crate::commands::{CmdMessage, check_hotkey};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::{HudLocation, SetHudText, TextList};
-use crate::post_process::PostProcess;
+use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
@@ -69,10 +68,9 @@ fn resolve_system_dir() -> PathBuf {
     system
 }
 
-/// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
-/// expressed in normalized `[0, 1]` coordinates.
-/// [`update_grid_viewports`] keeps the camera's viewport sized to
-/// this cell as the window changes.
+/// Marks an emulator view as occupying a sub-rectangle of the window,
+/// expressed in normalized `[0, 1]` coordinates. [`update_view_rects`] keeps
+/// the view's [`ViewRect`] sized to this cell as the window changes.
 #[derive(Component, Clone, Copy)]
 struct GridCell {
     /// Top-left corner as a fraction of the window size.
@@ -81,10 +79,10 @@ struct GridCell {
     size: Vec2,
 }
 
-/// Identifies an emulator's on-screen camera and its stable index, so the
+/// Identifies an emulator's on-screen view and its stable index, so the
 /// "current" emulator (cycled with RightAlt+Tab) can be looked up and its
 /// output area outlined. The rect itself comes from the optional [`GridCell`];
-/// a camera without one fills the whole window.
+/// a view without one fills the whole window.
 #[derive(Component, Clone, Copy)]
 struct EmuView {
     index: usize,
@@ -94,7 +92,7 @@ struct EmuView {
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
-/// top-to-bottom so cell index `i` maps cleanly to a distinct camera order.
+/// top-to-bottom so cell index `i` is the emulator's stable index.
 fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
     let mut cells = Vec::with_capacity((cols * rows) as usize);
     for row in 0..rows {
@@ -116,18 +114,15 @@ fn grid_layout(args: &Args) -> Vec<GridCell> {
     }
 }
 
-fn setup_ui_camera(mut commands: Commands, args: Res<Args>, asset_server: Res<AssetServer>) {
-    // Camera for full res UI on top of screen. Its order must stay above every
-    // emulator camera (grid mode gives each cell a distinct order, `0..n`) so
-    // the HUD and the focus outline draw on top of all cells rather than being
-    // overdrawn by a later one. Derive the order from the cell count instead of
-    // a fixed value, which would otherwise be exceeded by grids larger than the
-    // constant (e.g. a 4x4 grid hides the outline for cells with order >= it).
-    let order = grid_layout(&args).len().max(1) as isize;
+fn setup_ui_camera(mut commands: Commands, asset_server: Res<AssetServer>) {
+    // Camera for full res UI on top of screen. Its order is above the emulator
+    // camera's (which is 0 however many emulators are on screen — they are
+    // quads within its one pass, not cameras of their own), so the HUD and the
+    // focus outline draw over every cell.
     commands.spawn((
         Camera2d,
         Camera {
-            order,
+            order: 1,
             clear_color: ClearColorConfig::None,
             ..default()
         },
@@ -165,6 +160,20 @@ fn setup_retro(world: &mut World) {
     let select = args.select;
 
     let cells = grid_layout(args);
+
+    // One camera for every emulator on screen. Each emulator is a quad drawn
+    // into this camera's view target by `post_process_pass`, so the 2D pipeline
+    // (view uniforms, main pass, tonemapping, upscaling) is paid for once
+    // rather than once per grid cell.
+    world.spawn((
+        Camera2d,
+        Camera {
+            order: 0,
+            ..default()
+        },
+        EmuCamera,
+        RenderLayers::layer(1),
+    ));
 
     if cells.is_empty() {
         spawn_emulator(world, match_fps, max_time, speed_test, None);
@@ -204,12 +213,13 @@ fn handle_textlist(
 }
 
 /// Create a single emulator entity: its own audio stream + ring buffer, its own
-/// render-target texture, and a [`PostProcess`] camera that samples that
-/// texture. Call this once per emulator you want on screen.
+/// render-target texture, and a view entity holding the [`PostProcess`] state
+/// that samples that texture. Call this once per emulator you want on screen.
 ///
-/// `cell`, when `Some`, places this emulator in one cell of a grid: the camera
-/// gets a distinct render order (from the cell index) and a [`GridCell`] marker
-/// so [`update_grid_viewports`] keeps its viewport sized to that cell.
+/// `cell`, when `Some`, places this emulator in one cell of a grid: the view
+/// gets a [`GridCell`] marker so [`update_view_rects`] keeps its [`ViewRect`]
+/// sized to that cell. The views are *not* cameras — they are all composited
+/// by the single [`EmuCamera`] spawned in [`setup_retro`].
 fn spawn_emulator(
     world: &mut World,
     match_fps: bool,
@@ -222,43 +232,40 @@ fn spawn_emulator(
     let handle = emu.image.clone();
     world.spawn(emu);
 
-    // Samples this emulator's texture directly and renders it to the screen,
-    // letting the post-process shader handle scaling to the window. When
-    // showing several emulators at once, give each camera a distinct `order`
-    // and a `viewport` so they don't overdraw each other.
-    let mut camera = world.spawn((
-        Camera2d,
-        Camera {
-            // Distinct order per grid cell so the cameras share one window
-            // target cleanly (the lowest-order one clears it once per frame).
-            order: cell.map_or(0, |(i, _)| i as isize),
-            ..default()
-        },
+    // Samples this emulator's texture directly and draws it to the screen,
+    // letting the post-process shader handle scaling to its rectangle of the
+    // window.
+    let mut view = world.spawn((
         PostProcess {
             source: handle,
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
         },
-        RenderLayers::layer(1),
+        // The actual rectangle is set from the live window size by
+        // `update_view_rects`, before anything reads it.
+        ViewRect {
+            position: UVec2::ZERO,
+            size: UVec2::ZERO,
+            active: true,
+        },
         EmuView {
             index: cell.map_or(0, |(i, _)| i),
         },
     ));
     if let Some((_, cell)) = cell {
-        // The actual viewport rectangle is set from the live window size by
-        // `update_grid_viewports`; this just tags which cell to fill.
-        camera.insert(cell);
+        // Which fraction of the window this view fills.
+        view.insert(cell);
     }
 }
 
-/// Keep each [`GridCell`] camera's viewport sized to its cell as the window
-/// resizes. Each edge is rounded to a whole pixel; because adjacent cells share
-/// an edge fraction they round to the same pixel, so the cells always tile the
-/// full window with no gap or overlap.
-fn update_grid_viewports(
+/// Keep every emulator view's [`ViewRect`] sized to its slice of the window as
+/// the window resizes. Each edge is rounded to a whole pixel; because adjacent
+/// cells share an edge fraction they round to the same pixel, so the cells
+/// always tile the full window with no gap or overlap.
+fn update_view_rects(
     window: Single<&Window, With<PrimaryWindow>>,
     mut settings: ResMut<AppSettings>,
-    mut cameras: Query<(&GridCell, &EmuView, &mut Camera)>,
+    mut views: Query<(&EmuView, Option<&GridCell>, &mut ViewRect)>,
 ) {
     let size = window.physical_size();
     if size.x == 0 || size.y == 0 {
@@ -269,19 +276,20 @@ fn update_grid_viewports(
     settings.mouse_index = None;
 
     let fsize = size.as_vec2();
-    for (cell, view, mut camera) in &mut cameras {
-        // When maximized, the focused emulator fills the whole window and the
-        // rest stop rendering, so it looks exactly like it was the only core
-        // running. Guard the writes so we don't retrigger change detection (and
-        // a render-graph rebuild) every frame when nothing changed.
-        let is_focused = view.index == settings.current_emu;
-        let active = !settings.maximized || is_focused;
-        if camera.is_active != active {
-            camera.is_active = active;
-        }
-        if !active {
+    for (view, cell, mut rect) in &mut views {
+        let Some(cell) = cell else {
+            // No grid: this view owns the whole window, always.
+            rect.set_if_neq(ViewRect {
+                position: UVec2::ZERO,
+                size,
+                active: true,
+            });
             continue;
-        }
+        };
+        // When maximized, the focused emulator fills the whole window and the
+        // rest stop drawing, so it looks exactly like it was the only core
+        // running.
+        let active = !settings.maximized || view.index == settings.current_emu;
         let (position, vp_size) = if settings.maximized {
             (UVec2::ZERO, size)
         } else {
@@ -301,19 +309,13 @@ fn update_grid_viewports(
             settings.mouse_index = Some(99999);
         }
 
-        // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
-        // avoid retriggering change detection every frame when nothing moved.
-        let unchanged = camera
-            .viewport
-            .as_ref()
-            .is_some_and(|v| v.physical_position == position && v.physical_size == vp_size);
-        if !unchanged {
-            camera.viewport = Some(Viewport {
-                physical_position: position,
-                physical_size: vp_size,
-                ..default()
-            });
-        }
+        // Guarded so we don't retrigger change detection (and a re-extract)
+        // every frame when nothing moved.
+        rect.set_if_neq(ViewRect {
+            position,
+            size: vp_size,
+            active,
+        });
     }
 }
 
@@ -400,7 +402,7 @@ fn run_retro(
     mut cmd_writer: MessageWriter<CmdMessage>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&EmuView, &Camera, &mut PostProcess)>,
+    mut views: Query<(&EmuView, &ViewRect, &mut PostProcess)>,
 ) {
     // A controlled TextList is capturing keyboard navigation; while it is open,
     // swallow all keys so they don't also reach the emulated machine.
@@ -442,11 +444,8 @@ fn run_retro(
     let cursor = window.cursor_position().map(|c| c * window.scale_factor());
     let mut pointer: Option<(usize, Vec2)> = None;
     if let Some(pos) = cursor {
-        for (view, camera, pp) in &cameras {
-            if !camera.is_active {
-                continue;
-            }
-            let Some(rect) = camera.physical_viewport_rect() else {
+        for (view, view_rect, pp) in &views {
+            let Some(rect) = view_rect.rect() else {
                 continue;
             };
             let vp_min = rect.min.as_vec2();
@@ -647,7 +646,7 @@ fn run_retro(
 
         // Guarded: `PostProcess` is extracted into the render world, and the
         // aspect only moves when the core changes video mode.
-        for (_, _, mut pp) in &mut cameras {
+        for (_, _, mut pp) in &mut views {
             if pp.source == emu.image && pp.aspect != aspect {
                 pp.aspect = aspect;
             }
@@ -694,7 +693,7 @@ impl Plugin for RetroPlugin {
             Update,
             (
                 run_retro,
-                update_grid_viewports,
+                update_view_rects,
                 draw_current_emu_outline,
                 handle_textlist,
             ),
