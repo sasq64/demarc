@@ -17,6 +17,7 @@
 //! that is rotated according to how many frames have elapsed, animating the
 //! picture the way DeluxePaint did.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -34,6 +35,10 @@ const CRNG_RATE_60HZ: f64 = 16384.0;
 /// at. The colour-cycling animation advances one frame per call, so this is
 /// both the reported [`fps`](RetroEmu::fps) and the time base for cycling.
 const FRAME_RATE: f64 = 60.0;
+
+/// Largest colour count [`load_image`] reports in place of a bit depth; past
+/// this a truecolour image is described by its depth as before.
+const MAX_COUNTED_COLORS: usize = 256;
 
 /// Decode a still image (PNG, BMP, JPEG, …) into an RGBA frame via the `image`
 /// crate, along with a one-line description of it for [`Backend::get_info`].
@@ -62,13 +67,35 @@ fn load_image(game: &Path) -> Result<(image::RgbaImage, String)> {
     let img = reader.decode()?;
     // The depth of the decoded pixels rather than of the file: a paletted image
     // arrives here already expanded.
-    let info = format!(
-        "{name} {}x{} ({}-bit)",
-        img.width(),
-        img.height(),
-        img.color().bits_per_pixel()
-    );
-    Ok((img.into_rgba8(), info))
+    let bits = img.color().bits_per_pixel();
+    let rgba = img.into_rgba8();
+    // A truecolour file that in fact uses few colours — pixel art saved as a
+    // PNG, a converted screenshot — says more about itself with that count
+    // than with the depth it happens to be stored at.
+    let depth = match bits {
+        24 | 32 => count_colors(&rgba, MAX_COUNTED_COLORS).map(|n| match n {
+            1 => "1 color".to_string(),
+            n => format!("{n} colors"),
+        }),
+        _ => None,
+    }
+    .unwrap_or_else(|| format!("{bits}-bit"));
+    let info = format!("{name} {}x{} ({depth})", rgba.width(), rgba.height());
+    Ok((rgba, info))
+}
+
+/// Number of distinct colours in `img`, or `None` as soon as more than `limit`
+/// of them have been seen — the count is only wanted while it stays small, so
+/// there is no reason to keep tallying a photograph's thousands.
+fn count_colors(img: &image::RgbaImage, limit: usize) -> Option<usize> {
+    let mut seen: HashSet<u32> = HashSet::new();
+    for px in img.pixels() {
+        seen.insert(u32::from_ne_bytes(px.0));
+        if seen.len() > limit {
+            return None;
+        }
+    }
+    Some(seen.len())
 }
 
 /// Presents a single decoded image as a "frame". For colour-cycling images the
@@ -358,14 +385,57 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         // The `image` crate fallback names the format it sniffed, not the
-        // extension — so a PNG saved under the wrong name is still a PNG.
-        let src = image::RgbImage::new(8, 6);
+        // extension — so a PNG saved under the wrong name is still a PNG. Every
+        // pixel a different colour, which is past the count worth reporting, so
+        // the depth is what describes it.
+        let mut src = image::RgbImage::new(32, 16);
+        for (x, y, px) in src.enumerate_pixels_mut() {
+            *px = image::Rgb([x as u8, y as u8, 0]);
+        }
         let path = std::env::temp_dir().join("image_emu_info.bmp");
         src.save_with_format(&path, image::ImageFormat::Png)
             .unwrap();
         let emu = ImageEmu::new(&path).unwrap();
-        assert_eq!(emu.get_info().as_deref(), Some("PNG 8x6 (24-bit)"));
+        assert_eq!(emu.get_info().as_deref(), Some("PNG 32x16 (24-bit)"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A truecolour image that only uses a few colours is described by that
+    /// count rather than by its storage depth — the depth returns as soon as
+    /// there are more colours than are worth counting.
+    #[test]
+    fn get_info_counts_colors_of_truecolor_images() {
+        let dir = std::env::temp_dir();
+        // 24-bit with three colours, 32-bit with one, and one colour past the
+        // limit: 257 distinct pixels in a 257x1 image.
+        let mut three = image::RgbImage::new(30, 10);
+        for (x, _, px) in three.enumerate_pixels_mut() {
+            *px = image::Rgb([[10u8, 120, 250][x as usize % 3], 0, 0]);
+        }
+        let mut one = image::RgbaImage::new(8, 8);
+        for px in one.pixels_mut() {
+            *px = image::Rgba([1, 2, 3, 255]);
+        }
+        let mut many = image::RgbImage::new(257, 1);
+        for (x, _, px) in many.enumerate_pixels_mut() {
+            *px = image::Rgb([x as u8, (x >> 8) as u8, 0]);
+        }
+
+        for (name, expected) in [
+            ("three", "PNG 30x10 (3 colors)"),
+            ("one", "PNG 8x8 (1 color)"),
+            ("many", "PNG 257x1 (24-bit)"),
+        ] {
+            let path = dir.join(format!("image_emu_count_{name}.png"));
+            match name {
+                "three" => three.save(&path).unwrap(),
+                "one" => one.save(&path).unwrap(),
+                _ => many.save(&path).unwrap(),
+            }
+            let emu = ImageEmu::new(&path).unwrap();
+            assert_eq!(emu.get_info().as_deref(), Some(expected), "{name}");
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     #[test]
