@@ -281,6 +281,10 @@ impl NewSys {
                 meta.insert(key.trim().into(), val.trim().into());
             }
         }
+        if args.grid.is_some() {
+            // TODO: Maybe insert "grid" and let core decide?
+            meta.insert("psx_core".into(), "beetle".into());
+        }
         meta.insert("latency".into(), args.latency.to_string());
         NewSys {
             systems: Self::get_systems(args),

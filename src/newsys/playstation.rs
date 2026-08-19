@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::HashMap,
     fs,
@@ -8,12 +8,19 @@ use tracing::{debug, info, warn};
 
 use super::utils::read_header;
 
-use crate::{newsys::walk_dir, workfile::WorkFile};
+use crate::{
+    frontend::system_dir,
+    libloader,
+    newsys::walk_dir,
+    retro_emu::{Backend, RetroCoreThreaded},
+    workfile::WorkFile,
+};
 
 use super::System;
 use super::disc::{DiscImage, ISO_SECTOR, IsoSpec, build_iso, cue_data_tracks, cue_is_complete};
 
-const CORE_NAME_PSX: &str = "pcsx_rearmed";
+const CORE_NAME_REARMED: &str = "pcsx_rearmed";
+const CORE_NAME_BEETLE: &str = "mednafen_psx";
 pub struct PSXSystem {}
 
 impl PSXSystem {}
@@ -237,10 +244,6 @@ fn handle_exe(work_file: &Path) -> Result<PathBuf> {
     bail!("Could not load EXE");
 }
 impl System for PSXSystem {
-    fn core_name(&self) -> &'static str {
-        CORE_NAME_PSX
-    }
-
     fn name(&self) -> &'static str {
         "PSX"
     }
@@ -263,14 +266,25 @@ impl System for PSXSystem {
         let mut disc = None;
         let mut exe = None;
 
+        let psx_core = file.get_meta("psx_core", "");
+        let use_beetle = psx_core.contains("beetle") || psx_core.contains("mednafen");
+
         walk_dir(&file.path.clone(), 4, |path, ext, _header| {
             if is_psx_exe(path) {
                 if exe.is_none() {
-                    // A broken executable shouldn't take the whole release down
-                    // with it; there may still be a disc image next to it.
-                    match handle_exe(path) {
-                        Ok(built) => exe = Some(built),
-                        Err(err) => warn!("Could not use PSX executable {path:?}: {err}"),
+                    if use_beetle {
+                        // Beetle loads a raw PS-X EXE itself, given a real BIOS,
+                        // so the disc wrapper the other core needs is only in the
+                        // way here.
+                        debug!("FMT: PSX executable handed to beetle as-is {path:?}");
+                        exe = Some(path.to_owned());
+                    } else {
+                        // A broken executable shouldn't take the whole release
+                        // down with it; there may still be a disc image next to it.
+                        match handle_exe(path) {
+                            Ok(built) => exe = Some(built),
+                            Err(err) => warn!("Could not use PSX executable {path:?}: {err}"),
+                        }
                     }
                 }
             } else if ext == "cue" {
@@ -298,6 +312,24 @@ impl System for PSXSystem {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let psx_core = path.get_meta("psx_core", "");
+        let use_beetle = psx_core.contains("beetle") || psx_core.contains("mednafen");
+        let core_name = if use_beetle {
+            CORE_NAME_BEETLE
+        } else {
+            CORE_NAME_REARMED
+        };
+        let core = libloader::get_libretro(core_name).context("Could not load core")?;
+        Ok(Box::new(RetroCoreThreaded::new(
+            &core,
+            system_dir(),
+            Some(path),
+            path.get_all_meta(),
+            false,
+        )?))
     }
 }
 
