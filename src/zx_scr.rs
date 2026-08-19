@@ -205,7 +205,7 @@ pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {
 /// has no header, no palette and one fixed size, so there is nothing to read
 /// out of the file: every screen is described the same way.
 pub fn describe() -> String {
-    format!("ZX Spectrum Screen {WIDTH}x{HEIGHT}")
+    format!("ZX Spectrum {WIDTH}x{HEIGHT} (SCR)")
 }
 
 /// Whether a file of this length can be a screen dump, which is as much as can

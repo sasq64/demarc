@@ -232,12 +232,12 @@ pub fn load_indexed_from_memory(bytes: &[u8]) -> Result<IndexedImage> {
 /// header says nothing useful is just called a DEGAS image.
 pub fn describe(bytes: &[u8]) -> String {
     if bytes.len() < 2 {
-        return "Atari DEGAS".into();
+        return "Atari".into();
     }
     let res = be16(bytes, 0);
     // Both the plain and the compressed (DEGAS Elite) variant are named the
     // same: which program wrote the file says nothing about the picture.
-    let name = "Atari DEGAS";
+    let name = "Atari";
     let Ok(mode) = mode_for(res & 0x7fff) else {
         return name.into();
     };
