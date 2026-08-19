@@ -12,7 +12,7 @@ use super::utils::{copy_dir_all, has_any_extension, read_header};
 use crate::{
     Args,
     frontend::system_dir,
-    newsys::{collect_disk_images, walk_dir},
+    newsys::{collect_disk_images, utils::has_extension, walk_dir},
     workfile::WorkFile,
 };
 
@@ -312,9 +312,13 @@ impl System for AmigaSystem {
         if has_any_extension(path, &["dms", "adf", "ips"]) {
             return true;
         }
+        if has_extension(path, "cus") {
+            return false;
+        }
         let data = read_header(path, 4).unwrap_or_default();
         data.starts_with(&HUNK_MAGIC)
     }
+
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut images = vec![];
         let mut exes = vec![];
@@ -365,6 +369,9 @@ impl System for AmigaSystem {
 
         let mut is_dir = false;
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
+            if ext == "cus" || ext == "fp" {
+                return Ok(()); // Custom music looks like exe
+            }
             if ["adf", "dms"].contains(&ext) {
                 images.push(path.to_owned());
             } else if ext == "slave" {
