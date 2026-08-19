@@ -66,7 +66,7 @@ impl System for MusicSystem {
             "mp3", "flac", // Streaming
             "vtx", "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
             "smod", "dm2", "ahx", "aon", "mt2", "mon", "dw", "fred", "smod", "hip", "cus", "fc",
-            "cm", "fp", "syn", // Amiga
+            "cm", "fp", "syn", "ma", "hipc", // Amiga
         ]
     }
 
