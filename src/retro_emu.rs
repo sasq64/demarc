@@ -1022,6 +1022,7 @@ pub struct RetroCoreThreaded {
     frame_height: usize,
     audio: Vec<i16>,
     aspect_ratio: f32,
+    aspect_tweak: f32,
     sample_rate: f64,
     fps: f64,
     disk_count: u32,
@@ -1050,7 +1051,15 @@ impl RetroCoreThreaded {
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
 
-        let title = meta.get("title").map_or("???".into(), |s| s.to_string());
+        let is_atari = core_path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .contains("hatari");
+
+        // TODO: Why is this necessary
+        let aspect_tweak = if is_atari { 1.13 } else { 1.0 };
 
         let mut latency = 3;
         if let Some(l) = meta.get("latency") {
@@ -1109,6 +1118,7 @@ impl RetroCoreThreaded {
                 frame_height: height,
                 audio: Vec::new(),
                 aspect_ratio: 0.0,
+                aspect_tweak,
                 sample_rate: 0.0,
                 fps,
                 disk_count: disks,
@@ -1282,7 +1292,7 @@ impl Backend for RetroCoreThreaded {
         (self.frame_width, self.frame_height)
     }
     fn aspect_ratio(&self) -> f32 {
-        self.aspect_ratio
+        self.aspect_ratio * self.aspect_tweak
     }
     fn sample_rate(&self) -> f64 {
         self.sample_rate

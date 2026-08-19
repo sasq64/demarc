@@ -633,17 +633,7 @@ fn run_retro(
             }
         }
         // For some reason we need to compensate the hatari aspect
-        let aspect = if false {
-            // emu.work_file.system_type == SystemType::AtariST {
-            let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
-            if h > 0 {
-                w as f32 / h as f32
-            } else {
-                emu.core.as_mut().unwrap().aspect_ratio()
-            }
-        } else {
-            emu.core.as_mut().unwrap().aspect_ratio()
-        };
+        let aspect = emu.core.as_mut().unwrap().aspect_ratio();
 
         // Guarded: `PostProcess` is extracted into the render world, and the
         // aspect only moves when the core changes video mode.
