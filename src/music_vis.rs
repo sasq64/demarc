@@ -47,7 +47,11 @@ pub struct VisData {
     /// Player metadata as key/value pairs (`title`, `composer`, `format`, …),
     /// snapshotted by the backend because `musix` only offers it through a
     /// `&mut self` call that a `'static` Lua closure could never hold.
-    pub meta: Vec<(String, String)>,
+    ///
+    /// Values are ISO-8859-1 bytes, not UTF-8: that is the character set
+    /// [`Font::row`] indexes by, so a title reaches the script in the encoding
+    /// it will be drawn in. See `music_emu::to_latin1`.
+    pub meta: Vec<(String, Vec<u8>)>,
     /// Frames rendered since the song loaded. Doubles as the cache key for
     /// [`Fft`], so two `get_spectrum()` calls in one frame do one transform.
     pub frame_count: u64,
@@ -404,7 +408,7 @@ fn register(lua: &Lua, width: usize, height: usize, shared: &Arc<Mutex<VisData>>
             let data = data.lock().unwrap_or_else(|e| e.into_inner());
             let table = lua.create_table_with_capacity(0, data.meta.len())?;
             for (key, value) in &data.meta {
-                table.set(key.as_str(), value.as_str())?;
+                table.set(key.as_str(), lua.create_string(value)?)?;
             }
             table.set("sample_rate", data.sample_rate)?;
             Ok::<Table, mlua::Error>(table)
@@ -932,8 +936,8 @@ mod tests {
             let mut data = v.data();
             data.sample_rate = 44100.0;
             data.meta = vec![
-                ("title".into(), "Commando".into()),
-                ("composer".into(), "Rob Hubbard".into()),
+                ("title".into(), b"Commando".to_vec()),
+                ("composer".into(), b"Rob Hubbard".to_vec()),
             ];
         }
         let mut frame = vec![0u32; 4 * 2];

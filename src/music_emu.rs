@@ -184,6 +184,24 @@ pub fn can_handle(song: &Path, data_dir: &Path) -> bool {
     playable_file(song).is_some()
 }
 
+/// Re-encode a metadata string as ISO-8859-1, the character set the bitmap
+/// fonts a script draws with are indexed by (see `music_vis::Font::row`): text
+/// is drawn a byte at a time, so a `String` handed over as UTF-8 would put two
+/// pieces of mojibake on screen for every accented character in a title.
+///
+/// Whatever Latin-1 cannot hold — CJK, emoji, the curly quotes and long dashes
+/// that come with a title copied out of a web page — becomes `?`, as do the
+/// control codes, which have no glyph worth drawing. Most of this metadata was
+/// Latin-1 to begin with, so for the common case this changes nothing.
+fn to_latin1(text: &str) -> Vec<u8> {
+    text.chars()
+        .map(|ch| match ch as u32 {
+            0x20..=0x7e | 0xa0..=0xff => ch as u8,
+            _ => b'?',
+        })
+        .collect()
+}
+
 /// A loaded song, rendered a frame at a time.
 pub struct MusicEmu {
     player: Box<dyn MusixPlayer>,
@@ -226,8 +244,9 @@ pub struct MusicEmu {
     /// script for animation that is not driven by the waveform alone.
     frame_count: u64,
     /// Player metadata for the script's `get_meta()`, refreshed whenever the
-    /// player reports a change. See [`META_KEYS`].
-    meta: Vec<(String, String)>,
+    /// player reports a change. See [`META_KEYS`]. Values are ISO-8859-1 bytes
+    /// rather than `String`s; see [`to_latin1`].
+    meta: Vec<(String, Vec<u8>)>,
     /// Whether [`Self::meta`] has moved since it was last handed to the script.
     /// Metadata changes a handful of times a song; copying it across on every
     /// frame instead would be a dozen string allocations at 60Hz for nothing.
@@ -348,6 +367,7 @@ impl MusicEmu {
             let Some(value) = self.player.get_meta_string(key) else {
                 continue;
             };
+            let value = to_latin1(&value);
             match self.meta.iter_mut().find(|(k, _)| k == key) {
                 Some(slot) if slot.1 == value => continue,
                 Some(slot) => slot.1 = value,
@@ -759,6 +779,21 @@ mod tests {
             MusicEmu::from_player(Box::new(player), "".into(), 44100.0, channels),
             sizes,
         )
+    }
+
+    /// Metadata reaches the script in the encoding it is drawn in: one byte per
+    /// character, Latin-1, with everything the font has no glyph for turned
+    /// into a `?` rather than into a pair of mojibake bytes.
+    #[test]
+    fn meta_is_re_encoded_as_latin1() {
+        // Straight through.
+        assert_eq!(to_latin1("Commando"), b"Commando");
+        // In Latin-1, so one byte each rather than the two UTF-8 spends.
+        assert_eq!(to_latin1("Björn Ålder"), b"Bj\xf6rn \xc5lder");
+        // Outside it, so replaced: a curly quote, a long dash, a kana.
+        assert_eq!(to_latin1("Rob\u{2019}s \u{2014} \u{30c6}"), b"Rob?s ? ?");
+        // Control codes have no glyph worth drawing either.
+        assert_eq!(to_latin1("a\tb\n"), b"a?b?");
     }
 
     /// A mono player must still fill a stereo frame: each sample is doubled, so
