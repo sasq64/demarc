@@ -1,14 +1,16 @@
 
-- [ ] Whitelist/blacklist for audio formats
+- [x] Whitelist/blacklist for audio formats
 - [ ] hatari detects SMPL (turrican) as exe
-- [ ] Default CRT limit?
+- [x] Default CRT limit?
 - [ ] Toggle CRT On/Limited/Off if limit set
 - [ ] Use beetle flag
 - [ ] TIF: Photometric interpretation RGBPalette with bits per sample [8]
 - [ ] LZX packed files
-- [ ] Fix TV-mode/Max-time
+- [x] Fix TV-mode/Max-time
 - [ ] Wire up color cycle flag
-- [ ] Full music info
-- [ ] Speed up shader creation, maybe share shaders between emulators
+- [x] Full music info
+- [x] Speed up shader creation, maybe share shaders between emulators
 - [ ] Match files on disk
 - [ ] Try other downloads on failure
+- [ ] No unicode for topaz font
+- [ ] Atari aspect
