@@ -73,10 +73,14 @@ fn load_image(game: &Path) -> Result<(image::RgbaImage, String)> {
     // PNG, a converted screenshot — says more about itself with that count
     // than with the depth it happens to be stored at.
     let depth = match bits {
-        24 | 32 => count_colors(&rgba, MAX_COUNTED_COLORS).map(|n| match n {
-            1 => "1 color".to_string(),
-            n => format!("{n} colors"),
-        }),
+        24 | 32 => count_colors(&rgba, MAX_COUNTED_COLORS)
+            .map(|n| match n {
+                1 => "1 color".to_string(),
+                n => format!("{n} colors"),
+            })
+            // Past the count worth reporting the two truecolour depths are the
+            // same picture to look at, so they are named the same.
+            .or(Some("True color".to_string())),
         _ => None,
     }
     .unwrap_or_else(|| format!("{bits}-bit"));
@@ -359,12 +363,12 @@ mod tests {
             ),
             (
                 "testdata/iffILBM/Vogel_Kamera.24",
-                "Impulse RGB8 148x262 (24-bit)",
+                "Impulse RGB8 148x262 (True color)",
             ),
             ("testdata/degas/FUSE.PI1", "Atari DEGAS 320x200 (16 colors)"),
             (
                 "testdata/degas/BOLEK3.PC1",
-                "Atari DEGAS Elite 320x200 (16 colors)",
+                "Atari DEGAS 320x200 (16 colors)",
             ),
         ];
         for (file, expected) in cases {
@@ -396,7 +400,7 @@ mod tests {
         src.save_with_format(&path, image::ImageFormat::Png)
             .unwrap();
         let emu = ImageEmu::new(&path).unwrap();
-        assert_eq!(emu.get_info().as_deref(), Some("PNG 32x16 (24-bit)"));
+        assert_eq!(emu.get_info().as_deref(), Some("PNG 32x16 (True color)"));
         let _ = std::fs::remove_file(&path);
     }
 
@@ -424,7 +428,7 @@ mod tests {
         for (name, expected) in [
             ("three", "PNG 30x10 (3 colors)"),
             ("one", "PNG 8x8 (1 color)"),
-            ("many", "PNG 257x1 (24-bit)"),
+            ("many", "PNG 257x1 (True color)"),
         ] {
             let path = dir.join(format!("image_emu_count_{name}.png"));
             match name {

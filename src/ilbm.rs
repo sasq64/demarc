@@ -870,13 +870,14 @@ pub fn describe(bytes: &[u8]) -> String {
 
     let mut mode = match form_type.as_str() {
         // The truecolour forms carry their depth in the form type itself; the
-        // plane count doesn't describe them.
-        "RGB8" => "24-bit".to_string(),
+        // plane count doesn't describe them. RGB8 is 24-bit, RGBN 12-bit.
+        "RGB8" => "True color".to_string(),
         "RGBN" => "12-bit".to_string(),
         _ if camg & CAMG_HAM != 0 => format!("HAM{num_planes}"),
         _ if camg & CAMG_EHB != 0 => "EHB, 64 colors".to_string(),
-        // A deep ILBM's planes are colour bits rather than register bits.
-        _ if num_planes >= 24 => format!("{num_planes}-bit"),
+        // A deep ILBM's planes are colour bits rather than register bits, so
+        // 24 or more of them mean truecolour rather than a palette.
+        _ if num_planes >= 24 => "True color".to_string(),
         _ => format!("{} colors", 1usize << num_planes),
     };
     // A dynamic-palette chunk is what makes such a picture what it is, so name

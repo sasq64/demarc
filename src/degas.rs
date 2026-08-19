@@ -235,13 +235,9 @@ pub fn describe(bytes: &[u8]) -> String {
         return "Atari DEGAS".into();
     }
     let res = be16(bytes, 0);
-    // Only DEGAS Elite wrote the compressed variant, so the compression bit
-    // names the program that saved the picture.
-    let name = if res & 0x8000 != 0 {
-        "Atari DEGAS Elite"
-    } else {
-        "Atari DEGAS"
-    };
+    // Both the plain and the compressed (DEGAS Elite) variant are named the
+    // same: which program wrote the file says nothing about the picture.
+    let name = "Atari DEGAS";
     let Ok(mode) = mode_for(res & 0x7fff) else {
         return name.into();
     };
