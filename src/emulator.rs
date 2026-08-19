@@ -92,6 +92,7 @@ pub struct Emulator {
     pub start_time: f64,
     pub max_time: Option<usize>,
     pub display_fps: f64,
+    pub color_cycle: bool,
     pub match_fps: bool,
     pub show_info: bool,
     pub match_frames: usize,
@@ -272,7 +273,7 @@ impl Emulator {
     pub fn new(
         images: &mut Assets<Image>,
         max_time: Option<usize>,
-        match_fps: bool,
+        color_cycle: bool,
         speed_test: bool,
     ) -> Self {
         let width = 720;
@@ -303,7 +304,7 @@ impl Emulator {
             image: handle.clone(),
             width,
             height,
-            match_fps,
+            color_cycle,
             speed_test,
             ..Default::default()
         }
@@ -655,7 +656,7 @@ impl Emulator {
         }
 
         self.is_image = res.system.name().starts_with("Image");
-        self.paused = self.is_image;
+        self.paused = self.is_image && (!self.color_cycle);
 
         self.core = Some(core);
         self.work_file = res.work_file;

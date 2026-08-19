@@ -195,10 +195,6 @@ struct Args {
     #[arg(long)]
     max_time: Option<usize>,
 
-    /// Force vsync, slowing down or speeding up emulation to fit
-    #[arg(long)]
-    force_vsync: bool,
-
     /// Benchmark: run emulation unthrottled (no vsync, audio dropped) for two
     /// seconds, print the number of frames stepped, then exit.
     #[arg(long)]

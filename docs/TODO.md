@@ -3,14 +3,14 @@
 - [ ] hatari detects SMPL (turrican) as exe
 - [x] Default CRT limit?
 - [ ] Toggle CRT On/Limited/Off if limit set
-- [ ] Use beetle flag
+- [x] Use beetle flag
 - [ ] TIF: Photometric interpretation RGBPalette with bits per sample [8]
 - [ ] LZX packed files
 - [x] Fix TV-mode/Max-time
-- [ ] Wire up color cycle flag
+- [x] Wire up color cycle flag
 - [x] Full music info
 - [x] Speed up shader creation, maybe share shaders between emulators
 - [ ] Match files on disk
 - [ ] Try other downloads on failure
-- [ ] No unicode for topaz font
-- [ ] Atari aspect
+- [x] No unicode for topaz font
+- [x] Atari aspect

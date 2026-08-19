@@ -154,7 +154,7 @@ fn setup_retro(world: &mut World) {
 
     //    let mut meta = meta_from_args(args);
 
-    let match_fps = args.force_vsync;
+    let color_cycle = args.color_cycle;
     let max_time = args.max_time;
     let speed_test = args.speed_test;
     let select = args.select;
@@ -176,13 +176,13 @@ fn setup_retro(world: &mut World) {
     ));
 
     if cells.is_empty() {
-        spawn_emulator(world, match_fps, max_time, speed_test, None);
+        spawn_emulator(world, color_cycle, max_time, speed_test, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
         // pcsx rearmed can only run 3 instances at one time
         // meta.insert("psx_core".into(), "beetle".into());
         for (i, cell) in cells.into_iter().enumerate() {
-            spawn_emulator(world, match_fps, max_time, speed_test, Some((i, cell)));
+            spawn_emulator(world, color_cycle, max_time, speed_test, Some((i, cell)));
         }
     }
 
@@ -222,13 +222,13 @@ fn handle_textlist(
 /// by the single [`EmuCamera`] spawned in [`setup_retro`].
 fn spawn_emulator(
     world: &mut World,
-    match_fps: bool,
+    color_cycle: bool,
     max_time: Option<usize>,
     speed_test: bool,
     cell: Option<(usize, GridCell)>,
 ) {
     let mut res = world.resource_mut::<Assets<Image>>();
-    let emu = Emulator::new(&mut res, max_time, match_fps, speed_test);
+    let emu = Emulator::new(&mut res, max_time, color_cycle, speed_test);
     let handle = emu.image.clone();
     world.spawn(emu);
 
