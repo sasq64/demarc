@@ -12,7 +12,8 @@ use anyhow::Result;
 const CORE_NAME_ATARIXL: &str = "atari800";
 
 /// Bytes read per file, enough for the whole first header of a binary (see
-/// [`is_atari_binary`]).
+/// [`is_atari_binary`]) and for the part of a disk image's header that
+/// identifies it (see [`is_atari_disk`]).
 const HEADER_LEN: usize = 6;
 
 /// An Atari 8-bit executable — the DOS binary load format, carrying whatever
@@ -30,6 +31,20 @@ fn is_atari_binary(header: &[u8]) -> bool {
     let end = u16::from_le_bytes([header[4], header[5]]);
     // `$FFFF` may repeat before a segment, but never as the address itself.
     start != 0xffff && start <= end
+}
+
+/// An `.atr` disk image, recognized by the magic `$0296` ("NICKATARI") its
+/// 16-byte header opens with, followed by a sector size that is one of the
+/// three the format allows.
+///
+/// The extension is not ours alone — the ZX Spectrum names its 768-byte
+/// attribute dumps `.atr` too — so taking every `.atr` in a release would claim
+/// Spectrum pictures away from the image system and boot a colour map as a
+/// disk. The header is what tells the two apart.
+fn is_atari_disk(header: &[u8]) -> bool {
+    header.len() >= HEADER_LEN
+        && header[0..2] == [0x96, 0x02]
+        && matches!(u16::from_le_bytes([header[4], header[5]]), 128 | 256 | 512)
 }
 
 pub struct AtariXlSystem {}
@@ -60,7 +75,11 @@ impl System for AtariXlSystem {
         let mut images = vec![];
         let mut exes = vec![];
         walk_dir(&file.path.clone(), HEADER_LEN, |path, ext, header| {
-            if ["atr", "atx", "xfd", "dcm"].contains(&ext) {
+            let is_disk = match ext {
+                "atr" => is_atari_disk(header),
+                _ => ["atx", "xfd", "dcm"].contains(&ext),
+            };
+            if is_disk {
                 images.push(path.to_owned());
             } else if is_atari_binary(header) {
                 exes.push(path.to_owned());
@@ -86,5 +105,22 @@ impl System for AtariXlSystem {
             return Ok(false);
         }
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two real headers this was written against, one 128- and one
+    /// 256-byte-sector image, against the Spectrum attribute dump that shares
+    /// the extension — 768 bytes of one repeated colour, with no header at all.
+    #[test]
+    fn tells_a_disk_from_a_spectrum_attribute_dump() {
+        assert!(is_atari_disk(&[0x96, 0x02, 0x80, 0x20, 0x80, 0x00]));
+        assert!(is_atari_disk(&[0x96, 0x02, 0xe8, 0x2c, 0x00, 0x01]));
+        assert!(!is_atari_disk(&[0x09; HEADER_LEN]));
+        // Right magic, but no sector size the format defines.
+        assert!(!is_atari_disk(&[0x96, 0x02, 0x80, 0x20, 0x40, 0x00]));
     }
 }
