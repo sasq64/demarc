@@ -238,6 +238,7 @@ pub struct MusicEmu {
     /// call it over. Drives [`is_idle`](Backend::is_idle) so the frontend can
     /// move on to the next entry.
     ended: bool,
+    info: String,
 }
 
 // Safety: every player `musix::load_song` can return (`ChipPlayer`, wrapping an
@@ -298,7 +299,9 @@ impl MusicEmu {
             hz => hz as f64,
         };
 
-        let mut emu = Self::from_player(player, sample_rate, channels);
+        let info = format!("{}", meta(&mut player, "format"));
+
+        let mut emu = Self::from_player(player, info, sample_rate, channels);
         emu.vis = script.and_then(|path| {
             Visualizer::new(path, WIDTH, HEIGHT)
                 .inspect_err(|e| error!("No visualization: {e:#}"))
@@ -308,7 +311,12 @@ impl MusicEmu {
         Ok(emu)
     }
 
-    fn from_player(player: Box<dyn MusixPlayer>, sample_rate: f64, channels: u32) -> Self {
+    fn from_player(
+        player: Box<dyn MusixPlayer>,
+        info: String,
+        sample_rate: f64,
+        channels: u32,
+    ) -> Self {
         Self {
             player,
             sample_rate,
@@ -328,6 +336,7 @@ impl MusicEmu {
             meta_dirty: true,
             serial: 1,
             ended: false,
+            info,
         }
     }
 
@@ -614,6 +623,10 @@ impl Backend for MusicEmu {
     fn add_mouse_motion(&mut self, _dx: f32, _dy: f32) {}
     fn set_mouse_buttons(&mut self, _left: bool, _right: bool, _middle: bool) {}
     fn set_joypad(&mut self, _port: u32, _id: u32, _down: bool) {}
+
+    fn get_info(&self) -> Option<String> {
+        Some(self.info.clone())
+    }
 }
 
 /// Build a minimal but valid 4-channel ProTracker module: one instrument
@@ -743,7 +756,7 @@ mod tests {
             files: Vec::new(),
         };
         (
-            MusicEmu::from_player(Box::new(player), 44100.0, channels),
+            MusicEmu::from_player(Box::new(player), "".into(), 44100.0, channels),
             sizes,
         )
     }
@@ -778,7 +791,7 @@ mod tests {
             next: 0,
             files: Vec::new(),
         };
-        let mut emu = MusicEmu::from_player(Box::new(player), 44100.0, 1);
+        let mut emu = MusicEmu::from_player(Box::new(player), "".into(), 44100.0, 1);
         assert!(emu.run());
 
         let mut samples = Vec::new();
@@ -834,7 +847,12 @@ mod tests {
             left: frame,
             files: Vec::new(),
         };
-        let mut emu = with_script(MusicEmu::from_player(Box::new(player), 44100.0, 2));
+        let mut emu = with_script(MusicEmu::from_player(
+            Box::new(player),
+            "".into(),
+            44100.0,
+            2,
+        ));
 
         // The trace sits on the baseline while the window holds silence, and
         // jumps to the top of the band while the burst is passing through.
