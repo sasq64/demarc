@@ -51,14 +51,13 @@ pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
 /// Which post-process backend to run, selected on the command line.
 #[derive(Resource, Clone)]
 pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect, a plain
-    /// passthrough (`stock.slangp`) used when the CRT/LCD effect is toggled
-    /// off, and an optional downsampler for views that minify the source.
-    /// Absolute paths, resolved from the `system` dir (or a user-supplied
-    /// `--slangp`) in `main`.
+    /// librashader `.slangp` filter chains: the visible effect and an optional
+    /// downsampler for views that minify the source. Absolute paths, resolved
+    /// from the `system` dir (or a user-supplied `--slangp`) in `main`. With
+    /// the effect toggled off there is no chain at all — the composite blit
+    /// samples the emulator framebuffer directly (see [`post_process_pass`]).
     Slangp {
         effect: PathBuf,
-        passthrough: PathBuf,
         /// DREZ downsample preset, substituted for `effect` on views that show
         /// the source *smaller* than its native resolution (see `--downsample`).
         /// `None` disables the substitution.
@@ -158,8 +157,8 @@ pub struct PostProcessUniform {
     /// passthrough blit. Decided per camera in [`compute_uniform`]: the global
     /// [`RenderSettings::crt_effect`] toggle, further gated by
     /// [`AppSettings::crt_limit`] against this view's magnification. The slangp
-    /// backend reads it back off the extracted component to pick its filter
-    /// chain, so both backends agree on a single decision.
+    /// backend reads it back off the extracted component to decide whether to
+    /// run a filter chain at all, so both backends agree on a single decision.
     crt_enabled: u32,
 }
 
@@ -411,9 +410,11 @@ pub fn scale_offset(
 /// framebuffer into an intermediate texture (the effect, at display resolution,
 /// preserving the source aspect ratio), then a passthrough blit composites that
 /// intermediate into the view target with the letterbox/pillarbox transform and
-/// border handling. On the [`ShaderPath::Wgsl`] backend stage 1 is skipped: the
-/// single-pass WGSL shader samples the emulator framebuffer directly and
-/// applies the effect during the composite itself.
+/// border handling. Stage 1 is skipped whenever this view wants neither the
+/// effect nor the downsampler — the chain would be a verbatim copy — and again
+/// on the [`ShaderPath::Wgsl`] backend, where the single-pass WGSL shader
+/// samples the emulator framebuffer directly and applies the effect during the
+/// composite itself.
 ///
 /// As a `Core2d` render system this is invoked once per camera with
 /// [`CurrentView`](bevy::render::renderer::CurrentView) set; the [`ViewQuery`]
@@ -477,7 +478,7 @@ fn post_process_pass(
         // WGSL backend: the composite shader applies the effect itself while
         // sampling the emulator framebuffer directly — nothing to prepare.
         ShaderPath::Wgsl { .. } => &source_image.texture_view,
-        ShaderPath::Slangp { .. } => {
+        ShaderPath::Slangp { .. } => 'slangp: {
             // Absent if the preset failed to load; skip rendering rather than panic.
             let Some(chains) = chains.as_mut() else {
                 return;
@@ -500,21 +501,6 @@ fn post_process_pass(
                 .as_uvec2()
                 .max(UVec2::ONE);
 
-            let device = render_context.render_device().clone();
-            // Each source has its own chains and target, loaded on first use; skip
-            // the source if its presets failed to load.
-            let Some(source_chains) =
-                chains.source_chains(&device, &render_queue, source_id, inter_size)
-            else {
-                return;
-            };
-            let SourceChains {
-                effect,
-                passthrough,
-                downsample,
-                target,
-                frame_count,
-            } = source_chains;
             // Minification — the on-screen image is smaller than the source on
             // at least one axis — is the one case the CRT/LCD presets can't
             // help with: there are no spare display pixels for a scanline or a
@@ -525,11 +511,34 @@ fn post_process_pass(
             // beating against the pixel grid. Independent of `crt_enabled`:
             // `crt_limit` has almost always switched the effect off by the time
             // we're minifying, and this is a resampler, not a look.
-            let downsampling = is_minified(inter_size, src_size) && downsample.is_some();
-            let chain = match downsample.as_mut().filter(|_| downsampling) {
-                Some(downsample) => downsample,
-                None if crt_enabled => effect,
-                None => passthrough,
+            let downsampling =
+                is_minified(inter_size, src_size) && chains.downsample_path.is_some();
+            // With neither the effect nor the downsampler wanted, the chain
+            // this view would run is `stock.slangp` — a nearest-sampled
+            // verbatim copy of the source. Composite the emulator framebuffer
+            // itself instead: `blit.wgsl` maps uv and linearizes exactly the
+            // same way, and skipping the copy saves a full-screen pass, the
+            // intermediate texture, and (in grid mode, where `crt_limit`
+            // switches most cells off) building any filter chain for this
+            // source at all. It is also marginally *more* accurate: the
+            // intermediate is `Rgba8UnormSrgb`, so a copy through it encodes
+            // and re-decodes every texel, which costs up to 1/255 on bright
+            // values. Sampling the `Rgba8Unorm` source is exact.
+            let kind = if downsampling {
+                ChainKind::Downsample
+            } else if crt_enabled {
+                ChainKind::Effect
+            } else {
+                break 'slangp &source_image.texture_view;
+            };
+
+            let device = render_context.render_device().clone();
+            // Each source has its own chains and target, built on first use;
+            // skip the source if its preset failed to load.
+            let Some((chain, target, frame_count)) =
+                chains.chain(&device, &render_queue, source_id, inter_size, kind)
+            else {
+                return;
             };
             // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
             // 24px tiles). When render_width / tile_size is an even integer, a tile
@@ -542,7 +551,7 @@ fn post_process_pass(
             // tile size near 24px whose center offset is furthest from a boundary. This
             // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
             // the seam off-center. No-op on presets without this parameter.
-            if crt_enabled && !downsampling {
+            if kind == ChainKind::Effect {
                 use librashader::runtime::FilterChainParameters;
                 let width = inter_size.x as f32;
                 let mut best_tile = 24i32;
@@ -669,20 +678,66 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
     IntermediateTarget { size, view }
 }
 
-/// One emulator's librashader state: its own effect, passthrough and (optional)
-/// downsample chains, its intermediate target, and its frame counter.
-struct SourceChains {
+/// Which of a source's presets a view wants to run. There is no passthrough
+/// variant: a view that wants neither of these skips librashader entirely (see
+/// [`post_process_pass`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChainKind {
     /// The visible effect preset (CRT/LCD), selected on the command line.
-    effect: FilterChain,
-    /// Plain passthrough (`stock.slangp`), used when the effect is toggled off.
-    passthrough: FilterChain,
-    /// DREZ downsample preset, used instead of `effect` when the view minifies
-    /// the source. `None` when `--downsample` is off (or the preset failed to
-    /// load), which falls the view back to the effect/passthrough pair.
-    downsample: Option<FilterChain>,
+    Effect,
+    /// The DREZ downsample preset, run instead of the effect when the view
+    /// minifies the source.
+    Downsample,
+}
+
+/// A filter chain built the first time a view actually asks for it.
+///
+/// Building one costs on the order of 10–20 ms of glslang/naga/pipeline
+/// compilation, so the ones a view never selects are never paid for — a grid
+/// whose cells all fall below `crt_limit` and above their source resolution
+/// builds none at all.
+enum LazyChain {
+    /// Not built yet; no view has needed it.
+    Pending,
+    /// Boxed only to keep the three variants a similar size — a `FilterChain`
+    /// is several hundred bytes and every source holds one of these per kind.
+    Ready(Box<FilterChain>),
+    /// The preset failed to load. Remembered so it is reported once rather
+    /// than retried (and re-logged) every frame.
+    Failed,
+}
+
+impl LazyChain {
+    /// The chain, building it via `load` on first call. `None` once loading has
+    /// failed, so the caller skips rendering.
+    fn get_or_load(
+        &mut self,
+        load: impl FnOnce() -> Option<FilterChain>,
+    ) -> Option<&mut FilterChain> {
+        if matches!(self, LazyChain::Pending) {
+            *self = match load() {
+                Some(chain) => LazyChain::Ready(Box::new(chain)),
+                None => LazyChain::Failed,
+            };
+        }
+        match self {
+            LazyChain::Ready(chain) => Some(chain),
+            _ => None,
+        }
+    }
+}
+
+/// One emulator's librashader state: its effect and downsample chains, its
+/// intermediate target, and its frame counter.
+struct SourceChains {
+    effect: LazyChain,
+    downsample: LazyChain,
     /// Intermediate render target, recreated on resize.
     target: IntermediateTarget,
     /// RetroArch-style frame counter fed to the shaders (feedback/animation).
+    /// Only ticks on frames that actually run a chain, so an animated preset
+    /// resumes where it left off rather than jumping after a spell with the
+    /// effect switched off (during which nothing of it was on screen anyway).
     frame_count: usize,
 }
 
@@ -694,92 +749,83 @@ struct SourceChains {
 /// grid of images with different resolutions does) latches the last size and
 /// resamples the next frame's other cells through it — e.g. an 18×18 brush in
 /// the grid blurs every other image. One chain per source keeps that state
-/// isolated. Presets are loaded lazily the first time a source is rendered.
+/// isolated. Each chain is built lazily, the first time a view actually selects
+/// it (see [`LazyChain`]).
 ///
 /// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
 /// so this lives as a render-world resource, accessed via `ResMut`.
 #[derive(Resource)]
 struct SlangChains {
-    /// Path of the effect preset (`--shader`/`--slangp`), loaded per source.
+    /// Path of the effect preset (`--shader`/`--slangp`), built per source.
     effect_path: PathBuf,
-    /// Path of the passthrough preset (`stock.slangp`), loaded per source.
-    passthrough_path: PathBuf,
     /// Path of the DREZ downsample preset, or `None` with `--downsample` off.
     downsample_path: Option<PathBuf>,
     /// One set of chains + target per emulator, keyed by its source image.
+    /// A source that has never needed a chain has no entry at all.
     sources: HashMap<AssetId<Image>, SourceChains>,
 }
 
 impl SlangChains {
-    /// Return the per-source chains for `source`, loading its presets on first
-    /// use and (re)creating its intermediate target at `size`. Returns `None`
-    /// when a preset fails to load, so the caller skips rendering that source.
-    fn source_chains(
+    /// The `kind` chain for `source`, plus its intermediate target and frame
+    /// counter. Builds the chain on first use and (re)creates the target at
+    /// `size`. Returns `None` when the preset fails to load, so the caller
+    /// skips rendering that source.
+    fn chain(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         source: AssetId<Image>,
         size: UVec2,
-    ) -> Option<&mut SourceChains> {
-        use std::collections::hash_map::Entry;
-        match self.sources.entry(source) {
-            Entry::Occupied(e) => {
-                let sc = e.into_mut();
-                if sc.target.size != size {
-                    sc.target = build_target(device, size);
-                }
-                Some(sc)
-            }
-            Entry::Vacant(e) => {
-                let wdevice = device.wgpu_device();
-                let wqueue: &wgpu::Queue = queue;
-                #[allow(clippy::result_large_err)]
-                let load = |path: &PathBuf| {
-                    FilterChain::load_from_path(path, ShaderFeatures::NONE, wdevice, wqueue, None)
-                };
-                let effect = load(&self.effect_path)
-                    .inspect_err(|err| error!("failed to load effect preset: {err}"))
-                    .ok()?;
-                let passthrough = load(&self.passthrough_path)
-                    .inspect_err(|err| error!("failed to load passthrough preset: {err}"))
-                    .ok()?;
-                // Unlike the other two, a downsample preset that won't load is
-                // not fatal for the source: drop it and keep rendering with the
-                // effect/passthrough pair.
-                let downsample = self.downsample_path.as_ref().and_then(|path| {
-                    load(path)
-                        .inspect_err(|err| error!("failed to load downsample preset: {err}"))
-                        .ok()
-                });
-                Some(e.insert(SourceChains {
-                    effect,
-                    passthrough,
-                    downsample,
-                    target: build_target(device, size),
-                    frame_count: 0,
-                }))
-            }
+        kind: ChainKind,
+    ) -> Option<(&mut FilterChain, &IntermediateTarget, &mut usize)> {
+        // Destructured so the preset paths stay readable while `sources` is
+        // borrowed mutably.
+        let Self {
+            effect_path,
+            downsample_path,
+            sources,
+        } = self;
+        let sc = sources.entry(source).or_insert_with(|| SourceChains {
+            effect: LazyChain::Pending,
+            downsample: LazyChain::Pending,
+            target: build_target(device, size),
+            frame_count: 0,
+        });
+        if sc.target.size != size {
+            sc.target = build_target(device, size);
         }
+        let (slot, path) = match kind {
+            ChainKind::Effect => (&mut sc.effect, Some(&*effect_path)),
+            ChainKind::Downsample => (&mut sc.downsample, downsample_path.as_ref()),
+        };
+        let chain = slot.get_or_load(|| {
+            #[allow(clippy::result_large_err)]
+            let loaded = FilterChain::load_from_path(
+                path?,
+                ShaderFeatures::NONE,
+                device.wgpu_device(),
+                queue,
+                None,
+            );
+            loaded
+                .inspect_err(|err| error!("failed to load {kind:?} preset: {err}"))
+                .ok()
+        })?;
+        Some((chain, &sc.target, &mut sc.frame_count))
     }
 }
 
 /// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
-/// are loaded lazily, once per emulator source, on first render (see
-/// [`SlangChains::source_chains`]).
+/// are built lazily, once per emulator source and only for the presets a view
+/// actually selects (see [`SlangChains::chain`]).
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     // The WGSL backend runs no filter chains; the single-pass shader loaded by
     // `init_blit_pipeline` does everything.
-    let ShaderPath::Slangp {
-        effect,
-        passthrough,
-        downsample,
-    } = &*shader_path
-    else {
+    let ShaderPath::Slangp { effect, downsample } = &*shader_path else {
         return;
     };
     commands.insert_resource(SlangChains {
         effect_path: effect.clone(),
-        passthrough_path: passthrough.clone(),
         downsample_path: downsample.clone(),
         sources: HashMap::new(),
     });

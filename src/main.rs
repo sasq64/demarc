@@ -741,16 +741,13 @@ fn main() {
 
     // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
     // name — a `.wgsl` path selects the single-pass WGSL backend, anything
-    // else a `.slangp` preset run through librashader. The slangp passthrough
-    // (`stock.slangp`) is always the bundled one.
-    let passthrough = system_dir().join("shaders/slangp/stock.slangp");
+    // else a `.slangp` preset run through librashader.
     let downsample = args
         .downsample
         .then(|| system_dir().join(DOWNSAMPLE_PRESET));
     let shader_path = match &args.slangp {
         Some(path) => ShaderPath::Slangp {
             effect: path.clone(),
-            passthrough,
             downsample,
         },
         None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
@@ -758,7 +755,6 @@ fn main() {
         },
         None => ShaderPath::Slangp {
             effect: system_dir().join(shader.path()),
-            passthrough,
             downsample,
         },
     };
