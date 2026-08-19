@@ -10,3 +10,5 @@
 - [ ] Wire up color cycle flag
 - [ ] Full music info
 - [ ] Speed up shader creation, maybe share shaders between emulators
+- [ ] Match files on disk
+- [ ] Try other downloads on failure
