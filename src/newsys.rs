@@ -56,6 +56,7 @@ pub fn walk_dir(
     mut call: impl FnMut(&Path, &str, &[u8]) -> Result<()>,
 ) -> Result<()> {
     walk_dir_find(dir, header_size, |path, ext, header| {
+        debug!("WALK: {path:?}");
         call(path, ext, header)?;
         Ok(None::<()>)
     })?;

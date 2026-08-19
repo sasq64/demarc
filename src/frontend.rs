@@ -418,9 +418,11 @@ fn run_retro(
     };
 
     let mut show_info = false;
+    let mut stop_input = false;
     if mouse_buttons.just_pressed(MouseButton::Left)
         && let Some(i) = settings.mouse_index
     {
+        stop_input = true;
         let t = time.elapsed_secs_f64();
         if t - settings.last_draw < 0.2 {
             settings.maximized = !settings.maximized;
@@ -596,7 +598,12 @@ fn run_retro(
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu) && cmd.is_none() && !modal {
+        if (settings.all_emus || i == settings.current_emu)
+            && cmd.is_none()
+            && !modal
+            && settings.maximized
+            && !stop_input
+        {
             let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }

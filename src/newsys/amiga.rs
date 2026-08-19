@@ -408,6 +408,20 @@ impl System for AmigaSystem {
         if file.get_meta("platform", "").contains("AGA") {
             file.set_meta("puae_model", "A1200");
         }
+        if file.has_tag("amos") {
+            info!("AMOS DEMO");
+            file.set_meta("puae_cpu_model", "68030");
+            file.set_meta("puae_z3mem_size", "128");
+            file.set_meta("puae_chipmem_size", "4");
+            file.set_meta("puae_fastmem_size", "8");
+            file.make_temp();
+            let l_dir = file.temp_dir().unwrap().join("libs");
+            fs::create_dir(&l_dir)?;
+            fs::copy(
+                system_dir().join("libs").join("mathtrans.library"),
+                l_dir.join("mathtrans.library"),
+            )?;
+        }
 
         if is_dir {
             return Ok(true);
