@@ -119,31 +119,50 @@ const CAMG_LACE: u32 = 0x0004;
 
 /// Integer pixel-replication factors that turn an Amiga image's non-square
 /// pixels into square ones for display. On the Amiga a lores pixel is roughly
-/// square, a hires pixel is half as wide (so hires images are stretched
-/// vertically), and an interlaced pixel is half as tall (so lores-interlace
-/// images are stretched horizontally). A hires-interlace pixel is square again.
+/// square, a hires pixel is half as wide and a super-hires one a quarter as
+/// wide (so those images are stretched vertically), while an interlaced pixel
+/// is half as tall (so lores-interlace images are stretched horizontally). A
+/// hires-interlace pixel is square again; a super-hires interlace pixel is
+/// still half as wide as it is tall.
 ///
 /// The resolution comes from the CAMG viewport mode when present; only the
 /// HIRES/SHRES/LACE bits are trusted because old writers leave garbage in the
-/// other bits. When no CAMG mode is present the size is inferred from the pixel
-/// dimensions (the classic 320x512 -> 640x512 and 640x256 -> 640x512 cases).
-/// PBM (PC DeluxePaint) images always have square pixels and are left alone.
+/// other bits. SHRES additionally has to be backed up by the width: the
+/// extended mode ids (Productivity, DblPAL and friends) set that bit on
+/// 640-pixel screens whose pixels are already square, whereas a genuine
+/// super-hires screen is 1280 pixels wide (1024+ even trimmed down).
+///
+/// When no CAMG mode is present the size is inferred from the pixel dimensions
+/// (the classic 320x512 -> 640x512 and 640x256 -> 640x512 cases); super-hires
+/// is not guessed at, as such a picture is Amiga-only and in practice always
+/// carries a CAMG. PBM (PC DeluxePaint) images always have square pixels and
+/// are left alone.
 fn display_scale(form_type: &str, width: usize, height: usize, camg: u32) -> (usize, usize) {
     if form_type == "PBM " {
         return (1, 1);
     }
     let mode = camg & (CAMG_HIRES | CAMG_SHRES | CAMG_LACE);
-    let (hires, lace) = if mode != 0 {
-        (camg & (CAMG_HIRES | CAMG_SHRES) != 0, camg & CAMG_LACE != 0)
+    // Horizontal pixels per lores pixel: 1 lores, 2 hires, 4 super-hires.
+    let (hres, lace) = if mode != 0 {
+        let hres = if camg & CAMG_SHRES != 0 && width >= 1024 {
+            4
+        } else if camg & (CAMG_HIRES | CAMG_SHRES) != 0 {
+            2
+        } else {
+            1
+        };
+        (hres, camg & CAMG_LACE != 0)
     } else {
         // No usable viewport mode: fall back to the dimensions. Hires screens
         // are ~640+ wide; interlaced screens are ~400+ lines tall.
-        (width >= 512, height >= 400)
+        (if width >= 512 { 2 } else { 1 }, height >= 400)
     };
-    match (hires, lace) {
-        (true, false) => (1, 2), // hires: thin pixels, double the height
-        (false, true) => (2, 1), // lores interlace: wide pixels, double the width
-        _ => (1, 1),             // lores or hires-interlace: already square
+    match (hres, lace) {
+        (4, false) => (1, 4), // super-hires: quarter-width pixels
+        (4, true) => (1, 2),  // super-hires interlace: half-width pixels
+        (2, false) => (1, 2), // hires: half-width pixels
+        (1, true) => (2, 1),  // lores interlace: half-height pixels
+        _ => (1, 1),          // lores, or hires interlace: already square
     }
 }
 
@@ -476,6 +495,27 @@ fn parse_ranges(form: &Chunk) -> Vec<CycleRange> {
             })
         })
         .collect()
+}
+
+/// Whether a colour map holds the full 8 bits per component AGA can display, or
+/// only the 4 bits an OCS/ECS colour register could store. A 4-bit value is
+/// written out either replicated into both nibbles (`$f` -> `0xff`, what the
+/// IFF spec asks for) or in the high nibble alone (`$f` -> `0xf0`, what plenty
+/// of older writers do), so a map that is entirely one of those two shapes came
+/// from 4-bit hardware and anything else needs AGA.
+///
+/// Returns the number of significant bits per component, or `None` for an empty
+/// map. Best effort: a genuine 8-bit palette that happens to use only such
+/// values — a black-and-white one, say — reads as 4-bit, which is the right
+/// answer about its colours if not about the machine that made it.
+fn palette_bits(cmap: &[u8]) -> Option<u8> {
+    let components = &cmap[..cmap.len() - cmap.len() % 3];
+    if components.is_empty() {
+        return None;
+    }
+    let replicated = components.iter().all(|b| b >> 4 == b & 0xf);
+    let high_nibble_only = components.iter().all(|b| b & 0xf == 0);
+    Some(if replicated || high_nibble_only { 4 } else { 8 })
 }
 
 /// Expand a 12-bit `$0RGB` colour word (4 bits per component) to 8-bit RGB by
@@ -842,19 +882,20 @@ pub fn describe(bytes: &[u8]) -> String {
         .get(0..4)
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .unwrap_or_default();
-    let name = match form_type.as_str() {
-        "ILBM" => "Amiga IFF",
-        "ACBM" => "Amiga ACBM",
-        "PBM " => "PC IFF",
-        "RGB8" => "Impulse RGB8",
-        "RGBN" => "Impulse RGBN",
+    let mut name = (match form_type.as_str() {
+        "ILBM" => "Amiga",
+        "ACBM" => "Amiga",
+        "PBM " => "PC",
+        "RGB8" => "Amiga",
+        "RGBN" => "Amiga",
         _ => return UNKNOWN.into(),
-    };
+    })
+    .to_string();
     let Some(header) = form
         .find("BMHD")
         .and_then(|c| BmHeader::parse(c.data()).ok())
     else {
-        return name.into();
+        return name;
     };
     let width = header.width as usize;
     let height = header.height as usize;
@@ -874,19 +915,34 @@ pub fn describe(bytes: &[u8]) -> String {
         "RGB8" => "True color".to_string(),
         "RGBN" => "12-bit".to_string(),
         _ if camg & CAMG_HAM != 0 => format!("HAM{num_planes}"),
-        _ if camg & CAMG_EHB != 0 => "EHB, 64 colors".to_string(),
+        _ if camg & CAMG_EHB != 0 => "64 colors/EHB".to_string(),
         // A deep ILBM's planes are colour bits rather than register bits, so
         // 24 or more of them mean truecolour rather than a palette.
         _ if num_planes >= 24 => "True color".to_string(),
         _ => format!("{} colors", 1usize << num_planes),
     };
+    // Colour depth of the palette itself: AGA widened the colour registers from
+    // 4 to 8 bits per component, so which one a picture's colours were authored
+    // at says which chipset it is for. Only meaningful for the Amiga paletted
+    // forms — a PC PBM's palette is a VGA one, and the truecolour forms carry
+    // their colours per pixel rather than in the CMAP.
+    let cmap = matches!(form_type.as_str(), "ILBM" | "ACBM") && num_planes < 24;
+    if let Some(bits) = cmap
+        .then(|| form.find("CMAP"))
+        .flatten()
+        .and_then(|c| palette_bits(c.data()))
+    {
+        if name == "Amiga" {
+            name = format!("Amiga {}", if bits == 8 { "AGA" } else { "OCS" });
+        }
+    }
     // A dynamic-palette chunk is what makes such a picture what it is, so name
     // the one in play (see [`attach_line_palettes`]).
     if let Some(chunk) = ["SHAM", "CTBL", "BEAM", "PCHG"]
         .into_iter()
         .find(|id| form.find(id).is_some())
     {
-        mode = format!("{mode}, {chunk}");
+        mode = format!("{mode}/{chunk}");
     }
 
     // The displayed size, not the stored one: aspect correction replicates
@@ -1076,7 +1132,7 @@ mod tests {
     /// HAM6 and HAM8 hold-and-modify images.
     #[test]
     fn test_ham() {
-        check("GINA", 320, 200); // HAM6
+        check("AH_Swimmer.iff", 320, 200); // HAM6
         check("FearFace.HAM8", 640, 512); // HAM8
     }
 
@@ -1146,7 +1202,7 @@ mod tests {
     /// not plain palette lookups) so callers fall back to the RGBA path.
     #[test]
     fn test_indexed_rejects_non_palette() {
-        assert!(load_indexed(get_path("GINA")).is_err(), "HAM");
+        assert!(load_indexed(get_path("AH_Swimmer.iff")).is_err(), "HAM");
         assert!(load_indexed(get_path("24.iff")).is_err(), "deep");
         assert!(load_indexed(get_path("WorldMap2.24")).is_err(), "RGB8");
     }
@@ -1232,6 +1288,17 @@ mod tests {
         assert_eq!(scale_grid(&[1u8, 2, 3, 4], 2, 2, 1, 1), vec![1, 2, 3, 4]);
     }
 
+    /// Super-hires: quarter-width pixels, so the height is quadrupled.
+    /// `dalton-big-wheel-1280x256` is the same picture as the hires-interlace
+    /// `dalton-big-wheel-640x512`, and must come out the same shape.
+    #[test]
+    fn test_super_hires() {
+        check("dalton-big-wheel-1280x256.ilbm", 1280, 1024);
+        // Productivity (a Multiscan mode id) sets the SHRES bit on a screen
+        // that is already square, and must not be stretched.
+        check("attaq.lbm", 640, 480);
+    }
+
     /// The `display_scale` mode logic, exercised directly.
     #[test]
     fn test_display_scale() {
@@ -1242,13 +1309,58 @@ mod tests {
             (1, 1)
         );
         assert_eq!(display_scale("ILBM", 320, 200, 0), (1, 1)); // lores
+        // Super-hires (the mode id sets HIRES too), plain and interlaced.
+        let shres = CAMG_HIRES | CAMG_SHRES;
+        assert_eq!(display_scale("ILBM", 1280, 256, shres), (1, 4));
+        assert_eq!(display_scale("ILBM", 1280, 512, shres | CAMG_LACE), (1, 2));
+        // A 640-wide screen claiming SHRES is an extended mode id (Productivity
+        // here), not a super-hires screen: treat it as hires.
+        assert_eq!(display_scale("ILBM", 640, 480, 0x00039024), (1, 1));
+        assert_eq!(display_scale("ILBM", 640, 256, 0x00039020), (1, 2));
         // Garbage in the high bits must not read as a resolution.
         assert_eq!(display_scale("ILBM", 320, 200, 0x4800), (1, 1));
         // No CAMG mode: infer from dimensions (the user's fallback rule).
         assert_eq!(display_scale("ILBM", 320, 512, 0), (2, 1));
         assert_eq!(display_scale("ILBM", 640, 256, 0), (1, 2));
+        // Super-hires is never inferred without a CAMG.
+        assert_eq!(display_scale("ILBM", 1280, 256, 0), (1, 2));
         // PBM is always square, even at hires dimensions.
         assert_eq!(display_scale("PBM ", 640, 480, 0), (1, 1));
+    }
+
+    /// `palette_bits` tells a 4-bit (OCS/ECS) colour map from an 8-bit (AGA)
+    /// one, in both of the ways a 4-bit value gets written out.
+    #[test]
+    fn test_palette_bits() {
+        assert_eq!(palette_bits(&[0xff, 0x11, 0xaa]), Some(4)); // nibble-replicated
+        assert_eq!(palette_bits(&[0xf0, 0x10, 0xa0]), Some(4)); // high nibble only
+        assert_eq!(palette_bits(&[0xff, 0x11, 0xab]), Some(8)); // needs 8 bits
+        assert_eq!(palette_bits(&[]), None);
+        // A trailing partial entry is ignored rather than misread.
+        assert_eq!(palette_bits(&[0x12]), None);
+    }
+
+    /// `describe` names the colour depth of the palette: AGA images carry full
+    /// 8-bit components, OCS/ECS ones only 4 bits per component.
+    #[test]
+    fn test_describe_chipset() {
+        let d = |f: &str| describe(&fs::read(get_path(f)).unwrap());
+        assert_eq!(d("aplacet.lbm"), "Amiga IFF 640x512 (256 colors, AGA)");
+        assert_eq!(d("ghost"), "Amiga IFF 320x256 (16 colors, OCS)");
+        assert_eq!(d("TEST.ACBM"), "Amiga ACBM 320x256 (8 colors, OCS)");
+        assert_eq!(d("FearFace.HAM8"), "Amiga IFF 640x512 (HAM8, AGA)");
+        assert_eq!(
+            d("DECKER-BattleMech.lbm"),
+            "Amiga IFF 640x512 (EHB, 64 colors, OCS)"
+        );
+        assert_eq!(
+            d("amiga-ferrari.dhr"),
+            "Amiga IFF 704x512 (16 colors, OCS, CTBL)"
+        );
+        // Truecolour images have no palette to judge, and a PC PBM's palette is
+        // not an Amiga one.
+        assert_eq!(d("24.iff"), "Amiga IFF 455x341 (True color)");
+        assert_eq!(d("water.lbm"), "PC IFF 640x480 (256 colors)");
     }
 
     /// Non-IFF and unsupported forms should error rather than panic.
@@ -1307,7 +1419,7 @@ mod tests {
     fn test_truncated_files_dont_panic() {
         for file in [
             "abydos.ilbm",
-            "GINA",
+            "AH_Swimmer.iff",
             "TEST.ACBM",
             "water.lbm",
             "spock.rgbn",

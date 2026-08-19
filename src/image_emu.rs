@@ -355,11 +355,14 @@ mod tests {
         let cases = [
             // Indexed ILBM, HAM (which takes the fixed-RGBA path instead), a
             // per-scanline palette, a truecolour IFF, and both DEGAS variants.
-            ("testdata/test.iff", "Amiga IFF 640x512 (256 colors)"),
-            ("testdata/iffILBM/FearFace.HAM8", "Amiga IFF 640x512 (HAM8)"),
+            ("testdata/test.iff", "Amiga IFF 640x512 (256 colors, AGA)"),
+            (
+                "testdata/iffILBM/FearFace.HAM8",
+                "Amiga IFF 640x512 (HAM8, AGA)",
+            ),
             (
                 "testdata/iffILBM/sham.iff",
-                "Amiga IFF 640x512 (HAM6, SHAM)",
+                "Amiga IFF 640x512 (HAM6, OCS, SHAM)",
             ),
             (
                 "testdata/iffILBM/Vogel_Kamera.24",
