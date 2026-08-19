@@ -574,6 +574,7 @@ fn run_retro(
             && now > emu.start_time + (mt as f64)
             && (now - settings.last_draw) > 1.0
         {
+            emu.start_time = now + 100.0;
             emu.run_next = true;
         };
 
