@@ -64,8 +64,15 @@ impl System for C64System {
         let mut images = vec![];
         let mut prgs = vec![];
 
-        if self.reu {
+        if self.reu || file.has_tag("reu") {
             file.set_meta("vice_ram_expansion_unit", "16384kB");
+        }
+
+        if file.has_tag("2sid") {
+            file.set_meta("vice_sid_extra", "0xd420");
+        }
+        if file.has_tag("6581") {
+            file.set_meta("vice_sid_model", "6581");
         }
 
         let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
