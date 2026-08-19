@@ -463,10 +463,6 @@ impl Emulator {
     }
 
     pub fn get_info(&self) -> String {
-        if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
-            return info;
-        }
-
         let system = self.work_file.get_meta("system", "???");
         let GameInfo {
             title,
@@ -479,9 +475,15 @@ impl Emulator {
         } else {
             format!(" ({year})")
         };
-        let desc = if typ.is_empty() { &system } else { &typ };
+        //let desc = if typ.is_empty() { &system } else { &typ };
 
-        format!("\"{title}\"\n{group}\n{desc}{year}")
+        let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
+            info
+        } else {
+            if typ.is_empty() { system } else { typ.clone() }
+        };
+
+        format!("\"{title}\"{year}\n{group}\n{desc}")
     }
 
     /// Begin loading `emu_file`, downloading it first if it is URL-backed.
