@@ -30,10 +30,137 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// keeps filling the disk.
 const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
+/// Where each archive named by a db `download:` field lives, best mirror first.
+///
+/// Demozoo does not store a url for the files it knows an archive for: it
+/// stores a *link class* plus a parameter, and the db generator keeps that pair
+/// as `SceneOrgFile:/parties/2006/assembly06/demo/x.zip` rather than resolving
+/// it (see demodb's demozoo.py). Resolving it here instead means a mirror that
+/// dies — or a faster one appearing — is a change to this table rather than a
+/// regenerate of every db file that mentions it.
+///
+/// The url is simply the base with the parameter appended, so a base carries
+/// whatever trailing `/` or `?` the join needs. Only the first mirror is used
+/// today; walking down the list when a download fails is what the list is for,
+/// and is not implemented yet.
+///
+/// Any class listed here is also a scheme demarc will accept as a url, so keep
+/// the names distinct from real schemes. Matching is case-insensitive: the db
+/// spells the class the way Demozoo does, but a value that has been through
+/// `Url::parse` (which is how db lines reach [`fetch_url`]) arrives lowercased.
+const LINK_BASES: &[(&str, &[&str])] = &[
+    (
+        "AmigascneFile",
+        &[
+            "https://files.scene.org/get:fi-ftp/mirrors/amigascne",
+            "https://files.scene.org/get:de-https/mirrors/amigascne",
+            "ftp://ftp.amigascne.org/pub/amiga",
+        ],
+    ),
+    (
+        "SceneOrgFile",
+        &[
+            // The bare `/get/` link 302-redirects to a slow FTP mirror, so name
+            // a mirror directly. (`URL_REWRITES` below rewrites `/get/` the same
+            // way, for the plain urls a db holds for the same files.)
+            "https://files.scene.org/get:de-https",
+            "https://files.scene.org/get:fi-ftp",
+        ],
+    ),
+    ("ModlandFile", &["https://ftp.modland.com"]),
+    (
+        "FujiologyFile",
+        &["https://ftp.untergrund.net/users/ltk_tscc/fujiology"],
+    ),
+    ("UntergrundFile", &["https://ftp.untergrund.net"]),
+    ("PaduaOrgFile", &["http://ftp.padua.org/pub/c64"]),
+    ("Defacto2File", &["https://defacto2.net/f/"]),
+    ("ModarchiveModule", &["https://modarchive.org/module.php?"]),
+    ("SixteenColorsPack", &["https://16colo.rs/pack/"]),
+];
+
+/// Fixups applied to every resolved url, as `(prefix, replacement)` pairs; the
+/// first matching rule wins.
+///
+/// These are links that are correct as a db records them but not as written
+/// downloadable: they point at a redirect, a dead host name, or a doubled path
+/// prefix. Rules match the url *after* [`LINK_BASES`] has been applied, so a
+/// rule must not undo a mirror choice made there — hence no rule for the bases
+/// listed above.
+///
+///   funet, sndh  plain http (or ftp) no longer serves these files.
+///   scene.org    a `/get/` link 302-redirects to a slow FTP mirror; the
+///                `/get:de-https/` variant serves the file over HTTPS directly.
+///   modland      some links already carry the `/pub/modules` prefix, giving a
+///                doubled path once the base is prepended.
+///   untergrund   the fujiology archive moved from user ltk_tscl to ltk_tscc.
+const URL_REWRITES: &[(&str, &str)] = &[
+    ("ftp://ftp.funet.fi/", "https://ftp.funet.fi/"),
+    (
+        "https://files.scene.org/get/",
+        "https://files.scene.org/get:de-https/",
+    ),
+    (
+        "https://ftp.modland.com/pub/modules/pub/modules/",
+        "https://ftp.modland.com/pub/modules/",
+    ),
+    (
+        "https://ftp.untergrund.net/users/ltk_tscl/",
+        "https://ftp.untergrund.net/users/ltk_tscc/",
+    ),
+    ("http://sndh.atari.org/", "https://sndh.atari.org/"),
+];
+
+/// The [`LINK_BASES`] mirrors and the parameter to append to them, if `s` names
+/// a link class rather than spelling a url out.
+fn link_bases(s: &str) -> Option<(&'static [&'static str], &str)> {
+    let (class, parameter) = s.split_once(':')?;
+    LINK_BASES
+        .iter()
+        .find(|(name, _)| class.eq_ignore_ascii_case(name))
+        .map(|(_, bases)| (*bases, parameter))
+}
+
+/// Apply the first matching [`URL_REWRITES`] rule to `url`.
+fn rewrite(url: &str) -> String {
+    for (prefix, replacement) in URL_REWRITES {
+        if let Some(rest) = url.strip_prefix(prefix) {
+            return format!("{replacement}{rest}");
+        }
+    }
+    url.to_string()
+}
+
+/// Every url `s` could be downloaded from, best first — the [`LINK_BASES`]
+/// mirrors for a link class, or just `s` itself for a url that is already
+/// spelled out. Either way the result has been through [`rewrite`].
+pub fn resolve_url(s: &str) -> Vec<String> {
+    match link_bases(s) {
+        Some((bases, parameter)) => bases
+            .iter()
+            .map(|base| rewrite(&format!("{base}{parameter}")))
+            .collect(),
+        None => vec![rewrite(s)],
+    }
+}
+
+/// The url [`fetch_url`] actually downloads: the best mirror of a link class,
+/// or the url as given. A link class with no mirrors at all falls back to the
+/// input, which then fails at download with an unknown scheme rather than here.
+fn primary_url(s: &str) -> String {
+    resolve_url(s)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| s.into())
+}
+
 /// True if `s` looks like a remote URL demarc should download rather than treat
-/// as a local path.
+/// as a local path — either a downloadable scheme or a [`LINK_BASES`] class.
 pub fn is_url(s: &str) -> bool {
-    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://")
+    s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with("ftp://")
+        || link_bases(s).is_some()
 }
 
 /// Download the file at `url` into a local cache directory and return its path.
@@ -60,7 +187,11 @@ pub type OnProgress<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
 /// `on_progress` is not called at all for a cache hit — there is nothing to
 /// download — so a progress bar should not assume it will ever fire.
 pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow::Result<PathBuf> {
-    let name = url_filename(url);
+    // The cache directory is keyed on the url as the db writes it, so a link
+    // class keeps its cache entry when [`LINK_BASES`] changes mirror; the name
+    // inside it comes from the resolved url, which is the one that carries the
+    // file's real name and extension.
+    let name = url_filename(&primary_url(url));
     let dir = downloads_dir().join(url_hash(url));
     std::fs::create_dir_all(&dir)?;
 
@@ -235,10 +366,13 @@ fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::R
 /// does for its `/get/...` download links — is handled by switching to the FTP
 /// transport instead of failing on the unknown scheme.
 ///
-/// URLs are downloaded exactly as the db gives them: the rewrites that point a
-/// link at a faster or still-living mirror live in the db generators (see
-/// `URL_REWRITES` in demodb's demozoo.py), so what is exported is what works.
+/// `url` may also be a `LinkClass:parameter` pair rather than a url proper, and
+/// is in any case run through [`resolve_url`] first — that is where the mirror
+/// a db's link class resolves to, and the fixups for links that no longer work
+/// as recorded, both live.
 fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    // Only the best mirror is tried; see [`LINK_BASES`].
+    let url = &primary_url(url);
     info!("Downloading {url}...");
     if url.starts_with("ftp://") {
         return fetch_ftp(url, out, on_progress);
@@ -454,16 +588,82 @@ mod tests {
         assert!(is_url("https://example.com/a.zip"));
         assert!(is_url("http://example.com/a.zip"));
         assert!(is_url("ftp://example.com/a.zip"));
+        assert!(is_url("SceneOrgFile:/parties/2006/x.zip"));
         assert!(!is_url("/home/user/a.zip"));
         assert!(!is_url("a.zip"));
+        assert!(!is_url("C:/games/a.zip"));
+    }
+
+    #[test]
+    fn resolves_a_link_class_to_its_mirrors() {
+        let urls = resolve_url("SceneOrgFile:/parties/2006/assembly06/demo/x.zip");
+        assert_eq!(
+            urls,
+            vec![
+                "https://files.scene.org/get:de-https/parties/2006/assembly06/demo/x.zip",
+                "https://files.scene.org/get:fi-ftp/parties/2006/assembly06/demo/x.zip",
+            ]
+        );
+        // A base that is not a directory prefix joins just as directly.
+        assert_eq!(
+            resolve_url("Defacto2File:a53998"),
+            vec!["https://defacto2.net/f/a53998"]
+        );
+    }
+
+    /// A db line reaches us through `Url::parse`, which lowercases the scheme,
+    /// so the class has to match however it was spelled.
+    #[test]
+    fn resolves_a_link_class_case_insensitively() {
+        let parsed = Url::parse("ModlandFile:/pub/modules/Protracker/Wal/raw.mod").unwrap();
+        assert_eq!(parsed.scheme(), "modlandfile");
+        assert_eq!(
+            resolve_url(parsed.as_str()),
+            vec!["https://ftp.modland.com/pub/modules/Protracker/Wal/raw.mod"]
+        );
+    }
+
+    #[test]
+    fn rewrites_urls_that_no_longer_work_as_recorded() {
+        // A plain url from a db, pointed at the mirror that serves it.
+        assert_eq!(
+            resolve_url("https://files.scene.org/get/demos/x.zip"),
+            vec!["https://files.scene.org/get:de-https/demos/x.zip"]
+        );
+        // ...and the same fixup applied after a link class was resolved: these
+        // parameters carry the base's own path prefix a second time.
+        assert_eq!(
+            resolve_url("ModlandFile:/pub/modules/pub/modules/Wal/raw.mod"),
+            vec!["https://ftp.modland.com/pub/modules/Wal/raw.mod"]
+        );
+        // A url no rule matches is left exactly as it was.
+        assert_eq!(
+            resolve_url("https://example.com/a.zip"),
+            vec!["https://example.com/a.zip"]
+        );
+    }
+
+    /// The cache keys on the db's own url so a mirror change keeps the entry,
+    /// but the file inside it is named from the resolved url — dispatch keys on
+    /// the extension, and a link class has none.
+    #[test]
+    fn names_a_link_class_download_after_the_resolved_url() {
+        assert_eq!(
+            url_filename(&primary_url(
+                "AmigascneFile:/Groups/D/DOC/DOC-Digidemo1.dms"
+            )),
+            "DOC-Digidemo1.dms"
+        );
     }
 
     #[test]
     #[ignore = "hits the network"]
     fn downloads_https_to_ftp_redirect() {
         let mut buf = Vec::new();
+        // An FTP mirror named directly: a bare `/get/` link redirects here too,
+        // but [`URL_REWRITES`] sends that one to the HTTPS mirror instead.
         download(
-            "https://files.scene.org/get/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
+            "https://files.scene.org/get:fi-ftp/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
             &mut buf,
         )
         .unwrap();
@@ -485,6 +685,21 @@ mod tests {
         .unwrap();
         assert_eq!(buf.len(), 5402);
         assert_eq!(&buf[1..4], b"PNG");
+    }
+
+    /// The whole path a db line takes: a link class is resolved to its mirror
+    /// and downloaded from there.
+    #[test]
+    #[ignore = "hits the network"]
+    fn downloads_a_link_class_url() {
+        let mut buf = Vec::new();
+        download(
+            "SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(buf.len(), 46596);
+        assert_eq!(&buf[..2], b"PK");
     }
 
     #[test]
