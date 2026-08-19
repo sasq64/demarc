@@ -259,12 +259,13 @@ struct Args {
     crt_limit: f32,
 
     /// Filter the image with the DREZ downsampler instead of the CRT/LCD
-    /// shader whenever it is shown *smaller* than its source resolution (a
-    /// small grid cell, say). Pass `--downsample false` to keep the plain
-    /// nearest-sampled minification. Only applies to the `.slangp` backends,
-    /// and is independent of the CRT on/off hotkey.
-    #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
-    downsample: bool,
+    /// shader when the image is magnified less than this factor. `1` (the
+    /// default) switches to it whenever the image is shown *smaller* than its
+    /// source resolution (a small grid cell, say); `0` never uses it. Only
+    /// applies to the `.slangp` backends, and is independent of the CRT on/off
+    /// hotkey.
+    #[arg(long, default_value_t = 1.0)]
+    downsample: f32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -742,13 +743,12 @@ fn main() {
     // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
     // name — a `.wgsl` path selects the single-pass WGSL backend, anything
     // else a `.slangp` preset run through librashader.
-    let downsample = args
-        .downsample
-        .then(|| system_dir().join(DOWNSAMPLE_PRESET));
+    let downsample = system_dir().join(DOWNSAMPLE_PRESET);
     let shader_path = match &args.slangp {
         Some(path) => ShaderPath::Slangp {
             effect: path.clone(),
             downsample,
+            downsample_limit: args.downsample,
         },
         None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
             asset_path: shader.path().into(),
@@ -756,6 +756,7 @@ fn main() {
         None => ShaderPath::Slangp {
             effect: system_dir().join(shader.path()),
             downsample,
+            downsample_limit: args.downsample,
         },
     };
 

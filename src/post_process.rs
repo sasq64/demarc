@@ -44,23 +44,30 @@ use crate::{AppSettings, RenderSettings};
 const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
 /// The bundled DREZ downsample preset, relative to the `system` dir. Swapped in
-/// for the effect preset on views that minify the source (see `--downsample`).
+/// for the effect preset on views that magnify the source less than
+/// `--downsample` (by default: that minify it).
 pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
 
 /// Which post-process backend to run, selected on the command line.
 #[derive(Resource, Clone)]
 pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect and an optional
-    /// downsampler for views that minify the source. Absolute paths, resolved
-    /// from the `system` dir (or a user-supplied `--slangp`) in `main`. With
-    /// the effect toggled off there is no chain at all — the composite blit
-    /// samples the emulator framebuffer directly (see [`post_process_pass`]).
+    /// librashader `.slangp` filter chains: the visible effect and a
+    /// downsampler for views that show the source too small. Absolute paths,
+    /// resolved from the `system` dir (or a user-supplied `--slangp`) in
+    /// `main`. With the effect toggled off there is no chain at all — the
+    /// composite blit samples the emulator framebuffer directly (see
+    /// [`post_process_pass`]).
     Slangp {
         effect: PathBuf,
-        /// DREZ downsample preset, substituted for `effect` on views that show
-        /// the source *smaller* than its native resolution (see `--downsample`).
-        /// `None` disables the substitution.
-        downsample: Option<PathBuf>,
+        /// DREZ downsample preset, substituted for `effect` on views below
+        /// `downsample_limit`.
+        downsample: PathBuf,
+        /// Magnification (on-screen pixels per source pixel) below which the
+        /// downsampler replaces the effect, from `--downsample`. Mirrors
+        /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
+        /// kicks in exactly when the view shows the source *smaller* than its
+        /// native resolution; `0` disables the downsampler entirely.
+        downsample_limit: f32,
     },
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
@@ -347,13 +354,19 @@ fn pixel_ratio(target: UVec2, src: UVec2, uv_scale: Vec2) -> f32 {
     (uv_scale * target.as_vec2() / src.as_vec2()).min_element()
 }
 
-/// Whether the image's on-screen footprint is smaller than the source frame on
-/// either axis, i.e. the view throws source pixels away. Taken per axis rather
-/// than on the aspect-corrected magnification, because a frame stretched on one
-/// axis and squeezed on the other (a half-width Amiga screen shown at 1:1) still
-/// aliases on the squeezed one.
-fn is_minified(inter: UVec2, src: UVec2) -> bool {
-    inter.x < src.x || inter.y < src.y
+/// Whether a view whose on-screen footprint is `inter` should run the
+/// downsampler: it magnifies the source by less than `limit` on at least one
+/// axis. Taken per axis rather than on the aspect-corrected magnification,
+/// because a frame stretched on one axis and squeezed on the other (a
+/// half-width Amiga screen shown at 1:1) still aliases on the squeezed one.
+///
+/// `limit <= 0` never downsamples; the default `1.0` is exactly "the view
+/// throws source pixels away".
+fn wants_downsample(inter: UVec2, src: UVec2, limit: f32) -> bool {
+    if limit <= 0.0 || src.x == 0 || src.y == 0 {
+        return false;
+    }
+    (inter.as_vec2() / src.as_vec2()).min_element() < limit
 }
 
 /// The letterbox/pillarbox transform for showing a `src`-sized source in a
@@ -584,11 +597,12 @@ fn post_process_pass(
                 // source pixels outright, which aliases. The DREZ preset replaces
                 // the effect there; it band-limits the frame as it resamples, so
                 // the detail that can't be shown is filtered away instead of
-                // beating against the pixel grid. Independent of `crt_enabled`:
-                // `crt_limit` has almost always switched the effect off by the time
-                // we're minifying, and this is a resampler, not a look.
-                let downsampling =
-                    is_minified(inter_size, src_size) && chains.downsample_path.is_some();
+                // beating against the pixel grid. `--downsample` raises that
+                // threshold above 1:1 (or, at `0`, switches the preset off
+                // entirely). Independent of `crt_enabled`: `crt_limit` has almost
+                // always switched the effect off by the time we're down here, and
+                // this is a resampler, not a look.
+                let downsampling = wants_downsample(inter_size, src_size, chains.downsample_limit);
                 // With neither the effect nor the downsampler wanted, the chain
                 // this view would run is `stock.slangp` — a nearest-sampled
                 // verbatim copy of the source. Composite the emulator framebuffer
@@ -773,7 +787,7 @@ enum ChainKind {
     /// The visible effect preset (CRT/LCD), selected on the command line.
     Effect,
     /// The DREZ downsample preset, run instead of the effect when the view
-    /// minifies the source.
+    /// magnifies the source less than `--downsample`.
     Downsample,
 }
 
@@ -845,8 +859,11 @@ struct SourceChains {
 struct SlangChains {
     /// Path of the effect preset (`--shader`/`--slangp`), built per source.
     effect_path: PathBuf,
-    /// Path of the DREZ downsample preset, or `None` with `--downsample` off.
-    downsample_path: Option<PathBuf>,
+    /// Path of the DREZ downsample preset.
+    downsample_path: PathBuf,
+    /// Magnification below which `downsample_path` replaces the effect;
+    /// `0` (from `--downsample 0`) never runs it. See [`wants_downsample`].
+    downsample_limit: f32,
     /// One set of chains + target per emulator, keyed by its source image.
     /// A source that has never needed a chain has no entry at all.
     sources: HashMap<AssetId<Image>, SourceChains>,
@@ -871,6 +888,7 @@ impl SlangChains {
             effect_path,
             downsample_path,
             sources,
+            ..
         } = self;
         let sc = sources.entry(source).or_insert_with(|| SourceChains {
             effect: LazyChain::Pending,
@@ -883,7 +901,7 @@ impl SlangChains {
         }
         let (slot, path) = match kind {
             ChainKind::Effect => (&mut sc.effect, Some(&*effect_path)),
-            ChainKind::Downsample => (&mut sc.downsample, downsample_path.as_ref()),
+            ChainKind::Downsample => (&mut sc.downsample, Some(&*downsample_path)),
         };
         let chain = slot.get_or_load(|| {
             #[allow(clippy::result_large_err)]
@@ -908,12 +926,18 @@ impl SlangChains {
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     // The WGSL backend runs no filter chains; the single-pass shader loaded by
     // `init_blit_pipeline` does everything.
-    let ShaderPath::Slangp { effect, downsample } = &*shader_path else {
+    let ShaderPath::Slangp {
+        effect,
+        downsample,
+        downsample_limit,
+    } = &*shader_path
+    else {
         return;
     };
     commands.insert_resource(SlangChains {
         effect_path: effect.clone(),
         downsample_path: downsample.clone(),
+        downsample_limit: *downsample_limit,
         sources: HashMap::new(),
     });
 }
@@ -1063,29 +1087,58 @@ mod tests {
     #[test]
     fn minification_is_detected_per_axis() {
         let src = UVec2::new(320, 240);
-        // 1:1 and up are not minification — the boundary is exclusive.
-        assert!(!is_minified(
+        // At the default limit, 1:1 and up are not minification — the boundary
+        // is exclusive.
+        assert!(!wants_downsample(
             footprint(UVec2::new(320, 240), src, ScaleMode::Fit),
-            src
+            src,
+            1.0
         ));
-        assert!(!is_minified(
+        assert!(!wants_downsample(
             footprint(UVec2::new(1920, 1080), src, ScaleMode::Fit),
-            src
+            src,
+            1.0
         ));
         // A 5x4 grid of a 1920x1080 window still shows it above 1:1 — well
         // under the 1.5x `crt_limit`, but with nothing to filter away.
-        assert!(!is_minified(
+        assert!(!wants_downsample(
             footprint(UVec2::new(384, 270), src, ScaleMode::Fit),
-            src
+            src,
+            1.0
         ));
         // An 8x6 grid does squeeze it below its source resolution.
-        assert!(is_minified(
+        assert!(wants_downsample(
             footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
-            src
+            src,
+            1.0
         ));
         // A half-width Amiga frame stretched to 1:1 vertically is still
         // squeezed horizontally, and aliases there.
         let amiga = UVec2::new(640, 256);
-        assert!(is_minified(UVec2::new(512, 512), amiga));
+        assert!(wants_downsample(UVec2::new(512, 512), amiga, 1.0));
+    }
+
+    /// The limit is the same kind of threshold as `crt_limit`, from the other
+    /// side: raising it downsamples views that magnify below it, and `0`
+    /// switches the downsampler off however small the view gets.
+    #[test]
+    fn downsample_limit_thresholds_like_crt_limit() {
+        let src = UVec2::new(320, 240);
+        // A 5x4 grid cell shows the source at ~1.2x: untouched at the default,
+        // downsampled once the limit is raised past that.
+        let cell = footprint(UVec2::new(384, 270), src, ScaleMode::Fit);
+        assert!(!wants_downsample(cell, src, 1.0));
+        assert!(wants_downsample(cell, src, 1.5));
+        // Exactly at the limit the effect keeps it — the boundary is exclusive,
+        // mirroring `crt_limit`'s inclusive `>=`.
+        let one_to_one = footprint(UVec2::new(320, 240), src, ScaleMode::Fit);
+        assert!(!wants_downsample(one_to_one, src, 1.0));
+        // `0` never downsamples, however squeezed the view is.
+        assert!(!wants_downsample(
+            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
+            src,
+            0.0
+        ));
+        assert!(!wants_downsample(UVec2::new(1, 1), src, 0.0));
     }
 }
