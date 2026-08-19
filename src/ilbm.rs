@@ -10,15 +10,35 @@ struct Chunk<'a> {
 }
 
 impl<'a> Chunk<'a> {
+    /// Parse the chunk at the start of `data`, returning `None` if the 8-byte
+    /// header doesn't fit or the size field runs past the end of the data. A
+    /// parsed chunk therefore always holds exactly its header plus payload,
+    /// which is what makes the accessors below infallible.
+    fn parse(data: &'a [u8]) -> Option<Self> {
+        let size = u32::from_be_bytes(data.get(4..8)?.try_into().unwrap()) as usize;
+        let end = size.checked_add(8)?;
+        (end <= data.len()).then(|| Chunk { data: &data[..end] })
+    }
+
+    /// Wrap the outermost chunk of a file without trusting its size field:
+    /// real-world IFF files routinely carry a stale FORM size (both short and
+    /// past the end of the file), so the whole buffer is kept and the chunks
+    /// inside are read as far as they go. Sub-chunks are parsed strictly, so a
+    /// malformed one is still rejected.
+    fn parse_outer(data: &'a [u8]) -> Option<Self> {
+        (data.len() >= 8).then_some(Chunk { data })
+    }
+
     pub fn id(&self) -> String {
         String::from_utf8_lossy(&self.data[0..4]).into()
     }
+    /// Size of the payload actually present, which for a strictly parsed chunk
+    /// is the size the header declares.
     pub fn size(&self) -> usize {
-        let len = u32::from_be_bytes(self.data[4..8].try_into().unwrap());
-        len as usize
+        self.data.len() - 8
     }
-    pub fn data(&self) -> &[u8] {
-        &self.data[8..8 + self.size()]
+    pub fn data(&self) -> &'a [u8] {
+        &self.data[8..]
     }
 
     /// Iterate over the subchunks contained in this chunk.
@@ -51,12 +71,9 @@ impl<'a> Iterator for Chunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset + 8 > self.data.len() {
-            return None;
-        }
-        let chunk = Chunk {
-            data: &self.data[self.offset..],
-        };
+        // A chunk that doesn't fit ends the iteration; the file is malformed
+        // from here on and the caller reports whatever it failed to find.
+        let chunk = Chunk::parse(self.data.get(self.offset..)?)?;
         let size = chunk.size();
         // Data is padded to an even byte boundary; the pad byte is not
         // counted in the size field.
@@ -671,10 +688,9 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
 /// its pixel content and any colour-cycling ranges.
 fn parse(bytes: &[u8]) -> Result<Parsed> {
     // A valid FORM needs at least the 8-byte chunk header plus a 4-byte type.
-    if bytes.len() < 12 {
-        bail!("not an IFF FORM: too short ({} bytes)", bytes.len());
-    }
-    let form = Chunk { data: bytes };
+    let form = Chunk::parse_outer(bytes)
+        .filter(|c| c.data().len() >= 4)
+        .ok_or_else(|| anyhow!("not an IFF FORM: too short ({} bytes)", bytes.len()))?;
     if form.id() != "FORM" {
         bail!("not an IFF FORM");
     }
@@ -815,10 +831,9 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
 /// whose headers say nothing useful is just called an IFF image.
 pub fn describe(bytes: &[u8]) -> String {
     const UNKNOWN: &str = "IFF image";
-    if bytes.len() < 12 {
+    let Some(form) = Chunk::parse_outer(bytes).filter(|c| c.data().len() >= 4) else {
         return UNKNOWN.into();
-    }
-    let form = Chunk { data: bytes };
+    };
     if form.id() != "FORM" {
         return UNKNOWN.into();
     }
@@ -1240,5 +1255,69 @@ mod tests {
     fn test_rejects_garbage() {
         assert!(load_from_memory(b"not an iff file at all").is_err());
         assert!(load_from_memory(&[]).is_err());
+    }
+
+    /// Build a minimal 16x2 one-plane ILBM whose BODY chunk declares `body_size`
+    /// bytes but only carries `body`, for the malformed-chunk tests below.
+    fn ilbm_with_body(body_size: u32, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ILBM");
+        out.extend_from_slice(b"BMHD");
+        out.extend_from_slice(&20u32.to_be_bytes());
+        // width, height, x, y, planes, masking, compression, pad, transparent,
+        // aspect x/y, page width/height.
+        out.extend_from_slice(&16u16.to_be_bytes());
+        out.extend_from_slice(&2u16.to_be_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&[1, 0, 0, 0]);
+        out.extend_from_slice(&[0; 8]);
+        out.extend_from_slice(b"BODY");
+        out.extend_from_slice(&body_size.to_be_bytes());
+        out.extend_from_slice(body);
+        let mut form = b"FORM".to_vec();
+        form.extend_from_slice(&(out.len() as u32).to_be_bytes());
+        form.extend_from_slice(&out);
+        form
+    }
+
+    /// A chunk whose size field runs past the end of the file must be rejected,
+    /// not sliced out of bounds. `describe` reads the same chunks and must
+    /// survive it too.
+    #[test]
+    fn test_rejects_bad_chunk_size() {
+        // A sane file built the same way still loads, so the rejections below
+        // are about the bad size and nothing else.
+        let ok = ilbm_with_body(4, &[0xff, 0x00, 0xff, 0x00]);
+        assert!(load_from_memory(&ok).is_ok(), "control image should load");
+
+        for bad in [5u32, 1 << 20, u32::MAX] {
+            let bytes = ilbm_with_body(bad, &[0xff, 0x00, 0xff, 0x00]);
+            assert!(
+                load_from_memory(&bytes).is_err(),
+                "BODY declaring {bad} bytes should be rejected"
+            );
+            describe(&bytes);
+        }
+    }
+
+    /// Truncating a real file anywhere must give an error or a valid image,
+    /// never a panic.
+    #[test]
+    fn test_truncated_files_dont_panic() {
+        for file in [
+            "abydos.ilbm",
+            "GINA",
+            "TEST.ACBM",
+            "water.lbm",
+            "spock.rgbn",
+        ] {
+            let bytes = fs::read(get_path(file)).unwrap();
+            for len in (0..bytes.len()).step_by(97) {
+                let part = &bytes[..len];
+                let _ = load_from_memory(part);
+                let _ = load_indexed_from_memory(part);
+                describe(part);
+            }
+        }
     }
 }
