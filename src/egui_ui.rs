@@ -97,6 +97,109 @@ pub struct HudText {
 #[derive(Resource, Default)]
 struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
+    show_list: bool,
+    list_items: Vec<String>,
+    list_info: String,
+}
+
+/// Look of the boxes the list is drawn in, matching the Bevy UI widget in
+/// `crate::fuzzy_list`: near-opaque black behind a 2px orange border.
+const PANEL_FILL: egui::Color32 = egui::Color32::from_black_alpha(230);
+const PANEL_STROKE: egui::Color32 = egui::Color32::from_rgb(0xff, 0xaa, 0x7c);
+const PANEL_BORDER: f32 = 2.0;
+const PANEL_PADDING: i8 = 16;
+/// Vertical gap between the list box and the info box below it.
+const PANEL_GAP: f32 = 6.0;
+
+const ROW_SIZE: f32 = 28.0;
+/// Fixed height of every row, so the box does not resize as the list is
+/// filtered or emptied.
+const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
+/// Fraction of the screen height the list box is allowed to take up.
+const LIST_HEIGHT_FRACTION: f32 = 0.6;
+
+const INFO_SIZE: f32 = 22.0;
+/// How many lines of info the field below the list reserves room for. Fixed, so
+/// the centred layout doesn't jump as the selection moves between items whose
+/// info differs in length.
+const INFO_LINES: f32 = 5.0;
+const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
+
+fn panel_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(PANEL_FILL)
+        .stroke(egui::Stroke::new(PANEL_BORDER, PANEL_STROKE))
+        .inner_margin(egui::Margin::same(PANEL_PADDING))
+}
+
+/// Draws the file picker: a scrollable list of [`HudState::list_items`] with a
+/// fixed-height info field ([`HudState::list_info`]) below it, centred on
+/// screen. Purely a view for now -- no search box, no selection and no key
+/// handling; those follow when the widget takes over from `crate::fuzzy_list`.
+fn render_list(ctx: &egui::Context, state: &HudState) {
+    if !state.show_list {
+        return;
+    }
+    let screen = ctx.content_rect();
+    // Same proportions as the Bevy widget: as wide as the screen is tall (it is
+    // opened over a 4:3-ish emulator view), capped to what actually fits.
+    let width = screen.height().min(screen.width() - 2.0 * MARGIN.x);
+    let inner_width = width - 2.0 * (PANEL_PADDING as f32 + PANEL_BORDER);
+    let visible_rows = (screen.height() * LIST_HEIGHT_FRACTION / ROW_HEIGHT)
+        .floor()
+        .max(1.0);
+
+    egui::Area::new(egui::Id::new("fuzzy_list"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = PANEL_GAP;
+
+            panel_frame().show(ui, |ui| {
+                ui.set_width(inner_width);
+                egui::ScrollArea::vertical()
+                    .max_height(visible_rows * ROW_HEIGHT)
+                    .auto_shrink([false, false])
+                    // Only the rows in view are laid out, so a picker holding
+                    // the whole file list stays cheap to draw.
+                    .show_rows(ui, ROW_HEIGHT, state.list_items.len(), |ui, rows| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for row in rows {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), ROW_HEIGHT),
+                                egui::Sense::hover(),
+                            );
+                            // Painted rather than laid out as a `Label`: rows are
+                            // single-line and anything too long is clipped at the
+                            // scroll area's edge instead of wrapping.
+                            ui.painter().text(
+                                rect.left_center(),
+                                egui::Align2::LEFT_CENTER,
+                                &state.list_items[row],
+                                egui::FontId::proportional(ROW_SIZE),
+                                TEXT_COLOR,
+                            );
+                        }
+                    });
+            });
+
+            // The info box stays hidden while there is nothing to say.
+            if !state.list_info.is_empty() {
+                panel_frame().show(ui, |ui| {
+                    ui.set_width(inner_width);
+                    ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&state.list_info)
+                                .size(INFO_SIZE)
+                                .color(INFO_COLOR),
+                        )
+                        .wrap(),
+                    );
+                });
+            }
+        });
 }
 
 fn update_ui(
@@ -139,6 +242,8 @@ fn update_ui(
                 }
             }
         });
+
+    render_list(ctx, &state);
     Ok(())
 }
 
@@ -147,6 +252,10 @@ fn spawn_toast(
     time: Res<Time>,
     mut reader: MessageReader<SetHudText>,
 ) {
+    state.show_list = true;
+    state.list_items = vec!["One".into(), "Two".into()];
+    state.list_info = "Bottom  info".into();
+
     for msg in reader.read() {
         info!("MSG: {}", msg.text);
         let now = time.elapsed_secs();
