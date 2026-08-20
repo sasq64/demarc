@@ -2,6 +2,8 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, egui};
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
+use crate::fuzzy_list::FuzzySource;
+
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
 
@@ -80,6 +82,11 @@ pub enum HudLocation {
     Error,
 }
 
+#[derive(Message, Clone)]
+pub struct ShowFuzzyList {
+    source: Arc<dyn FuzzySource>,
+}
+
 #[derive(Default, Message, Clone)]
 pub struct SetHudText {
     pub text: String,
@@ -109,6 +116,7 @@ struct HudState {
     /// while leaving the wheel free otherwise.
     list_scroll: f32,
     list_info: String,
+    list_source: Option<Arc<dyn FuzzySource>>,
 }
 
 /// Look of the boxes the list is drawn in, matching the Bevy UI widget in
@@ -236,15 +244,7 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
             let scrolled = panel_frame()
                 .show(ui, |ui| {
                     ui.set_width(inner_width);
-                    // Rows butt up against each other. This has to be set on
-                    // *this* ui, not inside the closure below: `show_rows`
-                    // reads `item_spacing.y` here to work out how tall a row is
-                    // and which ones the viewport covers, so leaving the
-                    // panel's gap in place would have it reserve
-                    // `ROW_HEIGHT + PANEL_GAP` per row while we paint them
-                    // `ROW_HEIGHT` apart -- the list would come up short at the
-                    // bottom and the scroll offsets below would drift by a row
-                    // every few rows.
+                    // Manual text rendering below, spacing > 0 will make it incorrect
                     ui.spacing_mut().item_spacing.y = 0.0;
                     // Only the rows in view are laid out, so a picker holding
                     // the whole file list stays cheap to draw.
@@ -368,6 +368,13 @@ fn spawn_toast(
     }
 }
 
+fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFuzzyList>) {
+    state.show_list = true;
+    for msg in reader.read() {
+        state.list_source = Some(msg.source.clone());
+    }
+}
+
 impl Plugin for EguiUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default());
@@ -379,7 +386,14 @@ impl Plugin for EguiUiPlugin {
         app.add_systems(Startup, load_font)
             .add_systems(EguiPrimaryContextPass, (setup_egui, update_ui).chain())
             .add_message::<SetHudText>()
-            .add_systems(Update, spawn_toast.run_if(on_message::<SetHudText>))
+            .add_message::<ShowFuzzyList>()
+            .add_systems(
+                Update,
+                (
+                    spawn_toast.run_if(on_message::<SetHudText>),
+                    open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
+                ),
+            )
             .insert_resource(HudState::default());
     }
 }
