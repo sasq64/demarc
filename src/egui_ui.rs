@@ -192,6 +192,7 @@ const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
 /// Highlight behind the selected row: white at 25%, premultiplied (the
 /// `from_white_alpha` helper isn't const).
 const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x0, 0x0, 0x6c);
+const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x10, 0x10);
 /// How long [`SELECTED_ROW_COLOR`] takes to fade away once the selection has
 /// left a row, so a row the user passed over dims out instead of blinking off.
 const FADE_SECS: f32 = 0.5;
@@ -471,6 +472,11 @@ fn update_ui(
                     egui::Align2::RIGHT_BOTTOM,
                     INFO_TEXT_SCALE,
                 ),
+                (
+                    HudLocation::Error,
+                    egui::Align2::LEFT_BOTTOM,
+                    BOTTOM_LEFT_SCALE,
+                ),
             ] {
                 let info = state.current_texts.get(&text).cloned().unwrap_or_default();
                 let on = info.duration.contains(&time.elapsed_secs());
@@ -483,7 +489,12 @@ fn update_ui(
                         egui::Layout::bottom_up(corner.x())
                     };
 
-                    let color = ui.visuals().text_color().linear_multiply(t);
+                    let color = (if text == HudLocation::Error {
+                        ERROR_COLOR
+                    } else {
+                        ui.visuals().text_color()
+                    })
+                    .linear_multiply(t);
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(quad).layout(layout), |ui| {
                         if text == HudLocation::InfoText {
