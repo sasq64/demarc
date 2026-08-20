@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
 
+use tracing::warn;
 use url::Url;
 
 use crate::fetch::{OnProgress, fetch_url_with_progress, fetch_urls};
@@ -68,7 +69,7 @@ fn is_disk_image(path: &Path) -> bool {
 /// empties the list is dropped and the URLs are returned as they came in.
 pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
     /// Extensions that are never the main file of a release.
-    const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
+    const IGNORED_EXTENSIONS: [&str; 3] = ["sid", "pdf", "rtf"];
 
     let mut images: Vec<Url> = urls
         .iter()
@@ -84,6 +85,34 @@ pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
             .collect();
     };
     if images.is_empty() { urls } else { images }
+}
+
+/// Download the first of `urls` that succeeds, using `fetch` for each attempt.
+///
+/// The URLs a release survives [`filter_release_urls`] with are alternatives —
+/// a mirror, a reupload, the same file under a second link class — so a link
+/// that is dead, 404s or times out only rules out that one URL, not the whole
+/// release. Every failure is logged and the last one is returned if none of
+/// them work; with nothing downloaded the caller has only one failure to
+/// report, and the last is the one that ran out of alternatives.
+///
+/// `fetch` is a parameter so the walk can be tested without a network.
+fn fetch_first_available(
+    urls: &[Url],
+    on_progress: OnProgress<'_>,
+    mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    let mut last_error = None;
+    for url in urls {
+        match fetch(url.as_ref(), on_progress) {
+            Ok(path) => return Ok(path),
+            Err(e) => {
+                warn!("download failed for {url}: {e:#}");
+                last_error = Some(e);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("no download url")))
 }
 
 impl FileSource {
@@ -104,16 +133,20 @@ impl FileSource {
     ///
     /// A multi-disk set reports nothing: it is several downloads in a row, and
     /// forwarding each one's byte count would restart the bar on every disk.
+    /// A single file falling back to the next URL after a failure does restart
+    /// it, which is the honest thing to show — that transfer really is starting
+    /// over somewhere else.
     pub fn resolve_with_progress(&mut self, on_progress: OnProgress<'_>) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
             // If any URL is a disk image, this is a (possibly multi-) disk set:
             // download every disk image so they sit together in one directory
-            // (built into an m3u later). Otherwise just grab the first entry.
+            // (built into an m3u later). Otherwise take the first entry that
+            // downloads, treating the rest as fallbacks.
             let urls = filter_release_urls(urls.clone());
             let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
                 fetch_urls(&urls)?
             } else {
-                fetch_url_with_progress(urls.first().unwrap().as_ref(), on_progress)?
+                fetch_first_available(&urls, on_progress, fetch_url_with_progress)?
             };
             *self = FileSource::Path(p);
         }
@@ -153,5 +186,73 @@ impl EmuFile {
         self.meta
             .get(&name.into())
             .map_or("".into(), |s| s.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    /// Run `fetch_first_available` over `urls`, failing every URL whose path
+    /// isn't `works`, and report which URLs were tried alongside the result.
+    fn walk(urls: &[&str], works: &str) -> (Vec<String>, Result<PathBuf>) {
+        let urls: Vec<Url> = urls.iter().map(|u| Url::parse(u).unwrap()).collect();
+        let tried = RefCell::new(Vec::new());
+        let result = fetch_first_available(&urls, &|_, _| {}, |url, _| {
+            tried.borrow_mut().push(url.to_string());
+            if url.ends_with(works) {
+                Ok(PathBuf::from(works))
+            } else {
+                Err(anyhow!("{url} is dead"))
+            }
+        });
+        (tried.into_inner(), result)
+    }
+
+    /// A dead first link only rules out that URL: the next one is tried, and
+    /// nothing past the one that works is touched.
+    #[test]
+    fn a_failed_download_falls_back_to_the_next_url() {
+        let (tried, result) = walk(
+            &[
+                "https://dead.example/demo.zip",
+                "https://mirror.example/demo.lha",
+                "https://never.example/demo.lzx",
+            ],
+            "demo.lha",
+        );
+        assert_eq!(result.unwrap(), PathBuf::from("demo.lha"));
+        assert_eq!(
+            tried,
+            vec![
+                "https://dead.example/demo.zip",
+                "https://mirror.example/demo.lha"
+            ]
+        );
+    }
+
+    /// With every URL dead the walk reports the last failure, so the message
+    /// the user sees comes from the attempt that ran out of alternatives.
+    #[test]
+    fn all_urls_failing_reports_the_last_failure() {
+        let (tried, result) = walk(
+            &["https://a.example/demo.zip", "https://b.example/demo.zip"],
+            "nothing.zip",
+        );
+        assert_eq!(tried.len(), 2);
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "https://b.example/demo.zip is dead"
+        );
+    }
+
+    /// Nothing to try is an error rather than a panic — an entry whose URLs all
+    /// got filtered away shouldn't take the process down.
+    #[test]
+    fn no_urls_is_an_error() {
+        let (tried, result) = walk(&[], "demo.zip");
+        assert!(tried.is_empty());
+        assert!(result.is_err());
     }
 }
