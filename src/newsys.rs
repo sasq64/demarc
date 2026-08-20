@@ -25,7 +25,7 @@ use gameboy::GameboySystem;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 use utils::{is_archive, unpack_into};
 
 pub(crate) mod utils;
@@ -56,7 +56,7 @@ pub fn walk_dir(
     mut call: impl FnMut(&Path, &str, &[u8]) -> Result<()>,
 ) -> Result<()> {
     walk_dir_find(dir, header_size, |path, ext, header| {
-        debug!("WALK: {path:?}");
+        trace!("WALK: {path:?}");
         call(path, ext, header)?;
         Ok(None::<()>)
     })?;
@@ -349,6 +349,7 @@ impl NewSys {
             }
         }
         for sys in &self.systems {
+            trace!("Trying to load with {}", sys.name());
             if sys.load(&mut wf)? {
                 debug!("System {} can load {:?}", sys.name(), path);
                 // Whichever system claimed the release, a cue's MP3 audio tracks
