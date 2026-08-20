@@ -18,6 +18,7 @@ mod audio;
 mod cbmconvert;
 mod commands;
 mod degas;
+mod egui_ui;
 mod emu_file;
 mod emulator;
 mod fetch;
@@ -846,6 +847,7 @@ fn main() {
                 shader: shader_path,
             },
             HudPlugin,
+            egui_ui::EguiUiPlugin,
             TextInputPlugin,
             FuzzyListPlugin,
             ScreenSaverPlugin,

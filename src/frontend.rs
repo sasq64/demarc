@@ -12,9 +12,10 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
+use crate::egui_ui::{HudLocation, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::fuzzy_list::FuzzyListSelect;
-use crate::hud::{HudLocation, SetHudText, TextList};
+use crate::hud::TextList;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::text_input::TextInput;
@@ -127,6 +128,9 @@ fn setup_ui_camera(mut commands: Commands, asset_server: Res<AssetServer>) {
             ..default()
         },
         RenderLayers::layer(2),
+        // egui draws into this camera's pass too, so its output lands on top of
+        // the emulators as well (see `crate::egui_ui`).
+        bevy_egui::PrimaryEguiContext,
     ));
     commands.spawn((
         Node {

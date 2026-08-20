@@ -114,6 +114,17 @@ walkdir = "2.5.0"
 # feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
 # `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
 mlua = { version = "0.11", features = ["luau", "send"] }
+# egui, for the ongoing port of the frontend UI (src/egui_ui.rs). 0.42 is the
+# release built against Bevy 0.19 and wgpu-types 29, matching the versions above.
+# `picking` and `open_url` are off: the app does its own hit-testing and never
+# opens a browser. `manage_clipboard` stays on so egui text fields can paste.
+bevy_egui = { version = "0.42", default-features = false, features = [
+    "render",
+    "bevy_ui",
+    "default_fonts",
+    "manage_clipboard",
+] }
+
 # Hot-reload for that script. Already in the tree via bevy's `file_watcher`.
 notify = "8"
 # `get_spectrum()` for the script. Already in the tree via `rubato`.

@@ -9,10 +9,12 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
 };
 
+use crate::egui_ui::HudLocation;
+use crate::egui_ui::SetHudText;
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
 use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
-use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
+use crate::hud::{TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::{AppSettings, RenderSettings};
