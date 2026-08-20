@@ -98,6 +98,9 @@ pub struct HudText {
 struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
+    /// The search box text. Owned by the [`egui::TextEdit`] in [`render_list`],
+    /// which edits it in place; filtering on it comes later.
+    list_query: String,
     list_items: Vec<String>,
     list_info: String,
 }
@@ -111,6 +114,7 @@ const PANEL_PADDING: i8 = 16;
 /// Vertical gap between the list box and the info box below it.
 const PANEL_GAP: f32 = 6.0;
 
+const QUERY_SIZE: f32 = 32.0;
 const ROW_SIZE: f32 = 28.0;
 /// Fixed height of every row, so the box does not resize as the list is
 /// filtered or emptied.
@@ -132,11 +136,13 @@ fn panel_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(PANEL_PADDING))
 }
 
-/// Draws the file picker: a scrollable list of [`HudState::list_items`] with a
-/// fixed-height info field ([`HudState::list_info`]) below it, centred on
-/// screen. Purely a view for now -- no search box, no selection and no key
-/// handling; those follow when the widget takes over from `crate::fuzzy_list`.
-fn render_list(ctx: &egui::Context, state: &HudState) {
+/// Draws the file picker: a search box above a scrollable list of
+/// [`HudState::list_items`], with a fixed-height info field
+/// ([`HudState::list_info`]) below it, centred on screen. The search box takes
+/// keyboard focus for as long as the picker is up, but nothing filters on it
+/// yet -- that, the selection and the key handling follow when the widget takes
+/// over from `crate::fuzzy_list`.
+fn render_list(ctx: &egui::Context, state: &mut HudState) {
     if !state.show_list {
         return;
     }
@@ -155,6 +161,26 @@ fn render_list(ctx: &egui::Context, state: &HudState) {
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = PANEL_GAP;
+
+            panel_frame().show(ui, |ui| {
+                ui.set_width(inner_width);
+                // The picker is modal, so the search box keeps focus the whole
+                // time it is up: egui only routes key events to a focused
+                // widget, and a click on the emulator behind would otherwise
+                // take focus away and leave typing going nowhere.
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut state.list_query)
+                        // Our own `panel_frame` already draws the box.
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::ZERO)
+                        .desired_width(inner_width)
+                        .font(egui::FontId::proportional(QUERY_SIZE))
+                        .text_color(TEXT_COLOR),
+                );
+                if !response.has_focus() {
+                    response.request_focus();
+                }
+            });
 
             panel_frame().show(ui, |ui| {
                 ui.set_width(inner_width);
@@ -204,7 +230,7 @@ fn render_list(ctx: &egui::Context, state: &HudState) {
 
 fn update_ui(
     mut contexts: EguiContexts,
-    state: Res<HudState>,
+    mut state: ResMut<HudState>,
     time: Res<Time>,
     _window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
@@ -243,7 +269,7 @@ fn update_ui(
             }
         });
 
-    render_list(ctx, &state);
+    render_list(ctx, &mut state);
     Ok(())
 }
 
@@ -253,8 +279,12 @@ fn spawn_toast(
     mut reader: MessageReader<SetHudText>,
 ) {
     state.show_list = true;
-    state.list_items = vec!["One".into(), "Two".into()];
     state.list_info = "Bottom  info".into();
+    if state.list_items.is_empty() {
+        for i in 0..100 {
+            state.list_items.push(format!("Item{i}"));
+        }
+    }
 
     for msg in reader.read() {
         info!("MSG: {}", msg.text);
