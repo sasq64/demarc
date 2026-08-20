@@ -191,10 +191,10 @@ const INFO_LINES: f32 = 5.0;
 const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
 /// Highlight behind the selected row: white at 25%, premultiplied (the
 /// `from_white_alpha` helper isn't const).
-const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x8f, 0x7a, 0x3c);
-/// How much of [`SELECTED_ROW_COLOR`] a row loses per frame once the selection
-/// has left it, so a row the user passed over dims out instead of blinking off.
-const FADE_STEP: f32 = 0.02;
+const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x0, 0x0, 0x6c);
+/// How long [`SELECTED_ROW_COLOR`] takes to fade away once the selection has
+/// left a row, so a row the user passed over dims out instead of blinking off.
+const FADE_SECS: f32 = 0.5;
 
 fn panel_frame() -> egui::Frame {
     egui::Frame::new()
@@ -226,43 +226,6 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
         // A new filter starts at the top; a re-open keeps where the user was.
         state.list_selected = 0;
         state.list_scroll = 0.0;
-    }
-}
-
-/// Per-row fade levels for the list, kept in [`egui::Memory`] between frames.
-/// Only the rows the viewport covers get an entry, `levels[i]` belonging to row
-/// `first_row + i` -- so the array has to be re-anchored whenever the list
-/// scrolls, or the fades stay behind at fixed screen positions while the items
-/// they belong to move past them.
-#[derive(Clone, Default)]
-struct Highlights {
-    first_row: usize,
-    levels: Vec<f32>,
-}
-
-impl Highlights {
-    /// Moves the levels along with their rows, so that afterwards `levels[i]`
-    /// is the level of row `first_row + i`: rows that scrolled out are dropped
-    /// and rows that scrolled in start out unhighlighted. Resizes as well,
-    /// since the number of drawn rows follows the window height.
-    fn realign(&mut self, first_row: usize, count: usize) {
-        let delta = first_row as isize - self.first_row as isize;
-        self.first_row = first_row;
-        // Grows at the end, which is where new rows appear when the viewport
-        // gets taller -- the rotation below then puts them wherever they belong.
-        self.levels.resize(count, 0.0);
-        if delta.unsigned_abs() >= count {
-            // Jumped further than a screenful: nothing visible carries over.
-            self.levels.fill(0.0);
-        } else if delta > 0 {
-            // Scrolled down: row `first_row + i` sat at index `i + delta`.
-            self.levels.rotate_left(delta as usize);
-            self.levels[count - delta as usize..].fill(0.0);
-        } else if delta < 0 {
-            let delta = delta.unsigned_abs();
-            self.levels.rotate_right(delta);
-            self.levels[..delta].fill(0.0);
-        }
     }
 }
 
@@ -304,31 +267,30 @@ fn scroll_area<T: AsRef<str>>(
             ui.spacing_mut().item_spacing.y = 0.0;
 
             scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
-                // `rows` is egui's own answer for which absolute rows are about
-                // to be drawn, so the cached fades are re-anchored on that
-                // rather than on a row range re-derived from the offset.
-                let first_row = rows.start;
-                let mut highlight =
-                    ui.data_mut(|d| d.get_temp::<Highlights>(id).unwrap_or_default());
-                highlight.realign(first_row, rows.len());
                 for row in rows {
                     let (rect, _) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         egui::Sense::hover(),
                     );
-                    let level = &mut highlight.levels[row - first_row];
-                    if row == selected {
-                        *level = 1.0;
-                    }
-                    if *level > 0.0 {
+                    // Fades live in egui's animation map, keyed by absolute row
+                    // rather than by position in the viewport, so they follow
+                    // their row when the list scrolls -- and keep decaying on
+                    // wall-clock time while the row is scrolled out of sight.
+                    let row_id = id.with(row);
+                    let level = if row == selected {
+                        // Zero time snaps the stored value, so the highlight
+                        // appears at once and the fade later starts from full.
+                        ui.ctx().animate_value_with_time(row_id, 1.0, 0.0);
+                        1.0
+                    } else {
+                        ui.ctx().animate_value_with_time(row_id, 0.0, FADE_SECS)
+                    };
+                    if level > 0.0 {
                         ui.painter().rect_filled(
                             rect,
                             egui::CornerRadius::ZERO,
-                            SELECTED_ROW_COLOR.linear_multiply(*level),
+                            SELECTED_ROW_COLOR.linear_multiply(level),
                         );
-                        if row != selected {
-                            *level = (*level - FADE_STEP).max(0.0);
-                        }
                     }
                     // Painted rather than laid out as a `Label`: rows are
                     // single-line and anything too long is clipped.
@@ -342,7 +304,6 @@ fn scroll_area<T: AsRef<str>>(
                         TEXT_COLOR,
                     );
                 }
-                ui.data_mut(|d| d.insert_temp::<Highlights>(id, highlight));
             })
         })
         .inner
