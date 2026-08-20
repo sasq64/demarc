@@ -192,6 +192,9 @@ const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
 /// Highlight behind the selected row: white at 25%, premultiplied (the
 /// `from_white_alpha` helper isn't const).
 const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x8f, 0x7a, 0x3c);
+/// How much of [`SELECTED_ROW_COLOR`] a row loses per frame once the selection
+/// has left it, so a row the user passed over dims out instead of blinking off.
+const FADE_STEP: f32 = 0.02;
 
 fn panel_frame() -> egui::Frame {
     egui::Frame::new()
@@ -226,6 +229,43 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
     }
 }
 
+/// Per-row fade levels for the list, kept in [`egui::Memory`] between frames.
+/// Only the rows the viewport covers get an entry, `levels[i]` belonging to row
+/// `first_row + i` -- so the array has to be re-anchored whenever the list
+/// scrolls, or the fades stay behind at fixed screen positions while the items
+/// they belong to move past them.
+#[derive(Clone, Default)]
+struct Highlights {
+    first_row: usize,
+    levels: Vec<f32>,
+}
+
+impl Highlights {
+    /// Moves the levels along with their rows, so that afterwards `levels[i]`
+    /// is the level of row `first_row + i`: rows that scrolled out are dropped
+    /// and rows that scrolled in start out unhighlighted. Resizes as well,
+    /// since the number of drawn rows follows the window height.
+    fn realign(&mut self, first_row: usize, count: usize) {
+        let delta = first_row as isize - self.first_row as isize;
+        self.first_row = first_row;
+        // Grows at the end, which is where new rows appear when the viewport
+        // gets taller -- the rotation below then puts them wherever they belong.
+        self.levels.resize(count, 0.0);
+        if delta.unsigned_abs() >= count {
+            // Jumped further than a screenful: nothing visible carries over.
+            self.levels.fill(0.0);
+        } else if delta > 0 {
+            // Scrolled down: row `first_row + i` sat at index `i + delta`.
+            self.levels.rotate_left(delta as usize);
+            self.levels[count - delta as usize..].fill(0.0);
+        } else if delta < 0 {
+            let delta = delta.unsigned_abs();
+            self.levels.rotate_right(delta);
+            self.levels[..delta].fill(0.0);
+        }
+    }
+}
+
 /// Draws the scrollable, fixed-row-height list of `items`, highlighting row
 /// `selected` and scrolling the least that keeps it in view. Rows are borrowed:
 /// anything that can be seen as a `&str` (`String`, `&str`, [`FuzzyItem`], ...)
@@ -238,8 +278,7 @@ fn scroll_area<T: AsRef<str>>(
     list_scroll: f32,
     items: &[T],
 ) -> ScrollAreaOutput<()> {
-    let visible_rows = visible_rows(ui.ctx());
-    let view_height = visible_rows * ROW_HEIGHT;
+    let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
     panel_frame()
         .show(ui, |ui| {
@@ -247,20 +286,13 @@ fn scroll_area<T: AsRef<str>>(
                 .max_height(view_height)
                 .auto_shrink([false, false]);
 
-            let mut highlight = ui.data_mut(|d| {
-                d.get_temp::<Vec<f32>>(id)
-                    .unwrap_or(vec![1.0; (visible_rows + 5.0) as usize])
-            });
-
-            // delta != 0 || state.list_reopened {
             // Follow the selection only when a key actually moved it (or
             // when a re-opened list has to be put back where it was),
             // scrolling the least that brings it back into view; between
             // keypresses the wheel is left in charge.
             let top = selected as f32 * ROW_HEIGHT;
-            // Clamped to the end of the content as well: egui clamps whatever
-            // offset it is handed the same way, and `first_row` below only
-            // matches what it uses if we hand it an already-valid one.
+            // Clamped to the end of the content as well, the same way egui
+            // clamps whatever offset it is handed.
             let max_offset = (items.len() as f32 * ROW_HEIGHT - view_height).max(0.0);
             let offset = list_scroll
                 .min(top)
@@ -271,40 +303,32 @@ fn scroll_area<T: AsRef<str>>(
             // Manual text rendering below, spacing > 0 will make it incorrect
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            // What `show_rows` is about to pass as `rows.start`, recomputed
-            // here so per-row state (`highlight`) can be indexed by absolute
-            // row. Same arithmetic egui does: the rows the viewport covers plus
-            // a row of slack, pulled back when that runs past the last item.
-            // Only valid because `item_spacing.y` is zeroed just above.
-            let mut first_row = (offset / ROW_HEIGHT).floor() as usize;
-            let mut last_row = ((offset + view_height) / ROW_HEIGHT).ceil() as usize + 1;
-            if last_row > items.len() {
-                let count = last_row - first_row;
-                last_row = items.len();
-                first_row = last_row.saturating_sub(count);
-            }
-
             scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
-                assert!(first_row == rows.start);
+                // `rows` is egui's own answer for which absolute rows are about
+                // to be drawn, so the cached fades are re-anchored on that
+                // rather than on a row range re-derived from the offset.
+                let first_row = rows.start;
+                let mut highlight =
+                    ui.data_mut(|d| d.get_temp::<Highlights>(id).unwrap_or_default());
+                highlight.realign(first_row, rows.len());
                 for row in rows {
                     let (rect, _) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
                         egui::Sense::hover(),
                     );
+                    let level = &mut highlight.levels[row - first_row];
                     if row == selected {
+                        *level = 1.0;
+                    }
+                    if *level > 0.0 {
                         ui.painter().rect_filled(
                             rect,
                             egui::CornerRadius::ZERO,
-                            SELECTED_ROW_COLOR,
+                            SELECTED_ROW_COLOR.linear_multiply(*level),
                         );
-                        highlight[row - first_row] = 1.0;
-                    } else if highlight[row - first_row] > 0.0 {
-                        ui.painter().rect_filled(
-                            rect,
-                            egui::CornerRadius::ZERO,
-                            SELECTED_ROW_COLOR.linear_multiply(highlight[row - first_row]),
-                        );
-                        highlight[row - first_row] -= 0.02;
+                        if row != selected {
+                            *level = (*level - FADE_STEP).max(0.0);
+                        }
                     }
                     // Painted rather than laid out as a `Label`: rows are
                     // single-line and anything too long is clipped.
@@ -318,7 +342,7 @@ fn scroll_area<T: AsRef<str>>(
                         TEXT_COLOR,
                     );
                 }
-                ui.data_mut(|d| d.insert_temp::<Vec<f32>>(id, highlight));
+                ui.data_mut(|d| d.insert_temp::<Highlights>(id, highlight));
             })
         })
         .inner
