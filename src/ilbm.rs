@@ -91,6 +91,9 @@ struct BmHeader {
     num_planes: u8,
     masking: u8,
     compression: u8,
+    /// Pixel aspect ratio as stored, width : height. Zero when not filled in.
+    x_aspect: u8,
+    y_aspect: u8,
 }
 
 impl BmHeader {
@@ -104,6 +107,8 @@ impl BmHeader {
             num_planes: data[8],
             masking: data[9],
             compression: data[10],
+            x_aspect: data[14],
+            y_aspect: data[15],
         })
     }
 }
@@ -137,8 +142,20 @@ const CAMG_LACE: u32 = 0x0004;
 /// is not guessed at, as such a picture is Amiga-only and in practice always
 /// carries a CAMG. PBM (PC DeluxePaint) images always have square pixels and
 /// are left alone.
-fn display_scale(form_type: &str, width: usize, height: usize, camg: u32) -> (usize, usize) {
+///
+/// A BMHD that declares equal x and y aspect overrides all of that: the ratio
+/// itself is too often left at a writer's stale default (10:11 on a hires
+/// screen, say) to be worth reading in general, but writing the two the same
+/// is a deliberate "these pixels are square" that some modern pictures rely on
+/// — an image drawn square and saved in a hires mode id would otherwise be
+/// stretched to twice its intended height.
+fn display_scale(form_type: &str, header: &BmHeader, camg: u32) -> (usize, usize) {
+    let width = header.width as usize;
+    let height = header.height as usize;
     if form_type == "PBM " {
+        return (1, 1);
+    }
+    if header.x_aspect != 0 && header.x_aspect == header.y_aspect {
         return (1, 1);
     }
     let mode = camg & (CAMG_HIRES | CAMG_SHRES | CAMG_LACE);
@@ -852,7 +869,7 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
         }
     };
 
-    let (xscale, yscale) = display_scale(&form_type, width, height, camg);
+    let (xscale, yscale) = display_scale(&form_type, &header, camg);
 
     Ok(Parsed {
         width,
@@ -947,7 +964,7 @@ pub fn describe(bytes: &[u8]) -> String {
 
     // The displayed size, not the stored one: aspect correction replicates
     // pixels, and that is the picture the frontend shows.
-    let (xscale, yscale) = display_scale(&form_type, width, height, camg);
+    let (xscale, yscale) = display_scale(&form_type, &header, camg);
     format!("{name} {}x{} ({mode})", width * xscale, height * yscale)
 }
 
@@ -1275,6 +1292,9 @@ mod tests {
         check("Seascape.dr", 704, 480); // hires interlace
         // PBM (PC DeluxePaint) always has square pixels, even at hires-ish sizes.
         check("water.lbm", 640, 480);
+        // A hires mode id on a picture whose BMHD says its pixels are square
+        // (10:10) is left at its stored size.
+        check("CK_Welcome_To_Omega_6.iff", 640, 256);
     }
 
     /// `scale_grid` replicates each cell into an `sx` x `sy` block.
@@ -1299,33 +1319,64 @@ mod tests {
         check("attaq.lbm", 640, 480);
     }
 
+    /// A `BmHeader` of the given size, with the aspect fields left unfilled
+    /// (as plenty of real writers leave them).
+    fn hdr(width: u16, height: u16) -> BmHeader {
+        BmHeader {
+            width,
+            height,
+            num_planes: 8,
+            masking: 0,
+            compression: 0,
+            x_aspect: 0,
+            y_aspect: 0,
+        }
+    }
+
     /// The `display_scale` mode logic, exercised directly.
     #[test]
     fn test_display_scale() {
-        assert_eq!(display_scale("ILBM", 640, 256, CAMG_HIRES), (1, 2)); // hires
-        assert_eq!(display_scale("ILBM", 320, 512, CAMG_LACE), (2, 1)); // lores lace
-        assert_eq!(
-            display_scale("ILBM", 640, 512, CAMG_HIRES | CAMG_LACE),
-            (1, 1)
-        );
-        assert_eq!(display_scale("ILBM", 320, 200, 0), (1, 1)); // lores
+        let scale = |w, h, camg| display_scale("ILBM", &hdr(w, h), camg);
+        assert_eq!(scale(640, 256, CAMG_HIRES), (1, 2)); // hires
+        assert_eq!(scale(320, 512, CAMG_LACE), (2, 1)); // lores lace
+        assert_eq!(scale(640, 512, CAMG_HIRES | CAMG_LACE), (1, 1));
+        assert_eq!(scale(320, 200, 0), (1, 1)); // lores
         // Super-hires (the mode id sets HIRES too), plain and interlaced.
         let shres = CAMG_HIRES | CAMG_SHRES;
-        assert_eq!(display_scale("ILBM", 1280, 256, shres), (1, 4));
-        assert_eq!(display_scale("ILBM", 1280, 512, shres | CAMG_LACE), (1, 2));
+        assert_eq!(scale(1280, 256, shres), (1, 4));
+        assert_eq!(scale(1280, 512, shres | CAMG_LACE), (1, 2));
         // A 640-wide screen claiming SHRES is an extended mode id (Productivity
         // here), not a super-hires screen: treat it as hires.
-        assert_eq!(display_scale("ILBM", 640, 480, 0x00039024), (1, 1));
-        assert_eq!(display_scale("ILBM", 640, 256, 0x00039020), (1, 2));
+        assert_eq!(scale(640, 480, 0x00039024), (1, 1));
+        assert_eq!(scale(640, 256, 0x00039020), (1, 2));
         // Garbage in the high bits must not read as a resolution.
-        assert_eq!(display_scale("ILBM", 320, 200, 0x4800), (1, 1));
+        assert_eq!(scale(320, 200, 0x4800), (1, 1));
         // No CAMG mode: infer from dimensions (the user's fallback rule).
-        assert_eq!(display_scale("ILBM", 320, 512, 0), (2, 1));
-        assert_eq!(display_scale("ILBM", 640, 256, 0), (1, 2));
+        assert_eq!(scale(320, 512, 0), (2, 1));
+        assert_eq!(scale(640, 256, 0), (1, 2));
         // Super-hires is never inferred without a CAMG.
-        assert_eq!(display_scale("ILBM", 1280, 256, 0), (1, 2));
+        assert_eq!(scale(1280, 256, 0), (1, 2));
         // PBM is always square, even at hires dimensions.
-        assert_eq!(display_scale("PBM ", 640, 480, 0), (1, 1));
+        assert_eq!(display_scale("PBM ", &hdr(640, 480), 0), (1, 1));
+    }
+
+    /// A BMHD declaring equal x and y aspect means square pixels, and wins over
+    /// the mode id: a picture drawn square but saved as a hires screen must not
+    /// be stretched to twice its height.
+    #[test]
+    fn test_square_aspect_overrides_mode() {
+        let square = |w, h, camg| {
+            let mut h = hdr(w, h);
+            (h.x_aspect, h.y_aspect) = (10, 10);
+            display_scale("ILBM", &h, camg)
+        };
+        assert_eq!(square(640, 256, CAMG_HIRES), (1, 1));
+        assert_eq!(square(320, 512, CAMG_LACE), (1, 1));
+        // An unequal ratio is not trusted: too many writers leave a stale
+        // default there, so the mode id still decides.
+        let mut stale = hdr(640, 256);
+        (stale.x_aspect, stale.y_aspect) = (10, 11);
+        assert_eq!(display_scale("ILBM", &stale, CAMG_HIRES), (1, 2));
     }
 
     /// `palette_bits` tells a 4-bit (OCS/ECS) colour map from an 8-bit (AGA)
