@@ -102,6 +102,12 @@ struct HudState {
     /// which edits it in place; filtering on it comes later.
     list_query: String,
     list_items: Vec<String>,
+    /// Index into `list_items` of the highlighted row.
+    list_selected: usize,
+    /// The list's scroll offset in points, mirrored out of the [`egui::ScrollArea`]
+    /// so [`render_list`] can steer it when the selection moves out of view
+    /// while leaving the wheel free otherwise.
+    list_scroll: f32,
     list_info: String,
 }
 
@@ -128,6 +134,9 @@ const INFO_SIZE: f32 = 22.0;
 /// info differs in length.
 const INFO_LINES: f32 = 5.0;
 const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
+/// Highlight behind the selected row: white at 25%, premultiplied (the
+/// `from_white_alpha` helper isn't const).
+const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(64, 64, 64, 64);
 
 fn panel_frame() -> egui::Frame {
     egui::Frame::new()
@@ -139,9 +148,10 @@ fn panel_frame() -> egui::Frame {
 /// Draws the file picker: a search box above a scrollable list of
 /// [`HudState::list_items`], with a fixed-height info field
 /// ([`HudState::list_info`]) below it, centred on screen. The search box takes
-/// keyboard focus for as long as the picker is up, but nothing filters on it
-/// yet -- that, the selection and the key handling follow when the widget takes
-/// over from `crate::fuzzy_list`.
+/// keyboard focus for as long as the picker is up, with Up/Down/PageUp/PageDown
+/// moving the highlighted row. Nothing filters on the query yet, and picking a
+/// row does nothing -- those follow when the widget takes over from
+/// `crate::fuzzy_list`.
 fn render_list(ctx: &egui::Context, state: &mut HudState) {
     if !state.show_list {
         return;
@@ -154,6 +164,31 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
     let visible_rows = (screen.height() * LIST_HEIGHT_FRACTION / ROW_HEIGHT)
         .floor()
         .max(1.0);
+    let view_height = visible_rows * ROW_HEIGHT;
+
+    // Selection keys are taken before the search box is drawn, so the
+    // `TextEdit` never sees them. Home/End are deliberately left alone -- they
+    // stay cursor movement inside the query. Counting (rather than testing)
+    // the presses keeps a held-down arrow moving at the key repeat rate even
+    // when several repeats land in one frame.
+    let len = state.list_items.len();
+    let (row_steps, page_steps) = ctx.input_mut(|i| {
+        let none = egui::Modifiers::NONE;
+        let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
+            - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
+        let pages = i.count_and_consume_key(none, egui::Key::PageDown) as i64
+            - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
+        (rows, pages)
+    });
+    let delta = row_steps + page_steps * visible_rows as i64;
+    let selected = if len == 0 {
+        0
+    } else {
+        // Clamped rather than wrapped, and re-clamped against the current
+        // length in case the list shrank since the last frame.
+        (state.list_selected.min(len - 1) as i64 + delta).clamp(0, len as i64 - 1) as usize
+    };
+    state.list_selected = selected;
 
     egui::Area::new(egui::Id::new("fuzzy_list"))
         .order(egui::Order::Foreground)
@@ -182,33 +217,65 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
                 }
             });
 
-            panel_frame().show(ui, |ui| {
-                ui.set_width(inner_width);
-                egui::ScrollArea::vertical()
-                    .max_height(visible_rows * ROW_HEIGHT)
-                    .auto_shrink([false, false])
+            let items = &state.list_items;
+            let mut scroll = egui::ScrollArea::vertical()
+                .max_height(view_height)
+                .auto_shrink([false, false]);
+            if delta != 0 {
+                // Follow the selection only when a key actually moved it,
+                // scrolling the least that brings it back into view; between
+                // keypresses the wheel is left in charge.
+                let top = selected as f32 * ROW_HEIGHT;
+                let offset = state
+                    .list_scroll
+                    .min(top)
+                    .max(top + ROW_HEIGHT - view_height)
+                    .max(0.0);
+                scroll = scroll.vertical_scroll_offset(offset);
+            }
+            let scrolled = panel_frame()
+                .show(ui, |ui| {
+                    ui.set_width(inner_width);
+                    // Rows butt up against each other. This has to be set on
+                    // *this* ui, not inside the closure below: `show_rows`
+                    // reads `item_spacing.y` here to work out how tall a row is
+                    // and which ones the viewport covers, so leaving the
+                    // panel's gap in place would have it reserve
+                    // `ROW_HEIGHT + PANEL_GAP` per row while we paint them
+                    // `ROW_HEIGHT` apart -- the list would come up short at the
+                    // bottom and the scroll offsets below would drift by a row
+                    // every few rows.
+                    ui.spacing_mut().item_spacing.y = 0.0;
                     // Only the rows in view are laid out, so a picker holding
                     // the whole file list stays cheap to draw.
-                    .show_rows(ui, ROW_HEIGHT, state.list_items.len(), |ui, rows| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
+                    scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
                         for row in rows {
                             let (rect, _) = ui.allocate_exact_size(
                                 egui::vec2(ui.available_width(), ROW_HEIGHT),
                                 egui::Sense::hover(),
                             );
+                            if row == selected {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    egui::CornerRadius::ZERO,
+                                    SELECTED_ROW_COLOR,
+                                );
+                            }
                             // Painted rather than laid out as a `Label`: rows are
                             // single-line and anything too long is clipped at the
                             // scroll area's edge instead of wrapping.
                             ui.painter().text(
                                 rect.left_center(),
                                 egui::Align2::LEFT_CENTER,
-                                &state.list_items[row],
+                                &items[row],
                                 egui::FontId::proportional(ROW_SIZE),
                                 TEXT_COLOR,
                             );
                         }
-                    });
-            });
+                    })
+                })
+                .inner;
+            state.list_scroll = scrolled.state.offset.y;
 
             // The info box stays hidden while there is nothing to say.
             if !state.list_info.is_empty() {
