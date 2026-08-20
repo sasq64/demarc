@@ -44,7 +44,6 @@ mod profiling;
 mod retro_emu;
 mod screensaver;
 mod speed_test;
-mod text_input;
 mod utils;
 mod workfile;
 mod zx_scr;
@@ -56,7 +55,6 @@ use hud::HudPlugin;
 use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
-use text_input::TextInputPlugin;
 #[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
@@ -846,7 +844,6 @@ fn main() {
             },
             HudPlugin,
             egui_ui::EguiUiPlugin,
-            TextInputPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,
             jobs::JobsPlugin,

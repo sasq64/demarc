@@ -17,7 +17,6 @@ use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::hud::TextList;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
 
 pub struct RetroPlugin {}
@@ -114,11 +113,8 @@ fn grid_layout(args: &Args) -> Vec<GridCell> {
     }
 }
 
-fn setup_ui_camera(mut commands: Commands, asset_server: Res<AssetServer>) {
-    // Camera for full res UI on top of screen. Its order is above the emulator
-    // camera's (which is 0 however many emulators are on screen — they are
-    // quads within its one pass, not cameras of their own), so the HUD and the
-    // focus outline draw over every cell.
+fn setup_ui_camera(mut commands: Commands) {
+    // Camera for full res UI on top of screen.
     commands.spawn((
         Camera2d,
         Camera {
@@ -131,21 +127,6 @@ fn setup_ui_camera(mut commands: Commands, asset_server: Res<AssetServer>) {
         // the emulators as well (see `crate::egui_ui`).
         bevy_egui::PrimaryEguiContext,
     ));
-    commands.spawn((
-        Node {
-            display: Display::None,
-            position_type: PositionType::Absolute,
-            bottom: px(25.0),
-            left: px(15.0),
-            ..default()
-        },
-        TextInput {
-            // The app font, not Bevy's ASCII-only built-in one, so typed
-            // non-ASCII characters actually have glyphs.
-            font: asset_server.load("font.ttf"),
-            ..default()
-        },
-    ));
 }
 
 fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -155,8 +136,6 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
 
-    //    let mut meta = meta_from_args(args);
-
     let color_cycle = args.color_cycle;
     let max_time = args.max_time;
     let speed_test = args.speed_test;
@@ -164,10 +143,6 @@ fn setup_retro(world: &mut World) {
 
     let cells = grid_layout(args);
 
-    // One camera for every emulator on screen. Each emulator is a quad drawn
-    // into this camera's view target by `post_process_pass`, so the 2D pipeline
-    // (view uniforms, main pass, tonemapping, upscaling) is paid for once
-    // rather than once per grid cell.
     world.spawn((
         Camera2d,
         Camera {
@@ -182,8 +157,6 @@ fn setup_retro(world: &mut World) {
         spawn_emulator(world, color_cycle, max_time, speed_test, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
-        // pcsx rearmed can only run 3 instances at one time
-        // meta.insert("psx_core".into(), "beetle".into());
         for (i, cell) in cells.into_iter().enumerate() {
             spawn_emulator(world, color_cycle, max_time, speed_test, Some((i, cell)));
         }

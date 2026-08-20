@@ -426,7 +426,16 @@ fn update_ui(
                     let color = ui.visuals().text_color().linear_multiply(t);
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(quad).layout(layout), |ui| {
-                        ui.heading(egui::RichText::new(info.text).color(color));
+                        if text == HudLocation::InfoText {
+                            egui::Frame::new()
+                                .fill(egui::Color32::from_black_alpha(180).linear_multiply(t))
+                                .inner_margin(egui::Margin::symmetric(8 * 2, 4 * 2))
+                                .show(ui, |ui| {
+                                    ui.heading(egui::RichText::new(info.text).color(color));
+                                });
+                        } else {
+                            ui.heading(egui::RichText::new(info.text).color(color));
+                        }
                     });
                 }
             }
