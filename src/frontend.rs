@@ -14,7 +14,6 @@ use bevy::{
 use crate::commands::{CmdMessage, check_hotkey};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
-use crate::hud::TextList;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::{AppSettings, Args, RenderSettings};
@@ -353,7 +352,6 @@ const fn config_line_width() -> f32 {
 fn run_retro(
     mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
-    lists: Query<&TextList>,
     mut settings: ResMut<AppSettings>,
     render: Res<RenderSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -369,7 +367,7 @@ fn run_retro(
     // The file picker or a controlled TextList is capturing keyboard
     // navigation; while one is open, swallow all keys so they don't also reach
     // the emulated machine.
-    let modal = hud.list_open() || lists.iter().any(|l| l.controlled);
+    let modal = hud.list_open();
     let cmd = if !modal {
         let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
         if hot_key {

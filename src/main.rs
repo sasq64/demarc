@@ -27,7 +27,6 @@ mod files;
 mod flash_emu;
 mod frontend;
 mod fuzzy_list;
-mod hud;
 mod ilbm;
 mod image_emu;
 mod jobs;
@@ -51,7 +50,6 @@ mod zx_scr;
 use commands::CommandPlugin;
 use commands::FilePickerSource;
 use frontend::{RetroPlugin, system_dir};
-use hud::HudPlugin;
 use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
@@ -448,7 +446,6 @@ struct AppSettings {
     maximized: bool,
     all_emus: bool,
     last_draw: f64,
-    text_list: Option<Entity>,
     /// The file picker's search index, built lazily from `files` on first open
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.
@@ -842,7 +839,6 @@ fn main() {
             PostProcessPlugin {
                 shader: shader_path,
             },
-            HudPlugin,
             egui_ui::EguiUiPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,

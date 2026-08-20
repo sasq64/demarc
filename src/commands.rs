@@ -12,8 +12,8 @@ use bevy::{
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
+use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
-use crate::hud::{TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::{AppSettings, RenderSettings};
@@ -151,26 +151,14 @@ fn screenshot(commands: &mut Commands, name: impl Into<String>) {
 }
 
 fn handle_textlist(
-    mut commands: Commands,
     mut settings: ResMut<AppSettings>,
-    asset_server: Res<AssetServer>,
     input: Res<ButtonInput<KeyCode>>,
-    mut reader: MessageReader<TextListSelect>,
     mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
+    mut show_list: MessageWriter<ShowFuzzyList>,
     time: Res<Time>,
-    lists: Query<&TextList>,
     hud: Res<HudState>,
 ) {
-    for &TextListSelect { id, index } in reader.read() {
-        if id == 0 && index < HOTKEYS.len() {
-            let cmd = HOTKEYS[index].cmd;
-            writer.write(CmdMessage(cmd));
-            if let Some(e) = settings.text_list.take() {
-                commands.entity(e).despawn();
-            }
-        }
-    }
     // The file picker is the egui list in `crate::egui_ui`, which closes itself
     // once a row is picked; `item` is the stable index into `settings.files`,
     // independent of the current search filter.
@@ -179,6 +167,11 @@ fn handle_textlist(
         if id == FILE_PICKER_ID {
             settings.current_game = item as isize;
             writer.write(CmdMessage(Cmd::Reload));
+        } else {
+            if item < HOTKEYS.len() {
+                let cmd = HOTKEYS[item].cmd;
+                writer.write(CmdMessage(cmd));
+            }
         }
     }
     let hot_key_pressed =
@@ -190,33 +183,26 @@ fn handle_textlist(
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = hud.list_open() || lists.iter().any(|l| l.controlled);
+        let modal = hud.list_open();
         if modal {
             return;
         }
         if time.elapsed_secs() - settings.hotkey_pressed < 0.35 {
-            if let Some(e) = settings.text_list.take() {
-                commands.entity(e).despawn();
-            } else {
-                let font: Handle<Font> = asset_server.load("font.ttf");
-                let lines = HOTKEYS
-                    .iter()
-                    .map(|m| {
-                        if m.shift {
-                            format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
-                        } else {
-                            format!(" {} {} ", m.glyph(), m.description)
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let entity = TextList::spawn(0, &mut commands, font, lines, 8, 580.0);
-                settings.text_list = Some(entity);
-            }
-        }
-    } else if input.just_pressed(KeyCode::Escape) {
-        // The file picker takes Escape itself; only the hotkey list is ours.
-        if let Some(e) = settings.text_list.take() {
-            commands.entity(e).despawn();
+            let lines = HOTKEYS
+                .iter()
+                .map(|m| {
+                    if m.shift {
+                        format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
+                    } else {
+                        format!(" {} {} ", m.glyph(), m.description)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let source = AllWordsSource::new(lines);
+            show_list.write(ShowFuzzyList {
+                id: 99,
+                source: Arc::new(source),
+            });
         }
     }
 }
