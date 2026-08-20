@@ -12,9 +12,8 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
-use crate::egui_ui::{HudLocation, SetHudText};
+use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
-use crate::fuzzy_list::FuzzyListSelect;
 use crate::hud::TextList;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::screensaver::ScreenSaverInhibitor;
@@ -197,21 +196,6 @@ fn setup_retro(world: &mut World) {
         let mut emus = world.query::<&mut Emulator>();
         for mut emu in emus.iter_mut(world) {
             emu.run_next = false;
-        }
-    }
-}
-
-fn handle_textlist(
-    mut commands: Commands,
-    mut settings: ResMut<AppSettings>,
-    mut reader: MessageReader<FuzzyListSelect>,
-) {
-    for &FuzzyListSelect { id, item, .. } in reader.read() {
-        if id == 1 {
-            println!("START {item}");
-            if let Some(e) = settings.file_list.take() {
-                commands.entity(e).despawn();
-            }
         }
     }
 }
@@ -407,10 +391,12 @@ fn run_retro(
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut views: Query<(&EmuView, &ViewRect, &mut PostProcess)>,
+    hud: Res<HudState>,
 ) {
-    // A controlled TextList is capturing keyboard navigation; while it is open,
-    // swallow all keys so they don't also reach the emulated machine.
-    let modal = lists.iter().any(|l| l.controlled);
+    // The file picker or a controlled TextList is capturing keyboard
+    // navigation; while one is open, swallow all keys so they don't also reach
+    // the emulated machine.
+    let modal = hud.list_open() || lists.iter().any(|l| l.controlled);
     let cmd = if !modal {
         let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
         if hot_key {
@@ -697,7 +683,6 @@ impl Plugin for RetroPlugin {
                 run_retro,
                 update_view_rects,
                 draw_current_emu_outline,
-                handle_textlist,
             ),
         );
     }

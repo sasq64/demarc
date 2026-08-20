@@ -452,7 +452,6 @@ struct AppSettings {
     all_emus: bool,
     last_draw: f64,
     text_list: Option<Entity>,
-    file_list: Option<Entity>,
     /// The file picker's search index, built lazily from `files` on first open
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.

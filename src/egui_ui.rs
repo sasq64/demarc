@@ -2,7 +2,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, egui};
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::fuzzy_list::FuzzySource;
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzyListSelect, FuzzySource};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -20,8 +20,8 @@ fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(AppFont(asset_server.load("font.ttf")));
 }
 
-const HEADING_SIZE: f32 = 60.0;
-const BODY_SIZE: f32 = 44.0;
+const HEADING_SIZE: f32 = 80.0;
+const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(32.0, 32.0);
 
@@ -82,9 +82,14 @@ pub enum HudLocation {
     Error,
 }
 
+/// Opens the searchable list over `source`. Picking a row emits a
+/// [`FuzzyListSelect`] carrying `id` back, so several callers can tell their
+/// pickers apart; re-opening the same `id` restores the search text and the
+/// selected row.
 #[derive(Message, Clone)]
 pub struct ShowFuzzyList {
-    source: Arc<dyn FuzzySource>,
+    pub id: usize,
+    pub source: Arc<dyn FuzzySource>,
 }
 
 #[derive(Default, Message, Clone)]
@@ -102,21 +107,42 @@ pub struct HudText {
 }
 
 #[derive(Resource, Default)]
-struct HudState {
+pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
+    /// Caller-chosen id of the open list, echoed back in [`FuzzyListSelect`].
+    list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`render_list`],
-    /// which edits it in place; filtering on it comes later.
+    /// which edits it in place; [`sync_results`] filters on it.
     list_query: String,
-    list_items: Vec<String>,
+    /// The query `list_items` was filtered with, so the source is only asked
+    /// again when the text actually changed (the box is polled every frame).
+    list_last_query: Option<String>,
+    /// The results currently shown, in display order. Their [`FuzzyItem::id`]s
+    /// are what a selection reports, so they survive re-filtering.
+    list_items: Vec<FuzzyItem>,
     /// Index into `list_items` of the highlighted row.
     list_selected: usize,
     /// The list's scroll offset in points, mirrored out of the [`egui::ScrollArea`]
     /// so [`render_list`] can steer it when the selection moves out of view
     /// while leaving the wheel free otherwise.
     list_scroll: f32,
+    /// Set when the list is (re-)opened: forces one re-query of the source and
+    /// one scroll back to the restored selection.
+    list_reopened: bool,
     list_info: String,
+    /// Item `list_info` describes, so the source is only asked when the
+    /// highlighted item changes. `None` when nothing is highlighted.
+    list_info_item: Option<usize>,
     list_source: Option<Arc<dyn FuzzySource>>,
+}
+
+impl HudState {
+    /// Whether the file picker is up. It owns the keyboard while it is, so the
+    /// callers that feed keys to the emulated machine swallow them instead.
+    pub fn list_open(&self) -> bool {
+        self.show_list
+    }
 }
 
 /// Look of the boxes the list is drawn in, matching the Bevy UI widget in
@@ -153,17 +179,43 @@ fn panel_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(PANEL_PADDING))
 }
 
-/// Draws the file picker: a search box above a scrollable list of
-/// [`HudState::list_items`], with a fixed-height info field
-/// ([`HudState::list_info`]) below it, centred on screen. The search box takes
+/// Re-filters the list against the search box. The source is asked only when
+/// the query changed since the last frame -- or when the list was just opened,
+/// since the source itself may be a new one by then.
+fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
+    let changed = state.list_last_query.as_deref() != Some(state.list_query.as_str());
+    if !changed && !state.list_reopened {
+        return;
+    }
+    state.list_items = source.search(&state.list_query, DEFAULT_MAX_RESULTS);
+    state.list_last_query = Some(state.list_query.clone());
+    if changed {
+        // A new filter starts at the top; a re-open keeps where the user was.
+        state.list_selected = 0;
+        state.list_scroll = 0.0;
+    }
+}
+
+/// Draws the file picker: a search box above a scrollable, filtered view of
+/// [`HudState::list_source`], with a fixed-height info field
+/// ([`FuzzySource::get_info`]) below it, centred on screen. The search box takes
 /// keyboard focus for as long as the picker is up, with Up/Down/PageUp/PageDown
-/// moving the highlighted row. Nothing filters on the query yet, and picking a
-/// row does nothing -- those follow when the widget takes over from
-/// `crate::fuzzy_list`.
-fn render_list(ctx: &egui::Context, state: &mut HudState) {
+/// moving the highlighted row, Enter emitting a [`FuzzyListSelect`] for it and
+/// Escape closing the picker without one.
+fn render_list(
+    ctx: &egui::Context,
+    state: &mut HudState,
+    writer: &mut MessageWriter<FuzzyListSelect>,
+) {
     if !state.show_list {
         return;
     }
+    let Some(source) = state.list_source.clone() else {
+        state.show_list = false;
+        return;
+    };
+    sync_results(state, &source);
+
     let screen = ctx.content_rect();
     // Same proportions as the Bevy widget: as wide as the screen is tall (it is
     // opened over a 4:3-ish emulator view), capped to what actually fits.
@@ -180,14 +232,22 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
     // the presses keeps a held-down arrow moving at the key repeat rate even
     // when several repeats land in one frame.
     let len = state.list_items.len();
-    let (row_steps, page_steps) = ctx.input_mut(|i| {
+    let (row_steps, page_steps, pick, close) = ctx.input_mut(|i| {
         let none = egui::Modifiers::NONE;
         let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
             - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
         let pages = i.count_and_consume_key(none, egui::Key::PageDown) as i64
             - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
-        (rows, pages)
+        // Enter belongs to the list, not the search box, and Escape closes the
+        // whole picker; both are consumed so the `TextEdit` never acts on them.
+        let pick = i.consume_key(none, egui::Key::Enter);
+        let close = i.consume_key(none, egui::Key::Escape);
+        (rows, pages, pick, close)
     });
+    if close {
+        state.show_list = false;
+        return;
+    }
     let delta = row_steps + page_steps * visible_rows as i64;
     let selected = if len == 0 {
         0
@@ -197,6 +257,24 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
         (state.list_selected.min(len - 1) as i64 + delta).clamp(0, len as i64 - 1) as usize
     };
     state.list_selected = selected;
+
+    if pick && let Some(item) = state.list_items.get(selected) {
+        writer.write(FuzzyListSelect {
+            id: state.list_id,
+            item: item.id,
+            text: item.text.clone(),
+        });
+        state.show_list = false;
+        return;
+    }
+
+    // Describe the highlighted item, asking the source only when it changes
+    // (arrow keys, or a new filter) rather than every frame.
+    let info_item = state.list_items.get(selected).map(|item| item.id);
+    if info_item != state.list_info_item {
+        state.list_info = info_item.map(|id| source.get_info(id)).unwrap_or_default();
+        state.list_info_item = info_item;
+    }
 
     egui::Area::new(egui::Id::new("fuzzy_list"))
         .order(egui::Order::Foreground)
@@ -229,8 +307,9 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
             let mut scroll = egui::ScrollArea::vertical()
                 .max_height(view_height)
                 .auto_shrink([false, false]);
-            if delta != 0 {
-                // Follow the selection only when a key actually moved it,
+            if delta != 0 || state.list_reopened {
+                // Follow the selection only when a key actually moved it (or
+                // when a re-opened list has to be put back where it was),
                 // scrolling the least that brings it back into view; between
                 // keypresses the wheel is left in charge.
                 let top = selected as f32 * ROW_HEIGHT;
@@ -267,7 +346,7 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
                             ui.painter().text(
                                 rect.left_center(),
                                 egui::Align2::LEFT_CENTER,
-                                &items[row],
+                                &items[row].text,
                                 egui::FontId::proportional(ROW_SIZE),
                                 TEXT_COLOR,
                             );
@@ -293,15 +372,20 @@ fn render_list(ctx: &egui::Context, state: &mut HudState) {
                 });
             }
         });
+
+    state.list_reopened = false;
 }
 
 fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
     time: Res<Time>,
-    _window: Single<&mut Window, With<PrimaryWindow>>,
+    mut selected: MessageWriter<FuzzyListSelect>,
+    window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
+    let scale = (window.height() / 2000.0).clamp(0.5, 2.0);
+    ctx.set_pixels_per_point(window.scale_factor() as f32 * scale);
 
     let rect = ctx.content_rect().shrink2(MARGIN);
 
@@ -336,7 +420,7 @@ fn update_ui(
             }
         });
 
-    render_list(ctx, &mut state);
+    render_list(ctx, &mut state, &mut selected);
     Ok(())
 }
 
@@ -345,14 +429,6 @@ fn spawn_toast(
     time: Res<Time>,
     mut reader: MessageReader<SetHudText>,
 ) {
-    state.show_list = true;
-    state.list_info = "Bottom  info".into();
-    if state.list_items.is_empty() {
-        for i in 0..100 {
-            state.list_items.push(format!("Item{i}"));
-        }
-    }
-
     for msg in reader.read() {
         info!("MSG: {}", msg.text);
         let now = time.elapsed_secs();
@@ -369,9 +445,21 @@ fn spawn_toast(
 }
 
 fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFuzzyList>) {
-    state.show_list = true;
     for msg in reader.read() {
+        // A different picker starts fresh; the same one comes back with the
+        // search text and the row the user left it on.
+        if state.list_id != msg.id {
+            state.list_id = msg.id;
+            state.list_query.clear();
+            state.list_selected = 0;
+            state.list_scroll = 0.0;
+        }
         state.list_source = Some(msg.source.clone());
+        // The source may be a different instance than last time (rebuilt, or
+        // just re-measured for the info field), so re-query and re-describe.
+        state.list_reopened = true;
+        state.list_info_item = None;
+        state.show_list = true;
     }
 }
 
@@ -387,6 +475,9 @@ impl Plugin for EguiUiPlugin {
             .add_systems(EguiPrimaryContextPass, (setup_egui, update_ui).chain())
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
+            // Written by `render_list`; registered here too so the picker keeps
+            // working once `crate::fuzzy_list`'s own widget (and plugin) go.
+            .add_message::<FuzzyListSelect>()
             .add_systems(
                 Update,
                 (

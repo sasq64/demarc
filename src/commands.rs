@@ -10,10 +10,9 @@ use bevy::{
 };
 
 use crate::egui_ui::HudLocation;
-use crate::egui_ui::SetHudText;
+use crate::egui_ui::{HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
-use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
+use crate::fuzzy_list::{FuzzyItem, FuzzyListSelect, FuzzySource, IndexedSource};
 use crate::hud::{TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
@@ -50,6 +49,10 @@ pub enum Cmd {
 
 #[derive(Message)]
 pub struct CmdMessage(pub Cmd);
+
+/// Id the file picker is opened under, echoed back by
+/// [`FuzzyListSelect`] so its selections are told apart from any other list's.
+pub const FILE_PICKER_ID: usize = 1;
 
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
@@ -157,6 +160,7 @@ fn handle_textlist(
     mut writer: MessageWriter<CmdMessage>,
     time: Res<Time>,
     lists: Query<&TextList>,
+    hud: Res<HudState>,
 ) {
     for &TextListSelect { id, index } in reader.read() {
         if id == 0 && index < HOTKEYS.len() {
@@ -167,13 +171,12 @@ fn handle_textlist(
             }
         }
     }
-    // The file picker is a `FuzzyList`; `item` is the stable index into
-    // `settings.files`, independent of the current search filter.
+    // The file picker is the egui list in `crate::egui_ui`, which closes itself
+    // once a row is picked; `item` is the stable index into `settings.files`,
+    // independent of the current search filter.
     for &FuzzyListSelect { id, item, .. } in file_reader.read() {
-        if id == 1 {
-            if let Some(e) = settings.file_list.take() {
-                commands.entity(e).despawn();
-            }
+        info!("Got SELECT {id} {item:?}");
+        if id == FILE_PICKER_ID {
             settings.current_game = item as isize;
             writer.write(CmdMessage(Cmd::Reload));
         }
@@ -187,7 +190,7 @@ fn handle_textlist(
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = lists.iter().any(|l| l.controlled);
+        let modal = hud.list_open() || lists.iter().any(|l| l.controlled);
         if modal {
             return;
         }
@@ -211,10 +214,8 @@ fn handle_textlist(
             }
         }
     } else if input.just_pressed(KeyCode::Escape) {
+        // The file picker takes Escape itself; only the hotkey list is ours.
         if let Some(e) = settings.text_list.take() {
-            commands.entity(e).despawn();
-        }
-        if let Some(e) = settings.file_list.take() {
             commands.entity(e).despawn();
         }
     }
@@ -385,13 +386,12 @@ fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut commands: Commands,
     mut emus: Query<&mut Emulator>,
-    asset_server: Res<AssetServer>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
-    state_store: Res<FuzzyStateStore>,
+    mut show_list: MessageWriter<ShowFuzzyList>,
 ) {
     let mut show_info = false;
     let count = emus.iter().count();
@@ -479,24 +479,16 @@ fn handle_cmd(
                 if settings.file_source.is_none() {
                     settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
+                // The info field wraps to the width of the list box, which is
+                // as wide as the window is tall; this is what the source
+                // truncates the (unwrappable) URL line to.
                 let size = window.resolution.size();
+                settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
 
-                let count = (size.y / 50.0) as usize;
-                let width = size.y;
-                settings.file_source.as_mut().unwrap().width = (width / 12.0) as u32;
-
-                let source = settings.file_source.clone().unwrap();
-                let font: Handle<Font> = asset_server.load("font.ttf");
-                let entity = FuzzyList::spawn(
-                    1,
-                    &mut commands,
-                    font,
-                    source,
-                    count,
-                    width,
-                    &state_store.get(1),
-                );
-                settings.file_list = Some(entity);
+                show_list.write(ShowFuzzyList {
+                    id: FILE_PICKER_ID,
+                    source: Arc::new(settings.file_source.clone().unwrap()),
+                });
             }
             _ => {}
         }
