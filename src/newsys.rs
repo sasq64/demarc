@@ -296,9 +296,6 @@ impl NewSys {
     pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
         debug!("Trying to load: {path:?}");
         let mut wf = WorkFile::new_with_meta(path, meta.clone());
-        for (key, val) in &self.meta {
-            wf.set_meta(key, val);
-        }
         if path.is_file() {
             if is_archive(path)? {
                 wf = WorkFile::new_dir_with_meta(meta.clone())?;
@@ -319,6 +316,10 @@ impl NewSys {
                     wf.set_meta(&key, value);
                 }
             }
+        }
+        for (key, val) in &self.meta {
+            debug!("Adding {key}={val}");
+            wf.set_meta(key, val);
         }
 
         // Sort out which side of a disc release we were pointed at before any
