@@ -476,15 +476,13 @@ impl Emulator {
         } else {
             format!(" ({year})")
         };
-        //let desc = if typ.is_empty() { &system } else { &typ };
-
         let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
             info
         } else {
             if typ.is_empty() { system } else { typ.clone() }
         };
 
-        format!("\"{title}\"{year}\n{group}\n{desc}")
+        format!("\"{title}\"\n{group}{year}\n{desc}")
     }
 
     /// Begin loading `emu_file`, downloading it first if it is URL-backed.
