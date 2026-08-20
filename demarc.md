@@ -139,7 +139,7 @@ demarc adds a few of its own:
 
 | Tag | Effect |
 | --- | --- |
-| `boot_file` | Which file in a release directory to auto start, e.g. `boot_file=TLKTLK2.PRG`. Overrides the guess demarc makes (nearest the top of the release, named like a program — `.prg`, `.tos`, `.ttp`, `.app` — and the biggest of those). Matched case insensitively, by file name or by path within the release (`DEMO/TLKTLK2.PRG`) |
+| `boot_file` | Which file in a release directory to auto start, e.g. `boot_file=TLKTLK2.PRG`. Overrides the guess demarc makes (named like a program — `.prg`, `.tos`, `.ttp`, `.app` — nearest the top of the release, and the biggest of those). Matched case insensitively, by file name or by path within the release (`DEMO/TLKTLK2.PRG`) |
 | `psx_core` | `beetle` to load a PlayStation release with Beetle (needs a BIOS) instead of the default pcsx_rearmed |
 
 An Atari ST release directory is loaded as a hard drive, and the program is

@@ -1,12 +1,13 @@
 use anyhow::Result;
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
 use tracing::{debug, info, warn};
 
-use super::utils::{build_m3u, copy_dir_all};
+use super::utils::{build_m3u, copy_dir_all, has_extension};
 
 use crate::{
     newsys::{
@@ -59,6 +60,57 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
         path = dir.join(format!("{name}{n}"));
     }
     path
+}
+
+/// How TOS names a program meant to be started. A release names what the user
+/// runs and leaves its payload looking like data, so one of these beats a
+/// GEMDOS executable called anything else, however big — `molz.tos` is a
+/// 651-byte loader sitting next to the 652K part it loads.
+const PROGRAM_EXTENSIONS: [&str; 4] = ["prg", "tos", "ttp", "app"];
+
+/// Which of `exes` to boot.
+///
+/// `boot_file` decides it outright when the release carries one, named either
+/// by file name or by path within the release (`DEMO/TLKTLK2.PRG`), matched
+/// case insensitively. Otherwise it is a guess, in this order: named like a
+/// program, nearest the top of the release, then the biggest of those. Size
+/// alone picked a readme viewer over the demo beside it, and picked a payload
+/// over the loader that feeds it — see docs/NOTES.md.
+///
+/// Paths are ranked relative to `root`, the release the walk found them in.
+fn pick_program<'a>(exes: &'a [PathBuf], root: &Path, boot_file: &str) -> Option<&'a PathBuf> {
+    let within = |p: &'a Path| p.strip_prefix(root).unwrap_or(p).to_owned();
+
+    if !boot_file.is_empty() {
+        // GEMDOS spells a path with backslashes and the host doesn't, so a
+        // `boot_file` copied out of a release's own README still matches.
+        let wanted = boot_file.replace('\\', "/");
+        let named = exes.iter().find(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let path = within(p).to_string_lossy().replace('\\', "/");
+            name.eq_ignore_ascii_case(&wanted) || path.eq_ignore_ascii_case(&wanted)
+        });
+        if let Some(named) = named {
+            debug!("FMT: booting {named:?}, named by boot_file");
+            return Some(named);
+        }
+        warn!("No program called {boot_file:?} in the release; picking one instead");
+    }
+
+    exes.iter().min_by_key(|p| {
+        let named_like_program = PROGRAM_EXTENSIONS.iter().any(|e| has_extension(p, e));
+        let size = p.metadata().map(|m| m.len()).unwrap_or(0);
+        // `false` sorts before `true`, so each term is written to make the
+        // wanted one the smaller: named like a program, then shallow, then big.
+        (
+            !named_like_program,
+            within(p).components().count(),
+            Reverse(size),
+            // Two files alike in every way still have to rank in some order
+            // that doesn't change from one walk to the next.
+            p.as_path(),
+        )
+    })
 }
 
 /// Stage `prg` and the rest of its release as an Atari ST hard drive for
@@ -149,6 +201,17 @@ impl System for AtariStSystem {
             file.set_meta(key, val);
         }
 
+        // What the release itself asks for, as against what is guessed for it
+        // below: a hard drive load replaces a guess, but never a request.
+        let machine_given = {
+            let machine = file.get_meta("hatari_machinetype", "");
+            !machine.is_empty() && machine != "date"
+        } || file.has_tag("ste");
+        let ram_given = file.has_meta("hatari_ramsize")
+            || ["requires-4mb", "requires-2mb", "requires-1mb"]
+                .iter()
+                .any(|tag| file.has_tag(tag));
+
         // `date` is our own stand-in for "decide from the release's year", and
         // never a machine the core knows, so it has to be resolved here whether
         // the year says anything or not — see [`MACHINE_TYPES`] for what an
@@ -216,7 +279,22 @@ impl System for AtariStSystem {
                 file.path = images[0].clone();
             }
         } else if !exes.is_empty() {
-            let wf = build_gemdos_drive(&exes[0], &file.path)?;
+            let prg = pick_program(&exes, &file.path, &file.get_meta("boot_file", ""))
+                .expect("exes is not empty");
+            info!("FMT: booting {prg:?} from a GEMDOS hard drive");
+
+            // A release shipped to run off a hard drive is a late one: it
+            // expects the STE and the memory that came with it, and a demo like
+            // molz quietly drops back to the desktop on the 1MB ST that is the
+            // core's default (docs/NOTES.md).
+            if !machine_given {
+                file.set_meta("hatari_machinetype", "ste");
+            }
+            if !ram_given {
+                file.set_meta("hatari_ramsize", "4");
+            }
+
+            let wf = build_gemdos_drive(prg, &file.path)?;
             file.path = wf.path;
             file.temp_dir = wf.temp_dir;
             return Ok(true);
@@ -269,6 +347,68 @@ mod tests {
         assert!(drive.join("data").join("music.snd").exists());
         assert!(drive.join(DISABLED_AUTO).join("SWAP.PRG").exists());
         assert!(drive.join("AUTO").join(AUTO_PROGRAM).exists());
+    }
+
+    fn exe(dir: &Path, name: &str, size: usize) -> PathBuf {
+        let path = dir.join(name);
+        let mut bytes = GEMDOS_MAGIC.to_vec();
+        bytes.resize(size, 0);
+        write(&path, &bytes);
+        path
+    }
+
+    /// TalkTalk2: the demo and its readme viewer sit side by side, both named
+    /// like programs, and the demo is the bigger one.
+    #[test]
+    fn biggest_program_of_a_level_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let readme = exe(dir.path(), "TLK2READ.PRG", 40_000);
+        let demo = exe(dir.path(), "TLKTLK2.PRG", 124_000);
+
+        let exes = [readme, demo.clone()];
+        assert_eq!(pick_program(&exes, dir.path(), ""), Some(&demo));
+    }
+
+    /// molz: the 651-byte `.tos` loader is what reads the music and hands it to
+    /// the 652K part, which is a GEMDOS executable too but named like data.
+    #[test]
+    fn program_extension_beats_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let loader = exe(dir.path(), "molz.tos", 651);
+        let part = exe(dir.path(), "part1.bin", 652_000);
+
+        let exes = [part, loader.clone()];
+        assert_eq!(pick_program(&exes, dir.path(), ""), Some(&loader));
+    }
+
+    /// Between programs alike in name, the one nearer the top of the release.
+    #[test]
+    fn shallowest_program_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let top = exe(dir.path(), "DEMO.PRG", 1000);
+        let buried = exe(&dir.path().join("PARTS"), "PART1.PRG", 500_000);
+
+        let exes = [buried, top.clone()];
+        assert_eq!(pick_program(&exes, dir.path(), ""), Some(&top));
+    }
+
+    /// `boot_file` overrides the guess outright, by name or by path, and a
+    /// GEMDOS-style path in it still matches.
+    #[test]
+    fn boot_file_overrides_the_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = exe(dir.path(), "BIG.PRG", 500_000);
+        let wanted = exe(&dir.path().join("DEMO"), "TLKTLK2.PRG", 1000);
+        let exes = [big.clone(), wanted.clone()];
+
+        assert_eq!(pick_program(&exes, dir.path(), "tlktlk2.prg"), Some(&wanted));
+        assert_eq!(pick_program(&exes, dir.path(), "DEMO/TLKTLK2.PRG"), Some(&wanted));
+        assert_eq!(
+            pick_program(&exes, dir.path(), "DEMO\\TLKTLK2.PRG"),
+            Some(&wanted)
+        );
+        // A name that isn't there falls back to the guess rather than failing.
+        assert_eq!(pick_program(&exes, dir.path(), "GONE.PRG"), Some(&big));
     }
 
     /// A program inside the release's own `AUTO` folder is already started by
