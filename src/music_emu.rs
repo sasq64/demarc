@@ -637,7 +637,7 @@ impl Backend for MusicEmu {
     // A song has no disks, no keyboard, no joypad and no mouse.
     fn set_disk(&mut self, _no: u32) {}
     fn get_number_of_disks(&mut self) -> u32 {
-        0
+        1
     }
     fn press_key(&mut self, _code: u32, _down: bool, _mods: u16) {}
     fn add_mouse_motion(&mut self, _dx: f32, _dy: f32) {}

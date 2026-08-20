@@ -320,7 +320,7 @@ impl Backend for ImageEmu {
     // Everything below is inapplicable to a still image.
     fn set_disk(&mut self, _no: u32) {}
     fn get_number_of_disks(&mut self) -> u32 {
-        0
+        1
     }
     fn reset(&mut self) {}
     fn press_key(&mut self, _code: u32, _down: bool, _mods: u16) {}
