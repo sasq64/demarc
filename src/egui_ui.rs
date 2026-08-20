@@ -353,9 +353,12 @@ fn render_list(
                                 );
                             }
                             // Painted rather than laid out as a `Label`: rows are
-                            // single-line and anything too long is clipped at the
-                            // scroll area's edge instead of wrapping.
-                            ui.painter().text(
+                            // single-line and anything too long is clipped.
+                            let clip = egui::Rect::from_x_y_ranges(
+                                rect.x_range(),
+                                ui.clip_rect().y_range(),
+                            );
+                            ui.painter().with_clip_rect(clip).text(
                                 rect.left_center(),
                                 egui::Align2::LEFT_CENTER,
                                 &items[row].text,
