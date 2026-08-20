@@ -59,6 +59,8 @@ impl System for ImageSystem {
             let n = path.components().count() as u8;
             if indexed {
                 images.push((n, path.to_owned()));
+            } else if ext == "jpg" || ext == "jpeg" {
+                images.push((20 + n, path.to_owned()));
             } else if SCREENSHOT_EXTENSIONS.contains(&ext) {
                 images.push((10 + n, path.to_owned()));
             }
