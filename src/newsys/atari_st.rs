@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::utils::{build_m3u, copy_dir_all};
 
@@ -20,6 +20,14 @@ use super::System;
 
 const CORE_NAME_HATARI: &str = "hatari";
 const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
+
+/// Machines hatari's `--machine` accepts, the first being its default.
+///
+/// It is handed the value of `hatari_machinetype` as it stands, and rejects an
+/// unknown one by abandoning the rest of its command line along with it — the
+/// `--harddrive` that mounts C: included, which leaves a hard drive release
+/// sitting on the TOS desktop with no drive to run from.
+const MACHINE_TYPES: [&str; 4] = ["st", "ste", "tt", "falcon"];
 
 #[derive(Default)]
 pub struct AtariStSystem {}
@@ -53,10 +61,11 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
-/// Stage `prg` and everything next to it as an Atari ST hard drive for hatari,
-/// which mounts a host directory as GEMDOS drive C: and boots from it. Returns
-/// the path to hand the core and the temp directory holding it, which the
-/// caller has to keep alive for as long as the drive is needed.
+/// Stage `prg` and the rest of its release as an Atari ST hard drive for
+/// hatari, which mounts a host directory as GEMDOS drive C: and boots from it.
+/// `base` is what we were pointed at, and bounds what goes on the drive.
+/// Returns the path to hand the core and the temp directory holding it, which
+/// the caller has to keep alive for as long as the drive is needed.
 ///
 /// The libretro core takes the drive as a `.gem` file whose name, minus that
 /// extension, is the directory to mount — so the two are created side by side,
@@ -71,19 +80,31 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
 /// Everything is copied into the temp directory rather than mounted in place:
 /// the drive is writable from the emulator, and the `AUTO` folder is ours to
 /// rearrange — neither is something to do to a directory of the user's own.
-fn build_gemdos_drive(prg: &Path) -> Result<WorkFile> {
-    let mut root = prg.parent().unwrap_or(Path::new("."));
-    // A program already in an `AUTO` folder is started by the folder above it.
-    let in_auto = root
-        .file_name()
-        .is_some_and(|n| n.eq_ignore_ascii_case("auto"));
-    if in_auto && let Some(parent) = root.parent() {
-        root = parent;
-    }
-
+fn build_gemdos_drive(prg: &Path, base: &Path) -> Result<WorkFile> {
     let mut temp = WorkFile::new_dir()?;
     let drive = temp.join("harddrive");
-    copy_dir_all(root, &drive)?;
+
+    // The release is `base` and nothing outside it. Pointed straight at a
+    // program file, the release *is* that one file: the directory it happens to
+    // sit in belongs to whoever pointed us there — a downloads folder, a home
+    // directory — and copying that wholesale is how the drive grows to
+    // gigabytes and the copy never finishes.
+    let mut in_auto = false;
+    if base.is_dir() {
+        let mut root = prg.parent().unwrap_or(base);
+        // A program already in an `AUTO` folder is started by the folder above
+        // it — as long as that folder is still part of the release.
+        in_auto = root != base
+            && root
+                .file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case("auto"));
+        if in_auto && let Some(parent) = root.parent() {
+            root = parent;
+        }
+        copy_dir_all(root, &drive)?;
+    } else {
+        fs::create_dir_all(&drive)?;
+    }
 
     if !in_auto {
         if let Some(auto) = find_child(&drive, "auto").filter(|a| a.is_dir()) {
@@ -128,19 +149,34 @@ impl System for AtariStSystem {
             file.set_meta(key, val);
         }
 
+        // `date` is our own stand-in for "decide from the release's year", and
+        // never a machine the core knows, so it has to be resolved here whether
+        // the year says anything or not — see [`MACHINE_TYPES`] for what an
+        // unresolved one costs.
         if file.get_meta("hatari_machinetype", "") == "date" {
-            info!("#### DATE");
-            file.set_meta("puae_model", "st");
-            if let Ok(year) = file.get_meta("year", "").parse::<u32>() {
-                if year > 1994 {
-                    file.set_meta("hatari_machinetype", "ste");
-                    file.set_meta("hatari_ramsize", "4");
-                }
+            let year = file.get_meta("year", "").parse::<u32>().unwrap_or(0);
+            info!("FMT: picking the machine from year {year}");
+            if year > 1994 {
+                file.set_meta("hatari_machinetype", "ste");
+                file.set_meta("hatari_ramsize", "4");
+            } else {
+                // Undated too: an STE release usually says so, while plenty of
+                // ST ones break on an STE.
+                file.set_meta("hatari_machinetype", "st");
             }
         }
 
         if file.has_tag("ste") {
             file.set_meta("hatari_machinetype", "ste");
+        }
+
+        // A machine the core can't parse takes everything after it down with
+        // it, so nothing may reach it but the four it knows.
+        let mut machine = file.get_meta("hatari_machinetype", "");
+        if !machine.is_empty() && !MACHINE_TYPES.contains(&machine.as_str()) {
+            warn!("Ignoring unknown hatari_machinetype {machine:?}");
+            machine = MACHINE_TYPES[0].into();
+            file.set_meta("hatari_machinetype", machine.as_str());
         }
 
         // Hatari sizes its internal "desktop" from the libretro core's
@@ -151,7 +187,6 @@ impl System for AtariStSystem {
         // 2x2") and draws the shrunken image into the top-left of the frame we
         // are handed. Hires raises it to 832x548, which covers the usual Falcon
         // modes.
-        let machine = file.get_meta("hatari_machinetype", "");
         if (machine == "falcon" || machine == "tt") && !file.has_meta("hatari_video_hires") {
             file.set_meta("hatari_video_hires", "true");
         }
@@ -181,7 +216,7 @@ impl System for AtariStSystem {
                 file.path = images[0].clone();
             }
         } else if !exes.is_empty() {
-            let wf = build_gemdos_drive(&exes[0])?;
+            let wf = build_gemdos_drive(&exes[0], &file.path)?;
             file.path = wf.path;
             file.temp_dir = wf.temp_dir;
             return Ok(true);
@@ -191,3 +226,66 @@ impl System for AtariStSystem {
         Ok(true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, bytes: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    /// Pointed at a program on its own, only that program goes on the drive —
+    /// whatever else shares the directory with it is none of our business.
+    #[test]
+    fn bare_program_leaves_its_directory_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let prg = dir.path().join("DEMO.EXE");
+        write(&prg, &GEMDOS_MAGIC);
+        write(&dir.path().join("huge.iso"), b"not ours");
+
+        let wf = build_gemdos_drive(&prg, &prg).unwrap();
+        let drive = wf.path.parent().unwrap().join("harddrive");
+
+        assert!(drive.join("AUTO").join(AUTO_PROGRAM).exists());
+        assert!(!drive.join("huge.iso").exists());
+    }
+
+    /// A directory release brings its files along, and its own `AUTO` folder is
+    /// moved aside so ours is the one TOS boots.
+    #[test]
+    fn directory_release_is_copied_with_its_auto_moved_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("release");
+        let prg = base.join("DEMO.EXE");
+        write(&prg, &GEMDOS_MAGIC);
+        write(&base.join("data").join("music.snd"), b"tune");
+        write(&base.join("auto").join("SWAP.PRG"), b"stub");
+
+        let wf = build_gemdos_drive(&prg, &base).unwrap();
+        let drive = wf.path.parent().unwrap().join("harddrive");
+
+        assert!(drive.join("data").join("music.snd").exists());
+        assert!(drive.join(DISABLED_AUTO).join("SWAP.PRG").exists());
+        assert!(drive.join("AUTO").join(AUTO_PROGRAM).exists());
+    }
+
+    /// A program inside the release's own `AUTO` folder is already started by
+    /// it, so the drive is the folder above and nothing is rearranged.
+    #[test]
+    fn program_in_auto_starts_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("release");
+        let prg = base.join("AUTO").join("DEMO.PRG");
+        write(&prg, &GEMDOS_MAGIC);
+
+        let wf = build_gemdos_drive(&prg, &base).unwrap();
+        let drive = wf.path.parent().unwrap().join("harddrive");
+
+        assert!(drive.join("AUTO").join("DEMO.PRG").exists());
+        assert!(!drive.join("AUTO").join(AUTO_PROGRAM).exists());
+        assert!(!drive.join(DISABLED_AUTO).exists());
+    }
+}
+
