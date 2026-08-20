@@ -31,6 +31,12 @@ pub struct FuzzyItem {
     pub text: String,
 }
 
+impl AsRef<str> for FuzzyItem {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
 /// Backs the searchable list with items. Implement this to plug in smarter
 /// matching without touching the UI: prefix trees, fuzzy scoring, or an
 /// external index/database.

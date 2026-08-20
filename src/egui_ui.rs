@@ -1,5 +1,8 @@
 use bevy::{prelude::*, window::PrimaryWindow};
-use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui::{
+    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
+    egui::{self, Ui, scroll_area::ScrollAreaOutput},
+};
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzySource};
@@ -20,7 +23,13 @@ fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(AppFont(asset_server.load("font.ttf")));
 }
 
-const HEADING_SIZE: f32 = 80.0;
+const HEADING_SIZE: f32 = 72.0;
+/// Multipliers on [`HEADING_SIZE`], one per corner HUD text, so each can be
+/// sized on its own without touching [`egui::TextStyle::Heading`] elsewhere.
+const TOP_LEFT_SCALE: f32 = 1.0;
+const TOP_RIGHT_SCALE: f32 = 2.5;
+const BOTTOM_LEFT_SCALE: f32 = 1.0;
+const INFO_TEXT_SCALE: f32 = 1.0;
 const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(32.0, 32.0);
@@ -182,13 +191,22 @@ const INFO_LINES: f32 = 5.0;
 const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
 /// Highlight behind the selected row: white at 25%, premultiplied (the
 /// `from_white_alpha` helper isn't const).
-const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(64, 64, 64, 64);
+const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x8f, 0x7a, 0x3c);
 
 fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL_FILL)
         .stroke(egui::Stroke::new(PANEL_BORDER, PANEL_STROKE))
         .inner_margin(egui::Margin::same(PANEL_PADDING))
+}
+
+/// How many rows the list shows at once: whole rows filling
+/// [`LIST_HEIGHT_FRACTION`] of the screen. Also the PageUp/PageDown step, so
+/// the key moves the selection exactly one screenful.
+fn visible_rows(ctx: &egui::Context) -> f32 {
+    (ctx.content_rect().height() * LIST_HEIGHT_FRACTION / ROW_HEIGHT)
+        .floor()
+        .max(1.0)
 }
 
 /// Re-filters the list against the search box. The source is asked only when
@@ -206,6 +224,104 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
         state.list_selected = 0;
         state.list_scroll = 0.0;
     }
+}
+
+/// Draws the scrollable, fixed-row-height list of `items`, highlighting row
+/// `selected` and scrolling the least that keeps it in view. Rows are borrowed:
+/// anything that can be seen as a `&str` (`String`, `&str`, [`FuzzyItem`], ...)
+/// can be listed without copying its text out first.
+///
+/// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
+fn scroll_area<T: AsRef<str>>(
+    ui: &mut Ui,
+    selected: usize,
+    list_scroll: f32,
+    items: &[T],
+) -> ScrollAreaOutput<()> {
+    let visible_rows = visible_rows(ui.ctx());
+    let view_height = visible_rows * ROW_HEIGHT;
+    let id = ui.id();
+    panel_frame()
+        .show(ui, |ui| {
+            let mut scroll = egui::ScrollArea::vertical()
+                .max_height(view_height)
+                .auto_shrink([false, false]);
+
+            let mut highlight = ui.data_mut(|d| {
+                d.get_temp::<Vec<f32>>(id)
+                    .unwrap_or(vec![1.0; (visible_rows + 5.0) as usize])
+            });
+
+            // delta != 0 || state.list_reopened {
+            // Follow the selection only when a key actually moved it (or
+            // when a re-opened list has to be put back where it was),
+            // scrolling the least that brings it back into view; between
+            // keypresses the wheel is left in charge.
+            let top = selected as f32 * ROW_HEIGHT;
+            // Clamped to the end of the content as well: egui clamps whatever
+            // offset it is handed the same way, and `first_row` below only
+            // matches what it uses if we hand it an already-valid one.
+            let max_offset = (items.len() as f32 * ROW_HEIGHT - view_height).max(0.0);
+            let offset = list_scroll
+                .min(top)
+                .max(top + ROW_HEIGHT - view_height)
+                .clamp(0.0, max_offset);
+            scroll = scroll.vertical_scroll_offset(offset);
+            ui.set_width(ui.available_width());
+            // Manual text rendering below, spacing > 0 will make it incorrect
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            // What `show_rows` is about to pass as `rows.start`, recomputed
+            // here so per-row state (`highlight`) can be indexed by absolute
+            // row. Same arithmetic egui does: the rows the viewport covers plus
+            // a row of slack, pulled back when that runs past the last item.
+            // Only valid because `item_spacing.y` is zeroed just above.
+            let mut first_row = (offset / ROW_HEIGHT).floor() as usize;
+            let mut last_row = ((offset + view_height) / ROW_HEIGHT).ceil() as usize + 1;
+            if last_row > items.len() {
+                let count = last_row - first_row;
+                last_row = items.len();
+                first_row = last_row.saturating_sub(count);
+            }
+
+            scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
+                assert!(first_row == rows.start);
+                for row in rows {
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
+                    if row == selected {
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::CornerRadius::ZERO,
+                            SELECTED_ROW_COLOR,
+                        );
+                        highlight[row - first_row] = 1.0;
+                    } else if highlight[row - first_row] > 0.0 {
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::CornerRadius::ZERO,
+                            SELECTED_ROW_COLOR.linear_multiply(highlight[row - first_row]),
+                        );
+                        highlight[row - first_row] -= 0.02;
+                    }
+                    // Painted rather than laid out as a `Label`: rows are
+                    // single-line and anything too long is clipped.
+                    let clip =
+                        egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
+                    ui.painter().with_clip_rect(clip).text(
+                        rect.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        items[row].as_ref(),
+                        egui::FontId::proportional(ROW_SIZE),
+                        TEXT_COLOR,
+                    );
+                }
+                ui.data_mut(|d| d.insert_temp::<Vec<f32>>(id, highlight));
+            })
+        })
+        .inner
 }
 
 /// Draws the file picker: a search box above a scrollable, filtered view of
@@ -230,13 +346,9 @@ fn render_list(
 
     let screen = ctx.content_rect();
     // Same proportions as the Bevy widget: as wide as the screen is tall (it is
-    // opened over a 4:3-ish emulator view), capped to what actually fits.
+    // opened over a 4:3-ish emulator view), capped to what actually fits. The
+    // panels below take their own width from this one, via `available_width`.
     let width = screen.height().min(screen.width() - 2.0 * MARGIN.x);
-    let inner_width = width - 2.0 * (PANEL_PADDING as f32 + PANEL_BORDER);
-    let visible_rows = (screen.height() * LIST_HEIGHT_FRACTION / ROW_HEIGHT)
-        .floor()
-        .max(1.0);
-    let view_height = visible_rows * ROW_HEIGHT;
 
     // Selection keys are taken before the search box is drawn, so the
     // `TextEdit` never sees them. Home/End are deliberately left alone -- they
@@ -260,7 +372,7 @@ fn render_list(
         state.show_list = false;
         return;
     }
-    let delta = row_steps + page_steps * visible_rows as i64;
+    let delta = row_steps + page_steps * visible_rows(ctx) as i64;
     let selected = if len == 0 {
         0
     } else {
@@ -296,6 +408,7 @@ fn render_list(
             ui.spacing_mut().item_spacing.y = PANEL_GAP;
 
             panel_frame().show(ui, |ui| {
+                let inner_width = ui.available_width();
                 ui.set_width(inner_width);
                 // The picker is modal, so the search box keeps focus the whole
                 // time it is up: egui only routes key events to a focused
@@ -315,66 +428,13 @@ fn render_list(
                 }
             });
 
-            let items = &state.list_items;
-            let mut scroll = egui::ScrollArea::vertical()
-                .max_height(view_height)
-                .auto_shrink([false, false]);
-            if delta != 0 || state.list_reopened {
-                // Follow the selection only when a key actually moved it (or
-                // when a re-opened list has to be put back where it was),
-                // scrolling the least that brings it back into view; between
-                // keypresses the wheel is left in charge.
-                let top = selected as f32 * ROW_HEIGHT;
-                let offset = state
-                    .list_scroll
-                    .min(top)
-                    .max(top + ROW_HEIGHT - view_height)
-                    .max(0.0);
-                scroll = scroll.vertical_scroll_offset(offset);
-            }
-            let scrolled = panel_frame()
-                .show(ui, |ui| {
-                    ui.set_width(inner_width);
-                    // Manual text rendering below, spacing > 0 will make it incorrect
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    // Only the rows in view are laid out, so a picker holding
-                    // the whole file list stays cheap to draw.
-                    scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
-                        for row in rows {
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), ROW_HEIGHT),
-                                egui::Sense::hover(),
-                            );
-                            if row == selected {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    egui::CornerRadius::ZERO,
-                                    SELECTED_ROW_COLOR,
-                                );
-                            }
-                            // Painted rather than laid out as a `Label`: rows are
-                            // single-line and anything too long is clipped.
-                            let clip = egui::Rect::from_x_y_ranges(
-                                rect.x_range(),
-                                ui.clip_rect().y_range(),
-                            );
-                            ui.painter().with_clip_rect(clip).text(
-                                rect.left_center(),
-                                egui::Align2::LEFT_CENTER,
-                                &items[row].text,
-                                egui::FontId::proportional(ROW_SIZE),
-                                TEXT_COLOR,
-                            );
-                        }
-                    })
-                })
-                .inner;
+            let scrolled = scroll_area(ui, selected, state.list_scroll, &state.list_items);
             state.list_scroll = scrolled.state.offset.y;
 
             // The info box stays hidden while there is nothing to say.
             if !state.list_info.is_empty() {
                 panel_frame().show(ui, |ui| {
-                    ui.set_width(inner_width);
+                    ui.set_width(ui.available_width());
                     ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
                     ui.add(
                         egui::Label::new(
@@ -399,7 +459,7 @@ fn update_ui(
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
-    let scale = (window.height() / 2000.0).clamp(0.5, 2.0);
+    let scale = (window.height() / 1600.0).clamp(0.2, 8.0);
     ctx.set_pixels_per_point(window.scale_factor() as f32 * scale);
 
     let rect = ctx.content_rect().shrink2(MARGIN);
@@ -409,15 +469,27 @@ fn update_ui(
         .order(egui::Order::Background)
         .show(ctx, |ui| {
             ui.set_min_size(rect.size());
-            for (text, corner) in [
-                (HudLocation::TopLeft, egui::Align2::LEFT_TOP),
-                (HudLocation::TopRight, egui::Align2::RIGHT_TOP),
-                (HudLocation::BottomLeft, egui::Align2::LEFT_BOTTOM),
-                (HudLocation::InfoText, egui::Align2::RIGHT_BOTTOM),
+            for (text, corner, scale) in [
+                (HudLocation::TopLeft, egui::Align2::LEFT_TOP, TOP_LEFT_SCALE),
+                (
+                    HudLocation::TopRight,
+                    egui::Align2::RIGHT_TOP,
+                    TOP_RIGHT_SCALE,
+                ),
+                (
+                    HudLocation::BottomLeft,
+                    egui::Align2::LEFT_BOTTOM,
+                    BOTTOM_LEFT_SCALE,
+                ),
+                (
+                    HudLocation::InfoText,
+                    egui::Align2::RIGHT_BOTTOM,
+                    INFO_TEXT_SCALE,
+                ),
             ] {
                 let info = state.current_texts.get(&text).cloned().unwrap_or_default();
                 let on = info.duration.contains(&time.elapsed_secs());
-                let t = ctx.animate_bool_with_time(egui::Id::new(corner), on, 1.0);
+                let t = ctx.animate_bool_with_time(egui::Id::new(&info.text), on, 0.5);
                 if t > 0.0 {
                     let quad = egui::Rect::from_two_pos(corner.pos_in_rect(&rect), rect.center());
                     let layout = if corner.y() == egui::Align::Min {
@@ -434,10 +506,18 @@ fn update_ui(
                                 .fill(egui::Color32::from_black_alpha(180).linear_multiply(t))
                                 .inner_margin(egui::Margin::symmetric(8 * 2, 4 * 2))
                                 .show(ui, |ui| {
-                                    ui.heading(egui::RichText::new(info.text).color(color));
+                                    ui.heading(
+                                        egui::RichText::new(info.text)
+                                            .size(HEADING_SIZE * scale)
+                                            .color(color),
+                                    );
                                 });
                         } else {
-                            ui.heading(egui::RichText::new(info.text).color(color));
+                            ui.heading(
+                                egui::RichText::new(info.text)
+                                    .size(HEADING_SIZE * scale)
+                                    .color(color),
+                            );
                         }
                     });
                 }
