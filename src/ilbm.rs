@@ -1345,22 +1345,19 @@ mod tests {
     #[test]
     fn test_describe_chipset() {
         let d = |f: &str| describe(&fs::read(get_path(f)).unwrap());
-        assert_eq!(d("aplacet.lbm"), "Amiga IFF 640x512 (256 colors, AGA)");
-        assert_eq!(d("ghost"), "Amiga IFF 320x256 (16 colors, OCS)");
-        assert_eq!(d("TEST.ACBM"), "Amiga ACBM 320x256 (8 colors, OCS)");
-        assert_eq!(d("FearFace.HAM8"), "Amiga IFF 640x512 (HAM8, AGA)");
+        assert_eq!(d("aplacet.lbm"), "Amiga AGA 640x512 (256 colors)");
+        assert_eq!(d("ghost"), "Amiga OCS 320x256 (16 colors)");
+        assert_eq!(d("TEST.ACBM"), "Amiga OCS 320x256 (8 colors)");
+        assert_eq!(d("FearFace.HAM8"), "Amiga AGA 640x512 (HAM8)");
         assert_eq!(
             d("DECKER-BattleMech.lbm"),
-            "Amiga IFF 640x512 (EHB, 64 colors, OCS)"
+            "Amiga OCS 640x512 (64 colors/EHB)"
         );
-        assert_eq!(
-            d("amiga-ferrari.dhr"),
-            "Amiga IFF 704x512 (16 colors, OCS, CTBL)"
-        );
+        assert_eq!(d("amiga-ferrari.dhr"), "Amiga OCS 704x512 (16 colors/CTBL)");
         // Truecolour images have no palette to judge, and a PC PBM's palette is
         // not an Amiga one.
-        assert_eq!(d("24.iff"), "Amiga IFF 455x341 (True color)");
-        assert_eq!(d("water.lbm"), "PC IFF 640x480 (256 colors)");
+        assert_eq!(d("24.iff"), "Amiga 455x341 (True color)");
+        assert_eq!(d("water.lbm"), "PC 640x480 (256 colors)");
     }
 
     /// Non-IFF and unsupported forms should error rather than panic.

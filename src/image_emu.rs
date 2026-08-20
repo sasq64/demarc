@@ -355,24 +355,15 @@ mod tests {
         let cases = [
             // Indexed ILBM, HAM (which takes the fixed-RGBA path instead), a
             // per-scanline palette, a truecolour IFF, and both DEGAS variants.
-            ("testdata/test.iff", "Amiga IFF 640x512 (256 colors, AGA)"),
-            (
-                "testdata/iffILBM/FearFace.HAM8",
-                "Amiga IFF 640x512 (HAM8, AGA)",
-            ),
-            (
-                "testdata/iffILBM/sham.iff",
-                "Amiga IFF 640x512 (HAM6, OCS, SHAM)",
-            ),
+            ("testdata/test.iff", "Amiga AGA 640x512 (256 colors)"),
+            ("testdata/iffILBM/FearFace.HAM8", "Amiga AGA 640x512 (HAM8)"),
+            ("testdata/iffILBM/sham.iff", "Amiga OCS 640x512 (HAM6/SHAM)"),
             (
                 "testdata/iffILBM/Vogel_Kamera.24",
-                "Impulse RGB8 148x262 (True color)",
+                "Amiga 148x262 (True color)",
             ),
-            ("testdata/degas/FUSE.PI1", "Atari DEGAS 320x200 (16 colors)"),
-            (
-                "testdata/degas/BOLEK3.PC1",
-                "Atari DEGAS 320x200 (16 colors)",
-            ),
+            ("testdata/degas/FUSE.PI1", "Atari 320x200 (16 colors)"),
+            ("testdata/degas/BOLEK3.PC1", "Atari 320x200 (16 colors)"),
         ];
         for (file, expected) in cases {
             let emu = ImageEmu::new(&root(file)).unwrap();
@@ -385,10 +376,7 @@ mod tests {
         let path = std::env::temp_dir().join("image_emu_info.scr");
         std::fs::write(&path, &bytes).unwrap();
         let emu = ImageEmu::new(&path).unwrap();
-        assert_eq!(
-            emu.get_info().as_deref(),
-            Some("ZX Spectrum Screen 256x192")
-        );
+        assert_eq!(emu.get_info().as_deref(), Some("ZX Spectrum 256x192 (SCR)"));
         let _ = std::fs::remove_file(&path);
 
         // The `image` crate fallback names the format it sniffed, not the
