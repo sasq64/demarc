@@ -10,9 +10,9 @@ use bevy::{
 };
 
 use crate::egui_ui::HudLocation;
-use crate::egui_ui::{HudState, SetHudText, ShowFuzzyList};
+use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::{FuzzyItem, FuzzyListSelect, FuzzySource, IndexedSource};
+use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
 use crate::hud::{TextList, TextListSelect};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};

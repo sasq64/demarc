@@ -52,7 +52,6 @@ mod zx_scr;
 use commands::CommandPlugin;
 use commands::FilePickerSource;
 use frontend::{RetroPlugin, system_dir};
-use fuzzy_list::FuzzyListPlugin;
 use hud::HudPlugin;
 use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
@@ -848,7 +847,6 @@ fn main() {
             HudPlugin,
             egui_ui::EguiUiPlugin,
             TextInputPlugin,
-            FuzzyListPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,
             jobs::JobsPlugin,

@@ -2,7 +2,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, egui};
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzyListSelect, FuzzySource};
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzySource};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -90,6 +90,18 @@ pub enum HudLocation {
 pub struct ShowFuzzyList {
     pub id: usize,
     pub source: Arc<dyn FuzzySource>,
+}
+
+/// Emitted when the user picks a row (Enter) in the list opened by
+/// [`ShowFuzzyList`].
+#[derive(Message, Debug, Clone)]
+pub struct FuzzyListSelect {
+    /// The list's `id`, so callers can tell their pickers apart.
+    pub id: usize,
+    /// Stable id of the chosen item (see [`FuzzyItem::id`]).
+    pub item: usize,
+    #[allow(dead_code)]
+    pub text: String,
 }
 
 #[derive(Default, Message, Clone)]
@@ -475,8 +487,6 @@ impl Plugin for EguiUiPlugin {
             .add_systems(EguiPrimaryContextPass, (setup_egui, update_ui).chain())
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
-            // Written by `render_list`; registered here too so the picker keeps
-            // working once `crate::fuzzy_list`'s own widget (and plugin) go.
             .add_message::<FuzzyListSelect>()
             .add_systems(
                 Update,

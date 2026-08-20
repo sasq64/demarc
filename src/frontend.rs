@@ -679,11 +679,7 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (
-                run_retro,
-                update_view_rects,
-                draw_current_emu_outline,
-            ),
+            (run_retro, update_view_rects, draw_current_emu_outline),
         );
     }
 }
