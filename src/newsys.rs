@@ -48,6 +48,20 @@ mod sinclair;
 mod snes;
 mod tic80;
 
+/// Trim the caches of built and rewritten discs back under their budgets.
+///
+/// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and
+/// for the same reason: nothing is holding a path into any of them yet, so this
+/// run's own work can't be evicted out from under it.
+///
+/// Each cache carries its own budget, since what an entry costs differs by two
+/// orders of magnitude between them — see the constant beside each one.
+pub fn prune_caches() {
+    disc::prune_cache();
+    neo_geo::prune_cache();
+    playstation::prune_cache();
+}
+
 /// Walk `dir`, calling `call` with the path, lowercased extension and the
 /// first `header_size` bytes of every file big enough to have them.
 pub fn walk_dir(

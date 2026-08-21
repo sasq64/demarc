@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 use tracing::{debug, info, warn};
 
@@ -9,7 +10,11 @@ use super::System;
 use super::disc::{
     DiscImage, IsoSpec, TRACK_EXTENSIONS, build_iso, cue_data_tracks, cue_is_complete, iso_name,
 };
-use crate::{newsys::walk_dir, workfile::WorkFile};
+use crate::{
+    cache::{FileCache, KeyHasher},
+    newsys::walk_dir,
+    workfile::WorkFile,
+};
 
 const CORE_NAME_GEOLITH: &str = "geolith";
 
@@ -81,8 +86,6 @@ fn ipl_entries(text: &str) -> Vec<String> {
 /// sources and readmes in subdirectories and the boot ROM reads a flat root
 /// anyway. Returns the cue.
 fn create_neocd_disc(ipl: &Path) -> Result<PathBuf> {
-    use std::hash::{Hash, Hasher};
-
     let dir = ipl.parent().unwrap_or(Path::new("."));
 
     // Sorted by the on-disc identifier: ISO9660 wants the root directory in
@@ -127,43 +130,51 @@ fn create_neocd_disc(ipl: &Path) -> Result<PathBuf> {
     // Key the cache on the contents, never the path: a release unpacked from an
     // archive lands in a fresh temp directory every launch, so a path or mtime
     // key would rebuild — and pile up another copy — every time.
-    let mut key = std::collections::hash_map::DefaultHasher::new();
-    files.hash(&mut key);
-    let stem = dir.file_name().unwrap_or_default().to_string_lossy();
-    let out_dir = dirs::cache_dir()
-        .unwrap_or_default()
-        .join("demarc")
-        .join("neocd")
-        .join(format!("{stem}-{:016x}", key.finish()));
-    let out_cue = out_dir.join("disc.cue");
-    if out_cue.is_file() {
-        debug!("Using cached disc image {out_dir:?}");
-        return Ok(out_cue);
+    let mut key = KeyHasher::new();
+    for (name, data) in &files {
+        key.add(name);
+        key.add(data);
     }
 
-    info!(
-        "Building a Neo Geo CD image from {} files in {dir:?}",
-        files.len()
-    );
-    let image = build_iso(&IsoSpec {
-        system_id: "NEO-GEO",
-        volume_id: "NEOGEOCD",
-        files: &files,
-        copyright_file: present(COPYRIGHT_FILE),
-        abstract_file: present(ABSTRACT_FILE),
-        bibliographic_file: present(BIBLIO_FILE),
-        pad_sectors: 0,
-    });
+    let entry = CACHE.get_dir(&key.finish(), DISC_CUE, |out_dir| {
+        info!(
+            "Building a Neo Geo CD image from {} files in {dir:?}",
+            files.len()
+        );
+        let image = build_iso(&IsoSpec {
+            system_id: "NEO-GEO",
+            volume_id: "NEOGEOCD",
+            files: &files,
+            copyright_file: present(COPYRIGHT_FILE),
+            abstract_file: present(ABSTRACT_FILE),
+            bibliographic_file: present(BIBLIO_FILE),
+            pad_sectors: 0,
+        });
 
-    fs::create_dir_all(&out_dir)?;
-    fs::write(out_dir.join("disc.iso"), image)?;
-    // A single MODE1/2048 track: the sector size the ISO is written in, so the
-    // core reads it straight through with no sector translation.
-    fs::write(
-        &out_cue,
-        "FILE \"disc.iso\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n",
-    )?;
-    Ok(out_cue)
+        fs::write(out_dir.join("disc.iso"), image)?;
+        // A single MODE1/2048 track: the sector size the ISO is written in, so
+        // the core reads it straight through with no sector translation.
+        fs::write(
+            out_dir.join(DISC_CUE),
+            "FILE \"disc.iso\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n",
+        )?;
+        Ok(())
+    })?;
+    Ok(entry.join(DISC_CUE))
+}
+
+/// The cue sheet naming the built image. Written last, so its presence is what
+/// tells [`crate::cache::FileCache`] the entry finished.
+const DISC_CUE: &str = "disc.cue";
+
+/// Built Neo Geo CD images, keyed on the contents of the directory they were
+/// built from. One entry is a single-track ISO of a whole release.
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("neocd"));
+
+const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
+
+pub fn prune_cache() {
+    CACHE.prune(CACHE_LIMIT);
 }
 
 pub struct NeoGeoSystem {}

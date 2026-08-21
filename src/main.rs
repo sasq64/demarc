@@ -15,6 +15,7 @@ use regex::Regex;
 mod libretro;
 
 mod audio;
+mod cache;
 mod cbmconvert;
 mod commands;
 mod degas;
@@ -653,9 +654,10 @@ fn main() {
         builder.init();
     }
 
-    // Trim the download cache before anything fetches into it, so this run's
-    // own downloads can't be evicted out from under it.
+    // Trim the caches before anything writes into them, so this run's own
+    // downloads and built discs can't be evicted out from under it.
     fetch::prune_cache();
+    newsys::prune_caches();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());

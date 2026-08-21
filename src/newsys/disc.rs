@@ -9,8 +9,10 @@
 //! ([`super::playstation`], [`super::neo_geo`]) stay with the system.
 
 use anyhow::{Result, bail};
-use std::{fs, path::Path, path::PathBuf};
+use std::{fs, path::Path, path::PathBuf, sync::LazyLock};
 use tracing::{debug, info, warn};
+
+use crate::cache::{FileCache, KeyHasher};
 
 /// One sector of an ISO9660 image: the user-data half of a CD-ROM data sector,
 /// and the unit every address in the format counts in.
@@ -711,13 +713,12 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     // unpacked from a zip lands in a fresh temp dir each run and the extractor
     // doesn't restore the archived timestamps, so either would miss the cache
     // every launch and pile up another copy of the transcoded audio.
-    let mut key = std::collections::hash_map::DefaultHasher::new();
-    use std::hash::{Hash, Hasher};
-    text.hash(&mut key);
+    let mut key = KeyHasher::new();
+    key.add(&text);
     for (f, src, actual) in &resolved {
-        actual.hash(&mut key);
+        key.add(actual);
         if let Ok(meta) = fs::metadata(src) {
-            meta.len().hash(&mut key);
+            key.add(meta.len().to_le_bytes());
         }
         // Size alone would let an edited track reuse stale audio. Hash the bytes
         // of the tracks we actually decode; they're a few MB, unlike the data
@@ -725,48 +726,101 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
         if f.kind.eq_ignore_ascii_case("MP3")
             && let Ok(bytes) = fs::read(src)
         {
-            bytes.hash(&mut key);
+            key.add(bytes);
         }
     }
-    let stem = cue_path.file_stem().unwrap_or_default().to_string_lossy();
-    let out_dir = dirs::cache_dir()
-        .unwrap_or_default()
-        .join("demarc")
-        .join("cdda")
-        .join(format!("{stem}-{:016x}", key.finish()));
-    let out_cue = out_dir.join("disc.cue");
-    if out_cue.is_file() {
-        debug!("Using cached disc {out_dir:?}");
-        return Ok(Some(out_cue));
-    }
-    fs::create_dir_all(&out_dir)?;
 
-    let mut new_text = text.clone();
-    for (f, src, actual) in &resolved {
-        if f.kind.eq_ignore_ascii_case("MP3") {
-            let wav_name = format!(
-                "{}.wav",
-                Path::new(actual)
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-            );
-            info!("Transcoding CD audio track {actual:?} -> {wav_name}");
-            transcode_mp3_to_wav(src, &out_dir.join(&wav_name))?;
-            new_text = new_text.replace(f.line, &format!("FILE \"{wav_name}\" WAVE"));
-        } else {
-            link_or_copy(src, &out_dir.join(actual))?;
-            // Quote the name so bare names parse, and use the on-disk spelling.
-            new_text = new_text.replace(f.line, &format!("FILE \"{actual}\" {}", f.kind));
+    let entry = CACHE.get_dir(&key.finish(), DISC_CUE, |out_dir| {
+        let mut new_text = text.clone();
+        for (f, src, actual) in &resolved {
+            if f.kind.eq_ignore_ascii_case("MP3") {
+                let wav_name = format!(
+                    "{}.wav",
+                    Path::new(actual)
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                );
+                info!("Transcoding CD audio track {actual:?} -> {wav_name}");
+                transcode_mp3_to_wav(src, &out_dir.join(&wav_name))?;
+                new_text = new_text.replace(f.line, &format!("FILE \"{wav_name}\" WAVE"));
+            } else {
+                link_or_copy(src, &out_dir.join(actual))?;
+                // Quote the name so bare names parse, and use the on-disk spelling.
+                new_text = new_text.replace(f.line, &format!("FILE \"{actual}\" {}", f.kind));
+            }
         }
-    }
-    fs::write(&out_cue, new_text)?;
-    Ok(Some(out_cue))
+        // Last, so a build that died partway leaves an entry the cache knows to
+        // rebuild rather than one that names tracks it never wrote.
+        fs::write(out_dir.join(DISC_CUE), new_text)?;
+        Ok(())
+    })?;
+    Ok(Some(entry.join(DISC_CUE)))
+}
+
+/// The rewritten cue sheet, and the marker that says the entry is complete.
+const DISC_CUE: &str = "disc.cue";
+
+/// Rewritten discs, keyed on the contents of the one they were built from.
+///
+/// The largest cache demarc keeps: an entry is a full disc's audio decoded to
+/// WAV. Its accounted size *overstates* the disk it costs, though, since data
+/// tracks are hard links to the original rather than copies — so the budget is
+/// deliberately generous.
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("cdda"));
+
+const CACHE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+
+pub fn prune_cache() {
+    CACHE.prune(CACHE_LIMIT);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cue naming an MP3 track has to come back naming a WAV one, since no
+    /// core here decodes MP3 — and the same rewrite has to fix the data track's
+    /// spelling, which this sheet gives in upper case while the file on disk is
+    /// lower.
+    ///
+    /// Runs against the real cache, like [`super::super::playstation`]'s disc
+    /// test, so it costs a ~15s transcode the first time and nothing after.
+    #[test]
+    fn rewrites_an_mp3_cue_to_wav() {
+        let cue = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/psx/monophobia/mono.cue");
+        let out = prepare_disc(&cue)
+            .unwrap()
+            .expect("a sheet naming an MP3 needs preparing");
+
+        let text = fs::read_to_string(&out).unwrap();
+        assert!(
+            text.contains("FILE \"mono_t2.wav\" WAVE"),
+            "the MP3 track should be transcoded and renamed: {text}"
+        );
+        assert!(
+            !text.to_uppercase().contains(".MP3"),
+            "no MP3 should be left"
+        );
+        // The data track keeps its kind but picks up the on-disk spelling.
+        assert!(
+            text.contains("FILE \"mono_t1.bin\" BINARY"),
+            "the data track should be recased: {text}"
+        );
+
+        let dir = out.parent().unwrap();
+        assert!(dir.join("mono_t1.bin").is_file());
+        // Decoded CD audio, so it must be a RIFF/WAVE file and much larger than
+        // the MP3 it came from.
+        let wav = dir.join("mono_t2.wav");
+        let head = fs::read(&wav).unwrap();
+        assert_eq!(&head[..4], b"RIFF");
+        assert_eq!(&head[8..12], b"WAVE");
+        assert!(head.len() > 5_873_022);
+
+        // Second call is a cache hit on the same entry, with no re-transcode.
+        assert_eq!(prepare_disc(&cue).unwrap().unwrap(), out);
+    }
 
     fn spec_files(files: &[(&str, usize)]) -> Vec<(String, Vec<u8>)> {
         files

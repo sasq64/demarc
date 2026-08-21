@@ -3,12 +3,14 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 use tracing::{debug, info, warn};
 
 use super::utils::read_header;
 
 use crate::{
+    cache::{FileCache, KeyHasher},
     frontend::system_dir,
     libloader,
     newsys::walk_dir,
@@ -79,8 +81,6 @@ fn build_psx_iso(exe: &[u8]) -> Vec<u8> {
 ///
 /// Returns `None` when `exe_path` isn't a PlayStation executable at all.
 pub fn create_psx_iso(exe_path: &Path) -> Result<Option<PathBuf>> {
-    use std::hash::{Hash, Hasher};
-
     let mut exe = fs::read(exe_path)?;
     if exe.len() <= PSX_HEADER_LEN as usize || exe[0..8] != *b"PS-X EXE" {
         return Ok(None);
@@ -96,27 +96,28 @@ pub fn create_psx_iso(exe_path: &Path) -> Result<Option<PathBuf>> {
         exe.truncate(PSX_HEADER_LEN as usize + size as usize);
     }
 
-    let mut key = std::collections::hash_map::DefaultHasher::new();
-    exe.hash(&mut key);
+    let mut key = KeyHasher::new();
+    key.add(&exe);
     let stem = exe_path.file_stem().unwrap_or_default().to_string_lossy();
-    let out_dir = dirs::cache_dir()
-        .unwrap_or_default()
-        .join("demarc")
-        .join("psxexe");
-    let out = out_dir.join(format!("{stem}-{:016x}.iso", key.finish()));
-    if out.is_file() {
-        debug!("Using cached disc image {out:?}");
-        return Ok(Some(out));
-    }
-
-    info!("Building bootable disc image for {exe_path:?}");
-    fs::create_dir_all(&out_dir)?;
-    // Write beside the target and rename, so a second demarc looking at the
-    // cache never finds a half-written image under a name that says it is done.
-    let partial = out.with_extension("iso.part");
-    fs::write(&partial, build_psx_iso(&exe))?;
-    fs::rename(&partial, &out)?;
+    let out = CACHE.get_file(&key.finish(), &format!("{stem}.iso"), |dest| {
+        info!("Building bootable disc image for {exe_path:?}");
+        fs::write(dest, build_psx_iso(&exe))?;
+        Ok(())
+    })?;
     Ok(Some(out))
+}
+
+/// Built disc images, keyed on the executable's contents.
+///
+/// Small entries — an image is the executable plus a couple of hundred KB of
+/// filesystem — so the budget only has to keep a long browse through a pile of
+/// `.psx` files from accumulating without limit.
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("psxexe"));
+
+const CACHE_LIMIT: u64 = 200 * 1024 * 1024;
+
+pub fn prune_cache() {
+    CACHE.prune(CACHE_LIMIT);
 }
 
 pub fn is_psx_exe(path: &Path) -> bool {
