@@ -1,11 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 /// Give up after this many HTTP redirects, matching typical browser limits.
@@ -40,9 +42,10 @@ const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 /// regenerate of every db file that mentions it.
 ///
 /// The url is simply the base with the parameter appended, so a base carries
-/// whatever trailing `/` or `?` the join needs. Only the first mirror is used
-/// today; walking down the list when a download fails is what the list is for,
-/// and is not implemented yet.
+/// whatever trailing `/` or `?` the join needs. A download walks the mirrors in
+/// order and keeps the first that answers; which one it starts from is
+/// [`MIRROR_ROTATION`], so the list here is the order to prefer when every
+/// mirror is up.
 ///
 /// Any class listed here is also a scheme demarc will accept as a url, so keep
 /// the names distinct from real schemes. Matching is case-insensitive: the db
@@ -111,14 +114,71 @@ const URL_REWRITES: &[(&str, &str)] = &[
     ("http://sndh.atari.org/", "https://sndh.atari.org/"),
 ];
 
-/// The [`LINK_BASES`] mirrors and the parameter to append to them, if `s` names
-/// a link class rather than spelling a url out.
-fn link_bases(s: &str) -> Option<(&'static [&'static str], &str)> {
+/// Which mirror each [`LINK_BASES`] class starts from, as an index into that
+/// class's list; the rest of the list follows it cyclically. A download that
+/// had to fall past a dead or slow mirror records the one that actually worked
+/// here, so later downloads of the same class start where the last success was
+/// instead of timing out against the same broken host every time.
+///
+/// One entry per class, in [`LINK_BASES`] order. Memory only: a fresh run
+/// starts from the order the table is written in.
+static MIRROR_ROTATION: LazyLock<Vec<AtomicUsize>> =
+    LazyLock::new(|| LINK_BASES.iter().map(|_| AtomicUsize::new(0)).collect());
+
+/// One mirror, as a pair of indices into [`LINK_BASES`].
+#[derive(Clone, Copy)]
+struct Mirror {
+    class: usize,
+    base: usize,
+}
+
+/// One url a download can be attempted against, plus the mirror it came from
+/// when it was built from a link class — that is what a successful attempt
+/// feeds back into [`MIRROR_ROTATION`].
+struct Candidate {
+    url: String,
+    mirror: Option<Mirror>,
+}
+
+/// The [`LINK_BASES`] entry and the parameter to append to its mirrors, if `s`
+/// names a link class rather than spelling a url out.
+fn link_class(s: &str) -> Option<(usize, &str)> {
     let (class, parameter) = s.split_once(':')?;
-    LINK_BASES
+    let index = LINK_BASES
         .iter()
-        .find(|(name, _)| class.eq_ignore_ascii_case(name))
-        .map(|(_, bases)| (*bases, parameter))
+        .position(|(name, _)| class.eq_ignore_ascii_case(name))?;
+    Some((index, parameter))
+}
+
+/// Every url `s` could be downloaded from, best first: a link class's mirrors
+/// starting at the one [`MIRROR_ROTATION`] currently prefers, or just `s`
+/// itself for a url that is already spelled out.
+fn candidates(s: &str) -> Vec<Candidate> {
+    let Some((class, parameter)) = link_class(s) else {
+        return vec![Candidate {
+            url: rewrite(s),
+            mirror: None,
+        }];
+    };
+    let bases = LINK_BASES[class].1;
+    let start = MIRROR_ROTATION[class].load(Ordering::Relaxed);
+    (0..bases.len())
+        .map(|offset| (start + offset) % bases.len())
+        .map(|base| Candidate {
+            url: rewrite(&format!("{}{parameter}", bases[base])),
+            mirror: Some(Mirror { class, base }),
+        })
+        .collect()
+}
+
+/// Remember `mirror` as the one that worked, rotating its class's list so the
+/// next download of that class starts there.
+///
+/// The winner is stored as an absolute index rather than as "rotate past the
+/// mirrors we skipped", so a download finishing while another thread rotates
+/// the same class still leaves the list pointing at a mirror known to answer.
+fn promote_mirror(mirror: Mirror) {
+    MIRROR_ROTATION[mirror.class].store(mirror.base, Ordering::Relaxed);
 }
 
 /// Apply the first matching [`URL_REWRITES`] rule to `url`.
@@ -131,22 +191,16 @@ fn rewrite(url: &str) -> String {
     url.to_string()
 }
 
-/// Every url `s` could be downloaded from, best first — the [`LINK_BASES`]
-/// mirrors for a link class, or just `s` itself for a url that is already
-/// spelled out. Either way the result has been through [`rewrite`].
+/// The urls of [`candidates`], best first — the [`LINK_BASES`] mirrors for a
+/// link class, or just `s` itself for a url that is already spelled out. Either
+/// way the result has been through [`rewrite`].
 pub fn resolve_url(s: &str) -> Vec<String> {
-    match link_bases(s) {
-        Some((bases, parameter)) => bases
-            .iter()
-            .map(|base| rewrite(&format!("{base}{parameter}")))
-            .collect(),
-        None => vec![rewrite(s)],
-    }
+    candidates(s).into_iter().map(|c| c.url).collect()
 }
 
-/// The url [`fetch_url`] actually downloads: the best mirror of a link class,
-/// or the url as given. A link class with no mirrors at all falls back to the
-/// input, which then fails at download with an unknown scheme rather than here.
+/// The url a download starts at: the currently preferred mirror of a link
+/// class, or the url as given. A link class with no mirrors at all falls back
+/// to the input, which then fails at download rather than here.
 fn primary_url(s: &str) -> String {
     resolve_url(s)
         .into_iter()
@@ -160,7 +214,7 @@ pub fn is_url(s: &str) -> bool {
     s.starts_with("http://")
         || s.starts_with("https://")
         || s.starts_with("ftp://")
-        || link_bases(s).is_some()
+        || link_class(s).is_some()
 }
 
 /// Download the file at `url` into a local cache directory and return its path.
@@ -342,20 +396,51 @@ fn entry_stats(path: &Path) -> (u64, SystemTime) {
     (size, used)
 }
 
-/// Download `url` to `path`, writing first to a sibling `.part` file that is
-/// renamed into place on success so an interrupted transfer never leaves a
-/// truncated file masquerading as a complete one.
+/// Download `url` to `path`, trying every url [`candidates`] offers for it
+/// until one works — for a link class that is each mirror in turn, and the one
+/// that answered is remembered for next time (see [`MIRROR_ROTATION`]).
+///
+/// Each attempt writes to a sibling `.part` file, created afresh so a mirror
+/// that died mid-transfer leaves nothing behind for the next one to append to,
+/// and renamed into place only once a transfer has completed — an interrupted
+/// download never leaves a truncated file masquerading as a complete one.
+/// `on_progress` restarts from zero on each attempt, which is honest: that
+/// transfer really is starting over somewhere else.
+///
+/// Every failure is logged and the last one is returned if nothing works, as
+/// the one that ran out of alternatives.
 fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
     let tmp = path.with_file_name(format!(".{name}.part"));
-    let mut file = std::fs::File::create(&tmp)?;
+    let mut last_error = None;
+    for candidate in candidates(url) {
+        match download_part(&candidate.url, &tmp, on_progress) {
+            Ok(()) => {
+                std::fs::rename(&tmp, path)?;
+                if let Some(mirror) = candidate.mirror {
+                    promote_mirror(mirror);
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                warn!("download failed for {}: {e:#}", candidate.url);
+                last_error = Some(e);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no download url for {url}")))
+}
+
+/// One [`download_to`] attempt: `tmp` is created from scratch, so whatever a
+/// previous mirror managed to write into it is discarded.
+fn download_part(url: &str, tmp: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    let mut file = std::fs::File::create(tmp)?;
     download(url, &mut file, on_progress)?;
     file.flush()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -366,13 +451,10 @@ fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::R
 /// does for its `/get/...` download links — is handled by switching to the FTP
 /// transport instead of failing on the unknown scheme.
 ///
-/// `url` may also be a `LinkClass:parameter` pair rather than a url proper, and
-/// is in any case run through [`resolve_url`] first — that is where the mirror
-/// a db's link class resolves to, and the fixups for links that no longer work
-/// as recorded, both live.
+/// `url` is a url proper: resolving a db's `LinkClass:parameter` pair to the
+/// mirrors to try, and the fixups for links that no longer work as recorded,
+/// happen a level up in [`download_to`].
 fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
-    // Only the best mirror is tried; see [`LINK_BASES`].
-    let url = &primary_url(url);
     info!("Downloading {url}...");
     if url.starts_with("ftp://") {
         return fetch_ftp(url, out, on_progress);
@@ -578,9 +660,20 @@ fn url_filename(url: &str) -> String {
 mod tests {
     use super::*;
 
-    /// `download` with progress reporting discarded.
-    fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
-        super::download(url, out, &|_, _| {})
+    /// Download `url` the way the rest of demarc does — through the mirror
+    /// walk, into a file — and hand back the bytes that landed there.
+    fn download(url: &str) -> anyhow::Result<Vec<u8>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("out.bin");
+        download_to(url, &path, &|_, _| {})?;
+        Ok(std::fs::read(path)?)
+    }
+
+    /// The `base`th mirror of `url`'s class, counted in [`LINK_BASES`] order
+    /// rather than in whatever order [`MIRROR_ROTATION`] currently prefers.
+    fn mirror(url: &str, base: usize) -> Mirror {
+        let (class, _) = link_class(url).unwrap();
+        Mirror { class, base }
     }
 
     #[test]
@@ -643,6 +736,37 @@ mod tests {
         );
     }
 
+    /// A mirror that worked becomes the one the next download starts at. The
+    /// list keeps its cyclic order — this is a rotation, not a move to front —
+    /// so the mirrors after the winner stay in their table order.
+    ///
+    /// Uses AmigascneFile, the one class with three mirrors, and puts the
+    /// rotation back afterwards: [`MIRROR_ROTATION`] is process-wide state.
+    #[test]
+    fn rotates_to_the_mirror_that_last_worked() {
+        let url = "AmigascneFile:/Gfx/M/Mr_Acid/Count%20Duckula.png";
+        let table = resolve_url(url);
+        assert_eq!(table.len(), 3);
+
+        promote_mirror(mirror(url, 2));
+        assert_eq!(
+            resolve_url(url),
+            vec![table[2].clone(), table[0].clone(), table[1].clone()]
+        );
+
+        promote_mirror(mirror(url, 0));
+        assert_eq!(resolve_url(url), table);
+    }
+
+    /// A url that is spelled out has no mirror to promote, so a download of one
+    /// leaves every class's rotation alone.
+    #[test]
+    fn a_plain_url_has_no_mirror() {
+        let candidates = candidates("https://example.com/a.zip");
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].mirror.is_none());
+    }
+
     /// The cache keys on the db's own url so a mirror change keeps the entry,
     /// but the file inside it is named from the resolved url — dispatch keys on
     /// the extension, and a link class has none.
@@ -659,12 +783,10 @@ mod tests {
     #[test]
     #[ignore = "hits the network"]
     fn downloads_https_to_ftp_redirect() {
-        let mut buf = Vec::new();
         // An FTP mirror named directly: a bare `/get/` link redirects here too,
         // but [`URL_REWRITES`] sends that one to the HTTPS mirror instead.
-        download(
+        let buf = download(
             "https://files.scene.org/get:fi-ftp/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
-            &mut buf,
         )
         .unwrap();
         assert_eq!(buf.len(), 46596);
@@ -677,10 +799,8 @@ mod tests {
     #[test]
     #[ignore = "hits the network"]
     fn downloads_ftp_path_containing_a_space() {
-        let mut buf = Vec::new();
-        download(
+        let buf = download(
             "https://files.scene.org/get:fi-ftp/mirrors/amigascne/Gfx/M/Mr_Acid/Count%20Duckula.png",
-            &mut buf,
         )
         .unwrap();
         assert_eq!(buf.len(), 5402);
@@ -692,12 +812,8 @@ mod tests {
     #[test]
     #[ignore = "hits the network"]
     fn downloads_a_link_class_url() {
-        let mut buf = Vec::new();
-        download(
-            "SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
-            &mut buf,
-        )
-        .unwrap();
+        let buf =
+            download("SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip").unwrap();
         assert_eq!(buf.len(), 46596);
         assert_eq!(&buf[..2], b"PK");
     }
