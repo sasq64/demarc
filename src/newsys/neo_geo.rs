@@ -177,6 +177,10 @@ pub fn prune_cache() {
     CACHE.prune(CACHE_LIMIT);
 }
 
+/// What a `.neo` cartridge ROM opens with: the NeoSD container's tag, ahead of
+/// a version byte that is not worth being fussy about.
+const NEO_ROM_MAGIC: &[u8] = b"NEO";
+
 pub struct NeoGeoSystem {}
 
 impl System for NeoGeoSystem {
@@ -200,11 +204,13 @@ impl System for NeoGeoSystem {
         let mut disc = None;
         let mut ipl = None;
 
-        walk_dir(&file.path.clone(), 4, |path, ext, _header| {
+        walk_dir(&file.path.clone(), 4, |path, ext, header| {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             if name.eq_ignore_ascii_case(IPL_NAME) {
                 ipl.get_or_insert_with(|| path.to_owned());
-            } else if ext == "neo" {
+            // `.neo` is also what NEOchrome saves an Atari ST picture as (see
+            // [`crate::degas`]), so the cartridge's magic has to say so too.
+            } else if ext == "neo" && header.starts_with(NEO_ROM_MAGIC) {
                 rom.get_or_insert_with(|| path.to_owned());
             } else if ext == "chd" {
                 // A CHD is compressed, so there is no cheap way to look inside

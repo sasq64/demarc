@@ -138,31 +138,36 @@ impl ImageEmu {
             "scr" => zx_scr::load_indexed_from_memory(bytes),
             ext => bail!("not a ZX Spectrum screen: extension is {ext:?}"),
         };
-        // DEGAS has no signature either — its header is a resolution word
-        // followed by a palette, which another format's first 34 bytes can pass
-        // for (a 32-bit TGA opens with two zero bytes, which read as a valid
-        // low-res word). The decoder itself only checks that there is enough
-        // data, so it would happily turn the head of any large file into a
-        // screenful of noise; the full sniff, which also weighs the palette
-        // nibbles and the exact file size, is what keeps it to real pictures.
-        let degas = |bytes: &[u8]| {
-            let named = matches!(
-                crate::newsys::get_ext(game).as_str(),
-                "pi1" | "pi2" | "pi3" | "pc1" | "pc2" | "pc3"
-            );
-            if !named && !degas::is_degas(bytes, bytes.len()) {
-                bail!("not a DEGAS image");
+        // The ST's picture formats have next to no signature either — DEGAS
+        // opens with a resolution word followed by a palette, which another
+        // format's first 34 bytes can pass for (a 32-bit TGA opens with two
+        // zero bytes, which read as a valid low-res word), and NEOchrome opens
+        // with a word of nothing at all. The decoders themselves only check
+        // that there is enough data, so they would happily turn the head of any
+        // large file into a screenful of noise; the full sniff, which also
+        // weighs the palette nibbles and the exact file size, is what keeps
+        // them to real pictures.
+        let atari = |bytes: &[u8]| {
+            // DEGAS and CrackArt in each of their three resolutions, plus
+            // NEOchrome and Fullscreen Construction Kit, which only ever saved
+            // low-res pictures.
+            const EXTENSIONS: [&str; 11] = [
+                "pi1", "pi2", "pi3", "pc1", "pc2", "pc3", "ca1", "ca2", "ca3", "neo", "kid",
+            ];
+            let named = EXTENSIONS.contains(&crate::newsys::get_ext(game).as_str());
+            if !named && !degas::is_st_image(bytes, bytes.len()) {
+                bail!("not an Atari ST picture");
             }
             degas::load_indexed_from_memory(bytes)
         };
         // Every paletted format lands in the same indexed representation, so
-        // colour cycling works the same for an Amiga CRNG, a DEGAS Elite colour
-        // animation and a ZX Spectrum's flashing attributes.
+        // colour cycling works the same for an Amiga CRNG, a DEGAS Elite or
+        // NEOchrome colour animation and a ZX Spectrum's flashing attributes.
         // Each decoder is paired with its own description of the file, so the
         // one that wins names the format `get_info` reports.
         match ilbm::load_indexed_from_memory(&bytes)
             .map(|img| (img, ilbm::describe(&bytes)))
-            .or_else(|_| degas(&bytes).map(|img| (img, degas::describe(&bytes))))
+            .or_else(|_| atari(&bytes).map(|img| (img, degas::describe(&bytes))))
             .or_else(|_| zx(&bytes).map(|img| (img, zx_scr::describe())))
         {
             Ok((img, info)) => {
@@ -354,7 +359,8 @@ mod tests {
     fn get_info_names_the_format() {
         let cases = [
             // Indexed ILBM, HAM (which takes the fixed-RGBA path instead), a
-            // per-scanline palette, a truecolour IFF, and both DEGAS variants.
+            // per-scanline palette, a truecolour IFF, both DEGAS variants and
+            // the ST's two other still-image formats.
             ("testdata/test.iff", "Amiga AGA 640x512 (256 colors)"),
             ("testdata/iffILBM/FearFace.HAM8", "Amiga AGA 640x512 (HAM8)"),
             ("testdata/iffILBM/sham.iff", "Amiga OCS 640x512 (HAM6/SHAM)"),
@@ -364,6 +370,9 @@ mod tests {
             ),
             ("testdata/degas/FUSE.PI1", "Atari 320x200 (16 colors)"),
             ("testdata/degas/BOLEK3.PC1", "Atari 320x200 (16 colors)"),
+            ("testdata/degas/ST4EVER.NEO", "Atari 320x200 (16 colors)"),
+            ("testdata/degas/ATARIMAN.CA1", "Atari 320x200 (16 colors)"),
+            ("testdata/degas/EXO7.KID", "Atari 448x274 (16 colors)"),
         ];
         for (file, expected) in cases {
             let emu = ImageEmu::new(&root(file)).unwrap();
@@ -451,16 +460,23 @@ mod tests {
         });
     }
 
-    /// Atari DEGAS images reach the same indexed path as ILBM, plain (`.PI1`)
-    /// and compressed (`.PC1`) alike.
+    /// Atari ST pictures reach the same indexed path as ILBM: DEGAS plain
+    /// (`.PI1`) and compressed (`.PC1`), NEOchrome, CrackArt and the
+    /// overscanned KID alike.
     #[test]
     fn image_emu_presents_degas_frames() {
-        for file in ["testdata/degas/FUSE.PI1", "testdata/degas/BOLEK3.PC1"] {
+        for (file, size) in [
+            ("testdata/degas/FUSE.PI1", (320, 200)),
+            ("testdata/degas/BOLEK3.PC1", (320, 200)),
+            ("testdata/degas/ST4EVER.NEO", (320, 200)),
+            ("testdata/degas/ATARIMAN.CA1", (320, 200)),
+            ("testdata/degas/EXO7.KID", (448, 274)),
+        ] {
             let mut emu = ImageEmu::new(&root(file)).unwrap();
-            assert_eq!(emu.get_frame_size(), (320, 200), "wrong size for {file}");
+            assert_eq!(emu.get_frame_size(), size, "wrong size for {file}");
             assert!(emu.run());
             emu.with_frame(&mut |w, h, frame| {
-                assert_eq!((w, h), (320, 200));
+                assert_eq!((w, h), size);
                 let first = frame[0];
                 assert!(
                     frame.iter().any(|&px| px != first),

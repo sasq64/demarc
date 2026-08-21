@@ -493,8 +493,8 @@ mod tests {
         test_load(&dir, "Music");
     }
 
-    /// DEGAS pictures reach [`ImageSystem`] both by extension and, since they
-    /// are as often named after the release as `.pi1`, by content. A screenshot
+    /// ST pictures reach [`ImageSystem`] both by extension and, since they are
+    /// as often named after the release as `.pi1`, by content. A screenshot
     /// next to one doesn't win over it.
     #[test]
     fn test_degas_images() {
@@ -502,6 +502,9 @@ mod tests {
         let testdata = root.join("testdata").join("degas");
         test_load(&testdata.join("FUSE.PI1"), "Images");
         test_load(&testdata.join("BOLEK3.PC1"), "Images");
+        test_load(&testdata.join("ST4EVER.NEO"), "Images");
+        test_load(&testdata.join("ATARIMAN.CA1"), "Images");
+        test_load(&testdata.join("EXO7.KID"), "Images");
 
         let dir = std::env::temp_dir().join("newsys_degas_test");
         let _ = fs::remove_dir_all(&dir);
