@@ -28,3 +28,11 @@ install-updater = false
 [dist.dependencies.apt]
 libasound2-dev = '*'
 libudev-dev = '*'
+
+# Publish the demo databases as their own release assets, so they can be
+# downloaded without the Windows zip. Fetched rather than committed -- they are
+# ~8MB each and regenerated regularly. This is a global artifact: the build runs
+# once, in build-global-artifacts, not once per platform.
+[[dist.extra-artifacts]]
+artifacts = ["target/dl/csdb.txt.gz", "target/dl/demozoo.txt.gz"]
+build = ["bash", "scripts/fetch-dbs.sh", "target/dl"]

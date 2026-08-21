@@ -159,10 +159,7 @@ jobs:
           zip="demarc-x86_64-pc-windows-msvc.zip"
           mkdir -p extras
           cp "$GITHUB_WORKSPACE"/files/win/*.BAT extras/
-          for db in csdb demozoo; do
-            curl --proto '=https' --tlsv1.2 -fLsS --retry 3 \
-              -o "extras/$db.txt.gz" "https://minnberg.se/dl/$db.txt.gz"
-          done
+          bash "$GITHUB_WORKSPACE/scripts/fetch-dbs.sh" extras
           (cd extras && 7z a -tzip "../$zip" ./*)
           # dist checksummed the archive it just built, both as a sidecar file
           # and as `artifacts[].checksums.sha256` in the manifest the powershell
