@@ -5,7 +5,7 @@ use anyhow::Result;
 use bevy::prelude::*;
 
 use cpal::{
-    SampleFormat, SampleRate, StreamConfig,
+    SampleFormat, SampleRate, StreamConfig, SupportedStreamConfigRange,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
@@ -181,21 +181,43 @@ pub struct SendStream(#[allow(dead_code)] cpal::Stream);
 unsafe impl Send for SendStream {}
 unsafe impl Sync for SendStream {}
 
+/// Picks the stereo `f32` output config to open, and the rate to open it at,
+/// from the ranges a device advertises. Returns the range closest to `target`,
+/// preferring one that covers it outright.
+///
+/// Every range has to be clamped against, not just filtered with
+/// `min_sample_rate() <= target`: since cpal 0.17 the WASAPI backend no longer
+/// asks `IsFormatSupported` and instead advertises each entry of cpal's
+/// `COMMON_SAMPLE_RATES` as its own single-rate range, letting the audio engine
+/// convert via `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`. The first of those ranges
+/// is 5512 Hz, so picking the first range with `min <= target` and then taking
+/// `target.min(max)` opened the output stream at 5512 Hz on Windows.
+fn pick_output_config(
+    configs: impl Iterator<Item = SupportedStreamConfigRange>,
+    target: SampleRate,
+) -> Option<(SupportedStreamConfigRange, SampleRate)> {
+    let supported = configs
+        .filter(|c| c.channels() == 2 && c.sample_format() == SampleFormat::F32)
+        .min_by_key(|c| target.abs_diff(target.clamp(c.min_sample_rate(), c.max_sample_rate())))?;
+    let rate = target.clamp(supported.min_sample_rate(), supported.max_sample_rate());
+    Some((supported, rate))
+}
+
 pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
-    let target: SampleRate = 48000;
+    // Run at whatever rate the device itself runs at. Nothing we play is
+    // sourced above 44.1 kHz, so there is nothing to gain from asking for a
+    // higher rate -- and on WASAPI the device rate is the shared-mode mix rate,
+    // so matching it keeps Windows' audio engine from resampling on top of us.
+    let target: SampleRate = device
+        .default_output_config()
+        .map(|c| c.sample_rate())
+        .unwrap_or(48000);
 
-    let supported = device
-        .supported_output_configs()?
-        .find(|c| {
-            c.channels() == 2
-                && c.sample_format() == SampleFormat::F32
-                && c.min_sample_rate() <= target
-        })
+    let (supported, sample_rate) = pick_output_config(device.supported_output_configs()?, target)
         .expect("no supported config");
-    let sample_rate = target.min(supported.max_sample_rate());
 
     // We continuously adjust the resample ratio based on how full the ring
     // buffer is, so a small buffer is desirable for tight feedback. Prefer 2048
@@ -296,5 +318,59 @@ impl AudioSink {
         } else {
             6000
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cpal::SupportedBufferSize;
+
+    fn range(min: SampleRate, max: SampleRate, fmt: SampleFormat) -> SupportedStreamConfigRange {
+        SupportedStreamConfigRange::new(
+            2,
+            min,
+            max,
+            SupportedBufferSize::Range { min: 0, max: 4096 },
+            fmt,
+        )
+    }
+
+    /// cpal 0.17's WASAPI backend advertises every common rate as its own
+    /// single-rate range, lowest first. We must land on 48 kHz, not on the
+    /// 5512 Hz range that happens to come first.
+    #[test]
+    fn picks_target_rate_from_wasapi_style_single_rate_ranges() {
+        let configs = [5512, 8000, 11025, 22050, 44100, 48000, 96000, 192000]
+            .into_iter()
+            .flat_map(|r| {
+                [
+                    range(r, r, SampleFormat::I16),
+                    range(r, r, SampleFormat::F32),
+                ]
+            });
+
+        let (_, rate) = pick_output_config(configs, 48000).unwrap();
+        assert_eq!(rate, 48000);
+    }
+
+    /// A device that can't do the target rate gets the closest it offers.
+    #[test]
+    fn falls_back_to_the_nearest_offered_rate() {
+        let configs = [22050, 44100]
+            .into_iter()
+            .map(|r| range(r, r, SampleFormat::F32));
+
+        let (_, rate) = pick_output_config(configs, 48000).unwrap();
+        assert_eq!(rate, 44100);
+    }
+
+    /// ALSA/CoreAudio-style wide ranges still resolve to the target rate.
+    #[test]
+    fn picks_target_rate_from_a_wide_range() {
+        let configs = [range(8000, 192000, SampleFormat::F32)].into_iter();
+
+        let (_, rate) = pick_output_config(configs, 48000).unwrap();
+        assert_eq!(rate, 48000);
     }
 }
