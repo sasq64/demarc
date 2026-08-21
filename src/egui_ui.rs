@@ -460,6 +460,7 @@ fn render_downloads(ctx: &egui::Context, pos: egui::Pos2) {
                 format!("\u{f409} {count}").as_str(),
                 DOWNLOAD_SIZE,
                 DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
+                egui::Align::Min,
             );
         });
 }
@@ -471,23 +472,37 @@ const SHADOW_OFFSET: f32 = 0.05;
 /// offset down and to the right, so it stays readable over a bright emulator
 /// picture. Laid out by hand rather than as two [`Ui::heading`] calls, which
 /// would stack the shadow below the text instead of behind it.
-fn heading_with_shadow(ui: &mut Ui, text: &str, size: f32, color: egui::Color32) {
+///
+/// `align` is the edge the individual lines line up on, so a multi-line text in
+/// a right-hand corner reads flush against that corner rather than ragged.
+fn heading_with_shadow(
+    ui: &mut Ui,
+    text: &str,
+    size: f32,
+    color: egui::Color32,
+    align: egui::Align,
+) {
     // Laid out uncoloured so the one galley can be painted twice, with
-    // `Painter::galley` filling in a colour each time.
-    let galley = ui.painter().layout_no_wrap(
+    // `Painter::galley` filling in a colour each time. A job rather than
+    // `layout_no_wrap`, which has no say over `halign`.
+    let mut job = egui::text::LayoutJob::single_section(
         text.to_owned(),
-        egui::FontId::proportional(size),
-        egui::Color32::PLACEHOLDER,
+        egui::TextFormat::simple(egui::FontId::proportional(size), egui::Color32::PLACEHOLDER),
     );
+    job.halign = align;
+    let galley = ui.painter().layout_job(job);
     let offset = egui::Vec2::splat(size * SHADOW_OFFSET);
     // The shadow is part of the text as far as the layout is concerned, so the
     // corner it is anchored in leaves room for it.
     let (rect, _) = ui.allocate_exact_size(galley.size() + offset, egui::Sense::hover());
+    // `halign` puts the galley's origin on that same edge (x = 0 is the right
+    // edge for `Align::Max`), so the box just allocated is mapped onto it by
+    // cancelling out where the galley starts.
+    let pos = rect.min - galley.rect.min.to_vec2();
     // Black at the text's own alpha, so shadow and text fade together.
     let shadow = egui::Color32::from_black_alpha(color.a());
-    ui.painter()
-        .galley(rect.min + offset, galley.clone(), shadow);
-    ui.painter().galley(rect.min, galley, color);
+    ui.painter().galley(pos + offset, galley.clone(), shadow);
+    ui.painter().galley(pos, galley, color);
 }
 
 fn update_ui(
@@ -550,7 +565,13 @@ fn update_ui(
                     .linear_multiply(t);
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(quad).layout(layout), |ui| {
-                        heading_with_shadow(ui, &info.text, HEADING_SIZE * scale, color);
+                        heading_with_shadow(
+                            ui,
+                            &info.text,
+                            HEADING_SIZE * scale,
+                            color,
+                            corner.x(),
+                        );
                     });
                 }
             }
