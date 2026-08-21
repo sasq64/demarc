@@ -8,7 +8,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::emu_file::{EmuFile, FileSource, GameInfo};
+use crate::emu_file::{EmuFile, FileSource, GameInfo, download_finished, download_started};
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
 use crate::newsys::NewSys;
@@ -499,7 +499,11 @@ impl Emulator {
     pub fn load_async(&mut self, emu_file: &EmuFile) {
         if let Some(previous) = &self.pending_load {
             previous.job.cancel();
+            // The abandoned job never reaches `update_load`, so its share of
+            // the counter has to be given back here.
+            download_finished();
         }
+        download_started();
 
         // Taken, not just read: leaving them set would have the frontend ask
         // for this same load again on the very next frame.
@@ -552,6 +556,10 @@ impl Emulator {
             advance,
             ..
         } = self.pending_load.take().expect("checked just above");
+        // Past the `poll` above the download is over one way or another --
+        // landed, failed or cancelled -- so it stops counting here, whichever
+        // of the branches below the outcome takes.
+        download_finished();
 
         let title = emu_file.game_info.title.clone();
         let path = match resolved {
@@ -598,10 +606,12 @@ impl Emulator {
         }
     }
 
-    // The pair below is what a "downloading…" indicator would be built from.
-    // Nothing draws one yet, so outside the tests nothing calls them — but the
-    // byte counting behind `load_progress` is plumbed end to end already
-    // (`fetch` counts, [`FileSource::resolve_with_progress`] forwards).
+    // The pair below is what a real progress bar would be built from. What the
+    // UI draws today is only the count of downloads in flight
+    // ([`crate::emu_file::downloads_in_progress`]), so outside the tests
+    // nothing calls them — but the byte counting behind `load_progress` is
+    // plumbed end to end already (`fetch` counts,
+    // [`FileSource::resolve_with_progress`] forwards).
 
     /// True while a [`load_async`](Self::load_async) download is outstanding.
     #[allow(dead_code)]
@@ -639,7 +649,7 @@ impl Emulator {
         // skips an emulator with no core), and tv mode steps on to the next.
         self.core = None;
 
-        let res = sys.load_file(&path, &meta)?;
+        let res = sys.load_file(path, &meta)?;
         if res
             .work_file
             .get_meta("vice_cartridge", "")

@@ -2,12 +2,41 @@ use anyhow::{Result, anyhow};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use tracing::warn;
 use url::Url;
 
 use crate::fetch::{OnProgress, fetch_url_with_progress, fetch_urls};
+
+/// How many downloads are in flight right now, across every emulator.
+///
+/// Global rather than per-[`Emulator`](crate::emulator::Emulator) because the
+/// UI that shows it ([`crate::egui_ui`]) draws one indicator for the whole
+/// window and has no emulator to ask; kept in step by
+/// [`download_started`]/[`download_finished`] around the job in
+/// [`Emulator::load_async`](crate::emulator::Emulator::load_async).
+static DOWNLOADS_IN_PROGRESS: AtomicUsize = AtomicUsize::new(0);
+
+/// Count one more download as started.
+pub fn download_started() {
+    DOWNLOADS_IN_PROGRESS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Count one download as finished, however it ended -- landed, failed or
+/// cancelled. Saturates at zero so a stray extra call can't wrap the counter
+/// around into a permanent "downloading" state.
+pub fn download_finished() {
+    let _ = DOWNLOADS_IN_PROGRESS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(1))
+    });
+}
+
+/// Downloads currently in flight; zero when nothing is loading.
+pub fn downloads_in_progress() -> usize {
+    DOWNLOADS_IN_PROGRESS.load(Ordering::Relaxed)
+}
 
 /// Where an [`EmuFile`]'s data comes from: either an already-local path or one
 /// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).

@@ -433,6 +433,44 @@ fn render_list(
     state.list_reopened = false;
 }
 
+/// Colour of the download counter, distinct from the HUD texts sharing the
+/// corner so the two don't read as one line when both are up.
+const DOWNLOAD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0xff, 0xe0);
+/// Size of the download counter. Deliberately smaller than the corner HUD
+/// texts: it is status, not a title.
+const DOWNLOAD_SIZE: f32 = 32.0;
+
+/// Draws how many downloads are in flight in the top-left corner, and nothing
+/// at all while there are none. A placeholder for a real progress bar -- the
+/// byte counts behind it are already tracked, see
+/// [`Emulator::load_progress`](crate::emulator::Emulator::load_progress).
+fn render_downloads(ctx: &egui::Context, pos: egui::Pos2) {
+    let count = crate::emu_file::downloads_in_progress();
+    let id = egui::Id::new("downloads");
+    let t = ctx.animate_bool_with_time(id, count > 0, 1.0);
+    if count == 0 || t < 0.5 {
+        return;
+    }
+    egui::Area::new(id)
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(255))
+                .inner_margin(egui::Margin::symmetric(8 * 2, 4 * 2))
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("\u{f409} {count}"))
+                                .size(DOWNLOAD_SIZE)
+                                .color(DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0)),
+                        )
+                        .extend(),
+                    );
+                });
+        });
+}
+
 fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
@@ -442,7 +480,7 @@ fn update_ui(
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     let scale = (window.height() / 1600.0).clamp(0.2, 8.0);
-    ctx.set_pixels_per_point(window.scale_factor() as f32 * scale);
+    ctx.set_pixels_per_point(window.scale_factor() * scale);
 
     let rect = ctx.content_rect().shrink2(MARGIN);
 
@@ -516,6 +554,7 @@ fn update_ui(
             }
         });
 
+    render_downloads(ctx, rect.min);
     render_list(ctx, &mut state, &mut selected);
     Ok(())
 }
