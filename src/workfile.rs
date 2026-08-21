@@ -58,7 +58,7 @@ impl WorkFile {
     }
 
     pub fn has_meta(&self, key: &str) -> bool {
-        self.meta.contains_key(&key.to_string())
+        self.meta.contains_key(key)
     }
 
     pub fn get_meta(&self, arg: &str, def: impl Into<String>) -> String {
@@ -90,7 +90,7 @@ impl WorkFile {
             let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
             let dir = temp_dir.path();
             if self.path.is_dir() {
-                copy_dir_all(&self.path, &dir)?;
+                copy_dir_all(&self.path, dir)?;
                 self.path = dir.to_path_buf();
             } else {
                 let target = dir.join(self.path.file_name().unwrap_or_default());

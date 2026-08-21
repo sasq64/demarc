@@ -77,7 +77,7 @@ impl M3u {
             contents.push('\n');
         }
 
-        let mut m3u = fs::File::create(&target)?;
+        let mut m3u = fs::File::create(target)?;
         m3u.write_all(contents.as_bytes())?;
         m3u.flush()?;
         Ok(())
@@ -103,7 +103,7 @@ impl M3u {
             contents.push('\n');
         }
 
-        let mut m3u = fs::File::create(&target)?;
+        let mut m3u = fs::File::create(target)?;
         m3u.write_all(contents.as_bytes())?;
         m3u.flush()?;
         Ok(())

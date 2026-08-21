@@ -242,7 +242,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
                     })
                     .collect();
             }
-            meta.insert(key.into(), val.into());
+            meta.insert(key, val);
         }
         if urls.is_empty() {
             continue;

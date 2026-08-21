@@ -318,7 +318,7 @@ impl MusicEmu {
             hz => hz as f64,
         };
 
-        let info = format!("{}", meta(&mut player, "format"));
+        let info = meta(&mut player, "format").to_string();
 
         let mut emu = Self::from_player(player, info, sample_rate, channels);
         emu.vis = script.and_then(|path| {

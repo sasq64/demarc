@@ -86,7 +86,11 @@ fn pick_program<'a>(exes: &'a [PathBuf], root: &Path, boot_file: &str) -> Option
         // `boot_file` copied out of a release's own README still matches.
         let wanted = boot_file.replace('\\', "/");
         let named = exes.iter().find(|p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             let path = within(p).to_string_lossy().replace('\\', "/");
             name.eq_ignore_ascii_case(&wanted) || path.eq_ignore_ascii_case(&wanted)
         });
@@ -401,8 +405,14 @@ mod tests {
         let wanted = exe(&dir.path().join("DEMO"), "TLKTLK2.PRG", 1000);
         let exes = [big.clone(), wanted.clone()];
 
-        assert_eq!(pick_program(&exes, dir.path(), "tlktlk2.prg"), Some(&wanted));
-        assert_eq!(pick_program(&exes, dir.path(), "DEMO/TLKTLK2.PRG"), Some(&wanted));
+        assert_eq!(
+            pick_program(&exes, dir.path(), "tlktlk2.prg"),
+            Some(&wanted)
+        );
+        assert_eq!(
+            pick_program(&exes, dir.path(), "DEMO/TLKTLK2.PRG"),
+            Some(&wanted)
+        );
         assert_eq!(
             pick_program(&exes, dir.path(), "DEMO\\TLKTLK2.PRG"),
             Some(&wanted)
@@ -428,4 +438,3 @@ mod tests {
         assert!(!drive.join(DISABLED_AUTO).exists());
     }
 }
-

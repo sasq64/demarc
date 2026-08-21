@@ -948,10 +948,9 @@ pub fn describe(bytes: &[u8]) -> String {
         .then(|| form.find("CMAP"))
         .flatten()
         .and_then(|c| palette_bits(c.data()))
+        && name == "Amiga"
     {
-        if name == "Amiga" {
-            name = format!("Amiga {}", if bits == 8 { "AGA" } else { "OCS" });
-        }
+        name = format!("Amiga {}", if bits == 8 { "AGA" } else { "OCS" });
     }
     // A dynamic-palette chunk is what makes such a picture what it is, so name
     // the one in play (see [`attach_line_palettes`]).

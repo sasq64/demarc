@@ -77,7 +77,7 @@ impl System for ImageSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let backend = Box::new(ImageEmu::new(&path)?);
+        let backend = Box::new(ImageEmu::new(path)?);
         Ok(backend)
     }
 }

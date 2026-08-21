@@ -106,7 +106,7 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
             sort_disks(images);
             info!("IMAGES {images:?}");
             // images can be in a non-writeable or temp dir
-            let m3u = M3u::build(&images)?;
+            let m3u = M3u::build(images)?;
             file.make_temp()?;
             let demo_m3u = file
                 .temp_dir()
@@ -137,7 +137,7 @@ pub fn get_ext(path: &Path) -> String {
 /// Frontend first downloads, unpacks and does any non-system specific conversions of a realese.
 /// The result will be:
 /// - A folder/file combination where either (but not both) may be None, and folder must be a
-/// parent of the file.
+///   parent of the file.
 /// - Existing m3u files should be handled by frontend and not passed on to loading.
 ///
 /// Result will be passed to load_file() of each system in order. First that succeeds will be used.
@@ -250,7 +250,7 @@ pub struct NewSys {
 }
 pub struct LoadResult<'a> {
     pub backend: Box<dyn Backend + Send + Sync>,
-    pub system: &'a Box<dyn System>,
+    pub system: &'a dyn System,
     pub work_file: WorkFile,
 }
 
@@ -258,10 +258,10 @@ impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
             Box::new(Tic80System {}),
-            Box::new(AmigaSystem::new(&args)),
+            Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new()),
-            Box::new(AtariXlSystem::new(&args)),
-            Box::new(C64System::new(&args)),
+            Box::new(AtariXlSystem::new(args)),
+            Box::new(C64System::new(args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
             Box::new(MegadriveSystem::new(args)),
@@ -379,13 +379,12 @@ impl NewSys {
                 return Ok(LoadResult {
                     backend: sys.create(&wf)?,
                     work_file: wf,
-                    system: &sys,
+                    system: sys.as_ref(),
                 });
             }
         }
         let dir_list = if wf.path.is_dir() {
             fs::read_dir(wf.path)?
-                .into_iter()
                 .filter_map(Result::ok)
                 .fold("DIR:\n".to_string(), |t, f| {
                     format!("{t}  {}\n", f.file_name().to_string_lossy())
