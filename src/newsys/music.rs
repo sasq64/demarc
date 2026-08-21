@@ -60,13 +60,14 @@ impl System for MusicSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &[
             "sid", // C64
-            "mod", "xm", "s3m", "it", // Trackers
+            "mod", "xm", "s3m", "ft", "stm", "it", // Trackers
             "snd", "sndh", "sap", // Atari
             "nsf", "gbs", "spc", "psf", // Console
             "mp3", "flac", // Streaming
-            "vtx", "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
+            "emul", "vtx", "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
             "smod", "dm2", "ahx", "aon", "mt2", "mon", "dw", "fred", "smod", "hip", "cus", "fc",
-            "cm", "fp", "syn", "ma", "hipc", // Amiga
+            "hvl", "cm", "fp", "syn", "ma", "hipc", "ml", "mk2", "bd", "dln", "669", // Amiga
+            "jam", "dbm", "bp", "bp3", "hes", "lds",
         ]
     }
 
