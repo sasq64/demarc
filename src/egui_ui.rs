@@ -455,20 +455,39 @@ fn render_downloads(ctx: &egui::Context, pos: egui::Pos2) {
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_black_alpha(255))
-                .inner_margin(egui::Margin::symmetric(8 * 2, 4 * 2))
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("\u{f409} {count}"))
-                                .size(DOWNLOAD_SIZE)
-                                .color(DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0)),
-                        )
-                        .extend(),
-                    );
-                });
+            heading_with_shadow(
+                ui,
+                format!("\u{f409} {count}").as_str(),
+                DOWNLOAD_SIZE,
+                DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
+            );
         });
+}
+/// How far the drop shadow under the corner HUD texts is offset, as a fraction
+/// of the font size, so it keeps its look at every [`HEADING_SIZE`] scale.
+const SHADOW_OFFSET: f32 = 0.05;
+
+/// Draws `text` as a heading with a solid black copy of itself painted first,
+/// offset down and to the right, so it stays readable over a bright emulator
+/// picture. Laid out by hand rather than as two [`Ui::heading`] calls, which
+/// would stack the shadow below the text instead of behind it.
+fn heading_with_shadow(ui: &mut Ui, text: &str, size: f32, color: egui::Color32) {
+    // Laid out uncoloured so the one galley can be painted twice, with
+    // `Painter::galley` filling in a colour each time.
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(size),
+        egui::Color32::PLACEHOLDER,
+    );
+    let offset = egui::Vec2::splat(size * SHADOW_OFFSET);
+    // The shadow is part of the text as far as the layout is concerned, so the
+    // corner it is anchored in leaves room for it.
+    let (rect, _) = ui.allocate_exact_size(galley.size() + offset, egui::Sense::hover());
+    // Black at the text's own alpha, so shadow and text fade together.
+    let shadow = egui::Color32::from_black_alpha(color.a());
+    ui.painter()
+        .galley(rect.min + offset, galley.clone(), shadow);
+    ui.painter().galley(rect.min, galley, color);
 }
 
 fn update_ui(
@@ -531,24 +550,7 @@ fn update_ui(
                     .linear_multiply(t);
 
                     ui.scope_builder(egui::UiBuilder::new().max_rect(quad).layout(layout), |ui| {
-                        if text == HudLocation::InfoText {
-                            egui::Frame::new()
-                                .fill(egui::Color32::from_black_alpha(180).linear_multiply(t))
-                                .inner_margin(egui::Margin::symmetric(8 * 2, 4 * 2))
-                                .show(ui, |ui| {
-                                    ui.heading(
-                                        egui::RichText::new(info.text)
-                                            .size(HEADING_SIZE * scale)
-                                            .color(color),
-                                    );
-                                });
-                        } else {
-                            ui.heading(
-                                egui::RichText::new(info.text)
-                                    .size(HEADING_SIZE * scale)
-                                    .color(color),
-                            );
-                        }
+                        heading_with_shadow(ui, &info.text, HEADING_SIZE * scale, color);
                     });
                 }
             }
