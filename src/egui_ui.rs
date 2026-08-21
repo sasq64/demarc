@@ -250,10 +250,6 @@ fn scroll_area<T: AsRef<str>>(
                 .max_height(view_height)
                 .auto_shrink([false, false]);
 
-            // Follow the selection only when a key actually moved it (or
-            // when a re-opened list has to be put back where it was),
-            // scrolling the least that brings it back into view; between
-            // keypresses the wheel is left in charge.
             let top = selected as f32 * ROW_HEIGHT;
             // Clamped to the end of the content as well, the same way egui
             // clamps whatever offset it is handed.

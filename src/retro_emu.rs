@@ -1029,7 +1029,6 @@ pub struct RetroCoreThreaded {
     /// Emulated frames stepped by the worker so far (shared with the worker
     /// thread); read by `--speed-test`.
     frames: Arc<AtomicU64>,
-    info: String,
 }
 
 struct SetupResult {
@@ -1123,7 +1122,6 @@ impl RetroCoreThreaded {
                 fps,
                 disk_count: disks,
                 frames,
-                info: "".into(),
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();

@@ -20,6 +20,7 @@ fn is_same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+#[allow(dead_code)]
 impl M3u {
     pub fn from_file(path: &Path) -> Result<M3u> {
         let contents = std::fs::read_to_string(path)?;
