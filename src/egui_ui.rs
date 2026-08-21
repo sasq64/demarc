@@ -509,7 +509,7 @@ fn update_ui(
                 (
                     HudLocation::Error,
                     egui::Align2::LEFT_BOTTOM,
-                    BOTTOM_LEFT_SCALE,
+                    BOTTOM_LEFT_SCALE * 0.75,
                 ),
             ] {
                 let info = state.current_texts.get(&text).cloned().unwrap_or_default();

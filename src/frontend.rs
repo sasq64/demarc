@@ -385,7 +385,7 @@ fn run_retro(
     {
         stop_input = true;
         let t = time.elapsed_secs_f64();
-        if t - settings.last_draw < 0.2 {
+        if t - settings.last_draw < 0.35 {
             settings.maximized = !settings.maximized;
         }
         if i < 999 {
