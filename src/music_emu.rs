@@ -30,7 +30,7 @@ use musix::MusixPlayer;
 use tracing::{debug, error, info, warn};
 
 use crate::music_vis::Visualizer;
-use crate::retro_emu::Backend;
+use crate::retro_emu::{Backend, ViewFocus};
 
 /// Rate the frontend paces [`run`](Backend::run) at. Nothing in the music
 /// formats themselves is tied to it — it only sets how much audio is rendered
@@ -257,6 +257,11 @@ pub struct MusicEmu {
     /// call it over. Drives [`is_idle`](Backend::is_idle) so the frontend can
     /// move on to the next entry.
     ended: bool,
+    /// How the frontend is showing this view; see [`Backend::focus`]. Only the
+    /// focused song renders at all — the chip emulation is the whole cost of
+    /// this backend, and the unfocused views would pay it for audio that never
+    /// reaches a sink.
+    focus: ViewFocus,
     info: String,
 }
 
@@ -355,6 +360,7 @@ impl MusicEmu {
             meta_dirty: true,
             serial: 1,
             ended: false,
+            focus: ViewFocus::Focus,
             info,
         }
     }
@@ -548,6 +554,16 @@ impl MusicEmu {
 
 impl Backend for MusicEmu {
     fn run(&mut self) -> bool {
+        // Not the selected view: leave the song where it is (the last picture
+        // stays up) rather than render audio that is going nowhere. Only once
+        // there *is* a picture, though — an unfocused view that never drew a
+        // frame would show as a black tile in the grid. The early frames of a
+        // song produce no samples at all (UADE boots the Amiga replayer first),
+        // so this is "until one frame comes out" rather than a single attempt;
+        // a song that ends without ever producing any gives up here too.
+        if self.focus != ViewFocus::Focus && (self.frame_count > 0 || self.ended) {
+            return true;
+        }
         if self.render_frame() == 0 {
             // No audio this frame: either the player has not started yet, or
             // the song is over. Either way the last frame stays on screen — a
@@ -601,6 +617,10 @@ impl Backend for MusicEmu {
     /// timeout watches to advance to the next entry.
     fn is_idle(&self) -> bool {
         self.ended
+    }
+
+    fn focus(&mut self, focus: ViewFocus) {
+        self.focus = focus;
     }
 
     /// Fast-forward by rendering and discarding whole frames. Cheap for chip

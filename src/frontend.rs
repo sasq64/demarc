@@ -15,6 +15,7 @@ use crate::commands::{CmdMessage, check_hotkey};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
+use crate::retro_emu::ViewFocus;
 use crate::screensaver::ScreenSaverInhibitor;
 use crate::{AppSettings, Args, RenderSettings};
 
@@ -452,6 +453,13 @@ fn run_retro(
         }
         // Drop audio entirely in the speed-test benchmark.
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
+        // Exactly one view is focused; the others are on screen as grid tiles
+        // unless the focused one is maximized over them.
+        emu.focus(match (i == settings.current_emu, settings.maximized) {
+            (true, _) => ViewFocus::Focus,
+            (false, true) => ViewFocus::Invisible,
+            (false, false) => ViewFocus::Visible,
+        });
 
         let flen = settings.files.len() as isize;
 

@@ -209,6 +209,11 @@ struct Args {
     #[arg(long, value_parser = parse_grid)]
     grid: Option<(u32, u32)>,
 
+    /// Start with the first grid cell maximized, as if it was the only
+    /// emulator running. Un-maximize (RightAlt+Enter) to see the whole grid.
+    #[arg(long)]
+    focus_first: bool,
+
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000033")]
     clear_color: Color,
@@ -766,7 +771,7 @@ fn main() {
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         files,
-        maximized: args.grid.is_none(),
+        maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,
         idle_timeout: args.idle_timeout,

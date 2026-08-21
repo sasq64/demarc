@@ -251,6 +251,9 @@ Options:
       --grid <GRID>
           Render multiple emulators in a COLSxROWS grid, e.g. --grid=5x4
 
+      --focus-first
+          Start with the first grid cell maximized, as if it was the only emulator running. Un-maximize (RightAlt+Enter) to see the whole grid
+
       --clear-color <CLEAR_COLOR>
           Background clear color as a hex string, e.g. `#003` or `000080`
 

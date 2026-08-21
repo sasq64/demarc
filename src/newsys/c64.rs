@@ -1,10 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use crate::{
     Args, cbmconvert,
+    frontend::system_dir,
+    libloader,
+    libretro::{RETROK_F1, RETROK_RETURN},
     newsys::{collect_disk_images, walk_dir},
+    retro_emu::{Backend, RetroCoreThreaded},
     workfile::WorkFile,
 };
 
@@ -126,5 +130,13 @@ impl System for C64System {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
+        let mut core =
+            RetroCoreThreaded::new(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
+        core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+        Ok(Box::new(core))
     }
 }

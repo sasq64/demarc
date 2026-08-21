@@ -56,6 +56,10 @@ use crate::libretro::{
 /// [`RetroCoreThreaded::new`] for why the default is not enough.
 const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
+/// How long a key scheduled by [`RetroCmd::SendKeys`] stays down before the
+/// matching release is sent. Long enough for any core to notice the press.
+const KEY_HOLD_FRAMES: u64 = 2;
+
 /// Relative mouse movement accumulated since the last frame, plus button state.
 /// `dx`/`dy` accumulate as i32 to avoid overflow, then clamp to i16 when the core
 /// polls them, and reset to zero after each `retro_run`.
@@ -86,6 +90,20 @@ trait OptionInner {
 
 impl<T> OptionInner for Option<T> {
     type Inner = T;
+}
+
+/// How much of the user's attention a view has, handed to the backend by
+/// [`Backend::focus`].
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum ViewFocus {
+    /// Not on screen at all: another view is maximized over this one.
+    Invisible,
+    /// Drawn as one tile of the grid, but not the selected view.
+    Visible,
+    /// The selected view — exactly one emulator has this at a time, whether it
+    /// is maximized or one tile among many.
+    #[default]
+    Focus,
 }
 
 /// Abstract interface over a libretro emulator core.
@@ -132,6 +150,18 @@ pub trait Backend {
     fn is_idle(&self) -> bool {
         false
     }
+
+    /// Tell the backend how much the user is looking at it — see [`ViewFocus`].
+    /// A backend that runs just as well unwatched ignores it; the music backend
+    /// uses it to stop rendering audio nobody is listening to.
+    fn focus(&mut self, _focus: ViewFocus) {}
+
+    /// Schedule key presses to be played back into the core, as
+    /// `(frame, keycode)` pairs. The frame is relative to now — `0` means the
+    /// next stepped frame — and each key is released two frames after it is
+    /// pressed. Used to feed a core its "startup keys". Backends that can't
+    /// schedule ahead ignore it.
+    fn send_keys(&mut self, _keys: &[(u32, u32)]) {}
 
     fn get_info(&self) -> Option<String> {
         None
@@ -279,6 +309,7 @@ pub struct RetroCoreDirect {
     /// Bumped by every `run`, since each one leaves a freshly rendered frame.
     /// See [`Backend::frame_serial`].
     frame_serial: u64,
+    visible: bool,
 }
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
@@ -742,6 +773,7 @@ impl RetroCoreDirect {
                 retro_frame_time: None,
                 time_reference: 0,
                 frame_serial: 0,
+                visible: true,
             };
             // Our options go in before the core is told anything, so they are
             // already there whenever it announces its own defaults (usually
@@ -828,6 +860,9 @@ impl RetroCoreDirect {
         Ok(())
     }
     pub fn run(&mut self) {
+        // if !self.visible {
+        //     return;
+        // }
         let _guard = CurrentEmuGuard::enter(self);
         if let Some(cb) = self.retro_frame_time {
             unsafe { cb(self.time_reference) }
@@ -949,6 +984,9 @@ impl Backend for RetroCoreDirect {
     fn fps(&self) -> f64 {
         RetroCoreDirect::fps(self)
     }
+    fn focus(&mut self, focus: ViewFocus) {
+        self.visible = focus != ViewFocus::Invisible
+    }
 
     // fn unload(&mut self) {
     //     RetroCoreDirect::unload(self)
@@ -989,6 +1027,14 @@ enum RetroCmd {
     Unload,
     Skip {
         frames: u32,
+    },
+    SetFocus {
+        focus: ViewFocus,
+    },
+    /// `(frame, keycode)` pairs, where the frame is relative to whenever the
+    /// worker picks the command up — `0` meaning the next stepped frame.
+    SendKeys {
+        time_code_list: Vec<(u32, u32)>,
     },
 }
 
@@ -1143,12 +1189,18 @@ fn worker_loop(
     frames: &AtomicU64,
     speed_test: bool,
 ) {
+    // Keys scheduled by `RetroCmd::SendKeys`, as (frame to fire on, keycode,
+    // pressed). Frames are absolute counts of `frames`, so nothing can be
+    // scheduled into the past.
+    let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
     loop {
+        let frame = frames.load(Ordering::Relaxed);
+
         // Drain all pending commands without blocking.
         loop {
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
-                    if apply_cmd(core, cmd) {
+                    if apply_cmd(core, cmd, &mut key_queue, frame) {
                         return; // Unload
                     }
                 }
@@ -1157,51 +1209,72 @@ fn worker_loop(
             }
         }
 
-        core.run();
-        // Count every emulated frame the core steps, including skipped ones.
-        frames.fetch_add(1, Ordering::Relaxed);
-        if core.skip_frames > 0 {
-            core.skip_frames -= 1;
-            // Throw away the audio the core just produced.
-            core.with_audio(|_| {});
-            continue;
+        // Play back every scheduled key that is due this frame.
+        if !key_queue.is_empty() {
+            key_queue.retain(|&(at, code, down)| {
+                if at > frame {
+                    return true;
+                }
+                core.press_key(code, down, 0);
+                false
+            });
         }
 
-        let (width, height) = core.get_frame_size();
-        let mut frame = Vec::new();
-        core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
-
-        let hash = scan_frame(&frame);
-
-        let mut audio = Vec::new();
-        core.with_audio(|s| audio.extend_from_slice(s));
-
-        let update = RetroUpdate {
-            width,
-            height,
-            frame,
-            audio,
-            aspect_ratio: core.aspect_ratio(),
-            sample_rate: core.sample_rate(),
-            fps: core.fps(),
-            frame_hash: hash,
-        };
-        if speed_test {
-            // Benchmark: never block on the consumer. Hand off the latest frame
-            // if there's room, otherwise drop it and keep emulating flat-out so
-            // throughput reflects the core, not the (vsync-limited) main loop.
-            match update_tx.try_send(update) {
-                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
-                Err(mpsc::TrySendError::Disconnected(_)) => return,
+        if core.visible {
+            core.run();
+            // Count every emulated frame the core steps, including skipped ones.
+            frames.fetch_add(1, Ordering::Relaxed);
+            if core.skip_frames > 0 {
+                core.skip_frames -= 1;
+                // Throw away the audio the core just produced.
+                core.with_audio(|_| {});
+                continue;
             }
-        } else if update_tx.send(update).is_err() {
-            return; // main side gone
+
+            let (width, height) = core.get_frame_size();
+            let mut frame = Vec::new();
+            core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
+
+            let hash = scan_frame(&frame);
+
+            let mut audio = Vec::new();
+            core.with_audio(|s| audio.extend_from_slice(s));
+
+            let update = RetroUpdate {
+                width,
+                height,
+                frame,
+                audio,
+                aspect_ratio: core.aspect_ratio(),
+                sample_rate: core.sample_rate(),
+                fps: core.fps(),
+                frame_hash: hash,
+            };
+            if speed_test {
+                // Benchmark: never block on the consumer. Hand off the latest frame
+                // if there's room, otherwise drop it and keep emulating flat-out so
+                // throughput reflects the core, not the (vsync-limited) main loop.
+                match update_tx.try_send(update) {
+                    Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                    Err(mpsc::TrySendError::Disconnected(_)) => return,
+                }
+            } else if update_tx.send(update).is_err() {
+                return; // main side gone
+            }
         }
     }
 }
 
 /// Apply one command to the core. Returns `true` if the worker should stop.
-fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
+///
+/// `key_queue` is the worker's scheduled-key list and `frame` its current frame
+/// counter; `SendKeys` appends to the former relative to the latter.
+fn apply_cmd(
+    core: &mut RetroCoreDirect,
+    cmd: RetroCmd,
+    key_queue: &mut Vec<(u64, u32, bool)>,
+    frame: u64,
+) -> bool {
     match cmd {
         RetroCmd::Reset => core.reset(),
         RetroCmd::PressKey { code, down, mods } => core.press_key(code, down, mods),
@@ -1215,11 +1288,22 @@ fn apply_cmd(core: &mut RetroCoreDirect, cmd: RetroCmd) -> bool {
         RetroCmd::SetDisk { no } => {
             core.set_disk(no);
         }
+        RetroCmd::SetFocus { focus } => {
+            core.focus(focus);
+        }
         RetroCmd::Unload => {
             core.unload();
             return true;
         }
         RetroCmd::Skip { frames } => core.skip_frames = frames,
+        RetroCmd::SendKeys { time_code_list } => {
+            for (at, code) in time_code_list {
+                // Relative to now, so a core's startup keys can't land in the past.
+                let at = frame + at as u64;
+                key_queue.push((at, code, true));
+                key_queue.push((at + KEY_HOLD_FRAMES, code, false));
+            }
+        }
     }
     false
 }
@@ -1248,6 +1332,16 @@ impl Backend for RetroCoreThreaded {
             trace!("Starving");
             false
         }
+    }
+
+    fn focus(&mut self, focus: ViewFocus) {
+        let _ = self.cmd_tx.send(RetroCmd::SetFocus { focus });
+    }
+
+    fn send_keys(&mut self, keys: &[(u32, u32)]) {
+        let _ = self.cmd_tx.send(RetroCmd::SendKeys {
+            time_code_list: keys.to_vec(),
+        });
     }
 
     fn is_idle(&self) -> bool {

@@ -10,9 +10,9 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 use crate::audio::AudioSink;
 use crate::emu_file::{EmuFile, FileSource, GameInfo, download_finished, download_started};
 use crate::jobs::{Job, JobError, JobProgress};
-use crate::libretro::{self, RETROK_F1, RETROK_RETURN};
+use crate::libretro;
 use crate::newsys::NewSys;
-use crate::retro_emu::Backend;
+use crate::retro_emu::{Backend, ViewFocus};
 use crate::workfile::WorkFile;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
@@ -121,7 +121,6 @@ pub struct Emulator {
     pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
-    pub retro_replay: u32,
     pub title_info: GameInfo,
     /// Download in flight for the next game, driven by [`Emulator::update_load`].
     pending_load: Option<PendingLoad>,
@@ -307,6 +306,14 @@ impl Emulator {
             color_cycle,
             speed_test,
             ..Default::default()
+        }
+    }
+
+    /// Pass the frontend's view state on to the backend. See
+    /// [`Backend::focus`](crate::retro_emu::Backend::focus).
+    pub fn focus(&mut self, focus: ViewFocus) {
+        if let Some(core) = self.core.as_mut() {
+            core.focus(focus);
         }
     }
 
@@ -634,8 +641,6 @@ impl Emulator {
 
         self.title_info = emu_file.game_info.clone();
 
-        self.retro_replay = 0;
-
         // Before `load_file`, which builds the new backend at the end of it: a
         // backend may own something the machine only has one of, and the next
         // one cannot take it until this one has let go. `musix`'s sc68 plugin
@@ -650,14 +655,6 @@ impl Emulator {
         self.core = None;
 
         let res = sys.load_file(path, &meta)?;
-        if res
-            .work_file
-            .get_meta("vice_cartridge", "")
-            .starts_with("rr")
-        {
-            self.retro_replay = 1;
-        }
-
         let core = res.backend;
         if res.system.is_console() {
             self.input_mode = InputMode::Joystick1;
@@ -716,25 +713,6 @@ impl Emulator {
         if self.speed_test {
             return core.run();
         }
-
-        if self.retro_replay > 0 {
-            let frames = core.frames_stepped();
-            let f = 60;
-            if self.retro_replay == 1 && frames >= f {
-                core.press_key(RETROK_F1, true, 0);
-                self.retro_replay += 1;
-            } else if self.retro_replay == 2 && frames >= f + 2 {
-                core.press_key(RETROK_F1, false, 0);
-                self.retro_replay += 1;
-            } else if self.retro_replay == 3 && frames == f + 6 {
-                core.press_key(RETROK_RETURN, true, 0);
-                self.retro_replay += 1;
-            } else if self.retro_replay == 4 && frames == f + 8 {
-                core.press_key(RETROK_RETURN, false, 0);
-                self.retro_replay = 0;
-            }
-        }
-
         if self.paused {
             self.next_frame = time.elapsed_secs_f64();
             return true;
