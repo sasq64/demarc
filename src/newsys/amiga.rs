@@ -301,7 +301,6 @@ impl System for AmigaSystem {
         [
             ("puae_model", "A500"),
             ("puae_crop", "smaller"),
-            ("puae_autoloadfastforward", "enabled"),
             ("puae_horizontal_pos", "-5"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
@@ -362,7 +361,6 @@ impl System for AmigaSystem {
         }
         if self.silent_drive {
             file.set_meta("puae_floppy_sound", "100");
-            file.set_meta("vice_drive_sound_emulation", "disabled");
         }
 
         let copy_all = !file.is_file();
