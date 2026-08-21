@@ -8,3 +8,4 @@ __pycache__/
 /system/musix/sc68/sc68.cfg
 /test_*png
 /system/musix/sc68/sc68.cfg
+/files/win/*.gz
