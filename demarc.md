@@ -157,6 +157,10 @@ _Right Alt_ + _K_ tags the demo that is playing as a favorite; the file picker
 draws a heart beside the ones you have tagged. The list is kept in
 `~/.config/demarc/favorites`, one `source:id` per line, and can be edited by hand.
 
+_TAB_ inside the file picker switches it between listing everything and listing
+only your favorites; the heading above the search box says which it is showing
+and what TAB switches to. The search text is kept across the switch.
+
 Only database entries can be favorited — a file off disk has no id to remember it
 by. The `source` half is which database the entry came from, since every db
 numbers its entries from 1 and the ids would otherwise collide. A db can name

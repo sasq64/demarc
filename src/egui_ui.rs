@@ -99,6 +99,24 @@ pub enum HudLocation {
 pub struct ShowFuzzyList {
     pub id: usize,
     pub source: Arc<dyn FuzzySource>,
+    /// Heading above the search box, saying what is being listed. Empty hides
+    /// it. The list never writes this itself — a caller listing more than one
+    /// thing (see [`FuzzyListCycle`]) sends the new heading with the new
+    /// source, which is what keeps the list itself unaware of what it holds.
+    pub title: String,
+}
+
+/// Emitted when the user presses Tab in the open list, asking for the next of
+/// whatever the caller is offering.
+///
+/// The list has no idea what the alternatives are, or whether there are any: it
+/// reports the key and carries on showing what it has. Whoever opened it
+/// answers with another [`ShowFuzzyList`] under the same `id` — a new source
+/// and a new title — or ignores the message, which leaves Tab doing nothing.
+#[derive(Message, Debug, Clone)]
+pub struct FuzzyListCycle {
+    /// The list's `id`, so callers can tell their pickers apart.
+    pub id: usize,
 }
 
 /// Emitted when the user picks a row (Enter) in the list opened by
@@ -156,6 +174,8 @@ pub struct HudState {
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
     list_source: Option<Arc<dyn FuzzySource>>,
+    /// Heading shown above the search box, set by whoever opened the list.
+    list_title: String,
 }
 
 impl HudState {
@@ -193,6 +213,12 @@ const FAVORITE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x5c, 0x7a);
 /// good deal wider than [`ROW_SIZE`], because the Nerd-Font icon is a
 /// double-width glyph — at one em it ends up flush against the text.
 const FAVORITE_GUTTER: f32 = ROW_SIZE * 1.8;
+
+/// The heading above the search box. Sized between the query and the info
+/// field, and in the colour of the panel borders so it reads as a header
+/// rather than as another line of content.
+const TITLE_SIZE: f32 = 24.0;
+const TITLE_COLOR: egui::Color32 = PANEL_STROKE;
 
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
@@ -327,16 +353,18 @@ fn scroll_area(
         .inner
 }
 
-/// Draws the file picker: a search box above a scrollable, filtered view of
-/// [`HudState::list_source`], with a fixed-height info field
-/// ([`FuzzySource::get_info`]) below it, centred on screen. The search box takes
-/// keyboard focus for as long as the picker is up, with Up/Down/PageUp/PageDown
-/// moving the highlighted row, Enter emitting a [`FuzzyListSelect`] for it and
-/// Escape closing the picker without one.
+/// Draws the file picker: an optional heading and a search box above a
+/// scrollable, filtered view of [`HudState::list_source`], with a fixed-height
+/// info field ([`FuzzySource::get_info`]) below it, centred on screen. The
+/// search box takes keyboard focus for as long as the picker is up, with
+/// Up/Down/PageUp/PageDown moving the highlighted row, Enter emitting a
+/// [`FuzzyListSelect`] for it, Tab a [`FuzzyListCycle`], and Escape closing the
+/// picker without either.
 fn render_list(
     ctx: &egui::Context,
     state: &mut HudState,
     writer: &mut MessageWriter<FuzzyListSelect>,
+    cycle: &mut MessageWriter<FuzzyListCycle>,
 ) {
     if !state.show_list {
         return;
@@ -359,7 +387,7 @@ fn render_list(
     // the presses keeps a held-down arrow moving at the key repeat rate even
     // when several repeats land in one frame.
     let len = state.list_items.len();
-    let (row_steps, page_steps, pick, close) = ctx.input_mut(|i| {
+    let (row_steps, page_steps, pick, close, switch) = ctx.input_mut(|i| {
         let none = egui::Modifiers::NONE;
         let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
             - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
@@ -367,13 +395,21 @@ fn render_list(
             - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
         // Enter belongs to the list, not the search box, and Escape closes the
         // whole picker; both are consumed so the `TextEdit` never acts on them.
+        // So does Tab, which would otherwise move egui's focus off the box.
         let pick = i.consume_key(none, egui::Key::Enter);
         let close = i.consume_key(none, egui::Key::Escape);
-        (rows, pages, pick, close)
+        let switch = i.consume_key(none, egui::Key::Tab);
+        (rows, pages, pick, close, switch)
     });
     if close {
         state.show_list = false;
         return;
+    }
+    if switch {
+        // Reported, not acted on: what (if anything) Tab switches to is the
+        // caller's business. The list keeps showing what it has until one of
+        // them sends a new source.
+        cycle.write(FuzzyListCycle { id: state.list_id });
     }
     let delta = row_steps + page_steps * visible_rows(ctx) as i64;
     let selected = if len == 0 {
@@ -409,6 +445,19 @@ fn render_list(
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = PANEL_GAP;
+
+            // What the list is showing. The text comes from whoever opened it,
+            // so the list needn't know one kind of content from another.
+            if !state.list_title.is_empty() {
+                panel_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(&state.list_title)
+                            .size(TITLE_SIZE)
+                            .color(TITLE_COLOR),
+                    ));
+                });
+            }
 
             panel_frame().show(ui, |ui| {
                 let inner_width = ui.available_width();
@@ -531,6 +580,7 @@ fn update_ui(
     mut state: ResMut<HudState>,
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
+    mut cycle: MessageWriter<FuzzyListCycle>,
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -599,7 +649,7 @@ fn update_ui(
         });
 
     render_downloads(ctx, rect.min);
-    render_list(ctx, &mut state, &mut selected);
+    render_list(ctx, &mut state, &mut selected, &mut cycle);
     Ok(())
 }
 
@@ -634,6 +684,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
             state.list_scroll = 0.0;
         }
         state.list_source = Some(msg.source.clone());
+        state.list_title = msg.title.clone();
         // The source may be a different instance than last time (rebuilt, or
         // just re-measured for the info field), so re-query and re-describe.
         state.list_reopened = true;
@@ -655,6 +706,7 @@ impl Plugin for EguiUiPlugin {
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
             .add_message::<FuzzyListSelect>()
+            .add_message::<FuzzyListCycle>()
             .add_systems(
                 Update,
                 (

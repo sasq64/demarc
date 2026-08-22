@@ -7,7 +7,9 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
 
 use crate::egui_ui::HudLocation;
-use crate::egui_ui::{FAVORITE_GLYPH, FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
+use crate::egui_ui::{
+    FAVORITE_GLYPH, FuzzyListCycle, FuzzyListSelect, HudState, SetHudText, ShowFuzzyList,
+};
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FAVORITE_CONTEXT, FuzzyItem, FuzzySource, IndexedSource};
@@ -53,6 +55,44 @@ pub struct CmdMessage(pub Cmd);
 /// [`FuzzyListSelect`] so its selections are told apart from any other list's.
 pub const FILE_PICKER_ID: usize = 1;
 
+/// The Nerd-Font Tab keycap, in the picker's heading and the hotkey overlay.
+const TAB_GLYPH: char = '\u{f0312}';
+
+/// Which entries the file picker is listing. Tab cycles it — the picker itself
+/// knows nothing of this and just shows whatever source it was last handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerMode {
+    /// Everything that was collected: the db, the files, all of it.
+    #[default]
+    Database,
+    /// Just the entries the user has starred.
+    Favorites,
+}
+
+impl PickerMode {
+    fn next(self) -> Self {
+        match self {
+            PickerMode::Database => PickerMode::Favorites,
+            PickerMode::Favorites => PickerMode::Database,
+        }
+    }
+
+    /// What this mode is called in the picker's heading.
+    fn name(self) -> String {
+        match self {
+            PickerMode::Database => "Database".into(),
+            PickerMode::Favorites => format!("{FAVORITE_GLYPH} Favorites"),
+        }
+    }
+
+    /// The picker's heading: what is being shown, and what Tab switches to.
+    /// Naming the next mode is the only hint the user gets that Tab does
+    /// anything at all.
+    fn title(self) -> String {
+        format!("{}    {TAB_GLYPH} {}", self.name(), self.next().name())
+    }
+}
+
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
 struct KeyMapping {
@@ -84,7 +124,7 @@ impl KeyMapping {
     /// from the trailing letter of the `KeyCode` (all hotkeys are `Key*`).
     fn glyph(&self) -> char {
         match self.key {
-            KeyCode::Tab => '\u{f0312}',
+            KeyCode::Tab => TAB_GLYPH,
             KeyCode::Enter => '\u{f0311}',
             KeyCode::Space => '\u{f1050}',
             _ => {
@@ -147,8 +187,10 @@ fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
     mut file_reader: MessageReader<FuzzyListSelect>,
+    mut cycle_reader: MessageReader<FuzzyListCycle>,
     mut writer: MessageWriter<CmdMessage>,
     mut show_list: MessageWriter<ShowFuzzyList>,
+    window: Single<&Window, With<PrimaryWindow>>,
     time: Res<Time>,
     hud: Res<HudState>,
 ) {
@@ -167,6 +209,17 @@ fn handle_textlist(
             }
         }
     }
+    // Tab in the file picker switches which entries it lists. The picker knows
+    // nothing of the modes — it reports the key, and we answer by re-opening it
+    // on the next one. Any other list's Tab is left unanswered, which is what
+    // makes it do nothing there.
+    for &FuzzyListCycle { id } in cycle_reader.read() {
+        if id == FILE_PICKER_ID {
+            settings.picker_mode = settings.picker_mode.next();
+            show_file_picker(&mut settings, &window, &mut show_list);
+        }
+    }
+
     let hot_key_pressed =
         input.just_pressed(KeyCode::AltRight) || input.just_pressed(KeyCode::ControlRight);
     let hot_key_released =
@@ -195,9 +248,47 @@ fn handle_textlist(
             show_list.write(ShowFuzzyList {
                 id: 99,
                 source: Arc::new(source),
+                // Nothing to cycle through, so nothing to head it with.
+                title: String::new(),
             });
         }
     }
+}
+
+/// Open the file picker on whatever [`AppSettings::picker_mode`] currently says,
+/// sized to `window`.
+///
+/// Also how the mode is switched: the picker is simply re-opened under the same
+/// id with the other mode's source and heading, which is all a
+/// [`FuzzyListCycle`] amounts to. Re-opening keeps the search text and the
+/// highlighted row, so switching views doesn't lose what was typed.
+fn show_file_picker(
+    settings: &mut AppSettings,
+    window: &Window,
+    show_list: &mut MessageWriter<ShowFuzzyList>,
+) {
+    // Build the trigram index once, on first open, and reuse it on every open
+    // after that — `files` never changes, and indexing the whole list is what
+    // made reopening the picker slow. The clone below is a cheap `Arc` bump,
+    // not a re-index.
+    if settings.file_source.is_none() {
+        let favorites = settings.favorites.clone();
+        settings.file_source = Some(FilePickerSource::new(&settings.files, favorites));
+    }
+    let mut source = settings.file_source.clone().unwrap();
+    // The info field wraps to the width of the list box, which is as wide as
+    // the window is tall; this is what the source truncates the (unwrappable)
+    // URL line to.
+    source.width = (window.resolution.size().y / 12.0) as u32;
+    let mode = settings.picker_mode;
+    if mode == PickerMode::Favorites {
+        source = source.starred();
+    }
+    show_list.write(ShowFuzzyList {
+        id: FILE_PICKER_ID,
+        source: Arc::new(source),
+        title: mode.title(),
+    });
 }
 
 /// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
@@ -209,9 +300,15 @@ fn handle_textlist(
 #[derive(Clone)]
 pub struct FilePickerSource {
     names: IndexedSource,
-    /// Info text per entry, indexed by the same id `names` reports. Also where
-    /// the [`DbId`](crate::emu_file::DbId) a favorite is keyed on comes from.
+    /// Entry data, indexed the way [`FuzzySource::search`] reports ids. Also
+    /// where the [`DbId`](crate::emu_file::DbId) a favorite is keyed on comes
+    /// from.
     info: Arc<Vec<EmuFile>>,
+    /// Index into `info` per id `names` reports, when `names` covers only some
+    /// of the entries ([`starred`](Self::starred)). `None` when it covers all
+    /// of them and the two are already the same — which is the big list, and
+    /// the one worth not carrying an extra `usize` per entry for.
+    ids: Option<Arc<Vec<usize>>>,
     /// The starred entries, shared with [`AppSettings`] rather than copied, so
     /// a favorite toggled after this source was cached still shows up.
     favorites: Arc<Favorites>,
@@ -229,24 +326,60 @@ impl FilePickerSource {
         Self {
             names: IndexedSource::new(names),
             info: Arc::new(info),
+            ids: None,
             favorites,
             width: 70,
         }
+    }
+
+    /// The same entries narrowed to the starred ones.
+    ///
+    /// Shares this source's entry data rather than copying it, and keeps
+    /// reporting each entry's id in *this* source — so a row picked here means
+    /// the same file as the row picked in the full list. Only the (small)
+    /// trigram index over the surviving names is built, which is why this is
+    /// cheap enough to redo on every open instead of being cached: the set
+    /// changes as the user stars things.
+    fn starred(&self) -> Self {
+        let mut names = Vec::new();
+        let mut ids = Vec::new();
+        for (id, file) in self.info.iter().enumerate() {
+            if self.is_favorite(id) {
+                names.push(entry_name(file));
+                ids.push(id);
+            }
+        }
+        Self {
+            names: IndexedSource::new(names),
+            info: self.info.clone(),
+            ids: Some(Arc::new(ids)),
+            favorites: self.favorites.clone(),
+            width: self.width,
+        }
+    }
+
+    /// Whether the entry at `id` — an index into `info` — is starred.
+    fn is_favorite(&self, id: usize) -> bool {
+        self.info[id]
+            .game_info
+            .id
+            .as_ref()
+            .is_some_and(|id| self.favorites.contains(id))
     }
 }
 
 impl FuzzySource for FilePickerSource {
     fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
         let mut items = self.names.search(query, limit);
-        // Marked here rather than baked into the index: the favorites can
-        // change under a source that was built once and kept.
         for item in &mut items {
-            let starred = self.info[item.id]
-                .game_info
-                .id
-                .as_ref()
-                .is_some_and(|id| self.favorites.contains(id));
-            if starred {
+            if let Some(ids) = &self.ids {
+                // `names` covers a subset, so its ids are positions in that
+                // subset; report the entry's own id instead.
+                item.id = ids[item.id];
+            }
+            // Marked here rather than baked into the index: the favorites can
+            // change under a source that was built once and kept.
+            if self.is_favorite(item.id) {
                 item.context = FAVORITE_CONTEXT;
             }
         }
@@ -467,26 +600,7 @@ fn handle_cmd(
                     });
                 }
             }
-            Cmd::OpenFile => {
-                // Build the trigram index once, on first open, and reuse it on
-                // every open after that — `files` never changes, and indexing
-                // the whole list is what made reopening the picker slow. The
-                // clone below is a cheap `Arc` bump, not a re-index.
-                if settings.file_source.is_none() {
-                    let favorites = settings.favorites.clone();
-                    settings.file_source = Some(FilePickerSource::new(&settings.files, favorites));
-                }
-                // The info field wraps to the width of the list box, which is
-                // as wide as the window is tall; this is what the source
-                // truncates the (unwrappable) URL line to.
-                let size = window.resolution.size();
-                settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
-
-                show_list.write(ShowFuzzyList {
-                    id: FILE_PICKER_ID,
-                    source: Arc::new(settings.file_source.clone().unwrap()),
-                });
-            }
+            Cmd::OpenFile => show_file_picker(&mut settings, &window, &mut show_list),
             Cmd::Favorite => {
                 // The current emulator's `title_info` is the `GameInfo` of
                 // whatever it last loaded, which is what is on screen now.

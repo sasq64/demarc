@@ -51,7 +51,7 @@ mod workfile;
 mod zx_scr;
 
 use commands::CommandPlugin;
-use commands::FilePickerSource;
+use commands::{FilePickerSource, PickerMode};
 use frontend::{RetroPlugin, system_dir};
 use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
@@ -463,6 +463,9 @@ struct AppSettings {
     /// The starred entries, shared with the picker's search index so a favorite
     /// toggled while it is cached still shows up there.
     favorites: Arc<Favorites>,
+    /// Which entries the file picker lists, cycled with Tab while it is open.
+    /// Kept here rather than in the picker so it survives closing it.
+    picker_mode: PickerMode,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
