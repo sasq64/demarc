@@ -32,7 +32,7 @@ const BOTTOM_LEFT_SCALE: f32 = 1.0;
 const INFO_TEXT_SCALE: f32 = 1.0;
 const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
-const MARGIN: egui::Vec2 = egui::vec2(32.0, 32.0);
+const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
 fn setup_egui(
     mut contexts: EguiContexts,
