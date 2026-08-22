@@ -122,8 +122,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
-    /// Shader used to render the emulator screen. Defaults to the
-    /// LCD shader for Game Boy / GBA titles and the Lottes CRT shader otherwise.
+    /// Shader used to render the emulator screen.
     #[arg(long, value_enum)]
     shader: Option<ShaderArg>,
 
@@ -252,18 +251,20 @@ struct Args {
 
     /// Turn the CRT filter off when the image is magnified less than this
     /// factor, e.g. `2` disables it whenever a 320x240 screen is shown smaller
-    /// than 640x480. `0` (the default) never disables it.
+    /// than 640x480. `0` never disables it.
     #[arg(long, default_value_t = 1.0)]
     crt_limit: f32,
 
     /// Filter the image with the DREZ downsampler instead of the CRT/LCD
     /// shader when the image is magnified less than this factor. `1` (the
     /// default) switches to it whenever the image is shown *smaller* than its
-    /// source resolution (a small grid cell, say); `0` never uses it. Only
-    /// applies to the `.slangp` backends, and is independent of the CRT on/off
-    /// hotkey.
+    /// source resolution.
     #[arg(long, default_value_t = 1.0)]
     downsample: f32,
+
+    // Max threads in bevy thread pool. Probably don't touch this.
+    #[arg(long, default_value_t = 4)]
+    max_threads: u32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -805,6 +806,7 @@ fn main() {
         None,
     ));
 
+    let max_threads = args.max_threads as usize;
     app.insert_resource(args)
         .insert_resource(settings)
         .insert_resource(render_settings)
@@ -822,7 +824,7 @@ fn main() {
                     task_pool_options: bevy::app::TaskPoolOptions {
                         compute: bevy::app::TaskPoolThreadAssignmentPolicy {
                             min_threads: 1,
-                            max_threads: 24,
+                            max_threads,
                             percent: 0.5,
                             on_thread_spawn: None,
                             on_thread_destroy: None,
