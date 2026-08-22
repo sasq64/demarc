@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
@@ -12,7 +13,7 @@ use crate::emu_file::{EmuFile, FileSource, GameInfo, download_finished, download
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
 use crate::newsys::NewSys;
-use crate::retro_emu::{Backend, ViewFocus};
+use crate::retro_emu::{Backend, ViewFocus, frame_bytes};
 use crate::workfile::WorkFile;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
@@ -267,6 +268,21 @@ impl Emulator {
             (MediaPlayPause, RETROK_MEDIA_PLAY_PAUSE),
             (LaunchMail, RETROK_LAUNCH_MAIL),
         ])
+    }
+
+    pub fn save_png(&self, path: impl AsRef<Path>) -> Result<()> {
+        if let Some(core) = self.core.as_ref() {
+            core.with_frame(&mut |width, height, pixels| {
+                let expected = width * height;
+                // if width == 0 || height == 0 || emu.state.frame.len() < expected {
+                //     return Err("no frame available".into());
+                // }
+                let bytes = frame_bytes(&pixels[..expected]).to_vec();
+                let buf = image::RgbaImage::from_raw(width as u32, height as u32, bytes).unwrap();
+                _ = buf.save(&path);
+            });
+        }
+        Ok(())
     }
 
     pub fn new(

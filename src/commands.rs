@@ -3,11 +3,8 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
 
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
@@ -141,13 +138,6 @@ pub fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
         .iter()
         .find(|m| input.just_pressed(m.key) && m.shift == shift)
         .map(|m| m.cmd)
-}
-
-/// Capture the actual rendered window content and write it to `screenshot.png`.
-fn screenshot(commands: &mut Commands, name: impl Into<String>) {
-    commands
-        .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(name.into()));
 }
 
 fn handle_textlist(
@@ -370,7 +360,6 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
 
 fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
-    mut commands: Commands,
     mut emus: Query<&mut Emulator>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
@@ -598,16 +587,13 @@ fn handle_cmd(
                         });
                     }
                     Cmd::Screenshot => {
-                        let name = format!(
-                            "{}.png",
-                            //emu.work_file.game_info.title,
-                            time.elapsed_secs() as i32
-                        );
-                        screenshot(&mut commands, &name);
+                        let title = emu.work_file.get_meta("title", "shot");
+                        let name = format!("{}-{}.png", title, time.elapsed_secs() as i32);
+                        _ = emu.save_png(&name);
                         writer.write(SetHudText {
                             text: format!("Screenshot: {name}"),
                             delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(5000),
+                            duration: Duration::from_secs(1),
                             location: HudLocation::TopLeft,
                         });
                     }
