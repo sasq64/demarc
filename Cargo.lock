@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "demarc"
-version = "1.5.0-rc2"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "bevy",

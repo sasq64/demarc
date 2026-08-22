@@ -77,6 +77,8 @@ impl System for C64System {
         }
         if file.has_tag("6581") {
             file.set_meta("vice_sid_model", "6581");
+        } else {
+            file.set_meta("vice_sid_model", "8580");
         }
 
         let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
