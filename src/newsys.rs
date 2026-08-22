@@ -8,6 +8,8 @@ use crate::newsys::images::ImageSystem;
 use crate::newsys::megadrive::MegadriveSystem;
 use crate::newsys::music::MusicSystem;
 use crate::newsys::neo_geo::NeoGeoSystem;
+#[cfg(target_os = "linux")]
+use crate::newsys::pc::PcSystem;
 pub use crate::newsys::neo_geo::holds_boot_list;
 use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
@@ -43,6 +45,8 @@ mod images;
 mod megadrive;
 mod music;
 mod neo_geo;
+#[cfg(target_os = "linux")]
+mod pc;
 mod playstation;
 mod sinclair;
 mod snes;
@@ -270,7 +274,8 @@ pub struct LoadResult<'a> {
 
 impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
-        vec![
+        #[allow(unused_mut)]
+        let mut systems: Vec<Box<dyn System>> = vec![
             Box::new(Tic80System {}),
             Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new()),
@@ -285,9 +290,16 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
-            Box::new(MusicSystem::new(args)),
-            Box::new(ImageSystem {}),
-        ]
+        ];
+        // Windows demos, run under wine inside a headless gamescope. Ahead of
+        // the music and image fallbacks: a PC release directory usually holds a
+        // screenshot and often the soundtrack too, but the executable is the
+        // release itself.
+        #[cfg(target_os = "linux")]
+        systems.push(Box::new(PcSystem {}));
+        systems.push(Box::new(MusicSystem::new(args)));
+        systems.push(Box::new(ImageSystem {}));
+        systems
     }
     pub fn new(args: &Args) -> Self {
         let mut meta = HashMap::<String, String>::new();

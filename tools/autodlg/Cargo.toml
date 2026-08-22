@@ -1,0 +1,16 @@
+[package]
+name = "demarc-autodlg"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "demarc-autodlg"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+
+# Standalone: not part of the demarc package, and built for Windows.
+[workspace]

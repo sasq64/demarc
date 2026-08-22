@@ -45,6 +45,9 @@ mod retro_emu;
 mod screensaver;
 mod speed_test;
 mod utils;
+// wine + gamescope, so the PC backend only exists on Linux.
+#[cfg(target_os = "linux")]
+mod wine_emu;
 mod workfile;
 mod zx_scr;
 
