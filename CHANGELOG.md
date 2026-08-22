@@ -4,40 +4,37 @@ All notable changes to demarc will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
-## [1.5.0] - Unreleased
+## [1.5.0] - 2026-08-22
 
 ### Added
 
-- **New `newsys` Loading Pipeline**: Replaced the old file-detection and load path with a `newsys` module built on a generic `System` trait, covering archive/disk handling, async loading and per-system configuration (`b8eb1c7`, `eacf457`, `b5241b6`, `9e85034`).
+- **New `newsys` Loading Pipeline**: Replaced the old file-detection and load path with a  generic `System` trait, covering archive/disk handling, loading and per-system configuration (`b8eb1c7`, `eacf457`, `b5241b6`, `9e85034`).
 - **Many New Systems**: Amstrad, Atari 2600, Atari XL, GBA, Megadrive, Sinclair ZX Spectrum, SNES and TIC-80 (`cabf235`, `1381027`); PlayStation with m3u multi-disc handling (`a9ecf2c`); Atari ST and the image viewer (`fbc1d29`); bare music files (`7f43f3a`).
 - **Neo Geo CD**: Added Neo Geo CD support with the disc-image code shared with PSX, plus the Neo Geo BIOS (`78f505a`, `3aeae1b`).
-- **Asynchronous Loading**: Games load on a background task so downloads no longer freeze the emulator (`a6889dc`).
-- **Luau Music Visualization**: Scripted visualizers with an API covering `noise()`, buffer types and more fonts (`353af2e`, `9f9baa3`).
+- **Asynchronous Loading**: Demos load on a background task so downloads no longer freeze the emulator (`a6889dc`).
+- **Luau Music Visualization**: User modifiable LUA script for music visualization (`353af2e`, `9f9baa3`).
 - **egui Frontend**: Ported HUD toasts, the text list, file picker search/select/info and the hotkey list to egui, behind a reusable fuzzy-list widget (`ecebb92`, `b06b220`, `c9abe6b`, `c51c909`, `adb2009`, `f47c414`).
 - **New Image Formats**: ZX Spectrum screens, PCX and TGA (`21da2aa`); NEOchrome, CrackArt and KID (`18a4869`); DEGAS via `ImageSystem` (`75ddf43`); Amiga super-hires with AGA vs OCS/ECS palette detection (`b1b7adc`).
 - **Image Format Descriptions**: Report format details — including truecolour images by distinct colour count — for the frontend info display (`a659d18`, `ec16193`, `702b169`).
-- **More Music Formats**: Extended the recognized extension set across tracker, Amiga and custom formats, including `.ma` and `.hipc` (`f96c858`, `6a3e2ac`, `0e8b50d`, `cc22d91`, `709eabc`).
 - **Download Resilience**: Retry downloads across mirrors and remember the one that works, falling back to the next release URL on failure, with an in-flight download counter in the HUD (`f7fad43`, `938d8ee`, `b0c94a6`).
-- **Per-View Focus**: Added per-view focus state driving grid maximize and idle music (`6f6ce3b`).
-- **DREZ Downsampling**: Downsample minified views (`93adaa6`).
+- **Per-View Focus**: Avoid work in unfocused/invisible grid cells. (`6f6ce3b`).
+- **DREZ Downsampling**: Downsample minified views, configurable with `--downsample` (`93adaa6`).
 - **Retro Replay Autoboot**: Autoboot the Retro Replay cart for C64 disk/m3u loads under `--fast-load`, with autoboot and console input mode wired through the `System` trait (`b151267`, `39c0604`, `9e32254`).
 - **Beetle PSX Core**: Support `mednafen_psx` for PSX under `--grid` (`7768568`).
 - **Wayland Idle Inhibit**: Prefer Wayland idle-inhibit for screensaver suppression on Linux (`b444ba1`).
 - **Shared `FileCache`**: One cache implementation reused across all disc and download caches (`da30902`).
 - **Release Artifacts**: Publish the demo databases as release artifacts and ship CSDB/Demozoo launcher `.BAT` files in the Windows zip (`8fa8a70`, `a1412b6`).
-- **Heading Alignment**: `heading_with_shadow` supports text alignment (`5263f16`).
 
 ### Changed
 
 - **Tags Reworked**: Renamed tags to meta with a real tag lookup, described entries from tags instead of `SystemType`, and simplified db parsing so all named fields land in tags — including year extraction from the date tag (`57ca2e4`, `a62c554`, `fdb027d`, `0df2154`).
 - **Single Shared Camera**: Composite all emulator views through one camera and drop the passthrough slangp chain in favour of compositing the framebuffer directly (`05fe7b4`, `202e4d1`).
-- **`--downsample`**: Now a magnification threshold rather than a flat factor (`72a3f4d`).
 - **`--crt-limit`**: Default lowered to 1.0 (`e0432f2`).
 - **Atari ST Configuration**: Hatari is configured from content tags, releases from 1994 onward default to STE with 4 MB, and an ST-specific aspect-ratio tweak was added (`5d535b3`, `63c8931`, `ce4c3d4`).
 - **Logging via `tracing`**: Replaced ad-hoc `println` debugging with `tracing` macros and demoted per-file walk, system-probe and frame drop/duplicate logs to trace (`60654c9`, `47e49a8`, `373f41e`, `e0fa8d9`).
-- **HUD Presentation**: Drop shadows render behind the text instead of below it, the error location renders in red, and the year moved onto the group line in emulator info text (`21a5692`, `ac64bf1`, `868c90b`).
+- **HUD Presentation**: Drop shadows render behind the text (`21a5692`, `ac64bf1`, `868c90b`).
 - **Mirror Resolution**: Resolve db link classes (`SceneOrgFile`, `ModlandFile`, …) to mirror URLs (`450ab97`).
-- **Image Ordering**: Better image sorting, multi-disk image sorting, and jpg/jpeg screenshots ranked below other truecolour formats (`cffa732`, `3ceb7bd`, `7f4c4d4`).
+- **Image Ordering**: Better image sorting, multi-disk image sorting, and jpg/jpeg screenshots ranked below other true colour formats (`cffa732`, `3ceb7bd`, `7f4c4d4`).
 - **Cleanup**: Removed the legacy pre-`newsys` pipeline, the superseded file-detection code, the `systems` module (folding `GameInfo`/info text into `Emulator`), the obsolete bevy-UI fuzzy list and unused `text_input` (`9e85034`, `273c66e`, `dd3cf02`, `eedf71d`, `5eae6ae`).
 
 ### Fixed
