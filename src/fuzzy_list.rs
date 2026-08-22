@@ -21,6 +21,9 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 /// far more items than can be shown; this caps how many we pull and render.
 pub const DEFAULT_MAX_RESULTS: usize = 500_000;
 
+/// The [`FuzzyItem::context`] of a favorite: the list draws a heart beside it.
+pub const FAVORITE_CONTEXT: u32 = 1;
+
 /// One filtered result: the text to display plus a stable `id` identifying the
 /// item in the underlying source (an index into a `Vec`, a database row id, …).
 /// The `id` is what a selection reports back, so callers get a handle that is
@@ -29,6 +32,10 @@ pub const DEFAULT_MAX_RESULTS: usize = 500_000;
 pub struct FuzzyItem {
     pub id: usize,
     pub text: String,
+    /// How the list should style this row. `0` is a plain row;
+    /// [`FAVORITE_CONTEXT`] draws a heart. A source that doesn't style its
+    /// items leaves it `0` and every row looks the same.
+    pub context: u32,
 }
 
 impl AsRef<str> for FuzzyItem {
@@ -89,6 +96,7 @@ impl FuzzySource for SubstringSource {
             .map(|(i, _)| FuzzyItem {
                 id: i,
                 text: self.items[i].clone(),
+                context: 0,
             })
             .collect()
     }
@@ -130,6 +138,7 @@ impl FuzzySource for AllWordsSource {
             .map(|(i, _)| FuzzyItem {
                 id: i,
                 text: self.items[i].clone(),
+                context: 0,
             })
             .collect()
     }
@@ -268,6 +277,7 @@ impl FuzzySource for IndexedSource {
                 .map(|(id, text)| FuzzyItem {
                     id,
                     text: text.clone(),
+                    context: 0,
                 })
                 .collect();
         }
@@ -302,6 +312,7 @@ impl FuzzySource for IndexedSource {
                     out.push(FuzzyItem {
                         id: i as usize,
                         text: self.inner.items[i as usize].clone(),
+                        context: 0,
                     });
                     if out.len() >= limit {
                         break;
@@ -348,6 +359,7 @@ impl FuzzySource for IndexedSource {
             .map(|(_, i)| FuzzyItem {
                 id: i as usize,
                 text: self.inner.items[i as usize].clone(),
+                context: 0,
             })
             .collect()
     }

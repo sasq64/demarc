@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bevy::render::extract_resource::ExtractResource;
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -22,6 +23,7 @@ mod degas;
 mod egui_ui;
 mod emu_file;
 mod emulator;
+mod favorites;
 mod fetch;
 mod files;
 #[cfg(feature = "flash")]
@@ -58,6 +60,7 @@ use speed_test::SpeedTestPlugin;
 use tracing_subscriber::EnvFilter;
 
 use crate::emu_file::EmuFile;
+use crate::favorites::Favorites;
 use crate::files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use crate::newsys::NewSys;
 
@@ -457,6 +460,9 @@ struct AppSettings {
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.
     file_source: Option<FilePickerSource>,
+    /// The starred entries, shared with the picker's search index so a favorite
+    /// toggled while it is cached still shows up there.
+    favorites: Arc<Favorites>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
@@ -779,6 +785,7 @@ fn main() {
         info_delay: args.info_delay,
         info_duration: args.info_duration,
         crt_limit: args.crt_limit,
+        favorites: Arc::new(Favorites::load()),
         ..Default::default()
     };
 

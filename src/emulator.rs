@@ -493,6 +493,7 @@ impl Emulator {
             group,
             year,
             category: typ,
+            ..
         } = &self.title_info;
         let year = if *year == 0 {
             "".into()

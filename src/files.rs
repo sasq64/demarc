@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo},
+    emu_file::{DbId, DbSource, EmuFile, FileSource, GameInfo},
     m3u::M3u,
     utils::{is_disk_image, unpack_if_packed},
 };
@@ -51,6 +51,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             group,
             year,
             category: "".into(),
+            id: None,
         },
     })
 }
@@ -90,6 +91,13 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
 /// first, so it can be loaded exactly like the plain text file.
 ///
+/// An entry's `id` is only unique within its own db, so it is paired with the
+/// db it came from into a [`DbId`]: a `source:` field on the line or in the
+/// header names it outright, and failing that the file name is used (see
+/// [`db_source_from_name`]). A db that says nothing either way yields entries
+/// with no id, which is what keeps a favorite from following the number into a
+/// different db.
+///
 /// `filter` narrows down which lines are collected — see [`DbFilter`].
 pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
     let data = match fs::read(path) {
@@ -97,8 +105,23 @@ pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Res
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
     let text = db_text(data, &format!("db file {}", path.display()))?;
-    collect_db_text(&text, filter, out);
+    collect_db_text(&text, filter, db_source_from_name(path).as_ref(), out);
     Ok(())
+}
+
+/// Guess which database `path` holds from its name, for dbs that don't carry a
+/// `source:` header of their own: `csdb.txt.gz` is csdb, `demozoo.txt` demozoo,
+/// `bitworld.txt.gz` a db named `bitworld`. Every packing/text suffix is
+/// stripped, so it is the leading name that decides.
+fn db_source_from_name(path: &Path) -> Option<DbSource> {
+    let mut name = path.file_name()?.to_str()?;
+    for suffix in [".gz", ".bz2", ".Z", ".zip", ".txt"] {
+        // Repeatedly, so `csdb.txt.gz` loses both.
+        while let Some(stem) = name.strip_suffix(suffix) {
+            name = stem;
+        }
+    }
+    (!name.is_empty()).then(|| DbSource::from_name(name))
 }
 
 /// Turn the raw bytes of a db into its text, unpacking it first when it is a
@@ -162,8 +185,10 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
     if let Err(err) = io::stdin().read_to_end(&mut data) {
         bail!("Failed to read db from stdin: {err}");
     }
+    // Nothing names a piped-in db, so only a `source:` field in the db itself
+    // can identify its entries.
     let text = db_text(data, "db from stdin")?;
-    collect_db_text(&text, filter, out);
+    collect_db_text(&text, filter, None, out);
     Ok(())
 }
 
@@ -199,7 +224,17 @@ fn parse_db_header<'a>(
 }
 
 /// Parse the contents of a db file — see [`collect_db`] for the format.
-pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
+///
+/// `fallback_source` names the db for entries that don't say where they are
+/// from themselves; [`collect_db`] derives it from the file name. With neither,
+/// an entry gets no [`DbId`] — its `id` field alone can't identify it, since
+/// every db numbers from 1.
+pub(crate) fn collect_db_text(
+    text: &str,
+    filter: &DbFilter,
+    fallback_source: Option<&DbSource>,
+    out: &mut Vec<EmuFile>,
+) {
     let mut file_platform: Option<&str> = None;
 
     // Meta from header comments, applied to every entry below them.
@@ -259,6 +294,18 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             .unwrap_or_default();
         meta.insert("year", year_s);
         let year = year_s.parse::<u32>().unwrap_or(0);
+        // A `source` the db states — on the line or in its header — wins over
+        // the guess made from the file name.
+        let source = meta
+            .get("source")
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| DbSource::from_name(s))
+            .or_else(|| fallback_source.cloned());
+        let id = meta
+            .get("id")
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .zip(source)
+            .map(|(id, source)| DbId { source, id });
         out.push(EmuFile {
             path: FileSource::Url(urls),
             meta: meta
@@ -269,6 +316,7 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
                 title: title.into(),
                 group: author.into(),
                 year,
+                id,
                 ..Default::default()
             },
         });
@@ -442,6 +490,63 @@ mod tests {
         }
     }
 
+    /// An entry's identity is the db it comes from plus its id there. The db
+    /// may name itself, on the line or in its header; otherwise the file name
+    /// decides. Without either — or without an `id` — there is no identity.
+    #[test]
+    fn collect_db_pairs_ids_with_their_database() {
+        const DB: &str = "id:1\ttitle:Named by the file\tdownload:http://example.com/a\n\
+             id:2\tsource:demozoo\ttitle:Names itself\tdownload:http://example.com/b\n\
+             title:No id at all\tdownload:http://example.com/c\n";
+
+        let ids = |fallback: Option<&DbSource>| {
+            let mut out = vec![];
+            collect_db_text(DB, &DbFilter::default(), fallback, &mut out);
+            out.iter()
+                .map(|f| f.game_info.id.as_ref().map(DbId::to_string))
+                .collect::<Vec<_>>()
+        };
+
+        // The fallback names the first line, the line's own `source` wins on
+        // the second, and the third has no id to pair with anything.
+        assert_eq!(
+            ids(Some(&DbSource::Csdb)),
+            [Some("csdb:1".into()), Some("demozoo:2".into()), None]
+        );
+        // With nothing to fall back on, only the self-naming line has an id.
+        assert_eq!(ids(None), [None, Some("demozoo:2".into()), None]);
+
+        // A `# source:` header names every line below it, the same as any other
+        // header pair.
+        let mut out = vec![];
+        collect_db_text(
+            &format!("# source:bitworld\n{DB}"),
+            &DbFilter::default(),
+            Some(&DbSource::Csdb),
+            &mut out,
+        );
+        assert_eq!(
+            out[0].game_info.id.as_ref().map(DbId::to_string).unwrap(),
+            "bitworld:1",
+            "the header beats the file name"
+        );
+    }
+
+    /// The file name is the last resort for naming a db, so every packing and
+    /// text suffix has to come off before it is read.
+    #[test]
+    fn db_source_is_guessed_from_the_file_name() {
+        let guess = |name: &str| db_source_from_name(Path::new(name));
+        assert_eq!(guess("csdb.txt.gz"), Some(DbSource::Csdb));
+        assert_eq!(guess("/tmp/dl/CSDb.txt"), Some(DbSource::Csdb));
+        assert_eq!(guess("demozoo.txt.bz2"), Some(DbSource::Demozoo));
+        assert_eq!(
+            guess("bitworld.txt.gz"),
+            Some(DbSource::Other("bitworld".into()))
+        );
+        assert_eq!(guess(".txt.gz"), None, "nothing left to name it by");
+    }
+
     /// A db piped in has usually been filtered line by line, so the header that
     /// carried the platform may be gone and only some lines survive — each line
     /// still stands on its own.
@@ -451,6 +556,7 @@ mod tests {
         collect_db_text(
             "id:9\ttitle:Speedball Demo\tauthor:Illusions\tdate:1990-04-07\tcategory:Demo\tdownload:http://example.com/speedball\n",
             &DbFilter::default(),
+            None,
             &mut out,
         );
         assert_eq!(out.len(), 1);
@@ -474,7 +580,7 @@ mod tests {
 
         let titles = |filter: &DbFilter| {
             let mut out = vec![];
-            collect_db_text(DB, filter, &mut out);
+            collect_db_text(DB, filter, None, &mut out);
             (
                 out.iter()
                     .map(|f| f.game_info.title.clone())
@@ -545,7 +651,7 @@ mod tests {
 
         let titles = |filter: &DbFilter| {
             let mut out = vec![];
-            collect_db_text(DB, filter, &mut out);
+            collect_db_text(DB, filter, None, &mut out);
             out.iter()
                 .map(|f| f.game_info.title.clone())
                 .collect::<Vec<_>>()
@@ -625,6 +731,7 @@ mod tests {
              # puae_model:A1200\n\
              id:2\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n",
             &DbFilter::default(),
+            None,
             &mut out,
         );
 

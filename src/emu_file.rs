@@ -1,7 +1,9 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use std::{
     collections::HashMap,
+    fmt,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -186,12 +188,89 @@ impl FileSource {
     }
 }
 
+/// Which database an entry's `id` came from.
+///
+/// Ids are only unique within one database — csdb, demozoo and bitworld all
+/// number from 1 — so anything remembering an entry across runs has to key on
+/// the pair, not on the id alone.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DbSource {
+    Csdb,
+    Demozoo,
+    /// Any other db, named by its `source:` field or by its file name.
+    Other(String),
+}
+
+impl DbSource {
+    /// The source a `source:` field or a db file name spells, matched case
+    /// insensitively. Anything unrecognized keeps its (lowercased) name, so two
+    /// different dbs still get two different sources.
+    pub fn from_name(name: &str) -> Self {
+        let name = name.trim().to_ascii_lowercase();
+        match name.as_str() {
+            "csdb" => DbSource::Csdb,
+            "demozoo" => DbSource::Demozoo,
+            _ => DbSource::Other(name),
+        }
+    }
+}
+
+impl fmt::Display for DbSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DbSource::Csdb => f.write_str("csdb"),
+            DbSource::Demozoo => f.write_str("demozoo"),
+            DbSource::Other(name) => f.write_str(name),
+        }
+    }
+}
+
+/// A database entry's identity: which db it is from plus its id there.
+///
+/// Its text form is `source:id` (`csdb:1234`), which is what
+/// [`Display`](fmt::Display) writes and [`FromStr`] reads — the two are exact
+/// inverses, because that text is the on-disk format of the favorites file.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DbId {
+    pub source: DbSource,
+    pub id: u32,
+}
+
+impl fmt::Display for DbId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.source, self.id)
+    }
+}
+
+impl FromStr for DbId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        // Split on the *last* colon: a source name is free-form and could
+        // itself hold one, while the id never does.
+        let (source, id) = s
+            .trim()
+            .rsplit_once(':')
+            .ok_or_else(|| anyhow!("{s:?} is not `source:id`"))?;
+        if source.is_empty() {
+            bail!("{s:?} has no source");
+        }
+        Ok(DbId {
+            source: DbSource::from_name(source),
+            id: id.trim().parse()?,
+        })
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct GameInfo {
     pub title: String,
     pub group: String,
     pub year: u32,
     pub category: String,
+    /// The db entry this came from, when it came from one. `None` for files
+    /// found on disk — there is nothing there to identify them by.
+    pub id: Option<DbId>,
 }
 
 // EmuFile can be:
@@ -283,5 +362,43 @@ mod tests {
         let (tried, result) = walk(&[], "demo.zip");
         assert!(tried.is_empty());
         assert!(result.is_err());
+    }
+
+    /// The favorites file stores ids as text, so `Display` and `FromStr` have
+    /// to be exact inverses — including for a db demarc doesn't know by name.
+    #[test]
+    fn db_ids_round_trip_through_their_text_form() {
+        for id in [
+            DbId {
+                source: DbSource::Csdb,
+                id: 1234,
+            },
+            DbId {
+                source: DbSource::Demozoo,
+                id: 10,
+            },
+            DbId {
+                source: DbSource::Other("bitworld".into()),
+                id: 0,
+            },
+        ] {
+            let text = id.to_string();
+            assert_eq!(text.parse::<DbId>().unwrap(), id, "{text}");
+        }
+
+        assert_eq!("csdb:1234".parse::<DbId>().unwrap().to_string(), "csdb:1234");
+        // Source names are matched case insensitively and normalize on the way in.
+        assert_eq!(
+            "CSDb:7".parse::<DbId>().unwrap(),
+            DbId {
+                source: DbSource::Csdb,
+                id: 7
+            }
+        );
+        // …and anything that isn't `source:<number>` is rejected rather than
+        // silently turning into some other entry's id.
+        for bad in ["", "csdb", "csdb:", ":12", "csdb:abc", "csdb:-1"] {
+            assert!(bad.parse::<DbId>().is_err(), "{bad:?} should not parse");
+        }
     }
 }

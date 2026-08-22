@@ -5,7 +5,7 @@ use bevy_egui::{
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzySource};
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FAVORITE_CONTEXT, FuzzyItem, FuzzySource};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -183,6 +183,17 @@ const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
 /// Fraction of the screen height the list box is allowed to take up.
 const LIST_HEIGHT_FRACTION: f32 = 0.6;
 
+/// Nerd-Font heart (`nf-md-heart`), drawn in [`FAVORITE_GUTTER`] beside a row
+/// whose [`FuzzyItem::context`] is [`FAVORITE_CONTEXT`].
+pub const FAVORITE_GLYPH: char = '\u{f02d1}';
+const FAVORITE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x5c, 0x7a);
+/// Width reserved at the left of every row for the heart, which is centred in
+/// it. Fixed rather than per-row, so the text of favorited and plain rows still
+/// lines up and the list doesn't shift sideways as favorites are toggled. A
+/// good deal wider than [`ROW_SIZE`], because the Nerd-Font icon is a
+/// double-width glyph — at one em it ends up flush against the text.
+const FAVORITE_GUTTER: f32 = ROW_SIZE * 1.8;
+
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
 /// the centred layout doesn't jump as the selection moves between items whose
@@ -231,16 +242,16 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
 }
 
 /// Draws the scrollable, fixed-row-height list of `items`, highlighting row
-/// `selected` and scrolling the least that keeps it in view. Rows are borrowed:
-/// anything that can be seen as a `&str` (`String`, `&str`, [`FuzzyItem`], ...)
-/// can be listed without copying its text out first.
+/// `selected` and scrolling the least that keeps it in view. Each row is one
+/// clipped line of [`FuzzyItem::text`], preceded by [`FAVORITE_GUTTER`] — empty
+/// unless the item's [`FuzzyItem::context`] asks for a heart.
 ///
 /// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
-fn scroll_area<T: AsRef<str>>(
+fn scroll_area(
     ui: &mut Ui,
     selected: usize,
     list_scroll: f32,
-    items: &[T],
+    items: &[FuzzyItem],
 ) -> ScrollAreaOutput<()> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
@@ -293,10 +304,20 @@ fn scroll_area<T: AsRef<str>>(
                     // single-line and anything too long is clipped.
                     let clip =
                         egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
-                    ui.painter().with_clip_rect(clip).text(
-                        rect.left_center(),
+                    let painter = ui.painter().with_clip_rect(clip);
+                    if items[row].context == FAVORITE_CONTEXT {
+                        painter.text(
+                            rect.left_center() + egui::vec2(FAVORITE_GUTTER / 2.0, 0.0),
+                            egui::Align2::CENTER_CENTER,
+                            FAVORITE_GLYPH,
+                            egui::FontId::proportional(ROW_SIZE),
+                            FAVORITE_COLOR,
+                        );
+                    }
+                    painter.text(
+                        rect.left_center() + egui::vec2(FAVORITE_GUTTER, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        items[row].as_ref(),
+                        &items[row].text,
                         egui::FontId::proportional(ROW_SIZE),
                         TEXT_COLOR,
                     );

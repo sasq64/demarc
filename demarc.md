@@ -95,6 +95,7 @@ _Right Alt_ or _Right Ctrl_ +
 
 ```
 O = Open fuzzy search
+K = Toggle favorite (database entries only)
 D = Swap disk
 SPACE or N = Next file
 P = Previous file
@@ -149,6 +150,19 @@ there is usually the disk-swap loaders of its floppy version, which stop the boo
 ("insert disk 1 and reboot"). Such a release also defaults to a 4MB STE, since
 nothing that needs a hard drive ran on a 1MB ST; `--ste`, `--xmem` and an explicit
 tag still win.
+
+### Favorites
+
+_Right Alt_ + _K_ tags the demo that is playing as a favorite; the file picker
+draws a heart beside the ones you have tagged. The list is kept in
+`~/.config/demarc/favorites`, one `source:id` per line, and can be edited by hand.
+
+Only database entries can be favorited — a file off disk has no id to remember it
+by. The `source` half is which database the entry came from, since every db
+numbers its entries from 1 and the ids would otherwise collide. A db can name
+itself with a `# source:csdb` header line (or a `source:` field on a single line);
+failing that the name of the file passed to `--db` is used, so `csdb.txt.gz` and
+`demozoo.txt.gz` are recognized as they are.
 
 ### Command line arguments
 

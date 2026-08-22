@@ -7,13 +7,14 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
 
 use crate::egui_ui::HudLocation;
-use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
+use crate::egui_ui::{FAVORITE_GLYPH, FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::AllWordsSource;
-use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
+use crate::fuzzy_list::{FAVORITE_CONTEXT, FuzzyItem, FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::{AppSettings, RenderSettings};
+use crate::favorites::Favorites;
 use crate::{EmuFile, emu_file::FileSource};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
@@ -42,6 +43,7 @@ pub enum Cmd {
     NextFileAll,
     OpenFile,
     Reload,
+    Favorite,
 }
 
 #[derive(Message)]
@@ -110,6 +112,7 @@ const HOTKEYS: &[KeyMapping] = &[
         Cmd::ToggleInput,
     ),
     KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
+    KeyMapping::new(KeyCode::KeyK, "Toggle favorite", Cmd::Favorite),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
@@ -206,13 +209,17 @@ fn handle_textlist(
 #[derive(Clone)]
 pub struct FilePickerSource {
     names: IndexedSource,
-    /// Info text per entry, indexed by the same id `names` reports.
+    /// Info text per entry, indexed by the same id `names` reports. Also where
+    /// the [`DbId`](crate::emu_file::DbId) a favorite is keyed on comes from.
     info: Arc<Vec<EmuFile>>,
+    /// The starred entries, shared with [`AppSettings`] rather than copied, so
+    /// a favorite toggled after this source was cached still shows up.
+    favorites: Arc<Favorites>,
     width: u32,
 }
 
 impl FilePickerSource {
-    fn new(files: &[EmuFile]) -> Self {
+    fn new(files: &[EmuFile], favorites: Arc<Favorites>) -> Self {
         let mut names = Vec::with_capacity(files.len());
         let mut info = Vec::with_capacity(files.len());
         for file in files {
@@ -222,6 +229,7 @@ impl FilePickerSource {
         Self {
             names: IndexedSource::new(names),
             info: Arc::new(info),
+            favorites,
             width: 70,
         }
     }
@@ -229,7 +237,20 @@ impl FilePickerSource {
 
 impl FuzzySource for FilePickerSource {
     fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
-        self.names.search(query, limit)
+        let mut items = self.names.search(query, limit);
+        // Marked here rather than baked into the index: the favorites can
+        // change under a source that was built once and kept.
+        for item in &mut items {
+            let starred = self.info[item.id]
+                .game_info
+                .id
+                .as_ref()
+                .is_some_and(|id| self.favorites.contains(id));
+            if starred {
+                item.context = FAVORITE_CONTEXT;
+            }
+        }
+        items
     }
 
     fn get_info(&self, id: usize) -> String {
@@ -452,7 +473,8 @@ fn handle_cmd(
                 // the whole list is what made reopening the picker slow. The
                 // clone below is a cheap `Arc` bump, not a re-index.
                 if settings.file_source.is_none() {
-                    settings.file_source = Some(FilePickerSource::new(&settings.files));
+                    let favorites = settings.favorites.clone();
+                    settings.file_source = Some(FilePickerSource::new(&settings.files, favorites));
                 }
                 // The info field wraps to the width of the list box, which is
                 // as wide as the window is tall; this is what the source
@@ -463,6 +485,28 @@ fn handle_cmd(
                 show_list.write(ShowFuzzyList {
                     id: FILE_PICKER_ID,
                     source: Arc::new(settings.file_source.clone().unwrap()),
+                });
+            }
+            Cmd::Favorite => {
+                // The current emulator's `title_info` is the `GameInfo` of
+                // whatever it last loaded, which is what is on screen now.
+                let id = emus
+                    .iter()
+                    .nth(settings.current_emu)
+                    .and_then(|emu| emu.title_info.id.clone());
+                let text = match id {
+                    Some(id) if settings.favorites.toggle(&id) => {
+                        format!("{FAVORITE_GLYPH} Favorite")
+                    }
+                    Some(_) => "Not a favorite".into(),
+                    // Anything off disk has no db entry to key a favorite on.
+                    None => "Not a database entry".into(),
+                };
+                writer.write(SetHudText {
+                    text,
+                    delay: Duration::from_secs(0),
+                    duration: Duration::from_secs(1),
+                    location: HudLocation::TopLeft,
                 });
             }
             _ => {}
