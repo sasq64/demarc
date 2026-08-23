@@ -1,13 +1,41 @@
 ## demarc
 
-<img width="3160" height="2370" alt="IMG_2029-high" src="https://github.com/user-attachments/assets/ca33d5ce-46a7-4f19-b0d2-a39ec551e05b" />
-
 An command line emulator frontend for the demoscene
 
 _because_
 
 Emulation is better than youtube!
 
+## Screenshots
+**All screenshots are taken directly from Demarc in grid mode**
+
+### Amiga Demos
+`demarc --shuffle ~/Demo/Amiga --grid=6x5`
+
+<img width="2880" height="1920" alt="amiga" src="https://github.com/user-attachments/assets/af18c9f8-aa7b-4d09-bbdd-7c031e337aff" />
+
+### New Amiga/Atari ST Graphics
+
+`demarc --db ../demodb/demozoo.txt -I category:Graphics$ --shuffle -I "author:(Steffest|Critikill|Slayer|Facet|Optic|Prowler)" --grid=9x8 -I date:202 -X platform:C64`
+
+<img width="2880" height="1920" alt="graphics" src="https://github.com/user-attachments/assets/b92b06ad-60d9-43be-9e4b-29e826339ce1" />
+
+### C64 Demos
+`demarc -shuffle ~/Demo/C64/0* --grid=8x7 --fast-load`
+
+<img width="2880" height="1920" alt="c64" src="https://github.com/user-attachments/assets/d0b2e9d4-e2d5-4b47-9693-1f0198936f6a" />
+
+### GBA Cracktros
+`demarc --db ../demodb/demozoo.txt --shuffle -I "platform:GBA" -I "category:Cracktro" --grid=5x5`
+
+<img width="2880" height="1920" alt="gba_cracktro" src="https://github.com/user-attachments/assets/15a91673-7dfa-4abb-8100-f809d3512525" />
+
+### New C64 Graphics
+`demarc --db ../demodb/csdb.txt -I category:Graphics$ --shuffle -I "author:(The Sarge|Critikill|Facet|Prowler)" --grid=9x8 -I date:202`
+
+<img width="2880" height="1920" alt="c64_graphics" src="https://github.com/user-attachments/assets/9cd0f1bd-7ceb-43e3-a5e7-dfbd9f0071bd" />
+
+## INTRO
 
 *Main goal*
 
@@ -19,6 +47,7 @@ Make it easy to watch demos from C64 and Amiga
 * Can run Amiga/Atari/C64 exes & disk images
 * Right-Alt hotkey for disk switch etc
 * Can run multiple files at once in a grid
+
 
 
 ## INSTALL
