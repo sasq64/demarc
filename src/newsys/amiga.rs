@@ -325,12 +325,15 @@ impl System for AmigaSystem {
         // resort so a release that only ships a mangled exe behaves as before.
         let mut broken = vec![];
 
+        let aga = file.get_meta("platform", "").contains("AGA");
+
         if file.get_meta("puae_model", "") == "date" {
             file.set_meta("puae_model", "A500");
             if let Ok(year) = file.get_meta("year", "").parse::<u32>() {
                 if year < 1990 {
                     file.set_meta("puae_kickstart", "kick33180.A500");
-                } else {
+                } else if aga || self.aga {
+                    file.set_meta("puae_model", "A1200");
                     if year >= 1993 {
                         file.set_meta("puae_model", "A1200");
                     }
@@ -344,9 +347,10 @@ impl System for AmigaSystem {
                     }
                 }
             }
-        }
-        if self.aga {
-            file.set_meta("puae_model", "A1200");
+        } else {
+            if aga || self.aga {
+                file.set_meta("puae_model", "A1200");
+            }
         }
         if self.fast_load {
             file.set_meta("puae_floppy_speed", "0");
