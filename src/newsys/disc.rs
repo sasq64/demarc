@@ -767,12 +767,12 @@ const DISC_CUE: &str = "disc.cue";
 /// WAV. Its accounted size *overstates* the disk it costs, though, since data
 /// tracks are hard links to the original rather than copies — so the budget is
 /// deliberately generous.
-static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("cdda"));
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("cdda", CACHE_LIMIT));
 
 const CACHE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 
 pub fn prune_cache() {
-    CACHE.prune(CACHE_LIMIT);
+    CACHE.prune();
 }
 
 #[cfg(test)]

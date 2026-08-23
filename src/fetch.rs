@@ -27,11 +27,27 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// bounds the part where a wedged server has told us nothing at all.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How large the download cache is allowed to grow before [`prune_cache`]
-/// starts evicting from it. Demo and game archives are small individually but
-/// unbounded in number, so without a cap a long-running collection browse just
-/// keeps filling the disk.
-const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
+/// Where the download cache stops being small files and starts being big ones.
+///
+/// A megabyte is comfortably above a demo, a tune or a cracktro and comfortably
+/// below a disk image or a CD track, which is what the split is for: the two
+/// kinds are downloaded in wildly different numbers and cost wildly different
+/// amounts to fetch again.
+const SMALL_FILE: u64 = 1024 * 1024;
+
+/// How large the small half of the download cache is allowed to grow before
+/// [`prune_cache`] starts evicting from it. Demos and small archives are tiny
+/// individually but unbounded in number, so without a cap a long-running
+/// collection browse just keeps filling the disk — and thousands of them would,
+/// out of one shared budget, evict every big download there was.
+const SMALL_LIMIT: u64 = 250 * 1024 * 1024;
+
+/// The same, for everything above [`SMALL_FILE`]: fewer entries, each of them
+/// minutes of downloading to get back, so they get the larger share.
+///
+/// Both are defaults: the cache writes them to a `.limit` file the user can
+/// edit.
+const LARGE_LIMIT: u64 = 750 * 1024 * 1024;
 
 /// Where each archive named by a db `download:` field lives, best mirror first.
 ///
@@ -273,13 +289,16 @@ pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
 }
 
 /// The download cache: one entry per URL hash, each holding the downloaded file
-/// under its URL-derived name.
-static DOWNLOADS: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("downloads"));
+/// under its URL-derived name, budgeted separately by size (see
+/// [`SMALL_FILE`]).
+static DOWNLOADS: LazyLock<FileCache> =
+    LazyLock::new(|| FileCache::new("downloads", LARGE_LIMIT).with_level(SMALL_FILE, SMALL_LIMIT));
 
-/// Trim the download cache back under [`CACHE_LIMIT`]. Intended to run once at
-/// startup, when nothing is holding a path into it yet.
+/// Trim the download cache back under its budgets ([`SMALL_LIMIT`] and
+/// [`LARGE_LIMIT`], or whatever the cache's `.limit` says). Intended to run
+/// once at startup, when nothing is holding a path into it yet.
 pub fn prune_cache() {
-    DOWNLOADS.prune(CACHE_LIMIT);
+    DOWNLOADS.prune();
 }
 
 /// Download `url` to `path`, trying every url [`candidates`] offers for it

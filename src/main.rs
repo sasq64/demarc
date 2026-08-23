@@ -672,6 +672,7 @@ fn main() {
     // Trim the caches before anything writes into them, so this run's own
     // downloads and built discs can't be evicted out from under it.
     fetch::prune_cache();
+    libloader::prune_cache();
     newsys::prune_caches();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
