@@ -1,5 +1,9 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+use std::time::Duration;
+
+use crate::cache::FileCache;
 
 /// File extension of a dynamic library on the current platform.
 fn dylib_ext() -> &'static str {
@@ -72,44 +76,72 @@ fn clear_quarantine(path: &Path) {
     let _ = path;
 }
 
-/// Locate and if necessary download a libretro dynamic library.
-/// Check dirs::home_dir() / .lib / libretro / <name> _libretro. <ext>
-/// If none existing, download (blocking) from
-/// https://buildbot.libretro.com/nightly/<system>/latest/<name>_libretro.<ext>.zip
-/// Where system can be "linux/x86_64", "apple/osx/arm64" or "windows/x86_64"
-/// and unzip to above mentioned directory.
-/// On OSX, make sure quarantine flags are cleared
-pub fn get_libretro(name: &str) -> Option<PathBuf> {
-    let dir = dirs::home_dir()?.join(".lib").join("libretro");
-    get_libretro_in(&dir, name)
+/// Downloaded cores, one entry per buildbot url, holding the unzipped library.
+///
+/// Keyed on the url rather than on the core name, so the platform is part of
+/// the key and a cache copied between machines can't hand back a library for
+/// the wrong one.
+static CORES: LazyLock<FileCache> =
+    LazyLock::new(|| FileCache::new("cores", CACHE_LIMIT).with_max_age(MAX_AGE));
+
+/// A dozen or so cores at a few tens of MB each, with room for the ones a
+/// user tried once and stopped opening — those are what eviction is for.
+const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
+
+/// How long a downloaded core is used before it is fetched again.
+///
+/// The buildbot url names `latest`, so an entry keyed on it goes out of date
+/// on its own schedule rather than when anything demarc knows about changes.
+/// A fortnight keeps up with fixes upstream without making a launch depend on
+/// the network — and when the network isn't there,
+/// [`FileCache::with_max_age`]'s fallback keeps the copy already downloaded.
+const MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+
+/// Trim the core cache back under its budget ([`CACHE_LIMIT`], or whatever the
+/// cache's `.limit` says). Intended to run once at startup, before anything
+/// asks for a core, so this run's own cores can't be evicted out from under it.
+pub fn prune_cache() {
+    CORES.prune();
 }
 
-/// Implementation of [`get_libretro`] against an explicit library directory, so
-/// the cache/download logic can be exercised without touching the real home dir.
-fn get_libretro_in(dir: &Path, name: &str) -> Option<PathBuf> {
-    let target = dir.join(dylib_name(name));
-    if target.is_file() {
-        return Some(target);
-    }
+/// Locate and if necessary download a libretro dynamic library.
+///
+/// Cached under the user's cache directory, refetched from
+/// `https://buildbot.libretro.com/nightly/<system>/latest/<name>_libretro.<ext>.zip`
+/// when the copy there is older than [`MAX_AGE`] — where `<system>` is
+/// "linux/x86_64", "apple/osx/arm64" or "windows/x86_64".
+///
+/// Returns `None` only if there is nothing usable at all: a download that
+/// fails with a cached core to fall back on still returns that core. On macOS
+/// the quarantine flag is cleared so the result can be `dlopen`ed.
+pub fn get_libretro(name: &str) -> Option<PathBuf> {
+    get_libretro_from(&CORES, name)
+}
 
-    std::fs::create_dir_all(dir).ok()?;
+/// Implementation of [`get_libretro`] against an explicit cache, so the
+/// download logic can be exercised without touching the user's real one.
+fn get_libretro_from(cache: &FileCache, name: &str) -> Option<PathBuf> {
     let url = buildbot_url(name);
-    let bytes = match download(&url) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::warn!("Failed to download {url}: {e}");
-            return None;
+    let lib = dylib_name(name);
+    // The library itself is the marker: an archive that unpacked to anything
+    // else is not a core, and must not be cached as one.
+    let entry = cache.get_dir(&url, &lib, |dir| {
+        let bytes = download(&url)?;
+        extract_zip(&bytes, dir)?;
+        anyhow::ensure!(dir.join(&lib).is_file(), "{url} contains no {lib}");
+        Ok(())
+    });
+    match entry {
+        Ok(dir) => {
+            let path = dir.join(&lib);
+            clear_quarantine(&path);
+            Some(path)
         }
-    };
-    if let Err(e) = extract_zip(&bytes, dir) {
-        tracing::warn!("Failed to extract {url}: {e}");
-        return None;
+        Err(e) => {
+            tracing::warn!("Failed to get libretro core {name}: {e}");
+            None
+        }
     }
-
-    target.is_file().then(|| {
-        clear_quarantine(&target);
-        target
-    })
 }
 
 #[cfg(test)]
@@ -139,12 +171,21 @@ mod tests {
 
     #[test]
     fn returns_cached_library_without_network() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(dylib_name("snes9x"));
-        std::fs::write(&path, b"stub").unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = FileCache::at(tmp.path().join("cores"), 1024 * 1024);
+        // Populate the entry the way a successful download would, so the
+        // lookup under test is a hit and never reaches the buildbot.
+        let entry = cache
+            .get_dir(&buildbot_url("snes9x"), &dylib_name("snes9x"), |dir| {
+                std::fs::write(dir.join(dylib_name("snes9x")), b"stub")?;
+                Ok(())
+            })
+            .unwrap();
 
-        // File already present, so this must not attempt a download.
-        assert_eq!(get_libretro_in(dir.path(), "snes9x"), Some(path));
+        assert_eq!(
+            get_libretro_from(&cache, "snes9x"),
+            Some(entry.join(dylib_name("snes9x")))
+        );
     }
 
     #[test]

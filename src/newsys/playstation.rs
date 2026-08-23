@@ -112,12 +112,12 @@ pub fn create_psx_iso(exe_path: &Path) -> Result<Option<PathBuf>> {
 /// Small entries — an image is the executable plus a couple of hundred KB of
 /// filesystem — so the budget only has to keep a long browse through a pile of
 /// `.psx` files from accumulating without limit.
-static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("psxexe"));
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("psxexe", CACHE_LIMIT));
 
 const CACHE_LIMIT: u64 = 200 * 1024 * 1024;
 
 pub fn prune_cache() {
-    CACHE.prune(CACHE_LIMIT);
+    CACHE.prune();
 }
 
 pub fn is_psx_exe(path: &Path) -> bool {

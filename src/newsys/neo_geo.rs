@@ -169,12 +169,12 @@ const DISC_CUE: &str = "disc.cue";
 
 /// Built Neo Geo CD images, keyed on the contents of the directory they were
 /// built from. One entry is a single-track ISO of a whole release.
-static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("neocd"));
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("neocd", CACHE_LIMIT));
 
 const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
 pub fn prune_cache() {
-    CACHE.prune(CACHE_LIMIT);
+    CACHE.prune();
 }
 
 /// What a `.neo` cartridge ROM opens with: the NeoSD container's tag, ahead of
