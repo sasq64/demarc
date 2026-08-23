@@ -1,30 +1,16 @@
 
-* Joystick support
-
-disk-turbo on/off
-
-Fix warp
-
-HUD for Warp, Pause, Shader,Border,Screenshot
-
-
-* Statusbar
-  (Disk activity, LED, Frame rate, fixed, disk)
-
-
-* Select menu for shortcuts and files
-
-
-STEPS
-
-Populate Info at startup.
-
-* meta data from m3u
-
-LOAD does not need m3u
-
-
-TAGS
-
-
-
+- [x] Whitelist/blacklist for audio formats
+- [ ] hatari detects SMPL (turrican) as exe
+- [x] Default CRT limit?
+- [ ] Toggle CRT On/Limited/Off if limit set
+- [x] Use beetle flag
+- [ ] TIF: Photometric interpretation RGBPalette with bits per sample [8]
+- [ ] LZX packed files
+- [x] Fix TV-mode/Max-time
+- [x] Wire up color cycle flag
+- [x] Full music info
+- [x] Speed up shader creation, maybe share shaders between emulators
+- [ ] Match files on disk
+- [ ] Try other downloads on failure
+- [x] No unicode for topaz font
+- [x] Atari aspect

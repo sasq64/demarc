@@ -1,22 +1,20 @@
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
-use bevy::{
-    prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
-};
 
+use crate::egui_ui::HudLocation;
+use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
-use crate::fuzzy_list::IndexedSource;
-use crate::fuzzy_list::{FuzzyList, FuzzyListSelect, FuzzyStateStore};
-use crate::hud::{HudLocation, SetHudText, TextList, TextListSelect};
+use crate::fuzzy_list::AllWordsSource;
+use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::systems::SystemType;
-use crate::systems::get_info_text;
 use crate::{AppSettings, RenderSettings};
+use crate::{EmuFile, emu_file::FileSource};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -47,7 +45,11 @@ pub enum Cmd {
 }
 
 #[derive(Message)]
-pub struct CmdMessage(pub Cmd, pub bool);
+pub struct CmdMessage(pub Cmd);
+
+/// Id the file picker is opened under, echoed back by
+/// [`FuzzyListSelect`] so its selections are told apart from any other list's.
+pub const FILE_PICKER_ID: usize = 1;
 
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
@@ -138,43 +140,28 @@ pub fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
         .map(|m| m.cmd)
 }
 
-/// Capture the actual rendered window content and write it to `screenshot.png`.
-fn screenshot(commands: &mut Commands, name: impl Into<String>) {
-    commands
-        .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(name.into()));
-}
-
 fn handle_textlist(
-    mut commands: Commands,
     mut settings: ResMut<AppSettings>,
-    asset_server: Res<AssetServer>,
     input: Res<ButtonInput<KeyCode>>,
-    mut reader: MessageReader<TextListSelect>,
     mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
+    mut show_list: MessageWriter<ShowFuzzyList>,
     time: Res<Time>,
-    lists: Query<&TextList>,
+    hud: Res<HudState>,
 ) {
-    for &TextListSelect { id, index } in reader.read() {
-        if id == 0 && index < HOTKEYS.len() {
-            let cmd = HOTKEYS[index].cmd;
-            writer.write(CmdMessage(cmd, false));
-            if let Some(e) = settings.text_list.take() {
-                commands.entity(e).despawn();
-            }
-        }
-    }
-    // The file picker is a `FuzzyList`; `item` is the stable index into
-    // `settings.files`, independent of the current search filter.
+    // The file picker is the egui list in `crate::egui_ui`, which closes itself
+    // once a row is picked; `item` is the stable index into `settings.files`,
+    // independent of the current search filter.
     for &FuzzyListSelect { id, item, .. } in file_reader.read() {
-        if id == 1 {
-            debug!("START {item}");
-            if let Some(e) = settings.file_list.take() {
-                commands.entity(e).despawn();
-            }
+        info!("Got SELECT {id} {item:?}");
+        if id == FILE_PICKER_ID {
             settings.current_game = item as isize;
-            writer.write(CmdMessage(Cmd::Reload, false));
+            writer.write(CmdMessage(Cmd::Reload));
+        } else {
+            if item < HOTKEYS.len() {
+                let cmd = HOTKEYS[item].cmd;
+                writer.write(CmdMessage(cmd));
+            }
         }
     }
     let hot_key_pressed =
@@ -186,56 +173,206 @@ fn handle_textlist(
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = lists.iter().any(|l| l.controlled);
+        let modal = hud.list_open();
         if modal {
             return;
         }
         if time.elapsed_secs() - settings.hotkey_pressed < 0.35 {
-            if let Some(e) = settings.text_list.take() {
-                commands.entity(e).despawn();
-            } else {
-                let font: Handle<Font> = asset_server.load("font.ttf");
-                let lines = HOTKEYS
-                    .iter()
-                    .map(|m| {
-                        if m.shift {
-                            format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
-                        } else {
-                            format!(" {} {} ", m.glyph(), m.description)
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let entity = TextList::spawn(0, &mut commands, font, lines, 8, 580.0);
-                settings.text_list = Some(entity);
-            }
-        }
-    } else if input.just_pressed(KeyCode::Escape) {
-        if let Some(e) = settings.text_list.take() {
-            commands.entity(e).despawn();
-        }
-        if let Some(e) = settings.file_list.take() {
-            commands.entity(e).despawn();
+            let lines = HOTKEYS
+                .iter()
+                .map(|m| {
+                    if m.shift {
+                        format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
+                    } else {
+                        format!(" {} {} ", m.glyph(), m.description)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let source = AllWordsSource::new(lines);
+            show_list.write(ShowFuzzyList {
+                id: 99,
+                source: Arc::new(source),
+            });
         }
     }
 }
 
+/// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
+/// the list, paired with the fuller per-entry detail (year, type, party, …)
+/// shown in the info field below it.
+///
+/// Both are built once, on first open, and reused on every open after that —
+/// cloning is a pair of `Arc` bumps, not a re-index.
+#[derive(Clone)]
+pub struct FilePickerSource {
+    names: IndexedSource,
+    /// Info text per entry, indexed by the same id `names` reports.
+    info: Arc<Vec<EmuFile>>,
+    width: u32,
+}
+
+impl FilePickerSource {
+    fn new(files: &[EmuFile]) -> Self {
+        let mut names = Vec::with_capacity(files.len());
+        let mut info = Vec::with_capacity(files.len());
+        for file in files {
+            names.push(entry_name(file));
+            info.push(file.clone());
+        }
+        Self {
+            names: IndexedSource::new(names),
+            info: Arc::new(info),
+            width: 70,
+        }
+    }
+}
+
+impl FuzzySource for FilePickerSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+        self.names.search(query, limit)
+    }
+
+    fn get_info(&self, id: usize) -> String {
+        entry_info(&self.info[id], self.width as usize)
+    }
+}
+
+/// Shorten `url` to at most `max` characters by dropping path components from
+/// the left, keeping the two parts that identify it — the host it came from and
+/// the file name at the end. Everything dropped is replaced by a single `...`:
+///
+/// `https://ftp.example.org/pub/demos/c64/1992/zentro4.zip`
+/// → `https://ftp.example.org/.../1992/zentro4.zip`
+/// → `https://ftp.example.org/.../zentro4.zip`
+///
+/// A URL still too long once every component is gone has nothing left to drop,
+/// so it is cut out of the middle instead, keeping its head and the end of the
+/// file name (extension included).
+fn trunc_url(url: &str, max: usize) -> String {
+    if url.chars().count() <= max {
+        return url.to_string();
+    }
+
+    // Split into `scheme://host` and the path below it. The path search starts
+    // after `://` so the scheme's own slashes don't count as the first one.
+    let after_scheme = url.find("://").map(|i| i + 3).unwrap_or(0);
+    let (host, path) = match url[after_scheme..].find('/') {
+        Some(i) => url.split_at(after_scheme + i),
+        // No path at all: there is nothing to drop, only the middle cut below.
+        None => (url, ""),
+    };
+    let (dirs, file) = match path.rsplit_once('/') {
+        Some((dirs, file)) => (dirs.trim_start_matches('/'), file),
+        None => ("", ""),
+    };
+    let dirs: Vec<&str> = if dirs.is_empty() {
+        Vec::new()
+    } else {
+        dirs.split('/').collect()
+    };
+
+    // Drop one more leading component per round until what's left fits.
+    for skip in 1..=dirs.len() {
+        let kept = dirs[skip..].join("/");
+        let candidate = if kept.is_empty() {
+            format!("{host}/.../{file}")
+        } else {
+            format!("{host}/.../{kept}/{file}")
+        };
+        if candidate.chars().count() <= max {
+            return candidate;
+        }
+    }
+
+    middle_cut(&format!("{host}/.../{file}"), max)
+}
+
+/// Cut `s` down to `max` characters by removing from the middle, so both ends
+/// stay readable. Used as [`trunc_url`]'s last resort.
+fn middle_cut(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    if max <= 3 {
+        return chars.iter().take(max).collect();
+    }
+    let keep = max - 3;
+    let front = keep / 2;
+    let back = keep - front;
+    let head: String = chars[..front].iter().collect();
+    let tail: String = chars[chars.len() - back..].iter().collect();
+    format!("{head}...{tail}")
+}
+
+/// The single line an entry gets in the picker list: `title / group`.
+fn entry_name(file: &EmuFile) -> String {
+    let info = &file.game_info;
+    if info.title.is_empty() {
+        "???".into()
+    } else if info.group.is_empty() {
+        info.title.clone()
+    } else {
+        format!("{} / {}", info.title, info.group)
+    }
+}
+
+/// Everything we know about an entry, for the picker's info field: title,
+/// group, what it is and when, the party it was released at, its tags, and
+/// where it comes from. Empty fields are left out rather than shown blank.
+fn entry_info(file: &EmuFile, width: usize) -> String {
+    let mut lines = Vec::new();
+    let platform = file.get_meta("platform");
+    let category = file.get_meta("category");
+    let year = file.game_info.year;
+    let year = if year == 0 {
+        "".to_string()
+    } else {
+        format!(" ({year})")
+    };
+    if platform.is_empty() {
+        lines.push(format!("{category}{year}"));
+    } else {
+        lines.push(format!("{platform} {category}{year}"));
+    }
+    if let Some(party) = file.meta.get("party").filter(|p| !p.is_empty()) {
+        lines.push(format!("Party: {party}"));
+    }
+    if let Some(tags) = file.meta.get("tags").filter(|t| !t.is_empty()) {
+        lines.push(format!("Tags: {tags}"));
+    }
+
+    let source = match &file.path {
+        FileSource::Path(p) => p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string()),
+        FileSource::Url(urls) => urls
+            .first()
+            .map(|u| trunc_url(u.as_str(), width))
+            .unwrap_or_default(),
+    };
+    if !source.is_empty() {
+        lines.push(source);
+    }
+    lines.join("\n")
+}
+
 fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
-    mut commands: Commands,
     mut emus: Query<&mut Emulator>,
-    asset_server: Res<AssetServer>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
-    state_store: Res<FuzzyStateStore>,
+    mut show_list: MessageWriter<ShowFuzzyList>,
 ) {
     let mut show_info = false;
     let count = emus.iter().count();
     let multi = count > 1;
     for cmd in cmds.read() {
-        debug!("CMD: {:?}", cmd.0);
+        debug!("Received command: {:?}", cmd.0);
         match cmd.0 {
             Cmd::ToggleCrt => {
                 render.crt_effect = !render.crt_effect;
@@ -315,44 +452,25 @@ fn handle_cmd(
                 // the whole list is what made reopening the picker slow. The
                 // clone below is a cheap `Arc` bump, not a re-index.
                 if settings.file_source.is_none() {
-                    let mut names = Vec::new();
-                    for file in &settings.files {
-                        //let info = get_info(game).unwrap_or_default();
-                        if !file.game_info.title.is_empty() {
-                            if file.game_info.group.is_empty() {
-                                names.push(file.game_info.title.to_string());
-                            } else {
-                                names.push(format!(
-                                    "{} / {}",
-                                    file.game_info.title, file.game_info.group
-                                ));
-                            }
-                        } else {
-                            names.push("???".into());
-                        }
-                        //
-                    }
-                    settings.file_source = Some(IndexedSource::new(names));
+                    settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
-                let source = settings.file_source.clone().unwrap();
-                let font: Handle<Font> = asset_server.load("font.ttf");
-                let entity = FuzzyList::spawn(
-                    1,
-                    &mut commands,
-                    font,
-                    source,
-                    20,
-                    800.0,
-                    &state_store.get(1),
-                );
-                settings.file_list = Some(entity);
+                // The info field wraps to the width of the list box, which is
+                // as wide as the window is tall; this is what the source
+                // truncates the (unwrappable) URL line to.
+                let size = window.resolution.size();
+                settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
+
+                show_list.write(ShowFuzzyList {
+                    id: FILE_PICKER_ID,
+                    source: Arc::new(settings.file_source.clone().unwrap()),
+                });
             }
             _ => {}
         }
         for (i, mut emu) in &mut emus.iter_mut().enumerate() {
             if show_info && i == settings.current_emu {
                 writer.write(SetHudText {
-                    text: get_info_text(&emu.work_file),
+                    text: emu.get_info(),
                     duration: Duration::from_secs(2),
                     location: HudLocation::InfoText,
                     ..Default::default()
@@ -407,7 +525,7 @@ fn handle_cmd(
                         }
                         let disk_no = emu.disk_no;
                         emu.set_disk(disk_no);
-                        let floppy = emu.work_file.system_type == SystemType::C64;
+                        let floppy = emu.work_file.get_meta("system", "").starts_with("C64");
                         let d = emu.disk_no + 1;
 
                         writer.write(SetHudText {
@@ -432,7 +550,7 @@ fn handle_cmd(
                             });
                         } else {
                             writer.write(SetHudText {
-                                text: get_info_text(&emu.work_file),
+                                text: emu.get_info(),
                                 delay: Duration::from_secs(0),
                                 duration: Duration::from_secs(5000),
                                 location: HudLocation::InfoText,
@@ -453,7 +571,7 @@ fn handle_cmd(
                         emu.skip(10 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1500),
+                            duration: Duration::from_secs(1),
                             text,
                             ..Default::default()
                         });
@@ -463,22 +581,19 @@ fn handle_cmd(
                         emu.skip(30 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1500),
+                            duration: Duration::from_secs(1),
                             text,
                             ..Default::default()
                         });
                     }
                     Cmd::Screenshot => {
-                        let name = format!(
-                            "{}-{}.png",
-                            emu.work_file.game_info.title,
-                            time.elapsed_secs() as i32
-                        );
-                        screenshot(&mut commands, &name);
+                        let title = emu.work_file.get_meta("title", "shot");
+                        let name = format!("{}-{}.png", title, time.elapsed_secs() as i32);
+                        _ = emu.save_png(&name);
                         writer.write(SetHudText {
                             text: format!("Screenshot: {name}"),
                             delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(5000),
+                            duration: Duration::from_secs(1),
                             location: HudLocation::TopLeft,
                         });
                     }
@@ -523,31 +638,115 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
             MediaKeyEvent::Stop => None,
         };
         if let Some(cmd) = cmd {
-            writer.write(CmdMessage(cmd, false));
+            writer.write(CmdMessage(cmd));
         }
     }
 }
 
 pub struct CommandPlugin;
 
-/// When `--select` is passed, open the file-open selector once on the first frame.
-fn open_select_menu(args: Res<crate::Args>, mut writer: MessageWriter<CmdMessage>) {
-    if args.select {
-        writer.write(CmdMessage(Cmd::OpenFile, false));
+/// How many frames to wait before `--select` opens the picker. The window is
+/// still settling on its final size for the first few frames, and the picker's
+/// row count and width are derived from that size.
+const SELECT_MENU_DELAY: u32 = 5;
+
+/// When `--select` is passed, open the file-open selector once, a few frames in.
+fn open_select_menu(
+    args: Res<crate::Args>,
+    mut writer: MessageWriter<CmdMessage>,
+    mut frame: Local<u32>,
+) {
+    if !args.select {
+        return;
+    }
+    // Saturating, so the counter never wraps back around to the trigger value.
+    *frame = frame.saturating_add(1);
+    if *frame == SELECT_MENU_DELAY {
+        writer.write(CmdMessage(Cmd::OpenFile));
     }
 }
 
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>();
-        app.add_systems(Startup, (init_media_keys, open_select_menu));
+        app.add_systems(Startup, init_media_keys);
         app.add_systems(
             Update,
             (
+                open_select_menu,
                 handle_textlist,
                 handle_media_keys,
                 handle_cmd.run_if(on_message::<CmdMessage>),
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
+
+    #[test]
+    fn short_url_is_left_alone() {
+        assert_eq!(trunc_url(URL, URL.len()), URL);
+        assert_eq!(trunc_url("http://a.org/x.zip", 70), "http://a.org/x.zip");
+    }
+
+    #[test]
+    fn path_components_drop_from_the_left_until_it_fits() {
+        // One character short. Dropping `pub` alone buys nothing (`...` is just
+        // as long), so `demos` goes with it — components come off the left
+        // until the result actually fits.
+        assert_eq!(
+            trunc_url(URL, URL.len() - 1),
+            "https://ftp.example.org/.../c64/1992/zentro4.zip"
+        );
+        // Tighter budgets eat further into the path, always from the left…
+        assert_eq!(
+            trunc_url(URL, 46),
+            "https://ftp.example.org/.../1992/zentro4.zip"
+        );
+        // …down to just the host and the file name.
+        assert_eq!(
+            trunc_url(URL, 40),
+            "https://ftp.example.org/.../zentro4.zip"
+        );
+    }
+
+    #[test]
+    fn every_result_fits_the_budget() {
+        for max in 4..URL.len() + 2 {
+            let out = trunc_url(URL, max);
+            assert!(
+                out.chars().count() <= max,
+                "{max}: {out:?} is {} chars",
+                out.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn host_and_file_too_long_together_are_cut_in_the_middle() {
+        // Nothing left to drop, so both ends are kept and the middle goes.
+        let out = trunc_url(URL, 20);
+        assert_eq!(out.chars().count(), 20);
+        assert!(out.starts_with("https://"), "{out}");
+        assert!(out.ends_with(".zip"), "{out}");
+    }
+
+    #[test]
+    fn urls_without_a_path_are_still_bounded() {
+        let out = trunc_url("https://a-very-long-host-name.example.org", 20);
+        assert_eq!(out.chars().count(), 20);
+    }
+
+    #[test]
+    fn multibyte_urls_are_counted_in_characters() {
+        let url = "https://exämple.org/påth/före/filnämn-ÅÄÖ.zip";
+        let out = trunc_url(url, 40);
+        assert_eq!(out, "https://exämple.org/.../filnämn-ÅÄÖ.zip");
+        assert!(out.chars().count() <= 40);
     }
 }

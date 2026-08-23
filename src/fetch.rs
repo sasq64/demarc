@@ -1,12 +1,15 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use anyhow::Context;
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use sha2::{Digest, Sha256};
-use tracing::info;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use tracing::{info, warn};
 use url::Url;
+
+use crate::cache::FileCache;
 
 /// Give up after this many HTTP redirects, matching typical browser limits.
 const MAX_REDIRECTS: usize = 10;
@@ -30,42 +33,189 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// keeps filling the disk.
 const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
-/// True if `s` looks like a remote URL demarc should download rather than treat
-/// as a local path.
-pub fn is_url(s: &str) -> bool {
-    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("ftp://")
-}
-
-/// URL rewrite rules applied before downloading, as `(pattern, replacement)`
-/// pairs. A trailing `*` in the pattern matches any suffix, which is then
-/// substituted for the `*` in the replacement.
+/// Where each archive named by a db `download:` field lives, best mirror first.
 ///
-/// The scene.org rule turns a `/get/` link — which 302-redirects to a slow FTP
-/// mirror — into its `/get:de-https/` variant, which serves the file directly
-/// over HTTPS.
-const URL_REWRITES: &[(&str, &str)] = &[
+/// Demozoo does not store a url for the files it knows an archive for: it
+/// stores a *link class* plus a parameter, and the db generator keeps that pair
+/// as `SceneOrgFile:/parties/2006/assembly06/demo/x.zip` rather than resolving
+/// it (see demodb's demozoo.py). Resolving it here instead means a mirror that
+/// dies — or a faster one appearing — is a change to this table rather than a
+/// regenerate of every db file that mentions it.
+///
+/// The url is simply the base with the parameter appended, so a base carries
+/// whatever trailing `/` or `?` the join needs. A download walks the mirrors in
+/// order and keeps the first that answers; which one it starts from is
+/// [`MIRROR_ROTATION`], so the list here is the order to prefer when every
+/// mirror is up.
+///
+/// Any class listed here is also a scheme demarc will accept as a url, so keep
+/// the names distinct from real schemes. Matching is case-insensitive: the db
+/// spells the class the way Demozoo does, but a value that has been through
+/// `Url::parse` (which is how db lines reach [`fetch_url`]) arrives lowercased.
+const LINK_BASES: &[(&str, &[&str])] = &[
     (
-        "https://files.scene.org/get/*",
-        "https://files.scene.org/get:de-https/*",
+        "AmigascneFile",
+        &[
+            "https://files.scene.org/get:fi-ftp/mirrors/amigascne",
+            "https://files.scene.org/get:de-https/mirrors/amigascne",
+            "ftp://ftp.amigascne.org/pub/amiga",
+        ],
     ),
     (
-        "https://ftp.untergrund.net/users/ltk_tscl/fujiology/*",
-        "https://fujiology.org/*",
+        "SceneOrgFile",
+        &[
+            // The bare `/get/` link 302-redirects to a slow FTP mirror, so name
+            // a mirror directly. (`URL_REWRITES` below rewrites `/get/` the same
+            // way, for the plain urls a db holds for the same files.)
+            "https://files.scene.org/get:de-https",
+            "https://files.scene.org/get:fi-ftp",
+        ],
     ),
+    ("ModlandFile", &["https://ftp.modland.com"]),
+    (
+        "FujiologyFile",
+        &["https://ftp.untergrund.net/users/ltk_tscc/fujiology"],
+    ),
+    ("UntergrundFile", &["https://ftp.untergrund.net"]),
+    ("PaduaOrgFile", &["http://ftp.padua.org/pub/c64"]),
+    ("Defacto2File", &["https://defacto2.net/f/"]),
+    ("ModarchiveModule", &["https://modarchive.org/module.php?"]),
+    ("SixteenColorsPack", &["https://16colo.rs/pack/"]),
 ];
 
-/// Rewrite `url` according to the first matching rule in [`URL_REWRITES`],
-/// returning it unchanged if no rule applies.
-pub fn translate_url(url: &str) -> String {
-    for (pattern, replacement) in URL_REWRITES {
-        if let Some(prefix) = pattern.strip_suffix('*')
-            && let Some(rest) = url.strip_prefix(prefix)
-            && let Some(repl_prefix) = replacement.strip_suffix('*')
-        {
-            return format!("{repl_prefix}{rest}");
+/// Fixups applied to every resolved url, as `(prefix, replacement)` pairs; the
+/// first matching rule wins.
+///
+/// These are links that are correct as a db records them but not as written
+/// downloadable: they point at a redirect, a dead host name, or a doubled path
+/// prefix. Rules match the url *after* [`LINK_BASES`] has been applied, so a
+/// rule must not undo a mirror choice made there — hence no rule for the bases
+/// listed above.
+///
+///   funet, sndh  plain http (or ftp) no longer serves these files.
+///   scene.org    a `/get/` link 302-redirects to a slow FTP mirror; the
+///                `/get:de-https/` variant serves the file over HTTPS directly.
+///   modland      some links already carry the `/pub/modules` prefix, giving a
+///                doubled path once the base is prepended.
+///   untergrund   the fujiology archive moved from user ltk_tscl to ltk_tscc.
+const URL_REWRITES: &[(&str, &str)] = &[
+    ("ftp://ftp.funet.fi/", "https://ftp.funet.fi/"),
+    (
+        "https://files.scene.org/get/",
+        "https://files.scene.org/get:de-https/",
+    ),
+    (
+        "https://ftp.modland.com/pub/modules/pub/modules/",
+        "https://ftp.modland.com/pub/modules/",
+    ),
+    (
+        "https://ftp.untergrund.net/users/ltk_tscl/",
+        "https://ftp.untergrund.net/users/ltk_tscc/",
+    ),
+    ("http://sndh.atari.org/", "https://sndh.atari.org/"),
+];
+
+/// Which mirror each [`LINK_BASES`] class starts from, as an index into that
+/// class's list; the rest of the list follows it cyclically. A download that
+/// had to fall past a dead or slow mirror records the one that actually worked
+/// here, so later downloads of the same class start where the last success was
+/// instead of timing out against the same broken host every time.
+///
+/// One entry per class, in [`LINK_BASES`] order. Memory only: a fresh run
+/// starts from the order the table is written in.
+static MIRROR_ROTATION: LazyLock<Vec<AtomicUsize>> =
+    LazyLock::new(|| LINK_BASES.iter().map(|_| AtomicUsize::new(0)).collect());
+
+/// One mirror, as a pair of indices into [`LINK_BASES`].
+#[derive(Clone, Copy)]
+struct Mirror {
+    class: usize,
+    base: usize,
+}
+
+/// One url a download can be attempted against, plus the mirror it came from
+/// when it was built from a link class — that is what a successful attempt
+/// feeds back into [`MIRROR_ROTATION`].
+struct Candidate {
+    url: String,
+    mirror: Option<Mirror>,
+}
+
+/// The [`LINK_BASES`] entry and the parameter to append to its mirrors, if `s`
+/// names a link class rather than spelling a url out.
+fn link_class(s: &str) -> Option<(usize, &str)> {
+    let (class, parameter) = s.split_once(':')?;
+    let index = LINK_BASES
+        .iter()
+        .position(|(name, _)| class.eq_ignore_ascii_case(name))?;
+    Some((index, parameter))
+}
+
+/// Every url `s` could be downloaded from, best first: a link class's mirrors
+/// starting at the one [`MIRROR_ROTATION`] currently prefers, or just `s`
+/// itself for a url that is already spelled out.
+fn candidates(s: &str) -> Vec<Candidate> {
+    let Some((class, parameter)) = link_class(s) else {
+        return vec![Candidate {
+            url: rewrite(s),
+            mirror: None,
+        }];
+    };
+    let bases = LINK_BASES[class].1;
+    let start = MIRROR_ROTATION[class].load(Ordering::Relaxed);
+    (0..bases.len())
+        .map(|offset| (start + offset) % bases.len())
+        .map(|base| Candidate {
+            url: rewrite(&format!("{}{parameter}", bases[base])),
+            mirror: Some(Mirror { class, base }),
+        })
+        .collect()
+}
+
+/// Remember `mirror` as the one that worked, rotating its class's list so the
+/// next download of that class starts there.
+///
+/// The winner is stored as an absolute index rather than as "rotate past the
+/// mirrors we skipped", so a download finishing while another thread rotates
+/// the same class still leaves the list pointing at a mirror known to answer.
+fn promote_mirror(mirror: Mirror) {
+    MIRROR_ROTATION[mirror.class].store(mirror.base, Ordering::Relaxed);
+}
+
+/// Apply the first matching [`URL_REWRITES`] rule to `url`.
+fn rewrite(url: &str) -> String {
+    for (prefix, replacement) in URL_REWRITES {
+        if let Some(rest) = url.strip_prefix(prefix) {
+            return format!("{replacement}{rest}");
         }
     }
     url.to_string()
+}
+
+/// The urls of [`candidates`], best first — the [`LINK_BASES`] mirrors for a
+/// link class, or just `s` itself for a url that is already spelled out. Either
+/// way the result has been through [`rewrite`].
+pub fn resolve_url(s: &str) -> Vec<String> {
+    candidates(s).into_iter().map(|c| c.url).collect()
+}
+
+/// The url a download starts at: the currently preferred mirror of a link
+/// class, or the url as given. A link class with no mirrors at all falls back
+/// to the input, which then fails at download rather than here.
+fn primary_url(s: &str) -> String {
+    resolve_url(s)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| s.into())
+}
+
+/// True if `s` looks like a remote URL demarc should download rather than treat
+/// as a local path — either a downloadable scheme or a [`LINK_BASES`] class.
+pub fn is_url(s: &str) -> bool {
+    s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with("ftp://")
+        || link_class(s).is_some()
 }
 
 /// Download the file at `url` into a local cache directory and return its path.
@@ -73,26 +223,32 @@ pub fn translate_url(url: &str) -> String {
 /// Files are cached under `<cache>/demarc/downloads/<url-hash>/<name>`, so
 /// re-opening the same link reuses the existing download. The hash covers the
 /// whole URL while the leaf keeps its readable, correctly-suffixed name (see
-/// [`url_hash`] and [`url_filename`]) — downstream dispatch keys on the file
-/// extension, so the extension has to survive. The download goes to a `.part`
-/// temp file that is renamed into place on success, so an interrupted transfer
-/// never leaves a truncated file masquerading as a valid cache hit.
+/// [`crate::cache::FileCache::get_file`] and [`url_filename`]) — downstream
+/// dispatch keys on the file extension, so the extension has to survive. The
+/// download goes to a `.part` file that is renamed into place on success, so an
+/// interrupted transfer never leaves a truncated file masquerading as a valid
+/// cache hit.
 pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
-    let name = url_filename(url);
-    let dir = downloads_dir().join(url_hash(url));
-    std::fs::create_dir_all(&dir)?;
+    fetch_url_with_progress(url, &|_, _| {})
+}
 
-    let path = dir.join(&name);
-    if path.is_file() {
-        // Mark the hit as recent so [`prune_cache`] evicts genuinely unused
-        // downloads rather than merely old ones.
-        touch(&path);
-        return Ok(path);
-    }
+/// Reports `(bytes written so far, total size if the server declared one)` as a
+/// download runs. Called once per write, so on every chunk `std::io::copy`
+/// moves — cheap enough for an atomic store, too often for anything expensive.
+pub type OnProgress<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
 
-    info!("Downloading {url}...");
-    download_to(url, &path)?;
-    Ok(path)
+/// [`fetch_url`] with progress reporting, for callers that can display it (see
+/// [`crate::jobs::Jobs::download`]).
+///
+/// `on_progress` is not called at all for a cache hit — there is nothing to
+/// download — so a progress bar should not assume it will ever fire.
+pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow::Result<PathBuf> {
+    // The cache entry is keyed on the url as the db writes it, so a link class
+    // keeps its cache entry when [`LINK_BASES`] changes mirror; the name inside
+    // it comes from the resolved url, which is the one that carries the file's
+    // real name and extension.
+    let name = url_filename(&primary_url(url));
+    DOWNLOADS.get_file(url, &name, |dest| download_to(url, dest, on_progress))
 }
 
 /// Gather several URLs into a single fresh temp directory and return that
@@ -116,129 +272,55 @@ pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Root of the download cache: one subdirectory per URL hash, each holding the
-/// downloaded file under its URL-derived name.
-fn downloads_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("demarc")
-        .join("downloads")
-}
+/// The download cache: one entry per URL hash, each holding the downloaded file
+/// under its URL-derived name.
+static DOWNLOADS: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("downloads"));
 
-/// Set `path`'s access and modification times to now, recording it as recently
-/// used for [`prune_cache`].
-///
-/// Failures are ignored: a cache entry we can't touch is not worth failing a
-/// download over, it just risks being evicted earlier than it should be.
-fn touch(path: &Path) {
-    let now = SystemTime::now();
-    let times = std::fs::FileTimes::new().set_accessed(now).set_modified(now);
-    // Opening for write, not read: on Windows `set_times` needs write access,
-    // and on Unix futimens wants a handle we're allowed to modify.
-    if let Ok(file) = std::fs::File::options().write(true).open(path) {
-        let _ = file.set_times(times);
-    }
-}
-
-/// Delete least-recently-used entries from the download cache until its total
-/// size is back under [`CACHE_LIMIT`]. Intended to run once at startup, when
-/// nothing is holding a path into the cache yet.
-///
-/// Eviction is per URL-hash directory — the unit a [`fetch_url`] cache hit is
-/// keyed on — using the newest mtime inside it as its last-use time, which
-/// [`fetch_url`] refreshes on every hit. Errors are logged and skipped rather
-/// than propagated: a cache that can't be pruned is a disk-space problem, not a
-/// reason to refuse to start.
+/// Trim the download cache back under [`CACHE_LIMIT`]. Intended to run once at
+/// startup, when nothing is holding a path into it yet.
 pub fn prune_cache() {
-    prune_dir(&downloads_dir(), CACHE_LIMIT);
+    DOWNLOADS.prune(CACHE_LIMIT);
 }
 
-/// [`prune_cache`] against an explicit directory and limit.
-fn prune_dir(dir: &Path, limit: u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        // No cache directory yet — nothing to prune.
-        return;
-    };
-
-    let mut total = 0u64;
-    let mut items: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let (size, used) = entry_stats(&path);
-        total += size;
-        items.push((used, size, path));
-    }
-    if total <= limit {
-        return;
-    }
-
-    // Oldest first, so the entries nobody has opened in the longest go first.
-    items.sort_by_key(|(used, ..)| *used);
-    let mut freed = 0u64;
-    let mut removed = 0usize;
-    for (_, size, path) in items {
-        if total <= limit {
-            break;
-        }
-        let result = if path.is_dir() {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-        match result {
+/// Download `url` to `path`, trying every url [`candidates`] offers for it
+/// until one works — for a link class that is each mirror in turn, and the one
+/// that answered is remembered for next time (see [`MIRROR_ROTATION`]).
+///
+/// `path` is the staging file [`crate::cache::FileCache`] hands out, which it
+/// publishes under the entry's real name only once this returns `Ok` — so an
+/// interrupted download never leaves a truncated file masquerading as a
+/// complete one. Each attempt truncates it afresh, so a mirror that died
+/// mid-transfer leaves nothing behind for the next one to append to.
+/// `on_progress` restarts from zero on each attempt, which is honest: that
+/// transfer really is starting over somewhere else.
+///
+/// Every failure is logged and the last one is returned if nothing works, as
+/// the one that ran out of alternatives.
+fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    let mut last_error = None;
+    for candidate in candidates(url) {
+        match download_part(&candidate.url, path, on_progress) {
             Ok(()) => {
-                total -= size;
-                freed += size;
-                removed += 1;
+                if let Some(mirror) = candidate.mirror {
+                    promote_mirror(mirror);
+                }
+                return Ok(());
             }
-            Err(e) => tracing::warn!("Failed to prune {}: {e}", path.display()),
+            Err(e) => {
+                warn!("download failed for {}: {e:#}", candidate.url);
+                last_error = Some(e);
+            }
         }
     }
-    if removed > 0 {
-        info!(
-            "Pruned {removed} cached download(s), freeing {} MB",
-            freed / (1024 * 1024)
-        );
-    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no download url for {url}")))
 }
 
-/// Total size of `path` and the time it was last used, taken as the newest
-/// mtime found within it. A path we can't stat counts as zero-sized and
-/// last used at the epoch, so a broken entry is evicted first.
-fn entry_stats(path: &Path) -> (u64, SystemTime) {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return (0, SystemTime::UNIX_EPOCH);
-    };
-    if !meta.is_dir() {
-        return (meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
-    }
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return (0, SystemTime::UNIX_EPOCH);
-    };
-    let mut size = 0;
-    let mut used = SystemTime::UNIX_EPOCH;
-    for entry in entries.flatten() {
-        let (child_size, child_used) = entry_stats(&entry.path());
-        size += child_size;
-        used = used.max(child_used);
-    }
-    (size, used)
-}
-
-/// Download `url` to `path`, writing first to a sibling `.part` file that is
-/// renamed into place on success so an interrupted transfer never leaves a
-/// truncated file masquerading as a complete one.
-fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download");
-    let tmp = path.with_file_name(format!(".{name}.part"));
-    let mut file = std::fs::File::create(&tmp)?;
-    download(url, &mut file)?;
+/// One [`download_to`] attempt: `path` is created from scratch, so whatever a
+/// previous mirror managed to write into it is discarded.
+fn download_part(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    download(url, &mut file, on_progress)?;
     file.flush()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
@@ -248,11 +330,14 @@ fn download_to(url: &str, path: &Path) -> anyhow::Result<()> {
 /// redirect from an `http(s)://` URL to an `ftp://` one — as files.scene.org
 /// does for its `/get/...` download links — is handled by switching to the FTP
 /// transport instead of failing on the unknown scheme.
-fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
-    let url = translate_url(url);
-    let url = url.as_str();
+///
+/// `url` is a url proper: resolving a db's `LinkClass:parameter` pair to the
+/// mirrors to try, and the fixups for links that no longer work as recorded,
+/// happen a level up in [`download_to`].
+fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    info!("Downloading {url}...");
     if url.starts_with("ftp://") {
-        return fetch_ftp(url, out);
+        return fetch_ftp(url, out, on_progress);
     }
 
     let mut current = url.to_string();
@@ -264,7 +349,8 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_recv_response(Some(RESPONSE_TIMEOUT))
             .build()
-            .call()?;
+            .call()
+            .context(format!("{url:?} failed"))?;
         if response.status().is_redirection() {
             let location = response
                 .headers()
@@ -276,14 +362,24 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
                 .and_then(|base| base.join(location))
                 .with_context(|| format!("invalid redirect target: {location}"))?;
             if next.scheme() == "ftp" {
-                return fetch_ftp(next.as_str(), out);
+                return fetch_ftp(next.as_str(), out, on_progress);
             }
             info!("Redirected to {next}");
             current = next.into();
             continue;
         }
+        // `Content-Length` is the transfer size, which is the file size only
+        // when the body isn't compressed. Scene archives are already-compressed
+        // binaries that servers hand over as-is, so in practice it matches; if
+        // one ever does gzip a response the bar just tops out early.
+        let total = response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
         let mut reader = response.into_body().into_reader();
-        std::io::copy(&mut reader, out)?;
+        let mut out = CountingWriter::new(out, total, on_progress);
+        std::io::copy(&mut reader, &mut out)?;
         return Ok(());
     }
     anyhow::bail!("too many redirects while fetching {url}");
@@ -294,7 +390,14 @@ fn download(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
 /// Supports an optional `user:password@` prefix in the authority; without one it
 /// logs in anonymously. Transfers are done in binary mode so files aren't
 /// corrupted by line-ending translation.
-fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
+///
+/// The path is percent-decoded before it goes out as the `RETR` argument: FTP
+/// has no percent-encoding, so a server asked for `Count%20Duckula.png` looks
+/// for a file with a literal `%20` in its name and answers 550. URLs reach here
+/// encoded either because the db has them that way or because `Url::join`
+/// encoded a redirect `Location` that contained raw spaces — which is exactly
+/// what files.scene.org's `/get/...` links redirect to.
+fn fetch_ftp(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     use std::net::ToSocketAddrs;
 
     use suppaftp::FtpStream;
@@ -306,6 +409,7 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
         None => (rest, ""),
     };
     anyhow::ensure!(!path.is_empty(), "ftp URL has no file path: {url}");
+    let path = percent_decode_str(path).decode_utf8_lossy();
 
     let (credentials, host_port) = match authority.rsplit_once('@') {
         Some((creds, host)) => (Some(creds), host),
@@ -341,8 +445,12 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     let _ = ftp.get_ref().set_write_timeout(Some(RESPONSE_TIMEOUT));
     ftp.login(&user, &pass).context("FTP login failed")?;
     ftp.transfer_type(FileType::Binary)?;
-    ftp.retr(path, |reader| {
-        std::io::copy(reader, out).map_err(suppaftp::FtpError::ConnectionError)?;
+    // Not every server implements SIZE; without it the download just reports an
+    // unknown total and progress stays indeterminate.
+    let total = ftp.size(&path).ok().map(|size| size as u64);
+    let mut out = CountingWriter::new(out, total, on_progress);
+    ftp.retr(&path, |reader| {
+        std::io::copy(reader, &mut out).map_err(suppaftp::FtpError::ConnectionError)?;
         Ok(())
     })
     .with_context(|| format!("failed to retrieve {path}"))?;
@@ -350,21 +458,37 @@ fn fetch_ftp(url: &str, out: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Hash the whole URL into a hex string used as its cache subdirectory.
-///
-/// The last path segment alone is not a safe cache key: `.../v1/game.zip` and
-/// `.../v2/game.zip` share one, so the second URL would silently be served the
-/// first one's bytes. Keying the *directory* on the full URL keeps downloads
-/// distinct while leaving the filename inside it readable and correctly
-/// suffixed. 16 hex chars (64 bits) is far past any plausible collision here,
-/// and SHA-256 keeps the mapping stable across toolchain upgrades so an
-/// existing cache stays valid.
-fn url_hash(url: &str) -> String {
-    Sha256::digest(url.as_bytes())
-        .iter()
-        .take(8)
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// Wraps the download's output and reports the running byte count through an
+/// [`OnProgress`] callback, so the transfer loop stays plain `std::io::copy`.
+struct CountingWriter<'a, W> {
+    inner: W,
+    done: u64,
+    total: Option<u64>,
+    on_progress: OnProgress<'a>,
+}
+
+impl<'a, W: Write> CountingWriter<'a, W> {
+    fn new(inner: W, total: Option<u64>, on_progress: OnProgress<'a>) -> Self {
+        Self {
+            inner,
+            done: 0,
+            total,
+            on_progress,
+        }
+    }
+}
+
+impl<W: Write> Write for CountingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.done += written as u64;
+        (self.on_progress)(self.done, self.total);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// Everything outside the URL-unreserved set gets percent-encoded, which also
@@ -378,10 +502,16 @@ const FILENAME_ESCAPE: &AsciiSet = &NON_ALPHANUMERIC
 /// Derive a filesystem-safe filename from a URL's final path segment, dropping
 /// any `?query` or `#fragment` and percent-encoding anything that isn't an
 /// unreserved character so the result is safe to use as a cache key.
+///
+/// The segment is percent-*decoded* first so an already-encoded URL doesn't
+/// come back doubly encoded — `Count%20Duckula.png` is a space, not a literal
+/// `%20`, and re-encoding the `%` would name the cached file
+/// `Count%2520Duckula.png`.
 fn url_filename(url: &str) -> String {
     let tail = url.rsplit_once('/').map_or(url, |(_, tail)| tail);
     let tail = &tail[..tail.find(['?', '#']).unwrap_or(tail.len())];
-    let cleaned = utf8_percent_encode(tail, FILENAME_ESCAPE).to_string();
+    let tail = percent_decode_str(tail).decode_utf8_lossy();
+    let cleaned = utf8_percent_encode(&tail, FILENAME_ESCAPE).to_string();
     if cleaned.is_empty() || cleaned == "." {
         "download".to_string()
     } else {
@@ -393,37 +523,160 @@ fn url_filename(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Download `url` the way the rest of demarc does — through the mirror
+    /// walk, into a file — and hand back the bytes that landed there.
+    fn download(url: &str) -> anyhow::Result<Vec<u8>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("out.bin");
+        download_to(url, &path, &|_, _| {})?;
+        Ok(std::fs::read(path)?)
+    }
+
+    /// The `base`th mirror of `url`'s class, counted in [`LINK_BASES`] order
+    /// rather than in whatever order [`MIRROR_ROTATION`] currently prefers.
+    fn mirror(url: &str, base: usize) -> Mirror {
+        let (class, _) = link_class(url).unwrap();
+        Mirror { class, base }
+    }
+
     #[test]
     fn detects_urls() {
         assert!(is_url("https://example.com/a.zip"));
         assert!(is_url("http://example.com/a.zip"));
         assert!(is_url("ftp://example.com/a.zip"));
+        assert!(is_url("SceneOrgFile:/parties/2006/x.zip"));
         assert!(!is_url("/home/user/a.zip"));
         assert!(!is_url("a.zip"));
+        assert!(!is_url("C:/games/a.zip"));
     }
 
     #[test]
-    fn translates_scene_org_urls() {
+    fn resolves_a_link_class_to_its_mirrors() {
+        let urls = resolve_url("SceneOrgFile:/parties/2006/assembly06/demo/x.zip");
         assert_eq!(
-            translate_url("https://files.scene.org/get/demos/groups/x/y.zip"),
-            "https://files.scene.org/get:de-https/demos/groups/x/y.zip"
+            urls,
+            vec![
+                "https://files.scene.org/get:de-https/parties/2006/assembly06/demo/x.zip",
+                "https://files.scene.org/get:fi-ftp/parties/2006/assembly06/demo/x.zip",
+            ]
         );
-        // Non-matching URLs pass through untouched.
+        // A base that is not a directory prefix joins just as directly.
         assert_eq!(
-            translate_url("https://example.com/get/foo.zip"),
-            "https://example.com/get/foo.zip"
+            resolve_url("Defacto2File:a53998"),
+            vec!["https://defacto2.net/f/a53998"]
+        );
+    }
+
+    /// A db line reaches us through `Url::parse`, which lowercases the scheme,
+    /// so the class has to match however it was spelled.
+    #[test]
+    fn resolves_a_link_class_case_insensitively() {
+        let parsed = Url::parse("ModlandFile:/pub/modules/Protracker/Wal/raw.mod").unwrap();
+        assert_eq!(parsed.scheme(), "modlandfile");
+        assert_eq!(
+            resolve_url(parsed.as_str()),
+            vec!["https://ftp.modland.com/pub/modules/Protracker/Wal/raw.mod"]
+        );
+    }
+
+    #[test]
+    fn rewrites_urls_that_no_longer_work_as_recorded() {
+        // A plain url from a db, pointed at the mirror that serves it.
+        assert_eq!(
+            resolve_url("https://files.scene.org/get/demos/x.zip"),
+            vec!["https://files.scene.org/get:de-https/demos/x.zip"]
+        );
+        // ...and the same fixup applied after a link class was resolved: these
+        // parameters carry the base's own path prefix a second time.
+        assert_eq!(
+            resolve_url("ModlandFile:/pub/modules/pub/modules/Wal/raw.mod"),
+            vec!["https://ftp.modland.com/pub/modules/Wal/raw.mod"]
+        );
+        // A url no rule matches is left exactly as it was.
+        assert_eq!(
+            resolve_url("https://example.com/a.zip"),
+            vec!["https://example.com/a.zip"]
+        );
+    }
+
+    /// A mirror that worked becomes the one the next download starts at. The
+    /// list keeps its cyclic order — this is a rotation, not a move to front —
+    /// so the mirrors after the winner stay in their table order.
+    ///
+    /// Uses AmigascneFile, the one class with three mirrors, and puts the
+    /// rotation back afterwards: [`MIRROR_ROTATION`] is process-wide state.
+    #[test]
+    fn rotates_to_the_mirror_that_last_worked() {
+        let url = "AmigascneFile:/Gfx/M/Mr_Acid/Count%20Duckula.png";
+        let table = resolve_url(url);
+        assert_eq!(table.len(), 3);
+
+        promote_mirror(mirror(url, 2));
+        assert_eq!(
+            resolve_url(url),
+            vec![table[2].clone(), table[0].clone(), table[1].clone()]
+        );
+
+        promote_mirror(mirror(url, 0));
+        assert_eq!(resolve_url(url), table);
+    }
+
+    /// A url that is spelled out has no mirror to promote, so a download of one
+    /// leaves every class's rotation alone.
+    #[test]
+    fn a_plain_url_has_no_mirror() {
+        let candidates = candidates("https://example.com/a.zip");
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].mirror.is_none());
+    }
+
+    /// The cache keys on the db's own url so a mirror change keeps the entry,
+    /// but the file inside it is named from the resolved url — dispatch keys on
+    /// the extension, and a link class has none.
+    #[test]
+    fn names_a_link_class_download_after_the_resolved_url() {
+        assert_eq!(
+            url_filename(&primary_url(
+                "AmigascneFile:/Groups/D/DOC/DOC-Digidemo1.dms"
+            )),
+            "DOC-Digidemo1.dms"
         );
     }
 
     #[test]
     #[ignore = "hits the network"]
     fn downloads_https_to_ftp_redirect() {
-        let mut buf = Vec::new();
-        download(
-            "https://files.scene.org/get/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
-            &mut buf,
+        // An FTP mirror named directly: a bare `/get/` link redirects here too,
+        // but [`URL_REWRITES`] sends that one to the HTTPS mirror instead.
+        let buf = download(
+            "https://files.scene.org/get:fi-ftp/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
         )
         .unwrap();
+        assert_eq!(buf.len(), 46596);
+        assert_eq!(&buf[..2], b"PK");
+    }
+
+    /// A path with a space survives the https→ftp redirect: files.scene.org
+    /// sends the space raw in `Location`, `Url::join` encodes it to `%20`, and
+    /// the FTP side has to decode it again before `RETR` or the server 550s.
+    #[test]
+    #[ignore = "hits the network"]
+    fn downloads_ftp_path_containing_a_space() {
+        let buf = download(
+            "https://files.scene.org/get:fi-ftp/mirrors/amigascne/Gfx/M/Mr_Acid/Count%20Duckula.png",
+        )
+        .unwrap();
+        assert_eq!(buf.len(), 5402);
+        assert_eq!(&buf[1..4], b"PNG");
+    }
+
+    /// The whole path a db line takes: a link class is resolved to its mirror
+    /// and downloaded from there.
+    #[test]
+    #[ignore = "hits the network"]
+    fn downloads_a_link_class_url() {
+        let buf =
+            download("SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip").unwrap();
         assert_eq!(buf.len(), 46596);
         assert_eq!(&buf[..2], b"PK");
     }
@@ -434,106 +687,49 @@ mod tests {
         let url = "https://files.scene.org/get/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip";
         let path = fetch_url(url).unwrap();
         assert_eq!(path.file_name().unwrap(), "dcs-nmod.zip");
-        assert_eq!(path.parent().unwrap().file_name().unwrap(), &*url_hash(url));
+        // The file keeps its readable name, but the directory holding it is
+        // named for the url's hash, not for the file.
+        let entry = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(entry.len(), 16);
+        assert!(entry.chars().all(|c| c.is_ascii_hexdigit()));
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 46596);
         // Second call is a cache hit on the same path, no re-download.
         assert_eq!(fetch_url(url).unwrap(), path);
+    }
+
+    /// The byte count reported to `on_progress` accumulates across writes and
+    /// carries the declared total, which is what drives a download's progress
+    /// bar.
+    #[test]
+    fn counts_bytes_written() {
+        let seen = std::sync::Mutex::new(Vec::new());
+        let mut sink = Vec::new();
+        let report = |done, total| seen.lock().unwrap().push((done, total));
+        {
+            let mut writer = CountingWriter::new(&mut sink, Some(4), &report);
+            // Copy in two chunks so the running total has to be additive.
+            std::io::copy(&mut &b"ab"[..], &mut writer).unwrap();
+            std::io::copy(&mut &b"cd"[..], &mut writer).unwrap();
+        }
+        assert_eq!(sink, b"abcd");
+        assert_eq!(seen.into_inner().unwrap(), vec![(2, Some(4)), (4, Some(4))]);
     }
 
     #[test]
     fn extracts_filename() {
         assert_eq!(url_filename("https://x.com/path/foo.zip"), "foo.zip");
         assert_eq!(url_filename("https://x.com/path/foo.zip?a=b"), "foo.zip");
-        // The `%` of an already-encoded segment is itself encoded, keeping the
-        // mapping from URL to cache name unambiguous.
-        assert_eq!(
-            url_filename("https://x.com/foo%20bar.d64"),
-            "foo%2520bar.d64"
-        );
+        // An already-encoded segment is decoded before re-encoding, so it comes
+        // back as it went in rather than doubly encoded.
+        assert_eq!(url_filename("https://x.com/foo%20bar.d64"), "foo%20bar.d64");
         assert_eq!(url_filename("https://x.com/a b&c.zip"), "a%20b%26c.zip");
         assert_eq!(url_filename("https://x.com/"), "download");
         assert_eq!(url_filename("game.zip"), "game.zip");
-    }
-
-    #[test]
-    fn sums_size_and_newest_mtime_of_an_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        let entry = dir.path().join("abc123");
-        std::fs::create_dir(&entry).unwrap();
-        std::fs::write(entry.join("a.zip"), vec![0u8; 100]).unwrap();
-        std::fs::write(entry.join("b.zip"), vec![0u8; 200]).unwrap();
-
-        // Age one file; the entry's last-use time must follow the *newest*
-        // file in it, which `touch` here makes `b.zip`.
-        let old = SystemTime::now() - Duration::from_secs(3600);
-        let file = std::fs::File::options()
-            .write(true)
-            .open(entry.join("a.zip"))
-            .unwrap();
-        file.set_times(std::fs::FileTimes::new().set_modified(old))
-            .unwrap();
-        touch(&entry.join("b.zip"));
-
-        let (size, used) = entry_stats(&entry);
-        assert_eq!(size, 300);
-        assert!(used > old);
-    }
-
-    #[test]
-    fn prunes_least_recently_used_until_under_limit() {
-        let cache = tempfile::tempdir().unwrap();
-        // Three 100-byte entries, aged 3h / 2h / 1h ago.
-        for (name, hours) in [("old", 3), ("mid", 2), ("new", 1)] {
-            let entry = cache.path().join(name);
-            std::fs::create_dir(&entry).unwrap();
-            let path = entry.join("a.zip");
-            std::fs::write(&path, vec![0u8; 100]).unwrap();
-            let when = SystemTime::now() - Duration::from_secs(hours * 3600);
-            let file = std::fs::File::options().write(true).open(&path).unwrap();
-            file.set_times(std::fs::FileTimes::new().set_modified(when))
-                .unwrap();
-        }
-
-        // Under the limit: nothing is touched.
-        prune_dir(cache.path(), 300);
-        assert!(cache.path().join("old").exists());
-
-        // Over it: evict oldest first, and stop as soon as we're back under.
-        prune_dir(cache.path(), 150);
-        assert!(!cache.path().join("old").exists());
-        assert!(!cache.path().join("mid").exists());
-        assert!(cache.path().join("new").exists());
-    }
-
-    #[test]
-    fn touch_marks_a_file_as_recently_used() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a.zip");
-        std::fs::write(&path, b"x").unwrap();
-        let old = SystemTime::now() - Duration::from_secs(3600);
-        let file = std::fs::File::options().write(true).open(&path).unwrap();
-        file.set_times(std::fs::FileTimes::new().set_modified(old))
-            .unwrap();
-        drop(file);
-
-        let (_, before) = entry_stats(&path);
-        touch(&path);
-        let (_, after) = entry_stats(&path);
-        assert!(after > before);
-    }
-
-    #[test]
-    fn hashes_whole_url() {
-        // URLs sharing a final segment must not share a cache directory.
-        assert_ne!(
-            url_hash("https://x.com/v1/game.zip"),
-            url_hash("https://x.com/v2/game.zip")
-        );
-        // ...but the same URL must always land on the same one.
-        assert_eq!(
-            url_hash("https://x.com/v1/game.zip"),
-            url_hash("https://x.com/v1/game.zip")
-        );
-        assert_eq!(url_hash("https://x.com/v1/game.zip").len(), 16);
     }
 }

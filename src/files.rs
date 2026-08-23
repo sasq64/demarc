@@ -2,151 +2,27 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, IsTerminal, Read},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{Result, bail};
 use regex::Regex;
-use tempfile::TempDir;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    cbmconvert,
-    fetch::{fetch_url, fetch_urls},
-    frontend::system_dir,
-    systems::{GameInfo, SystemType, WorkingFile, get_system_type},
-    utils::{
-        GBA_HEADER_LEN, build_atari_auto_disk, build_m3u, copy_dir_all, fix_psx_text_size,
-        has_matching, is_disk_image, is_gba_rom, is_psx_exe, is_self_booting_dir, parse_m3u,
-        prepare_psx_disc, psx_needs_text_fix, read_header, scan_release_dir, sort_disks,
-        unpack_if_packed, unpack_into, unpack_to_temp,
-    },
+    emu_file::{EmuFile, FileSource, GameInfo},
+    m3u::M3u,
+    utils::{is_disk_image, unpack_if_packed},
 };
-
-/// Where an [`EmuFile`]'s data comes from: either an already-local path or one
-/// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).
-#[derive(Clone, Debug)]
-pub enum FileSource {
-    Url(Vec<Url>),
-    Path(PathBuf),
-}
-
-impl Default for FileSource {
-    fn default() -> Self {
-        FileSource::Path(PathBuf::new())
-    }
-}
-
-impl From<PathBuf> for FileSource {
-    fn from(path: PathBuf) -> Self {
-        FileSource::Path(path)
-    }
-}
-
-impl From<&Path> for FileSource {
-    fn from(path: &Path) -> Self {
-        FileSource::Path(path.to_owned())
-    }
-}
-
-fn url_extension(url: &Url) -> Option<String> {
-    Path::new(url.path())
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-}
-
-/// Narrow the URLs of one release down to the ones worth downloading.
-///
-/// A release listing often mixes the actual program with extras (music rips,
-/// scans, ...). If any URL is a disk image, the release is disk based and only
-/// disk images of that same kind are kept — that way a multi-disk set stays
-/// together without dragging in, say, an `.adf` version of a `.d64` release.
-/// Otherwise only the obviously non-loadable extras are dropped.
-fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
-    /// Extensions that are never the main file of a release.
-    const IGNORED_EXTENSIONS: [&str; 2] = ["sid", "pdf"];
-
-    let disk_ext = urls
-        .iter()
-        .find(|u| is_disk_image(Path::new(u.path())))
-        .and_then(url_extension);
-
-    let filtered: Vec<Url> = match &disk_ext {
-        Some(ext) => urls
-            .iter()
-            .filter(|u| url_extension(u).as_ref() == Some(ext))
-            .cloned()
-            .collect(),
-        None => urls
-            .iter()
-            .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
-            .cloned()
-            .collect(),
-    };
-
-    if filtered.is_empty() { urls } else { filtered }
-}
-
-impl FileSource {
-    /// Ensure the data is available locally — downloading the URL (cached, see
-    /// [`fetch_url`]) the first time — and return the resulting local path. A
-    /// [`FileSource::Path`] is returned as-is.
-    fn resolve(&mut self) -> Result<&PathBuf> {
-        if let FileSource::Url(urls) = self {
-            // If any URL is a disk image, this is a (possibly multi-) disk set:
-            // download every disk image so they sit together in one directory
-            // (built into an m3u later). Otherwise just grab the first entry.
-            let urls = filter_release_urls(urls.clone());
-            let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
-                fetch_urls(&urls)?
-            } else {
-                fetch_url(urls.first().unwrap().as_ref())?
-            };
-            *self = FileSource::Path(p);
-        }
-        match self {
-            FileSource::Path(p) => Ok(p),
-            FileSource::Url(_) => unreachable!("just converted to Path above"),
-        }
-    }
-}
-
-// EmuFile can be:
-// * Single PRG, ADF or other
-// * Parsed M3U for loading
-//   - Amiga or C64 with disks listed, path = m3u
-// * Parsed M3U but not supported for loading
-//   - No files listed, path = directory
-// * Directory (if leaf)
-// * Archive (sytem type unknown)
-
-#[derive(Default, Clone, Debug)]
-pub struct EmuFile {
-    pub path: FileSource,
-    pub tags: HashMap<String, String>,
-    pub system_type: SystemType,
-    pub game_info: GameInfo,
-}
 
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut title: String = "".into();
     let mut group: String = "".into();
-    let mut year: String = "".into();
-    let mut system_type = SystemType::Unknown;
-    let mut tags = HashMap::new();
+    let mut year: u32 = 0;
+    let mut meta = HashMap::new();
 
-    let m3u = parse_m3u(in_path)?;
-    for f in &m3u.files {
-        let t = get_system_type(f);
-        if system_type != SystemType::Unknown && t != system_type {
-            // Mixed
-            system_type = SystemType::Unknown;
-            break;
-        }
-        system_type = t;
-    }
+    let m3u = M3u::from_file(in_path)?;
 
     let path = (if m3u.files.is_empty() {
         in_path.parent().unwrap()
@@ -162,112 +38,54 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         } else if key == "group" {
             group = val.clone();
         } else if key == "year" {
-            year = val.clone();
+            year = val.parse::<u32>().unwrap_or(0);
         } else {
-            tags.insert(key, val);
+            meta.insert(key, val);
         }
     }
     Ok(EmuFile {
         path: path.into(),
-        system_type,
-        tags,
+        meta,
         game_info: GameInfo {
             title,
             group,
             year,
-            typ: "".into(),
+            category: "".into(),
         },
     })
 }
 
-/// The scene metadata one db line carries, however the line spells it out.
-#[derive(Default)]
-struct DbRecord<'a> {
-    title: &'a str,
-    group: &'a str,
-    date: &'a str,
-    party: &'a str,
-    demo_type: &'a str,
-    tag_list: &'a str,
-    url: &'a str,
-    /// Platform prefixed to the type, when the line names one itself.
-    platform: Option<&'a str>,
-}
-
-/// Map a named field onto the [`DbRecord`] slot it fills, or `None` if the name
-/// isn't one we know (`id`, for instance, is parsed but unused).
-fn db_field<'a, 'r>(rec: &'r mut DbRecord<'a>, key: &str) -> Option<&'r mut &'a str> {
-    Some(match key {
-        "title" => &mut rec.title,
-        "author" | "group" => &mut rec.group,
-        "date" => &mut rec.date,
-        "party" => &mut rec.party,
-        "category" | "type" => &mut rec.demo_type,
-        "tags" => &mut rec.tag_list,
-        "download" | "url" => &mut rec.url,
-        _ => return None,
-    })
-}
-
 /// Parse a `key:value`-per-field line, e.g.
-/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`. Returns `None` when the line isn't
-/// in that format, so the caller can fall back to the positional one.
+/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`, into its pairs. Fields without a
+/// `:` are skipped.
 ///
 /// Only the first `:` splits a field, leaving values (URLs above all) intact,
 /// and fields may appear in any order.
-fn parse_named_db_line(line: &str) -> Option<DbRecord<'_>> {
-    let mut rec = DbRecord::default();
-    let mut named = false;
+fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
+    let mut result = vec![];
     for field in line.split('\t') {
         let Some((key, val)) = field.split_once(':') else {
             continue;
         };
-        if key == "platform" {
-            rec.platform = Some(val);
-            named = true;
-        } else if let Some(slot) = db_field(&mut rec, key) {
-            *slot = val;
-            named = true;
-        } else if key == "id" {
-            named = true;
-        }
+        result.push((key, val));
     }
-    named.then_some(rec)
-}
-
-/// Parse the older order-based line: `id, title, group, date, party, type,
-/// tags, url` separated by tabs.
-fn parse_positional_db_line(line: &str) -> DbRecord<'_> {
-    let mut fields = line.split('\t');
-    let mut next = || fields.next().unwrap_or_default();
-    let _id = next();
-    DbRecord {
-        title: next(),
-        group: next(),
-        date: next(),
-        party: next(),
-        demo_type: next(),
-        tag_list: next(),
-        url: next(),
-        platform: None,
-    }
+    result
 }
 
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
 ///
-/// Each non-blank line holds the fields `id, title/author (group), date, party,
-/// category (type), tags, download (url)`, either prefixed with their names
-/// (`title:Zentro 4`, any order) or, in older db files, in that fixed order.
-/// The `url` becomes the entry's path and is downloaded on demand the first
-/// time it's loaded (see [`prepare_file`]); the year is the first `-`/`/`/`.`
-/// -delimited part of `date`. The remaining scene metadata (`party`, `type`,
-/// `tags`) is kept under matching keys. Lines with no URL are skipped.
+/// Each non-blank line holds `key:value` fields separated by tabs, in any order
+/// (`id:1\ttitle:Zentro 4\tauthor:Zenith\t…`). Every field becomes meta on the
+/// entry; `title`, `author` and the year — the first `-`/`/`/`.`-delimited part
+/// of `date` — additionally fill in its [`GameInfo`]. The `download` field
+/// becomes the entry's path and is fetched on demand the first time it's loaded
+/// (see [`FileSource::resolve`]). Lines with no URL are skipped.
 ///
-/// A `platform` field, or a `# Platform:<name>` header line applying to every
-/// line below it, prefixes the type (`Demo` → `Amiga Demo`). A header line may
-/// carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
-/// become tags on every entry below it — see [`parse_db_header`].
+/// A `# Platform:<name>` header line applies to every line below it, becoming a
+/// `platform` meta on each entry that doesn't name one itself. A header line
+/// may carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
+/// likewise become meta on every entry below it — see [`parse_db_header`].
 ///
 /// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
 /// first, so it can be loaded exactly like the plain text file.
@@ -296,14 +114,14 @@ fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
     }
 }
 
-/// Which db lines to keep, as regexes matched against the raw line before it is
-/// parsed — the same thing piping the db through `grep`/`grep -v` would do, so
-/// a pattern can pick on any field (`category:Demo`, `author:Fairlight`).
+/// Which db lines to keep, as regexes matched against the raw fields of a line
+/// before it is parsed, so a pattern can pick on any field (`category:Demo`,
+/// `author:Fairlight`).
 ///
 /// A line has to match *every* `include` pattern and must not match *any*
 /// `exclude` pattern, so repeating `-I` narrows the selection down while
 /// repeating `-X` widens what is thrown away. Header comments are always read,
-/// so the platform and tags they set still apply to the lines that survive.
+/// so the platform and meta they set still apply to the lines that survive.
 #[derive(Default)]
 pub struct DbFilter<'a> {
     pub include: &'a [Regex],
@@ -312,9 +130,21 @@ pub struct DbFilter<'a> {
 
 impl DbFilter<'_> {
     fn keeps(&self, line: &str) -> bool {
-        self.include.iter().all(|re| re.is_match(line))
-            && !self.exclude.iter().any(|re| re.is_match(line))
+        self.include.iter().all(|re| matches_field(re, line))
+            && !self.exclude.iter().any(|re| matches_field(re, line))
     }
+}
+
+/// Whether `re` matches any one of the line's tab-separated fields.
+///
+/// Matching field by field rather than the whole line keeps a pattern inside
+/// the field it names: `author:.*Firefox` can't run past the end of `author:`
+/// and pick up a `Firefox` somewhere later on the line. It also lets `^` and
+/// `$` anchor to a field, so `^category:Demo$` picks plain demos while leaving
+/// `category:Demoshow` alone. The flip side is that a pattern can no longer
+/// span two fields at once.
+fn matches_field(re: &Regex, line: &str) -> bool {
+    line.split('\t').any(|field| re.is_match(field))
 }
 
 /// Load a db piped in on stdin, so entries can be filtered before they reach
@@ -338,16 +168,16 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
 }
 
 /// Read a header comment such as `# Platform:Amiga puae_model:A500`, which
-/// applies to every line below it: `Platform` names the platform prefixed to
-/// the type, and every other pair becomes a tag merged into each entry (a
+/// applies to every line below it: `Platform` names the platform the entries
+/// are for, and every other pair becomes meta merged into each entry (a
 /// db can this way set emulator settings for all its lines at once).
 ///
 /// Only a comment made up entirely of `key:value` pairs is a header, so an
-/// ordinary prose comment never turns into tags.
+/// ordinary prose comment never turns into meta.
 fn parse_db_header<'a>(
     comment: &'a str,
     platform: &mut Option<&'a str>,
-    tags: &mut HashMap<String, String>,
+    meta: &mut HashMap<&'a str, &'a str>,
 ) {
     let Some(fields) = comment
         .split_whitespace()
@@ -363,7 +193,7 @@ fn parse_db_header<'a>(
         if key.eq_ignore_ascii_case("platform") {
             *platform = Some(val);
         } else {
-            tags.insert(key.to_string(), val.to_string());
+            meta.insert(key, val);
         }
     }
 }
@@ -372,8 +202,8 @@ fn parse_db_header<'a>(
 pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&str> = None;
 
-    // Tags from header comments, applied to every entry below them.
-    let mut file_tags = HashMap::<String, String>::new();
+    // Meta from header comments, applied to every entry below them.
+    let mut file_meta = HashMap::<&str, &str>::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -382,63 +212,64 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             continue;
         }
         if let Some(comment) = line.strip_prefix('#') {
-            parse_db_header(comment, &mut file_platform, &mut file_tags);
+            parse_db_header(comment, &mut file_platform, &mut file_meta);
             continue;
         }
         if !filter.keeps(line) {
             continue;
         }
-        let rec = parse_named_db_line(line).unwrap_or_else(|| parse_positional_db_line(line));
+        let fields = parse_named_db_line(line);
 
-        let demo_type = match rec.platform.or(file_platform) {
-            Some(platform) if !platform.is_empty() => format!("{platform} {}", rec.demo_type),
-            _ => rec.demo_type.to_string(),
-        };
-        let url = rec.url.trim();
-        if url.is_empty() {
-            continue;
+        let mut meta = file_meta.clone();
+        if let Some(platform) = file_platform.filter(|p| !p.is_empty()) {
+            // A `platform` field on the line itself is inserted below and wins.
+            meta.insert("platform", platform);
         }
-        let urls: Vec<Url> = url
-            .split(';')
-            .filter_map(|p| match Url::parse(p) {
-                Ok(u) => Some(u),
-                Err(err) => {
-                    warn!("Skipping unparseable URL {p:?}: {err}");
-                    None
+        let mut urls = vec![];
+        for (key, val) in fields {
+            if key == "download" {
+                if val.trim().is_empty() {
+                    continue;
                 }
-            })
-            .collect();
+                urls = val
+                    .split(';')
+                    .filter_map(|p| match Url::parse(p) {
+                        Ok(u) => Some(u),
+                        Err(err) => {
+                            warn!("Skipping unparseable URL {p:?}: {err}");
+                            None
+                        }
+                    })
+                    .collect();
+            }
+            meta.insert(key, val);
+        }
         if urls.is_empty() {
             continue;
         }
 
-        let year = rec
-            .date
+        let title = meta.get("title").copied().unwrap_or("");
+        let author = meta.get("author").copied().unwrap_or("");
+        let year_s = meta
+            .get("date")
+            .copied()
+            .unwrap_or("")
             .split(['-', '/', '.'])
             .next()
-            .unwrap_or_default()
-            .to_string();
-        // Header tags first, so anything the line itself names wins.
-        let mut tags = file_tags.clone();
-        for (key, val) in [
-            ("party", rec.party),
-            ("type", demo_type.as_str()),
-            ("tags", rec.tag_list),
-        ] {
-            if !val.is_empty() {
-                tags.insert(key.to_string(), val.to_string());
-            }
-        }
-
+            .unwrap_or_default();
+        meta.insert("year", year_s);
+        let year = year_s.parse::<u32>().unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
-            system_type: SystemType::Unknown,
-            tags,
+            meta: meta
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
             game_info: GameInfo {
-                title: rec.title.to_string(),
-                group: rec.group.to_string(),
+                title: title.into(),
+                group: author.into(),
                 year,
-                typ: demo_type,
+                ..Default::default()
             },
         });
     }
@@ -454,7 +285,7 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
         let title = in_path.file_stem().unwrap().to_string_lossy().to_string();
         Ok(EmuFile {
             path: in_path.into(),
-            system_type: get_system_type(in_path),
+            //system_type: get_system_type(in_path),
             game_info: GameInfo {
                 title,
                 ..Default::default()
@@ -476,8 +307,6 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     };
     let mut files = vec![];
     let mut dirs = vec![];
-    let mut found_type = SystemType::Unknown;
-    let mut mixed = many;
     let mut disk_images = true;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -491,31 +320,30 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
             out.push(handle_m3u(&path)?);
             return Ok(());
         } else {
-            let t = get_system_type(&path);
             // NOTE: Images on disk are assumed to be screenshots
-            if t != SystemType::Unknown && t != SystemType::Gfx {
-                if found_type != SystemType::Unknown && found_type != t {
-                    mixed = true;
-                }
-                if !is_disk_image(&path) {
-                    disk_images = false;
-                }
-                found_type = t;
-                files.push(path);
+            if !is_disk_image(&path) {
+                disk_images = false;
             }
+            files.push(path);
         }
     }
 
-    // Mixed types in directory, add every valid file one by one
-    // Amiga: Always add parent dir (to get data files)
-    if mixed || ((!disk_images) && found_type != SystemType::Amiga) {
-        //out.extend(files.iter().map(|f| handle_file(f)?));
+    // A Neo Geo CD release ships as the loose files that were meant to be
+    // burned onto a disc — the boot list and everything it names. They are one
+    // release and mean nothing apart, so the directory becomes a single entry
+    // and the loader builds the disc out of it.
+    if crate::newsys::holds_boot_list(&files) {
+        out.push(collect_file(dir)?);
+        return Ok(());
+    }
+
+    // Mixed types in directory, add every valid file one by one. A directory
+    // holding nothing but disk images is left to the loader, which mounts the
+    // whole set rather than each image on its own.
+    if many || !disk_images {
         for f in files {
             out.push(collect_file(&f)?);
         }
-    } else if found_type != SystemType::Unknown {
-        out.push(collect_file(dir)?);
-        return Ok(());
     }
     for dir in dirs {
         collect_files(&dir, out, many)?;
@@ -523,488 +351,11 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     Ok(())
 }
 
-/// Extension check shared by the conversion helpers below. Content sniffing is
-/// left to [`unpack_into`]: the file has to be picked out by name first, since
-/// what conversion does to it — replacing it in place — must never be a
-/// surprise for a file sitting in the user's own directory.
-fn has_extension(path: &Path, ext: &str) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
-}
-
-/// Wrappers that hold a release rather than being one: a scener's zip often has
-/// the disk image inside a `.gz`, and a `.tar.gz` puts another layer on top of
-/// that. Expanding them in place is always right — unlike a nested zip or lha,
-/// which is usually a second, alternative copy of the release.
-fn is_wrapper(path: &Path) -> bool {
-    ["gz", "tgz", "bz2", "z", "tar"]
-        .iter()
-        .any(|ext| has_extension(path, ext))
-}
-
-/// True if `path` names a container that isn't loadable as-is and that
-/// [`convert_dir`] knows how to turn into something that is.
-fn needs_conversion(path: &Path) -> bool {
-    has_extension(path, "t64") || is_wrapper(path)
-}
-
-/// True if `path` — a file, or anything in a directory tree — needs converting.
-fn has_convertible(path: &Path) -> bool {
-    if path.is_dir() {
-        fs::read_dir(path)
-            .is_ok_and(|entries| entries.flatten().any(|e| has_convertible(&e.path())))
-    } else {
-        needs_conversion(path)
-    }
-}
-
-/// How many times [`convert_dir`] re-scans for wrappers. Two rounds cover the
-/// `.tar.gz` case; the limit is only there so a self-referential chain can't
-/// spin forever.
-const MAX_EXPAND_PASSES: usize = 8;
-
-/// Expand every wrapper under `dir` in place, replacing each one with what it
-/// held. Returns whether anything was expanded.
-fn expand_wrappers(dir: &Path) -> Result<bool> {
-    let mut expanded = false;
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            expanded |= expand_wrappers(&path)?;
-        } else if is_wrapper(&path) {
-            // A `.gz` yields its payload under the archive's stem, so
-            // `demo.adf.gz` becomes `demo.adf` right next to it.
-            match unpack_into(&path, dir) {
-                // Drop the wrapper once its contents are out, so the file
-                // counting further down sees only the real files.
-                Ok(true) => {
-                    debug!("FMT: expanded {path:?}");
-                    fs::remove_file(&path)?;
-                    expanded = true;
-                }
-                Ok(false) => debug!("FMT: {path:?} is not an archive after all"),
-                Err(err) => warn!("Could not expand {path:?}: {err}"),
-            }
-        }
-    }
-    Ok(expanded)
-}
-
-/// Turn everything under `dir` that isn't loadable on its own into something
-/// that is: wrappers (`.gz` and friends) are expanded in place, and `.t64` tape
-/// images are handed to cbmconvert, which splits them into raw `.prg` files.
-///
-/// Both write next to the file they came from — and expanding deletes it — so
-/// `dir` has to be a directory we own; see [`stage_for_convert`].
-fn convert_dir(dir: &Path) -> Result<()> {
-    // Expanding can uncover more wrappers (`.tar.gz` -> `.tar` -> the files),
-    // so keep going until a pass finds nothing left.
-    for pass in 0.. {
-        if !expand_wrappers(dir)? {
-            break;
-        }
-        if pass + 1 >= MAX_EXPAND_PASSES {
-            warn!("Giving up expanding archives in {dir:?} after {MAX_EXPAND_PASSES} passes");
-            break;
-        }
-    }
-    convert_files(dir)
-}
-
-/// The cbmconvert half of [`convert_dir`], kept separate so it runs once per
-/// file rather than once per expansion pass.
-fn convert_files(dir: &Path) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            convert_files(&path)?;
-        } else if has_extension(&path, "t64") {
-            info!("Converting {path:?}");
-            let _guard = cbmconvert::CwdGuard::enter(dir);
-            let code = cbmconvert::run(["-t", "-N", path.to_string_lossy().as_ref()]);
-            if code != 0 {
-                warn!("cbmconvert failed on {path:?} (exit code {code})");
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Give conversion a directory of its own to work in.
-///
-/// Since conversion drops its output next to the input, anything still holding
-/// a convertible file is copied into a fresh temp directory first: a lone file
-/// on its own — so it takes the same route as an unpacked archive from here on
-/// — a directory as a whole tree. An `already_temp` path is ours to write to
-/// and is converted in place. Returns `None` when there is nothing to convert,
-/// in which case the caller keeps using the path it has.
-fn stage_for_convert(path: &Path, already_temp: bool) -> Result<Option<TempDir>> {
-    if already_temp || !has_convertible(path) {
-        return Ok(None);
-    }
-    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
-    if path.is_dir() {
-        copy_dir_all(path, dir.path())?;
-    } else {
-        fs::copy(path, dir.path().join(path.file_name().unwrap()))?;
-    }
-    debug!("FMT: staged {path:?} for conversion in {:?}", dir.path());
-    Ok(Some(dir))
-}
-
-/// Append every file under `dir` to `out`, stopping as soon as there is more
-/// than one — the only question [`only_file`] asks.
-fn gather_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            gather_files(&path, out)?;
-        } else {
-            out.push(path);
-        }
-        if out.len() > 1 {
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-/// The single file in `dir`'s tree, or `None` if it holds none or several. A
-/// directory that boils down to one file is really that file, even when its
-/// type wasn't recognized during the scan — the content checks further down
-/// still get a shot at identifying it.
-fn only_file(dir: &Path) -> Option<PathBuf> {
-    let mut files = vec![];
-    gather_files(dir, &mut files).ok()?;
-    match files.as_slice() {
-        [one] => Some(one.clone()),
-        _ => None,
-    }
-}
-
-/// Prepare a file for loading into emulator. Unpack archives, parse
-/// binaries for more info, convert formats as needed.
-/// Also need to determine system_type if not done previously
-pub fn prepare_file(emu_file: &EmuFile) -> Result<WorkingFile> {
-    let EmuFile {
-        mut system_type,
-        path: mut source,
-        mut tags,
-        game_info,
-    } = emu_file.clone();
-    // Holds whichever temp directory `path` currently points into, so it lives
-    // exactly as long as the `WorkingFile` this returns. Each stage below that
-    // builds a new one first copies out what it needs from the old, so simply
-    // replacing this drops — and removes — the directory it is done with.
-    let mut temp_dir: Option<TempDir> = None;
-
-    // Entries backed by a URL (e.g. from a `--db` list) are downloaded to the
-    // local cache on first load, then handled like any other local file. The
-    // cache means later loads of the same URL are free. Re-detect the system
-    // type once we have the real file, since collection only saw the URL.
-    let was_url = matches!(source, FileSource::Url(_));
-    let mut path = source.resolve()?.clone();
-    if was_url {
-        system_type = get_system_type(&path);
-    }
-
-    if path.is_file()
-        && let Some(unpacked) = unpack_to_temp(&path)?
-    {
-        debug!("FMT: unpacked archive {path:?} -> {:?}", unpacked.path());
-        path = unpacked.path().to_path_buf();
-        temp_dir = Some(unpacked);
-        system_type = get_system_type(&path);
-    }
-
-    // A file that needs converting becomes a temp directory holding just that
-    // file, so from here on there is one route: convert the directory, then
-    // pick the file back out of it below.
-    if let Some(staged) = stage_for_convert(&path, temp_dir.is_some())? {
-        path = staged.path().to_path_buf();
-        temp_dir = Some(staged);
-    }
-    let mut copy_all = false;
-
-    if path.is_dir() {
-        if let Err(err) = convert_dir(&path) {
-            warn!("Conversion failed in {path:?}: {err}");
-        }
-
-        if is_self_booting_dir(&path) {
-            debug!("FMT: Amiga self-booting");
-            system_type = SystemType::Amiga;
-            tags.insert("puae_use_whdload".into(), "disabled".into());
-        } else if has_matching(&path, ".slave").is_some() {
-            debug!("FMT: Amiga WHDLoad");
-            system_type = SystemType::Amiga;
-            tags.insert("puae_model".into(), "A1200".into());
-            tags.insert("puae_use_whdload".into(), "enabled".into());
-        } else {
-            let scan = scan_release_dir(&path)?;
-            if scan.system_type != SystemType::Unknown {
-                system_type = scan.system_type;
-            }
-            let mut files = scan.disk_images;
-            if files.len() > 1 {
-                sort_disks(&mut files);
-                let (m3u, dir) = build_m3u(&files)?;
-                path = m3u;
-                temp_dir = Some(dir);
-            } else if let Some(f) = scan.first_file.or_else(|| only_file(&path)) {
-                path = f;
-                copy_all = true;
-            }
-        }
-    }
-
-    if !path.is_dir() {
-        if is_psx_exe(&path) {
-            tags.insert("psx_core".into(), "beetle".into());
-            // A scene exe whose header undercounts its text section doesn't
-            // load at all, so patch the header before the core sees it. The
-            // file we were handed isn't ours to write to unless it already
-            // came out of a temp directory, so anything else is copied first.
-            if psx_needs_text_fix(&path) {
-                if temp_dir.is_none() {
-                    // TODO: temp file leek? Better to wire this in convert_dir()
-                    let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
-                    let copy = dir.path().join(path.file_name().unwrap());
-                    fs::copy(&path, &copy)?;
-                    path = copy;
-                    temp_dir = Some(dir);
-                }
-                debug!("FMT: patching short PSX text section in {path:?}");
-                fix_psx_text_size(&path)?;
-            }
-        }
-
-        // Only the header is examined below — the GBA check reaches furthest
-        // into it; the Amiga branch works off `path`, not the contents.
-        let data = read_header(&path, GBA_HEADER_LEN)?;
-        if data.len() >= 2 && data[0..2] == [0x60, 0x1a] {
-            // GEMDOS executable: wrap it in a bootable Atari ST floppy image
-            // with the program in the AUTO folder so it runs on boot. The whole
-            // executable goes on the disk, not just the header read above.
-            let (img, dir) = build_atari_auto_disk(&fs::read(&path)?)?;
-            path = img;
-            temp_dir = Some(dir);
-            system_type = SystemType::AtariST;
-        } else if data.len() >= 2 && data[0..2] == [0x01, 0x08] {
-            system_type = SystemType::C64;
-        } else if is_gba_rom(&data) {
-            debug!("FMT: GBA rom: {path:?}");
-            system_type = SystemType::Gba;
-        } else if data.len() >= 4 && data[0..4] == [0x00, 0x00, 0x03, 0xF3] {
-            debug!("FMT: Amiga exe: {path:?}");
-            if std::fs::metadata(&path)?.len() > 850 * 1024 {
-                tags.insert("puae_model".into(), "A1200".into());
-            }
-            let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
-            let target_dir = dir.path().to_path_buf();
-            let s_dir = target_dir.join("s");
-            fs::create_dir(&s_dir)?;
-            let c_dir = target_dir.join("c");
-            fs::create_dir(&c_dir)?;
-            fs::copy(system_dir().join("c").join("echo"), c_dir.join("echo"))?;
-            let mut text: String = "".into();
-            let model = tags.get("puae_model").map_or("", |s| s.as_str());
-            if model == "A1200" || model == "A4000" {
-                fs::copy(
-                    system_dir().join("c").join("SetPatch"),
-                    c_dir.join("SetPatch"),
-                )?;
-                text += "SetPatch QUIET\n";
-            }
-            if copy_all {
-                let name = path.file_name().unwrap().to_str().unwrap();
-                text += &format!("echo \"Loading...\"\n{name}\n");
-            } else {
-                text += "echo \"Loading...\"\namiga_file\n";
-            }
-            fs::write(s_dir.join("startup-sequence"), text)?;
-            if copy_all {
-                copy_dir_all(path.parent().unwrap(), &target_dir)?;
-            } else {
-                fs::copy(&path, target_dir.join("amiga_file"))?;
-            }
-            path = target_dir;
-            temp_dir = Some(dir);
-            tags.insert("puae_use_whdload".into(), "disabled".into());
-            system_type = SystemType::Amiga;
-        }
-    };
-
-    // The rewritten disc lives in the cache and is reused across runs, so it
-    // deliberately doesn't become the `temp_dir` — that would delete it. Any
-    // temp directory the cue itself came out of stays held either way.
-    if system_type == SystemType::Psx
-        && path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
-    {
-        match prepare_psx_disc(&path) {
-            Ok(Some(rewritten)) => path = rewritten,
-            Ok(None) => {}
-            Err(err) => warn!("Could not prepare PSX disc {path:?}: {err}"),
-        }
-    }
-    Ok(WorkingFile {
-        system_type,
-        path,
-        settings: tags,
-        game_info,
-        temp_dir,
-    })
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::emu_file::filter_release_urls;
+
     use super::*;
-
-    /// The local path behind a source. Everything below collects real files, so
-    /// a URL here means the test itself is wrong.
-    fn local_path(source: &FileSource) -> &Path {
-        match source {
-            FileSource::Path(p) => p,
-            FileSource::Url(urls) => panic!("expected a local path, got {urls:?}"),
-        }
-    }
-
-    #[test]
-    fn load_demo() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut out = vec![];
-        collect_files(&root.join("demos/nexus7"), &mut out, false).unwrap();
-        println!("{:?}", out[0]);
-        let wf = prepare_file(&out[0]);
-        println!("{:?}", wf);
-    }
-
-    /// Collect `<crate root>/<dir>`, with paths made relative again so the
-    /// assertions below don't depend on where the checkout lives. `read_dir`
-    /// order is unspecified, so everything is sorted before comparing.
-    fn collect(dir: &str, many: bool) -> Vec<(String, SystemType)> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut out = vec![];
-        collect_files(&root.join(dir), &mut out, many).unwrap();
-        let mut found: Vec<(String, SystemType)> = out
-            .iter()
-            .map(|f| {
-                let path = local_path(&f.path);
-                let rel = path.strip_prefix(root).unwrap_or(path);
-                (rel.to_string_lossy().into_owned(), f.system_type)
-            })
-            .collect();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
-        found
-    }
-
-    fn type_of(found: &[(String, SystemType)], path: &str) -> SystemType {
-        found
-            .iter()
-            .find(|(p, _)| p == path)
-            .unwrap_or_else(|| panic!("{path} not collected, got {found:#?}"))
-            .1
-    }
-
-    /// The demos dir mixes systems, so every file is listed on its own. The two
-    /// subdirectories don't expand into files: the Amiga demo needs its whole
-    /// directory (for the data files next to the executable), and nexus7's
-    /// `.m3u` carries only metadata, so it stands in for the directory.
-    #[test]
-    fn collects_demos() {
-        let found = collect("demos", false);
-        assert_eq!(
-            found,
-            vec![
-                ("demos/natrium.prg".into(), SystemType::AtariST),
-                ("demos/nexus7".into(), SystemType::Unknown),
-                ("demos/nightmode.gb".into(), SystemType::Gameboy),
-                ("demos/o2-intro".into(), SystemType::Unknown),
-                ("demos/pdx-dlcm.psx".into(), SystemType::Psx),
-                ("demos/quantum_icc2026_v1p.prg".into(), SystemType::C64),
-                ("demos/rebels.adf".into(), SystemType::Amiga),
-                ("demos/still_rising.dsk".into(), SystemType::Amstrad),
-                ("demos/triad.smc".into(), SystemType::SuperNintendo),
-            ]
-        );
-    }
-
-    /// A directory holding an `.m3u` is represented by that playlist alone; the
-    /// files next to it must not also show up as entries of their own. This one
-    /// lists no files, so the entry is the directory rather than the playlist —
-    /// the whole WHDLoad install is what gets loaded.
-    #[test]
-    fn m3u_replaces_its_directory() {
-        let found = collect("demos", false);
-        assert_eq!(
-            found
-                .iter()
-                .filter(|(p, _)| p.starts_with("demos/nexus7"))
-                .count(),
-            1
-        );
-        assert_eq!(type_of(&found, "demos/nexus7"), SystemType::Unknown);
-    }
-
-    /// `many` splits a directory of same-system files into separate entries,
-    /// so the Amiga demo dir becomes the executable inside it.
-    #[test]
-    fn many_expands_amiga_directory() {
-        let found = collect("demos", true);
-        assert_eq!(type_of(&found, "demos/o2-intro/o2intro"), SystemType::Amiga);
-        assert!(!found.iter().any(|(p, _)| p == "demos/o2-intro"));
-    }
-
-    /// testdata is recursed into: the C64 intros (mixed with `.png` previews)
-    /// and the IFF images all come out individually, while the archives at the
-    /// top level are not recognised as loadable files at all.
-    #[test]
-    fn collects_testdata() {
-        let found = collect("testdata", false);
-
-        assert_eq!(type_of(&found, "testdata/test.iff"), SystemType::Ilbm);
-        assert_eq!(
-            type_of(&found, "testdata/intros/0/007-01.prg"),
-            SystemType::C64
-        );
-        assert_eq!(type_of(&found, "testdata/iffILBM/24.iff"), SystemType::Ilbm);
-        assert_eq!(type_of(&found, "testdata/fr018.bin"), SystemType::Gba);
-
-        // Detection is by content as well as extension, so extension-less and
-        // oddly-named IFFs still count.
-        assert_eq!(type_of(&found, "testdata/iffILBM/ghost"), SystemType::Ilbm);
-        assert_eq!(
-            type_of(&found, "testdata/iffILBM/firestarter.256"),
-            SystemType::Ilbm
-        );
-
-        for (path, system_type) in &found {
-            assert!(!path.ends_with(".png"), "preview image collected: {path}");
-            assert!(
-                !(path.ends_with(".zip") || path.ends_with(".lha")),
-                "archive collected: {path}"
-            );
-            assert_ne!(*system_type, SystemType::Unknown, "{path}");
-        }
-
-        // No `.m3u` anywhere here, so nothing collapses to a directory.
-        for (path, _) in &found {
-            assert!(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join(path).is_file(),
-                "expected a file, got {path}"
-            );
-        }
-    }
-
-    /// `many` makes no difference for testdata — every directory in it is
-    /// already mixed or non-Amiga.
-    #[test]
-    fn testdata_is_unaffected_by_many() {
-        assert_eq!(collect("testdata", false), collect("testdata", true));
-    }
 
     #[test]
     fn missing_directory_is_an_error() {
@@ -1013,220 +364,10 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    /// Take `<crate root>/<rel>` all the way through both stages, the way the
-    /// frontend does: collect it, then unpack/convert it for the emulator.
-    fn prepare(rel: &str) -> WorkingFile {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        prepare_file(&collect_file(&root.join(rel)).unwrap()).unwrap()
-    }
-
-    /// A bare GEMDOS executable is wrapped in a bootable floppy image, so the
-    /// prepared path is no longer the `.prg` handed in.
-    #[test]
-    fn atari_exe() {
-        let wf = prepare("demos/natrium.prg");
-        assert_eq!(wf.system_type, SystemType::AtariST);
-        assert_eq!(wf.path.extension().unwrap(), "st");
-        assert!(wf.temp_dir.is_some());
-    }
-
-    /// The playlist's `#EXTINF` tags become emulator settings.
-    #[test]
-    fn amiga_m3u() {
-        let wf = prepare("demos/nexus7/demo.m3u");
-        assert_eq!(wf.settings.get("puae_model").unwrap(), "A1200");
-        assert_eq!(wf.system_type, SystemType::Amiga);
-    }
-
-    /// An Amiga executable can't be booted directly: it goes into a temp
-    /// directory with a generated `startup-sequence` that runs it.
-    #[test]
-    fn amiga_exe() {
-        let wf = prepare("demos/o2-intro/o2intro");
-        assert_eq!(wf.system_type, SystemType::Amiga);
-        assert!(wf.path.join("s/startup-sequence").exists());
-        assert!(wf.path.join("amiga_file").exists());
-    }
-
-    #[test]
-    fn amiga_lha() {
-        let wf = prepare("testdata/vS10-ami.lha");
-        assert_eq!(wf.system_type, SystemType::Amiga);
-        assert!(wf.path.join("s/startup-sequence").exists());
-    }
-
-    /// The archive holds previews and text alongside the cart, so unpacking has
-    /// to pick the one loadable file out of the directory.
-    #[test]
-    fn zip_with_extra_files() {
-        let wf = prepare("testdata/gigabates_Terrain-Spotting.zip");
-        assert_eq!(wf.system_type, SystemType::Tic80);
-        assert_eq!(wf.path.extension().unwrap(), "tic");
-    }
-
-    /// A lone `.t64` isn't loadable, so it is staged in a temp directory,
-    /// converted there, and the resulting `.prg` is what comes out — with the
-    /// tape image's own directory left exactly as it was.
-    #[test]
-    fn t64_file() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let before = fs::read_dir(root.join("testdata")).unwrap().count();
-        let wf = prepare("testdata/BADALM.T64");
-        assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path.extension().unwrap(), "prg");
-        assert!(wf.temp_dir.is_some());
-        assert!(!wf.path.starts_with(root), "converted next to the source");
-        assert_eq!(fs::read_dir(root.join("testdata")).unwrap().count(), before);
-    }
-
-    /// Scene zips often hold each disk gzipped. Both layers have to come off
-    /// before the release reads as the two-disk set it is.
-    #[test]
-    fn zip_of_gzipped_disks() {
-        let wf = prepare("testdata/Skaaneland.zip");
-        assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path.extension().unwrap(), "m3u");
-        let m3u = fs::read_to_string(&wf.path).unwrap();
-        assert_eq!(
-            m3u.lines().filter(|l| l.ends_with(".d64")).count(),
-            2,
-            "both disks should be in the playlist, got {m3u:?}"
-        );
-    }
-
-    /// A wrapper around something that itself needs converting: the `.gz` comes
-    /// off first, then cbmconvert turns the tape image into a `.prg`.
-    #[test]
-    fn gzipped_t64() {
-        let wf = prepare("testdata/Maniacs of Noise Logo.t64.gz");
-        assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path.extension().unwrap(), "prg");
-        assert!(wf.temp_dir.is_some());
-    }
-
-    /// Same for a directory holding one: it is copied before conversion, so
-    /// the `.prg` lands in the copy and the original directory is untouched.
-    #[test]
-    fn t64_dir() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let dir = tempfile::tempdir().unwrap();
-        fs::copy(
-            root.join("testdata/BADALM.T64"),
-            dir.path().join("BADALM.T64"),
-        )
-        .unwrap();
-
-        let wf = prepare_file(&EmuFile {
-            path: dir.path().into(),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path.extension().unwrap(), "prg");
-        assert!(!wf.path.starts_with(dir.path()));
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
-    }
-
-    /// A PSX executable that undercounts its text section is patched on the way
-    /// to the core — which refuses to load it otherwise — and the file we were
-    /// handed keeps the header it came with, since it isn't ours to write to.
-    #[test]
-    fn short_psx_exe_is_patched_on_a_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("demo.psx");
-        let mut data = b"PS-X EXE".to_vec();
-        data.resize(0x18, 0);
-        data.extend_from_slice(&0x8001_0000u32.to_le_bytes()); // t_addr
-        data.extend_from_slice(&0x800u32.to_le_bytes()); // t_size, way short
-        data.resize(0x800 + 0x4000, 0);
-        fs::write(&exe, &data).unwrap();
-
-        let wf = prepare_file(&EmuFile {
-            path: exe.as_path().into(),
-            ..Default::default()
-        })
-        .unwrap();
-
-        let t_size = |p: &Path| {
-            let header = read_header(p, 0x20).unwrap();
-            u32::from_le_bytes(header[0x1c..0x20].try_into().unwrap())
-        };
-        assert_ne!(wf.path, exe, "the original must not be the one loaded");
-        assert_eq!(t_size(&wf.path), 0x4000);
-        assert_eq!(t_size(&exe), 0x800);
-        assert_eq!(
-            wf.settings.get("psx_core").map(String::as_str),
-            Some("beetle")
-        );
-    }
-
-    /// A GBA rom is recognised by its header, not its name — this one is a
-    /// `.bin` — and is loaded as-is.
-    #[test]
-    fn gba_rom() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let wf = prepare("testdata/fr018.bin");
-        assert_eq!(wf.system_type, SystemType::Gba);
-        assert_eq!(wf.path, root.join("testdata/fr018.bin"));
-    }
-
-    /// An image needs no preparation at all — the path must survive untouched.
-    #[test]
-    fn ilbm_file() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let wf = prepare("testdata/test.iff");
-        assert_eq!(wf.system_type, SystemType::Ilbm);
-        assert_eq!(wf.path, root.join("testdata/test.iff"));
-    }
-
-    /// A tab-separated db line becomes an `EmuFile` whose path is the URL and
-    /// whose metadata is split out of the fields (year from the date, scene tags
-    /// preserved). Blank lines and URL-less lines are skipped.
-    #[test]
-    fn collect_db_parses_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("demos.txt");
-        fs::write(
-            &db,
-            "1\tEdge of Disgrace\tBooze Design\t2008-04-01\tBreakpoint\tdemo\tc64,fav\thttps://example.com/eod.d64\n\
-             \n\
-             2\tNo URL\tGroup\t1994\tParty\tintro\t\t\n\
-             3\tNexus 7\tAndromeda\t1994/12/30\t\t\t\thttps://example.com/nexus7.zip\n",
-        )
-        .unwrap();
-
-        let mut out = vec![];
-        collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-        assert_eq!(out.len(), 2, "blank and URL-less lines skipped");
-
-        let eod = &out[0];
-        let FileSource::Url(urls) = &eod.path else {
-            panic!("db entries stay URLs until loaded, got {:?}", eod.path)
-        };
-        assert_eq!(
-            urls.iter().map(Url::as_str).collect::<Vec<_>>(),
-            ["https://example.com/eod.d64"]
-        );
-        // The system type is only determined once the URL is fetched (see
-        // `prepare_file`), so collection leaves it Unknown.
-        assert_eq!(eod.system_type, SystemType::Unknown);
-        assert_eq!(eod.game_info.title, "Edge of Disgrace");
-        assert_eq!(eod.game_info.group, "Booze Design");
-        assert_eq!(eod.game_info.year, "2008");
-        assert_eq!(eod.tags.get("party").unwrap(), "Breakpoint");
-        assert_eq!(eod.tags.get("type").unwrap(), "demo");
-        assert_eq!(eod.tags.get("tags").unwrap(), "c64,fav");
-
-        let nexus = &out[1];
-        assert_eq!(nexus.game_info.title, "Nexus 7");
-        assert_eq!(nexus.game_info.year, "1994");
-        //println!("{:?}", nexus.tags);
-        //assert!(nexus.tags.is_empty(), "empty scene fields left out");
-    }
-
-    /// The named format spells out each field, so order doesn't matter and a
-    /// value may hold `:` itself (every URL does). Field names line up with the
-    /// same metadata the positional format carries.
+    /// Every field spells out its name, so order doesn't matter and a value may
+    /// hold `:` itself (every URL does). The fields become meta, with the title,
+    /// group and year lifted into the entry's `GameInfo`. Blank lines and
+    /// URL-less lines are skipped.
     #[test]
     fn collect_db_parses_named_fields() {
         let dir = tempfile::tempdir().unwrap();
@@ -1258,18 +399,17 @@ mod tests {
         );
         assert_eq!(zentro.game_info.title, "Zentro 4");
         assert_eq!(zentro.game_info.group, "Zenith");
-        assert_eq!(zentro.game_info.year, "1992");
-        assert_eq!(zentro.game_info.typ, "Demo");
-        assert_eq!(zentro.tags.get("party").unwrap(), "The Party 1992");
-        assert_eq!(zentro.tags.get("type").unwrap(), "Demo");
-        assert_eq!(zentro.tags.get("tags").unwrap(), "has effects");
+        assert_eq!(zentro.game_info.year, 1992);
+        assert_eq!(zentro.meta.get("category").unwrap(), "Demo");
+        assert_eq!(zentro.meta.get("party").unwrap(), "The Party 1992");
+        assert_eq!(zentro.meta.get("tags").unwrap(), "has effects");
 
         // Fields in any order, missing ones simply left empty.
         let nexus = &out[1];
         assert_eq!(nexus.game_info.title, "Nexus 7");
         assert_eq!(nexus.game_info.group, "Andromeda");
-        assert_eq!(nexus.game_info.year, "1994");
-        assert!(!nexus.tags.contains_key("party"));
+        assert_eq!(nexus.game_info.year, 1994);
+        assert!(!nexus.meta.contains_key("party"));
     }
 
     /// A packed db loads exactly like the plain text one it was made from — the
@@ -1286,9 +426,10 @@ mod tests {
             let eod = &out[0];
             assert_eq!(eod.game_info.title, "Edge of Disgrace", "{packed}");
             assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
-            assert_eq!(eod.game_info.year, "2008", "{packed}");
+            assert_eq!(eod.game_info.year, 2008, "{packed}");
             // The `# Platform:C64` header applies just as it does unpacked.
-            assert_eq!(eod.game_info.typ, "C64 demo", "{packed}");
+            assert_eq!(eod.meta.get("platform").unwrap(), "C64", "{packed}");
+            assert_eq!(eod.meta.get("category").unwrap(), "demo", "{packed}");
             let FileSource::Url(urls) = &eod.path else {
                 panic!("db entries stay URLs until loaded, got {:?}", eod.path)
             };
@@ -1314,7 +455,11 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].game_info.title, "Speedball Demo");
-        assert_eq!(out[0].game_info.typ, "Demo");
+        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
+        assert!(
+            !out[0].meta.contains_key("platform"),
+            "no header, no platform"
+        );
     }
 
     /// `--include`/`--exclude` drop non-matching lines while collecting, but
@@ -1346,7 +491,11 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
-        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header still applies");
+        assert_eq!(
+            out[0].meta.get("platform").unwrap(),
+            "Amiga",
+            "header still applies"
+        );
 
         let exclude = re("category:Musicdisk");
         let (kept, _) = titles(&DbFilter {
@@ -1386,10 +535,59 @@ mod tests {
         assert_eq!(kept, ["Zentro 4"]);
     }
 
-    /// A `platform` field, or a `# Platform:` header covering the lines below
-    /// it, prefixes the type so entries from different scenes stay apart.
+    /// Each pattern is matched against one field at a time, so it can't run
+    /// past the end of the field it names into the next one, and `^`/`$`
+    /// anchor to a field rather than the whole line.
     #[test]
-    fn collect_db_prefixes_platform() {
+    fn collect_db_filter_matches_per_field() {
+        const DB: &str = "id:1\ttitle:Firefox Intro\tauthor:Zenith\tcategory:Demo\tdownload:http://example.com/a\n\
+             id:2\ttitle:Hoax\tauthor:Firefox\tcategory:Demoshow\tdownload:http://example.com/b\n";
+
+        let titles = |filter: &DbFilter| {
+            let mut out = vec![];
+            collect_db_text(DB, filter, &mut out);
+            out.iter()
+                .map(|f| f.game_info.title.clone())
+                .collect::<Vec<_>>()
+        };
+
+        // `.*` stops at the field end, so the `Firefox` in the title of the
+        // first line doesn't count as an author.
+        let include = [Regex::new("author:.*Firefox").unwrap()];
+        assert_eq!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            }),
+            ["Hoax"]
+        );
+
+        // `$` is the end of a field, so `Demoshow` isn't a `Demo`.
+        let include = [Regex::new("^category:Demo$").unwrap()];
+        assert_eq!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            }),
+            ["Firefox Intro"]
+        );
+
+        // A pattern spanning the tab between two fields matches nothing.
+        let include = [Regex::new("title:Hoax\tauthor:Firefox").unwrap()];
+        assert!(
+            titles(&DbFilter {
+                include: &include,
+                ..Default::default()
+            })
+            .is_empty()
+        );
+    }
+
+    /// A `# Platform:` header covers the lines below it, giving each one a
+    /// `platform` tag, and a line naming a platform of its own overrides it —
+    /// that way entries from different scenes stay apart.
+    #[test]
+    fn collect_db_platform_tags_lines() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("demos.txt");
         fs::write(
@@ -1402,11 +600,20 @@ mod tests {
 
         let mut out = vec![];
         collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-        assert_eq!(out[0].game_info.typ, "Amiga Demo", "header applies");
-        assert_eq!(out[1].game_info.typ, "C64 Demo", "line overrides header");
+        assert_eq!(
+            out[0].meta.get("platform").unwrap(),
+            "Amiga",
+            "header applies"
+        );
+        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
+        assert_eq!(
+            out[1].meta.get("platform").unwrap(),
+            "C64",
+            "line overrides header"
+        );
     }
 
-    /// The other pairs of a header line become tags on every entry below it,
+    /// The other pairs of a header line become meta on every entry below it,
     /// while a plain prose comment is left alone.
     #[test]
     fn collect_db_applies_header_tags() {
@@ -1421,16 +628,16 @@ mod tests {
             &mut out,
         );
 
-        assert_eq!(out[0].game_info.typ, "Amiga Demo");
-        assert_eq!(out[0].tags.get("puae_model").unwrap(), "A500");
-        assert!(!out[0].tags.contains_key("Just"));
-        assert!(!out[0].tags.contains_key("comment"));
+        assert_eq!(out[0].meta.get("platform").unwrap(), "Amiga");
+        assert_eq!(out[0].meta.get("puae_model").unwrap(), "A500");
+        assert!(!out[0].meta.contains_key("Just"));
+        assert!(!out[0].meta.contains_key("comment"));
 
         // A later header overrides, and the platform from the first one still
         // applies.
-        assert_eq!(out[1].tags.get("puae_model").unwrap(), "A1200");
-        assert_eq!(out[1].tags.get("tags").unwrap(), "aga");
-        assert_eq!(out[1].game_info.typ, "Amiga Demo");
+        assert_eq!(out[1].meta.get("puae_model").unwrap(), "A1200");
+        assert_eq!(out[1].meta.get("tags").unwrap(), "aga");
+        assert_eq!(out[1].meta.get("platform").unwrap(), "Amiga");
     }
 
     fn filter(urls: &[&str]) -> Vec<String> {
@@ -1441,8 +648,9 @@ mod tests {
             .collect()
     }
 
-    /// A disk image among the URLs makes the release disk based: the extras and
-    /// any disk image of another kind go away, the rest of the set stays.
+    /// A disk image among the URLs makes the release disk based: everything
+    /// that isn't a disk image goes away and the whole set stays, whatever
+    /// format its disks are in.
     #[test]
     fn disk_images_win() {
         assert_eq!(
@@ -1453,7 +661,11 @@ mod tests {
                 "https://x.com/a.adf",
                 "https://x.com/readme.txt",
             ]),
-            vec!["https://x.com/a1.d64", "https://x.com/a2.D64"]
+            vec![
+                "https://x.com/a1.d64",
+                "https://x.com/a2.D64",
+                "https://x.com/a.adf"
+            ]
         );
     }
 
@@ -1480,19 +692,5 @@ mod tests {
             filter(&["https://x.com/a.sid", "https://x.com/b.pdf"]),
             vec!["https://x.com/a.sid", "https://x.com/b.pdf"]
         );
-    }
-
-    /// A directory of `.prg`s mixed with `.png` previews: every program is
-    /// collected on its own and prepares as a plain C64 file.
-    #[test]
-    fn prg_dir() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut out = vec![];
-        collect_files(&root.join("testdata/intros"), &mut out, true).unwrap();
-        assert_eq!(out.len(), 15);
-        out.sort_by(|a, b| local_path(&a.path).cmp(local_path(&b.path)));
-        let wf = prepare_file(&out[0]).unwrap();
-        assert_eq!(wf.system_type, SystemType::C64);
-        assert_eq!(wf.path, local_path(&out[0].path));
     }
 }

@@ -1,11 +1,78 @@
-RetroEmu
 
--> Load library
--> Set callbacks
-<- Set default variables
--> retro_init
-<- Get variables
--> load_game
+## NEW PROCESS
+
+`collect_files() -> Vec<EmuFile>` as usual
+
+but ask systems for leaf dirs without m3u to know if whole dir
+or individual files should be added.
+
+
+### Loading FileSource
+
+* If source is list of URLs, download all to temp dir
+
+* `
+
+
+### Loading EmuFile
+
+non system prepare:
+
+Download
+Unpack archives
+
+
+Pass EmuFile to all Systems until matched
+
+Always single file or directory
+
+"GAME" INFO
+
+Meta data from disk or db, handled by frontend.
+GameInfo for database / display
+
+
+title
+author
+date
+party
+platform
+category
+tags
+download
+
+
+## HANDLING IMAGES
+
+Incoming is DIR or SINGLE IMAGE
+DIR can be temp or not
+
+Collect images
+
+Write m3u where?
+
+
+
+
+
+
+can load -> WorkFile
+
+can create Backend
+
+`Load <WorkFile>`
+
+- Supported file: Direct load
+- Directory
+  * Maybe: convert files 
+  - First supported file
+  - Collect disk images -> m3u
+  - Load directory
+
+Iterate dir -> supported files.
+Disk images -> m3u, else first supported
+  new
+
 
  
 FLASH SPEED
@@ -107,3 +174,63 @@ time. What the capture did show:
 - `PostProcess`, `PostProcessUniform` and `BorderScissor` are also rewritten
   1.00/f per camera; `update_post_process_uniform` re-inserts `BorderScissor`
   through `Commands` every frame instead of comparing first.
+
+
+ATARI ST DIRECTORIES AS GEMDOS HARD DRIVES
+
+hatari mounts a host directory as GEMDOS drive C:, which is how a release
+directory (program + data files) is loaded — the equivalent of handing puae an
+Amiga directory. Two pieces of libretro-core trivia make it work:
+
+- The core recognizes a hard drive by the *extension* `.gem`, and mounts the
+  path with those four characters chopped off (`libretro/libretro.c`,
+  `retro_load_game`). So `prepare_file` stages the drive as `<temp>/harddrive`
+  and hands the core an empty `<temp>/harddrive.gem` next to it.
+- On that path the core also inserts `<system>/hatari/BOOT.ST` into drive A: and
+  passes `--disk-a` *before* `--harddrive`. hatari's option parser stops at the
+  first bad argument, so a missing BOOT.ST means `--harddrive` is never parsed
+  and there is no C: at all. `system/hatari/BOOT.ST` is therefore a blank 720K
+  FAT12 floppy that only has to exist (`mkfs.fat -F 12 -S 512 -s 2 -r 112 -f 2
+  -M 0xF9 -R 1 -h 0 -n BOOT --invariant -C BOOT.ST 720`). Nothing boots from it:
+  `--harddrive` comes last and sets `bBootFromHardDisk`, so TOS boots from C:.
+
+Booting from C: is what runs `C:\AUTO\*.PRG`, so the program is copied there as
+`STARTME.PRG` (TOS only auto-starts `.PRG`). A directory holding nothing but the
+executable keeps taking the old route — wrapped in a bootable floppy image —
+since that is how ST demos were released and shipped.
+
+Which program, and what to do about the release's own `AUTO` folder, was learned
+from tlk2_hd.zip (TalkTalk 2, HD version):
+
+- Its `AUTO` holds `LOADER.PRG` and `DISK2/3/4.PRG` — the disk-swap stubs of the
+  floppy version. Deferring to an existing `AUTO` folder meant booting straight
+  into "This is TalkTalk2 disk 2. Please insert disk 1 and reboot." So an `AUTO`
+  folder is only trusted when the program we start is *in* it; otherwise it is
+  renamed `NOAUTO` in our copy. The release's own README agrees: "consider
+  removing all accessories and AUTO programs to free up memory".
+- Its main program `TLKTLK2.PRG` (124K) sits next to `TLK2READ.PRG` (40K), a
+  readme viewer, so picking the alphabetically first program picked the readme.
+  The biggest program of the shallowest level wins instead; `boot_file` overrides
+  it outright.
+
+Size alone then broke on molz (More Or Less Zero, DHS), where it started the
+demo but the music was garbage:
+
+- The release is a 651-byte `molz.tos` loader next to `part1.bin` (652K) and
+  `part2.bin` (201K). The parts are GEMDOS executables too, so the biggest one
+  won and `part1.bin` was started directly. The loader is what reads `part1.mus`
+  (604K of STE DMA samples) and passes it to the part — skip it and the part
+  runs a replayer on whatever memory it was handed.
+- Extension is therefore ranked before size: a file named the way TOS starts one
+  (`.prg`, `.tos`, `.ttp`, `.app`) beats an executable named anything else,
+  however big. A release names what the user runs and leaves its payload looking
+  like data.
+- It needs a 4MB STE and quietly returns to the desktop on the 1MB ST default,
+  which is why the hard drive path defaults to `hatari_machinetype=ste` and
+  `hatari_ramsize=4`.
+
+If a demo ever turns out to dislike being started from `AUTO` (it runs before the
+desktop), the faithful alternative is what hatari does internally, in `tos.c`:
+write the boot drive's INF file — `NEWDESK.INF` for TOS >= 2.00, `DESKTOP.INF`
+below — with a `#Z 01 C:\PROG.PRG@` line, and the desktop launches it from its
+own directory.

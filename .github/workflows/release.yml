@@ -144,6 +144,31 @@ jobs:
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
+      # Extra files for the Windows zip. dist's `include` is workspace-wide with
+      # no per-target form, so routing these through dist config would also drop
+      # ~18MB of databases into the mac/linux archives; instead they go into the
+      # zip after dist has packed it. The zip is flat (demarc.exe sits at its
+      # root) and the .BATs run `demarc.exe --db csdb.txt.gz` relative to
+      # themselves, so everything is added at the root.
+      - name: Add Windows extras to the zip
+        if: ${{ contains(matrix.targets, 'x86_64-pc-windows-msvc') }}
+        shell: bash
+        working-directory: target/distrib
+        run: |
+          set -euo pipefail
+          zip="demarc-x86_64-pc-windows-msvc.zip"
+          mkdir -p extras
+          cp "$GITHUB_WORKSPACE"/files/win/*.BAT extras/
+          bash "$GITHUB_WORKSPACE/scripts/fetch-dbs.sh" extras
+          (cd extras && 7z a -tzip "../$zip" ./*)
+          # dist checksummed the archive it just built, both as a sidecar file
+          # and as `artifacts[].checksums.sha256` in the manifest the powershell
+          # installer is generated from. Both describe the pre-repack zip now,
+          # so re-stamp them.
+          old=$(awk '{print $1}' "$zip.sha256")
+          sha256sum -b "$zip" > "$zip.sha256"
+          new=$(awk '{print $1}' "$zip.sha256")
+          sed -i "s/$old/$new/g" "$GITHUB_WORKSPACE/dist-manifest.json"
       - id: cargo-dist
         name: Post-build
         # We force bash here just because github makes it really hard to get values up
@@ -276,7 +301,11 @@ jobs:
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          # --draft: the release is created unpublished so the artifacts can be
+          # checked before anyone can download them. Publish it by hand when
+          # happy (`gh release edit <tag> --draft=false`, or the "Publish
+          # release" button on the release page).
+          gh release create "${{ needs.plan.outputs.tag }}" --draft --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   announce:
     needs:

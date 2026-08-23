@@ -1,11 +1,9 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
-    camera::Viewport,
     camera::visibility::RenderLayers,
     image::Image,
     input::mouse::AccumulatedMouseMotion,
@@ -14,13 +12,11 @@ use bevy::{
 };
 
 use crate::commands::{CmdMessage, check_hotkey};
-use crate::emulator::Emulator;
-use crate::fuzzy_list::FuzzyListSelect;
-use crate::hud::{HudLocation, SetHudText, TextList};
-use crate::post_process::PostProcess;
+use crate::egui_ui::{HudLocation, HudState, SetHudText};
+use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
+use crate::post_process::{EmuCamera, PostProcess, ViewRect};
+use crate::retro_emu::ViewFocus;
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::systems::{SystemType, get_info_text, tags_from_args};
-use crate::text_input::TextInput;
 use crate::{AppSettings, Args, RenderSettings};
 
 pub struct RetroPlugin {}
@@ -71,10 +67,9 @@ fn resolve_system_dir() -> PathBuf {
     system
 }
 
-/// Marks a [`PostProcess`] camera as occupying a sub-rectangle of the window,
-/// expressed in normalized `[0, 1]` coordinates.
-/// [`update_grid_viewports`] keeps the camera's viewport sized to
-/// this cell as the window changes.
+/// Marks an emulator view as occupying a sub-rectangle of the window,
+/// expressed in normalized `[0, 1]` coordinates. [`update_view_rects`] keeps
+/// the view's [`ViewRect`] sized to this cell as the window changes.
 #[derive(Component, Clone, Copy)]
 struct GridCell {
     /// Top-left corner as a fraction of the window size.
@@ -83,10 +78,10 @@ struct GridCell {
     size: Vec2,
 }
 
-/// Identifies an emulator's on-screen camera and its stable index, so the
+/// Identifies an emulator's on-screen view and its stable index, so the
 /// "current" emulator (cycled with RightAlt+Tab) can be looked up and its
 /// output area outlined. The rect itself comes from the optional [`GridCell`];
-/// a camera without one fills the whole window.
+/// a view without one fills the whole window.
 #[derive(Component, Clone, Copy)]
 struct EmuView {
     index: usize,
@@ -96,7 +91,7 @@ struct EmuView {
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
-/// top-to-bottom so cell index `i` maps cleanly to a distinct camera order.
+/// top-to-bottom so cell index `i` is the emulator's stable index.
 fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
     let mut cells = Vec::with_capacity((cols * rows) as usize);
     for row in 0..rows {
@@ -118,37 +113,19 @@ fn grid_layout(args: &Args) -> Vec<GridCell> {
     }
 }
 
-fn setup_ui_camera(mut commands: Commands, args: Res<Args>, asset_server: Res<AssetServer>) {
-    // Camera for full res UI on top of screen. Its order must stay above every
-    // emulator camera (grid mode gives each cell a distinct order, `0..n`) so
-    // the HUD and the focus outline draw on top of all cells rather than being
-    // overdrawn by a later one. Derive the order from the cell count instead of
-    // a fixed value, which would otherwise be exceeded by grids larger than the
-    // constant (e.g. a 4x4 grid hides the outline for cells with order >= it).
-    let order = grid_layout(&args).len().max(1) as isize;
+fn setup_ui_camera(mut commands: Commands) {
+    // Camera for full res UI on top of screen.
     commands.spawn((
         Camera2d,
         Camera {
-            order,
+            order: 1,
             clear_color: ClearColorConfig::None,
             ..default()
         },
         RenderLayers::layer(2),
-    ));
-    commands.spawn((
-        Node {
-            display: Display::None,
-            position_type: PositionType::Absolute,
-            bottom: px(25.0),
-            left: px(15.0),
-            ..default()
-        },
-        TextInput {
-            // The app font, not Bevy's ASCII-only built-in one, so typed
-            // non-ASCII characters actually have glyphs.
-            font: asset_server.load("font.ttf"),
-            ..default()
-        },
+        // egui draws into this camera's pass too, so its output lands on top of
+        // the emulators as well (see `crate::egui_ui`).
+        bevy_egui::PrimaryEguiContext,
     ));
 }
 
@@ -159,28 +136,29 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
 fn setup_retro(world: &mut World) {
     let args = world.resource::<Args>();
 
-    let tags = tags_from_args(args);
-
-    let match_fps = args.force_vsync;
+    let color_cycle = args.color_cycle;
     let max_time = args.max_time;
     let speed_test = args.speed_test;
     let select = args.select;
 
     let cells = grid_layout(args);
 
+    world.spawn((
+        Camera2d,
+        Camera {
+            order: 0,
+            ..default()
+        },
+        EmuCamera,
+        RenderLayers::layer(1),
+    ));
+
     if cells.is_empty() {
-        spawn_emulator(world, tags, match_fps, max_time, speed_test, None);
+        spawn_emulator(world, color_cycle, max_time, speed_test, None);
         world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
     } else {
         for (i, cell) in cells.into_iter().enumerate() {
-            spawn_emulator(
-                world,
-                tags.clone(),
-                match_fps,
-                max_time,
-                speed_test,
-                Some((i, cell)),
-            );
+            spawn_emulator(world, color_cycle, max_time, speed_test, Some((i, cell)));
         }
     }
 
@@ -195,78 +173,60 @@ fn setup_retro(world: &mut World) {
     }
 }
 
-fn handle_textlist(
-    mut commands: Commands,
-    mut settings: ResMut<AppSettings>,
-    mut reader: MessageReader<FuzzyListSelect>,
-) {
-    for &FuzzyListSelect { id, item, .. } in reader.read() {
-        if id == 1 {
-            println!("START {item}");
-            if let Some(e) = settings.file_list.take() {
-                commands.entity(e).despawn();
-            }
-        }
-    }
-}
-
 /// Create a single emulator entity: its own audio stream + ring buffer, its own
-/// render-target texture, and a [`PostProcess`] camera that samples that
-/// texture. Call this once per emulator you want on screen.
+/// render-target texture, and a view entity holding the [`PostProcess`] state
+/// that samples that texture. Call this once per emulator you want on screen.
 ///
-/// `cell`, when `Some`, places this emulator in one cell of a grid: the camera
-/// gets a distinct render order (from the cell index) and a [`GridCell`] marker
-/// so [`update_grid_viewports`] keeps its viewport sized to that cell.
+/// `cell`, when `Some`, places this emulator in one cell of a grid: the view
+/// gets a [`GridCell`] marker so [`update_view_rects`] keeps its [`ViewRect`]
+/// sized to that cell. The views are *not* cameras — they are all composited
+/// by the single [`EmuCamera`] spawned in [`setup_retro`].
 fn spawn_emulator(
     world: &mut World,
-    tags: HashMap<String, String>,
-    match_fps: bool,
+    color_cycle: bool,
     max_time: Option<usize>,
     speed_test: bool,
     cell: Option<(usize, GridCell)>,
 ) {
     let mut res = world.resource_mut::<Assets<Image>>();
-    let emu = Emulator::new(&mut res, tags, max_time, match_fps, speed_test);
+    let emu = Emulator::new(&mut res, max_time, color_cycle, speed_test);
     let handle = emu.image.clone();
     world.spawn(emu);
 
-    // Samples this emulator's texture directly and renders it to the screen,
-    // letting the post-process shader handle scaling to the window. When
-    // showing several emulators at once, give each camera a distinct `order`
-    // and a `viewport` so they don't overdraw each other.
-    let mut camera = world.spawn((
-        Camera2d,
-        Camera {
-            // Distinct order per grid cell so the cameras share one window
-            // target cleanly (the lowest-order one clears it once per frame).
-            order: cell.map_or(0, |(i, _)| i as isize),
-            ..default()
-        },
+    // Samples this emulator's texture directly and draws it to the screen,
+    // letting the post-process shader handle scaling to its rectangle of the
+    // window.
+    let mut view = world.spawn((
         PostProcess {
             source: handle,
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
         },
-        RenderLayers::layer(1),
+        // The actual rectangle is set from the live window size by
+        // `update_view_rects`, before anything reads it.
+        ViewRect {
+            position: UVec2::ZERO,
+            size: UVec2::ZERO,
+            active: true,
+        },
         EmuView {
             index: cell.map_or(0, |(i, _)| i),
         },
     ));
     if let Some((_, cell)) = cell {
-        // The actual viewport rectangle is set from the live window size by
-        // `update_grid_viewports`; this just tags which cell to fill.
-        camera.insert(cell);
+        // Which fraction of the window this view fills.
+        view.insert(cell);
     }
 }
 
-/// Keep each [`GridCell`] camera's viewport sized to its cell as the window
-/// resizes. Each edge is rounded to a whole pixel; because adjacent cells share
-/// an edge fraction they round to the same pixel, so the cells always tile the
-/// full window with no gap or overlap.
-fn update_grid_viewports(
+/// Keep every emulator view's [`ViewRect`] sized to its slice of the window as
+/// the window resizes. Each edge is rounded to a whole pixel; because adjacent
+/// cells share an edge fraction they round to the same pixel, so the cells
+/// always tile the full window with no gap or overlap.
+fn update_view_rects(
     window: Single<&Window, With<PrimaryWindow>>,
     mut settings: ResMut<AppSettings>,
-    mut cameras: Query<(&GridCell, &EmuView, &mut Camera)>,
+    mut views: Query<(&EmuView, Option<&GridCell>, &mut ViewRect)>,
 ) {
     let size = window.physical_size();
     if size.x == 0 || size.y == 0 {
@@ -277,19 +237,20 @@ fn update_grid_viewports(
     settings.mouse_index = None;
 
     let fsize = size.as_vec2();
-    for (cell, view, mut camera) in &mut cameras {
-        // When maximized, the focused emulator fills the whole window and the
-        // rest stop rendering, so it looks exactly like it was the only core
-        // running. Guard the writes so we don't retrigger change detection (and
-        // a render-graph rebuild) every frame when nothing changed.
-        let is_focused = view.index == settings.current_emu;
-        let active = !settings.maximized || is_focused;
-        if camera.is_active != active {
-            camera.is_active = active;
-        }
-        if !active {
+    for (view, cell, mut rect) in &mut views {
+        let Some(cell) = cell else {
+            // No grid: this view owns the whole window, always.
+            rect.set_if_neq(ViewRect {
+                position: UVec2::ZERO,
+                size,
+                active: true,
+            });
             continue;
-        }
+        };
+        // When maximized, the focused emulator fills the whole window and the
+        // rest stop drawing, so it looks exactly like it was the only core
+        // running.
+        let active = !settings.maximized || view.index == settings.current_emu;
         let (position, vp_size) = if settings.maximized {
             (UVec2::ZERO, size)
         } else {
@@ -309,19 +270,13 @@ fn update_grid_viewports(
             settings.mouse_index = Some(99999);
         }
 
-        // `Viewport` doesn't derive `PartialEq`; compare the fields we set to
-        // avoid retriggering change detection every frame when nothing moved.
-        let unchanged = camera
-            .viewport
-            .as_ref()
-            .is_some_and(|v| v.physical_position == position && v.physical_size == vp_size);
-        if !unchanged {
-            camera.viewport = Some(Viewport {
-                physical_position: position,
-                physical_size: vp_size,
-                ..default()
-            });
-        }
+        // Guarded so we don't retrigger change detection (and a re-extract)
+        // every frame when nothing moved.
+        rect.set_if_neq(ViewRect {
+            position,
+            size: vp_size,
+            active,
+        });
     }
 }
 
@@ -398,7 +353,6 @@ const fn config_line_width() -> f32 {
 fn run_retro(
     mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
-    lists: Query<&TextList>,
     mut settings: ResMut<AppSettings>,
     render: Res<RenderSettings>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -408,12 +362,13 @@ fn run_retro(
     mut cmd_writer: MessageWriter<CmdMessage>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&EmuView, &Camera, &mut PostProcess)>,
+    mut views: Query<(&EmuView, &ViewRect, &mut PostProcess)>,
+    hud: Res<HudState>,
 ) {
-    let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
-    // A controlled TextList is capturing keyboard navigation; while it is open,
-    // swallow all keys so they don't also reach the emulated machine.
-    let modal = lists.iter().any(|l| l.controlled);
+    // The file picker or a controlled TextList is capturing keyboard
+    // navigation; while one is open, swallow all keys so they don't also reach
+    // the emulated machine.
+    let modal = hud.list_open();
     let cmd = if !modal {
         let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
         if hot_key {
@@ -425,11 +380,13 @@ fn run_retro(
     };
 
     let mut show_info = false;
+    let mut stop_input = false;
     if mouse_buttons.just_pressed(MouseButton::Left)
         && let Some(i) = settings.mouse_index
     {
+        stop_input = true;
         let t = time.elapsed_secs_f64();
-        if t - settings.last_draw < 0.2 {
+        if t - settings.last_draw < 0.35 {
             settings.maximized = !settings.maximized;
         }
         if i < 999 {
@@ -441,7 +398,7 @@ fn run_retro(
 
     if let Some(cmd) = cmd {
         settings.hotkey_pressed = 0.0;
-        cmd_writer.write(CmdMessage(cmd, shift));
+        cmd_writer.write(CmdMessage(cmd));
     }
 
     // Map the OS cursor to normalized frame coordinates of the emulator it is
@@ -451,11 +408,8 @@ fn run_retro(
     let cursor = window.cursor_position().map(|c| c * window.scale_factor());
     let mut pointer: Option<(usize, Vec2)> = None;
     if let Some(pos) = cursor {
-        for (view, camera, pp) in &cameras {
-            if !camera.is_active {
-                continue;
-            }
-            let Some(rect) = camera.physical_viewport_rect() else {
+        for (view, view_rect, pp) in &views {
+            let Some(rect) = view_rect.rect() else {
                 continue;
             };
             let vp_min = rect.min.as_vec2();
@@ -487,6 +441,8 @@ fn run_retro(
         }
     }
 
+    let now = time.elapsed_secs_f64();
+
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         // Read-only probe. The mutable borrow that the frame copy needs is taken
         // further down, only when the core has something new: `get_mut` marks the
@@ -497,9 +453,20 @@ fn run_retro(
         }
         // Drop audio entirely in the speed-test benchmark.
         emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
+        // Exactly one view is focused; the others are on screen as grid tiles
+        // unless the focused one is maximized over them.
+        emu.focus(match (i == settings.current_emu, settings.maximized) {
+            (true, _) => ViewFocus::Focus,
+            (false, true) => ViewFocus::Invisible,
+            (false, false) => ViewFocus::Visible,
+        });
 
         let flen = settings.files.len() as isize;
 
+        // `load_async` takes `run_next`/`run_prev` as it starts, so this fires
+        // once per request rather than on every frame of a long download — and
+        // a request that arrives *during* one (the file selector, a hotkey)
+        // still gets through and replaces the load in flight.
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
             1
         } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
@@ -510,11 +477,27 @@ fn run_retro(
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
             let game = settings.files[settings.current_game as usize].clone();
-            match emu.load(&time, &game) {
-                Err(e) => {
+            emu.load_async(&game);
+            continue;
+        }
+
+        // Completes whichever load `load_async` started, on the frame its
+        // download finishes. Until then the previously loaded core keeps
+        // running, so a slow mirror no longer freezes the picture.
+        //
+        // Bound rather than matched in place: the scrutinee's borrows of `emu`
+        // and `settings` would otherwise last the whole match, which the arms
+        // below write to.
+        if now >= emu.load_delay_until {
+            let status = emu.update_load(&time, &settings.system);
+            match status {
+                LoadStatus::Idle | LoadStatus::Pending => {}
+                LoadStatus::Done {
+                    title,
+                    result: Err(e),
+                } => {
                     let text = format!(
-                        "Could not load {}: {}",
-                        game.game_info.title,
+                        "Could not load {title}: {}",
                         crate::load_error::classify(&e).reason()
                     );
 
@@ -529,48 +512,51 @@ fn run_retro(
                         });
                     }
                     error!("{e:?}");
+                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
+                    continue;
                 }
-                Ok(()) => {
+                LoadStatus::Done { result: Ok(()), .. } => {
                     emu.run_next = false;
                     emu.run_prev = false;
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
-                            text: get_info_text(&emu.work_file),
-                            delay: Duration::from_secs(5),
-                            duration: Duration::from_secs(8),
+                            text: emu.get_info(),
+                            delay: Duration::from_secs(settings.info_delay),
+                            duration: Duration::from_secs(settings.info_duration),
                             location: HudLocation::InfoText,
                         });
                     }
+                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
+                    continue;
                 }
-            };
-            continue;
+            }
         }
 
         if show_info && i == settings.current_emu {
             writer.write(SetHudText {
-                text: get_info_text(&emu.work_file),
+                text: emu.get_info(),
                 duration: Duration::from_secs(2),
                 location: HudLocation::InfoText,
                 ..Default::default()
             });
         }
 
-        let et = time.elapsed_secs_f64();
         if let Some(mt) = emu.max_time
-            && et > emu.start_time + (mt as f64)
-            && (et - settings.last_draw) > 1.0
+            && now > emu.start_time + (mt as f64)
+            && (now - settings.last_draw) > 1.0
         {
+            emu.start_time = now + 100.0;
             emu.run_next = true;
         };
 
         let mut max_idle = settings.idle_timeout;
         if max_idle == 0 && settings.tv_mode {
             max_idle = 20;
-            if emu.work_file.system_type == SystemType::Ilbm
-                || emu.work_file.system_type == SystemType::Gfx
-            {
-                max_idle = 10;
-            }
+            // if emu.work_file.system_type == SystemType::Ilbm
+            //     || emu.work_file.system_type == SystemType::Gfx
+            // {
+            //     max_idle = 10;
+            // }
         }
 
         if max_idle > 0 && emu.idle_time > max_idle as f32 {
@@ -581,17 +567,16 @@ fn run_retro(
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu) && cmd.is_none() && !modal {
+        if (settings.all_emus || i == settings.current_emu)
+            && cmd.is_none()
+            && !modal
+            && settings.maximized
+            && !stop_input
+        {
             let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
-        if !emu.run(&time) {
-            // TODO: Better warp-end detection
-            writer.write(SetHudText {
-                location: HudLocation::TopRight,
-                ..Default::default()
-            });
-        }
+        emu.run(&time);
 
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
@@ -600,9 +585,9 @@ fn run_retro(
         // than the last copy. The screen refreshes at 60-165Hz while a core
         // produces 50-60 frames a second — and the threaded backend often has no
         // update ready at all — so most passes through here have nothing new.
-        let serial = emu.core.as_ref().unwrap().frame_serial();
-        if serial != emu.frame_serial {
-            emu.frame_serial = serial;
+        let hash = emu.core.as_ref().unwrap().frame_hash();
+        if hash != emu.frame_hash {
+            emu.frame_hash = hash;
             // Scoped so the `AssetMut` (whose destructor fires change detection)
             // releases the `images` borrow before it is taken again below.
             if let Some(mut image) = images.get_mut(&emu.image)
@@ -624,20 +609,11 @@ fn run_retro(
             }
         }
         // For some reason we need to compensate the hatari aspect
-        let aspect = if emu.work_file.system_type == SystemType::AtariST {
-            let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
-            if h > 0 {
-                w as f32 / h as f32
-            } else {
-                emu.core.as_mut().unwrap().aspect_ratio()
-            }
-        } else {
-            emu.core.as_mut().unwrap().aspect_ratio()
-        };
+        let aspect = emu.core.as_mut().unwrap().aspect_ratio();
 
         // Guarded: `PostProcess` is extracted into the render world, and the
         // aspect only moves when the core changes video mode.
-        for (_, _, mut pp) in &mut cameras {
+        for (_, _, mut pp) in &mut views {
             if pp.source == emu.image && pp.aspect != aspect {
                 pp.aspect = aspect;
             }
@@ -646,14 +622,14 @@ fn run_retro(
         let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
 
         if (w != bg_w || h != bg_h) && w > 0 && h > 0 {
-            debug!("SIZE CHANGE TO {w} {h}");
+            debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
             // The texture below is replaced with a blank one, so whatever was
-            // copied in for this serial is gone: forget it, or a backend that
+            // copied in for this hash is gone: forget it, or a backend that
             // isn't producing new frames (a still image, a paused core) would
             // never refill it and stay black.
-            emu.frame_serial = 0;
+            emu.frame_hash = 0;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(
@@ -682,12 +658,7 @@ impl Plugin for RetroPlugin {
         );
         app.add_systems(
             Update,
-            (
-                run_retro,
-                update_grid_viewports,
-                draw_current_emu_outline,
-                handle_textlist,
-            ),
+            (run_retro, update_view_rects, draw_current_emu_outline),
         );
     }
 }

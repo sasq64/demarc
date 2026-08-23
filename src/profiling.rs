@@ -35,7 +35,7 @@ use bevy::prelude::*;
 use bevy::text::TextLayoutInfo;
 use bevy::ui::ComputedNode;
 
-use crate::post_process::{BorderScissor, PostProcess, PostProcessUniform};
+use crate::post_process::{BorderScissor, PostProcess, PostProcessUniform, ViewRect};
 use crate::{AppSettings, RenderSettings};
 
 /// The dup of the original stdout, stashed for the `fmt_layer` hook below.
@@ -115,8 +115,8 @@ const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 ///   outputs of those passes, listed so a feedback loop is visible as both sides).
 /// * `Transform` — re-runs transform propagation into `GlobalTransform`.
 /// * `Camera` — a viewport/`is_active` write rebuilds render state.
-/// * `PostProcess`/`PostProcessUniform`/`BorderScissor` — re-extract plus a
-///   uniform buffer write per camera.
+/// * `PostProcess`/`PostProcessUniform`/`BorderScissor`/`ViewRect` — re-extract
+///   plus a uniform buffer write per emulator view.
 #[derive(SystemParam)]
 struct Changed<'w, 's> {
     text: Query<'w, 's, (), bevy::prelude::Changed<Text>>,
@@ -134,11 +134,12 @@ struct Changed<'w, 's> {
     post_process: Query<'w, 's, (), bevy::prelude::Changed<PostProcess>>,
     post_process_uniform: Query<'w, 's, (), bevy::prelude::Changed<PostProcessUniform>>,
     border_scissor: Query<'w, 's, (), bevy::prelude::Changed<BorderScissor>>,
+    view_rect: Query<'w, 's, (), bevy::prelude::Changed<ViewRect>>,
 }
 
 impl Changed<'_, '_> {
     /// `(label, entities changed this frame)` for every watched component.
-    fn counts(&self) -> [(&'static str, usize); 15] {
+    fn counts(&self) -> [(&'static str, usize); 16] {
         [
             ("Text", self.text.iter().count()),
             ("TextFont", self.text_font.iter().count()),
@@ -153,8 +154,12 @@ impl Changed<'_, '_> {
             ("Visibility", self.visibility.iter().count()),
             ("Camera", self.camera.iter().count()),
             ("PostProcess", self.post_process.iter().count()),
-            ("PostProcessUniform", self.post_process_uniform.iter().count()),
+            (
+                "PostProcessUniform",
+                self.post_process_uniform.iter().count(),
+            ),
             ("BorderScissor", self.border_scissor.iter().count()),
+            ("ViewRect", self.view_rect.iter().count()),
         ]
     }
 }
@@ -164,7 +169,7 @@ struct ChangeAudit {
     elapsed: Duration,
     frames: u32,
     /// Running totals, parallel to [`Changed::counts`].
-    counts: [usize; 15],
+    counts: [usize; 16],
     /// Frames on which the resource was written at all (`ResMut` deref).
     settings_frames: u32,
     render_settings_frames: u32,
@@ -177,7 +182,7 @@ impl Default for ChangeAudit {
         Self {
             elapsed: Duration::ZERO,
             frames: 0,
-            counts: [0; 15],
+            counts: [0; 16],
             settings_frames: 0,
             render_settings_frames: 0,
             image_modified: 0,

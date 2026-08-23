@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use bevy::{
     asset::AssetId,
-    camera::Camera,
     core_pipeline::{Core2d, Core2dSystems, FullscreenShader},
     image::Image,
     prelude::*,
@@ -17,10 +16,10 @@ use bevy::{
         extract_resource::ExtractResourcePlugin,
         render_asset::RenderAssets,
         render_resource::{
-            AddressMode, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-            CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState,
-            PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, Sampler,
-            SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType, Texture,
+            AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
+            BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+            Extent3d, FragmentState, PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor,
+            Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType,
             TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
             TextureView, TextureViewDescriptor,
             binding_types::{sampler, texture_2d, uniform_buffer},
@@ -37,23 +36,38 @@ use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use crate::RenderSettings;
+use crate::{AppSettings, RenderSettings};
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
 /// `TextureFormat::bevy_default()`).
 const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
+/// The bundled DREZ downsample preset, relative to the `system` dir. Swapped in
+/// for the effect preset on views that magnify the source less than
+/// `--downsample` (by default: that minify it).
+pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
+
 /// Which post-process backend to run, selected on the command line.
 #[derive(Resource, Clone)]
 pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect plus a plain
-    /// passthrough (`stock.slangp`) used when the CRT/LCD effect is toggled
-    /// off. Absolute paths, resolved from the `system` dir (or a user-supplied
-    /// `--slangp`) in `main`.
+    /// librashader `.slangp` filter chains: the visible effect and a
+    /// downsampler for views that show the source too small. Absolute paths,
+    /// resolved from the `system` dir (or a user-supplied `--slangp`) in
+    /// `main`. With the effect toggled off there is no chain at all — the
+    /// composite blit samples the emulator framebuffer directly (see
+    /// [`post_process_pass`]).
     Slangp {
         effect: PathBuf,
-        passthrough: PathBuf,
+        /// DREZ downsample preset, substituted for `effect` on views below
+        /// `downsample_limit`.
+        downsample: PathBuf,
+        /// Magnification (on-screen pixels per source pixel) below which the
+        /// downsampler replaces the effect, from `--downsample`. Mirrors
+        /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
+        /// kicks in exactly when the view shows the source *smaller* than its
+        /// native resolution; `0` disables the downsampler entirely.
+        downsample_limit: f32,
     },
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
@@ -74,6 +88,8 @@ impl Plugin for PostProcessPlugin {
             ExtractComponentPlugin::<PostProcess>::default(),
             ExtractComponentPlugin::<PostProcessUniform>::default(),
             ExtractComponentPlugin::<BorderScissor>::default(),
+            ExtractComponentPlugin::<ViewRect>::default(),
+            ExtractComponentPlugin::<EmuCamera>::default(),
             UniformComponentPlugin::<PostProcessUniform>::default(),
         ))
         .add_systems(PostUpdate, update_post_process_uniform);
@@ -145,7 +161,12 @@ pub struct PostProcess {
 pub struct PostProcessUniform {
     uv_scale: Vec2,
     uv_offset: Vec2,
-    /// `1` when the CRT effect is active, `0` for a plain passthrough blit.
+    /// `1` when the CRT effect is active for *this view*, `0` for a plain
+    /// passthrough blit. Decided per view in [`compute_uniform`]: the global
+    /// [`RenderSettings::crt_effect`] toggle, further gated by
+    /// [`AppSettings::crt_limit`] against this view's magnification. The slangp
+    /// backend reads it back off the extracted component to decide whether to
+    /// run a filter chain at all, so both backends agree on a single decision.
     crt_enabled: u32,
 }
 
@@ -159,7 +180,41 @@ pub struct PostProcessUniform {
 #[derive(Component, Clone, Copy, PartialEq, Eq, ExtractComponent)]
 pub struct BorderScissor(pub Option<URect>);
 
-/// Recomputes both post-process components from the camera's current viewport.
+/// The window rectangle, in physical pixels, that one emulator view draws into.
+///
+/// Grid mode used to give every cell its own `Camera2d` with a `viewport`, so
+/// the entire 2D pipeline — extraction, view uniforms, main pass, tonemapping,
+/// upscaling, one render pass each — ran once per cell. A grid now has a single
+/// camera and every view is a plain entity contributing one quad to
+/// [`post_process_pass`]; this component is what that camera viewport used to
+/// be, and is written from the window size by the frontend.
+#[derive(Component, Clone, Copy, PartialEq, Eq, ExtractComponent)]
+pub struct ViewRect {
+    /// Top-left corner in physical pixels.
+    pub position: UVec2,
+    /// Size in physical pixels. Zero until the first frame has sized it.
+    pub size: UVec2,
+    /// `false` while a *different* view is maximized over the window: the quad
+    /// is skipped entirely, exactly as an inactive camera used to be.
+    pub active: bool,
+}
+
+impl ViewRect {
+    /// The rectangle in physical framebuffer coordinates, or `None` before the
+    /// first frame has sized it (or while the window is degenerate).
+    pub fn rect(&self) -> Option<URect> {
+        (self.active && self.size.x > 0 && self.size.y > 0)
+            .then(|| URect::from_corners(self.position, self.position + self.size))
+    }
+}
+
+/// Marks the one camera the emulator views composite into. Its [`ViewTarget`]
+/// is what [`post_process_pass`] draws every quad to — the UI camera, which
+/// renders the HUD on top afterwards, must not carry this.
+#[derive(Component, Clone, Copy, ExtractComponent)]
+pub struct EmuCamera;
+
+/// Recomputes both post-process components from the view's current rectangle.
 ///
 /// Nothing here changes unless the window is resized, the core switches video
 /// mode or a hotkey toggles the shader — but it runs every frame, so both writes
@@ -169,18 +224,19 @@ pub struct BorderScissor(pub Option<URect>);
 fn update_post_process_uniform(
     images: Res<Assets<Image>>,
     settings: Res<RenderSettings>,
+    app_settings: Res<AppSettings>,
     mut commands: Commands,
     mut query: Query<(
         Entity,
         &PostProcess,
-        &Camera,
+        &ViewRect,
         Option<&mut PostProcessUniform>,
         Option<&mut BorderScissor>,
     )>,
 ) {
-    for (entity, pp, camera, existing, existing_scissor) in &mut query {
-        let uniform = compute_uniform(pp, &settings, camera, &images);
-        let scissor = BorderScissor(compute_scissor(&uniform, &settings, camera));
+    for (entity, pp, view_rect, existing, existing_scissor) in &mut query {
+        let uniform = compute_uniform(pp, &settings, app_settings.crt_limit, view_rect, &images);
+        let scissor = BorderScissor(compute_scissor(&uniform, &settings, view_rect));
         match existing {
             Some(mut u) => {
                 u.set_if_neq(uniform);
@@ -206,12 +262,12 @@ fn update_post_process_uniform(
 fn compute_scissor(
     u: &PostProcessUniform,
     settings: &RenderSettings,
-    camera: &Camera,
+    view_rect: &ViewRect,
 ) -> Option<URect> {
     if !matches!(settings.border_mode, BorderMode::Black) {
         return None;
     }
-    let rect = camera.physical_viewport_rect()?;
+    let rect = view_rect.rect()?;
     let vp_min = rect.min.as_vec2();
     let vp_size = rect.size().as_vec2();
     // The image occupies screen-uv `[uv_offset, uv_offset + uv_scale]` within the
@@ -231,22 +287,19 @@ fn compute_scissor(
 fn compute_uniform(
     pp: &PostProcess,
     settings: &RenderSettings,
-    camera: &Camera,
+    crt_limit: f32,
+    view_rect: &ViewRect,
     images: &Assets<Image>,
 ) -> PostProcessUniform {
-    // Use the viewport size, not the full render target: in grid mode each
-    // camera renders into its own sub-rect, so aspect must be computed against
-    // that quadrant. `physical_viewport_size` falls back to the full target
-    // when no viewport is set (single-emulator case).
-    let viewport = camera.physical_viewport_size();
-    let (mut uv_scale, mut uv_offset) = match (viewport, images.get(&pp.source)) {
-        (Some(target), Some(source)) => scale_offset(
-            target,
-            source.size(),
-            pp.aspect,
-            pp.aspect_tweak,
-            settings.scale_mode,
-        ),
+    // Use this view's rectangle, not the whole window: in grid mode every cell
+    // gets its own sub-rect of the one camera, so aspect must be computed
+    // against that quadrant. A single emulator's rect is the whole window.
+    let viewport = view_rect.rect().map(|r| r.size());
+    let src = images.get(&pp.source).map(|source| source.size());
+    let (mut uv_scale, mut uv_offset) = match (viewport, src) {
+        (Some(target), Some(src)) => {
+            scale_offset(target, src, pp.aspect, pp.aspect_tweak, settings.scale_mode)
+        }
         _ => (Vec2::ONE, Vec2::ZERO),
     };
     // Snap the composite transform to the intermediate's integer pixel grid so
@@ -267,11 +320,53 @@ fn compute_uniform(
         uv_scale = inter / target;
         uv_offset = (uv_offset * target).round() / target;
     }
+    // The effect is on only if it's globally enabled *and* this view magnifies
+    // the source enough for the scanlines/mask to resolve. Both the viewport and
+    // the source size are per-view, so a grid cell can fall below the limit
+    // while the same core, maximized, stays above it.
+    let crt_enabled = settings.crt_effect
+        && match (viewport, src) {
+            (Some(target), Some(src)) => pixel_ratio(target, src, uv_scale) >= crt_limit,
+            // Source not loaded yet: keep the global setting rather than
+            // flickering the effect off for a frame.
+            _ => true,
+        };
     PostProcessUniform {
         uv_scale,
         uv_offset,
-        crt_enabled: settings.crt_effect as u32,
+        crt_enabled: crt_enabled as u32,
     }
+}
+
+/// How many screen pixels the source gets per source pixel in this view, taken
+/// on the *tighter* of the two axes.
+///
+/// `uv_scale ⊙ target` is the image's on-screen footprint in pixels (the same
+/// `inter_size` the librashader intermediate is sized to), so dividing by the
+/// source dimensions gives the magnification per axis. The two differ whenever
+/// the pixel aspect isn't square — an Amiga half-width frame is stretched twice
+/// as far horizontally as vertically — and the effect is limited by whichever
+/// axis has the least room, so take the minimum.
+fn pixel_ratio(target: UVec2, src: UVec2, uv_scale: Vec2) -> f32 {
+    if src.x == 0 || src.y == 0 {
+        return f32::INFINITY;
+    }
+    (uv_scale * target.as_vec2() / src.as_vec2()).min_element()
+}
+
+/// Whether a view whose on-screen footprint is `inter` should run the
+/// downsampler: it magnifies the source by less than `limit` on at least one
+/// axis. Taken per axis rather than on the aspect-corrected magnification,
+/// because a frame stretched on one axis and squeezed on the other (a
+/// half-width Amiga screen shown at 1:1) still aliases on the squeezed one.
+///
+/// `limit <= 0` never downsamples; the default `1.0` is exactly "the view
+/// throws source pixels away".
+fn wants_downsample(inter: UVec2, src: UVec2, limit: f32) -> bool {
+    if limit <= 0.0 || src.x == 0 || src.y == 0 {
+        return false;
+    }
+    (inter.as_vec2() / src.as_vec2()).min_element() < limit
 }
 
 /// The letterbox/pillarbox transform for showing a `src`-sized source in a
@@ -357,25 +452,40 @@ pub fn scale_offset(
     )
 }
 
-/// Renders the current view. On the [`ShaderPath::Slangp`] backend this is two
-/// stages: first the librashader `.slangp` filter chain turns the emulator
-/// framebuffer into an intermediate texture (the effect, at display resolution,
-/// preserving the source aspect ratio), then a passthrough blit composites that
-/// intermediate into the view target with the letterbox/pillarbox transform and
-/// border handling. On the [`ShaderPath::Wgsl`] backend stage 1 is skipped: the
-/// single-pass WGSL shader samples the emulator framebuffer directly and
-/// applies the effect during the composite itself.
+/// Draws every emulator view into the one emulator camera's view target.
+///
+/// Each view is a quad: the fullscreen triangle, mapped to that view's
+/// [`ViewRect`] with the render pass viewport and clipped to it with the
+/// scissor. A grid of `n` emulators is therefore `n` draws in a single render
+/// pass, rather than `n` cameras each dragging the whole 2D pipeline (view
+/// uniforms, main pass, tonemapping, upscaling) behind them.
+///
+/// On the [`ShaderPath::Slangp`] backend a view is two stages: first the
+/// librashader `.slangp` filter chain turns the emulator framebuffer into an
+/// intermediate texture (the effect, at display resolution, preserving the
+/// source aspect ratio), then the composite blit draws that intermediate with
+/// the letterbox/pillarbox transform and border handling. Stage 1 is skipped
+/// whenever a view wants neither the effect nor the downsampler — the chain
+/// would be a verbatim copy — and again on the [`ShaderPath::Wgsl`] backend,
+/// where the single-pass WGSL shader samples the emulator framebuffer directly
+/// and applies the effect during the composite itself.
+///
+/// All of stage 1 runs before the composite pass is opened, because the filter
+/// chains record into the same command encoder and a render pass may not be
+/// live while they do.
 ///
 /// As a `Core2d` render system this is invoked once per camera with
 /// [`CurrentView`](bevy::render::renderer::CurrentView) set; the [`ViewQuery`]
-/// skips cameras without a [`PostProcess`] component.
+/// skips every camera but the [`EmuCamera`] (notably the UI camera, which draws
+/// the HUD on top afterwards).
 fn post_process_pass(
-    view: ViewQuery<(
-        &ViewTarget,
+    view: ViewQuery<(&ViewTarget, &ExtractedCamera), With<EmuCamera>>,
+    views: Query<(
         &PostProcess,
+        &PostProcessUniform,
         &DynamicUniformIndex<PostProcessUniform>,
-        &ExtractedCamera,
         &BorderScissor,
+        &ViewRect,
     )>,
     pipeline_resource: Res<PostProcessPipeline>,
     pipeline_cache: Res<PipelineCache>,
@@ -387,13 +497,9 @@ fn post_process_pass(
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
-    let (view_target, post_process, uniform_index, camera, border_scissor) = view.into_inner();
+    let (view_target, camera) = view.into_inner();
 
     let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
-        return;
-    };
-
-    let Some(source_image) = gpu_images.get(&post_process.source) else {
         return;
     };
 
@@ -401,133 +507,202 @@ fn post_process_pass(
         return;
     };
 
-    // --- Stage 1 (slangp only): run the librashader chain into an intermediate ---
-    //
-    // Size the intermediate to the image's actual on-screen pixel extent under
-    // the current scale mode, so the effect (scanlines/mask) is rendered at
-    // exactly the display pixel density it will be shown at. The composite blit
-    // below then samples the intermediate 1:1 (identity texel mapping) instead
-    // of bilinearly resampling a fixed-size effect to a different on-screen size
-    // — that resampling beats against the high-frequency phosphor mask and
-    // produces coloured R/G/B moiré lines (worst under Stretch/Zoom).
-    //
-    // `inter_size = viewport ⊙ uv_scale`: for Fit it's the aspect-correct image
-    // rectangle (unchanged); for Stretch it's the full viewport (source
-    // stretched to fill); for Zoom it's larger than the viewport on the cropped
-    // axis — the full scaled image, of which the composite shows the centre.
-    // Because the composite's `uv_scale`/`uv_offset` come from `scale_offset`
-    // with the same mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands
-    // on exact texel centres: one screen pixel per intermediate texel.
-    let composite_input: &TextureView = match &*shader_path {
-        // WGSL backend: the composite shader applies the effect itself while
-        // sampling the emulator framebuffer directly — nothing to prepare.
-        ShaderPath::Wgsl { .. } => &source_image.texture_view,
-        ShaderPath::Slangp { .. } => {
-            // Absent if the preset failed to load; skip rendering rather than panic.
-            let Some(chains) = chains.as_mut() else {
-                return;
-            };
-            let source_id = post_process.source.id();
-            let src_size = UVec2::new(source_image.texture.width(), source_image.texture.height());
-            let viewport_size = camera
-                .physical_viewport_size
-                .or(camera.physical_target_size)
-                .unwrap_or(src_size);
-            let (image_scale, _) = scale_offset(
-                viewport_size,
-                src_size,
-                post_process.aspect,
-                post_process.aspect_tweak,
-                settings.scale_mode,
-            );
-            let inter_size = (viewport_size.as_vec2() * image_scale)
-                .round()
-                .as_uvec2()
-                .max(UVec2::ONE);
-
-            let device = render_context.render_device().clone();
-            // Each source has its own chains and target, loaded on first use; skip
-            // the source if its presets failed to load.
-            let Some(source_chains) =
-                chains.source_chains(&device, &render_queue, source_id, inter_size)
-            else {
-                return;
-            };
-            let SourceChains {
-                effect,
-                passthrough,
-                target,
-                frame_count,
-            } = source_chains;
-            let chain = if settings.crt_effect {
-                effect
-            } else {
-                passthrough
-            };
-            // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
-            // 24px tiles). When render_width / tile_size is an even integer, a tile
-            // boundary lands exactly on the screen center, where the mask's manual
-            // frac() tiling has a coordinate discontinuity that duplicates a subpixel
-            // (a visible red vertical line). crt-royale's own fix (FIX_DISCONTINUITIES)
-            // uses ddx/ddy in a vertex-shared header and won't compile on the
-            // slang/glslang path. Instead, nudge the triad size a fraction so the
-            // center falls as far as possible from any tile boundary: pick the integer
-            // tile size near 24px whose center offset is furthest from a boundary. This
-            // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
-            // the seam off-center. No-op on presets without this parameter.
-            if settings.crt_effect {
-                use librashader::runtime::FilterChainParameters;
-                let width = inter_size.x as f32;
-                let mut best_tile = 24i32;
-                let mut best_dist = -1.0f32;
-                for tile in 22..=26 {
-                    let center_coord = width / (2.0 * tile as f32);
-                    let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
-                    if dist > best_dist {
-                        best_dist = dist;
-                        best_tile = tile;
-                    }
-                }
-                chain
-                    .parameters()
-                    .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
-            }
-            let lr_size = Size::new(inter_size.x, inter_size.y);
-            let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
-            let viewport = Viewport {
-                x: 0.0,
-                y: 0.0,
-                mvp: None,
-                output,
-                size: lr_size,
-            };
-            if let Err(err) = chain.frame(
-                &source_image.texture,
-                &viewport,
-                render_context.command_encoder(),
-                *frame_count,
-                None,
-            ) {
-                error!("librashader frame failed: {err}");
-                return;
-            }
-            *frame_count += 1;
-            &target.view
-        }
-    };
-
-    // --- Stage 2: composite into the view target ---
     let sampler = match settings.border_mode {
         BorderMode::Stretch => &pipeline_resource.sampler_stretch,
         BorderMode::Black => &pipeline_resource.sampler_black,
     };
 
-    let bind_group = render_context.render_device().create_bind_group(
-        "lottes_bind_group",
-        &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
-        &BindGroupEntries::sequential((composite_input, sampler, uniform_binding.clone())),
-    );
+    // Clip everything to the framebuffer: wgpu rejects a viewport or scissor
+    // that pokes outside it, and a stale `ViewRect` (written before a resize
+    // this frame) can.
+    let framebuffer = camera
+        .physical_target_size
+        .map(|size| URect::from_corners(UVec2::ZERO, size));
 
+    let mut quads: Vec<Quad> = Vec::with_capacity(views.iter().len());
+    'views: for (post_process, uniform, uniform_index, border_scissor, view_rect) in &views {
+        // Inactive (another view is maximized over this one) or not sized yet.
+        let Some(mut rect) = view_rect.rect() else {
+            continue;
+        };
+        if let Some(framebuffer) = framebuffer {
+            rect = rect.intersect(framebuffer);
+        }
+        if rect.is_empty() {
+            continue;
+        }
+        // Restrict the quad to the image rectangle (in `BorderMode::Black`) so
+        // the letterbox/pillarbox bars are left showing the camera's clear
+        // color rather than being overdrawn by the shader. Without one the
+        // scissor is the view rectangle itself — it still has to be set, or the
+        // previous quad's scissor would clip this one.
+        let scissor = border_scissor.0.map_or(rect, |r| rect.intersect(r));
+        if scissor.is_empty() {
+            continue;
+        }
+
+        let Some(source_image) = gpu_images.get(&post_process.source) else {
+            continue;
+        };
+        // Per-view decision made in `compute_uniform` (the global `crt_effect`
+        // toggle gated by `crt_limit`), not `settings.crt_effect` directly — in
+        // grid mode the answer differs from view to view.
+        let crt_enabled = uniform.crt_enabled != 0;
+
+        // --- Stage 1 (slangp only): run the librashader chain into an intermediate ---
+        //
+        // Size the intermediate to the image's actual on-screen pixel extent under
+        // the current scale mode, so the effect (scanlines/mask) is rendered at
+        // exactly the display pixel density it will be shown at. The composite blit
+        // below then samples the intermediate 1:1 (identity texel mapping) instead
+        // of bilinearly resampling a fixed-size effect to a different on-screen size
+        // — that resampling beats against the high-frequency phosphor mask and
+        // produces coloured R/G/B moiré lines (worst under Stretch/Zoom).
+        //
+        // `inter_size = view rect ⊙ uv_scale`: for Fit it's the aspect-correct image
+        // rectangle (unchanged); for Stretch it's the full rect (source stretched to
+        // fill); for Zoom it's larger than the rect on the cropped axis — the full
+        // scaled image, of which the composite shows the centre. Because the
+        // composite's `uv_scale`/`uv_offset` come from `scale_offset` with the same
+        // mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands on exact texel
+        // centres: one screen pixel per intermediate texel.
+        let composite_input: &TextureView = match &*shader_path {
+            // WGSL backend: the composite shader applies the effect itself while
+            // sampling the emulator framebuffer directly — nothing to prepare.
+            ShaderPath::Wgsl { .. } => &source_image.texture_view,
+            ShaderPath::Slangp { .. } => 'slangp: {
+                // Absent if the preset failed to load; skip rendering rather than panic.
+                let Some(chains) = chains.as_mut() else {
+                    return;
+                };
+                let source_id = post_process.source.id();
+                let src_size =
+                    UVec2::new(source_image.texture.width(), source_image.texture.height());
+                let (image_scale, _) = scale_offset(
+                    rect.size(),
+                    src_size,
+                    post_process.aspect,
+                    post_process.aspect_tweak,
+                    settings.scale_mode,
+                );
+                let inter_size = (rect.size().as_vec2() * image_scale)
+                    .round()
+                    .as_uvec2()
+                    .max(UVec2::ONE);
+
+                // Minification — the on-screen image is smaller than the source on
+                // at least one axis — is the one case the CRT/LCD presets can't
+                // help with: there are no spare display pixels for a scanline or a
+                // phosphor mask to live in, and squeezing the frame down drops
+                // source pixels outright, which aliases. The DREZ preset replaces
+                // the effect there; it band-limits the frame as it resamples, so
+                // the detail that can't be shown is filtered away instead of
+                // beating against the pixel grid. `--downsample` raises that
+                // threshold above 1:1 (or, at `0`, switches the preset off
+                // entirely). Independent of `crt_enabled`: `crt_limit` has almost
+                // always switched the effect off by the time we're down here, and
+                // this is a resampler, not a look.
+                let downsampling = wants_downsample(inter_size, src_size, chains.downsample_limit);
+                // With neither the effect nor the downsampler wanted, the chain
+                // this view would run is `stock.slangp` — a nearest-sampled
+                // verbatim copy of the source. Composite the emulator framebuffer
+                // itself instead: `blit.wgsl` maps uv and linearizes exactly the
+                // same way, and skipping the copy saves a full-screen pass, the
+                // intermediate texture, and (in grid mode, where `crt_limit`
+                // switches most cells off) building any filter chain for this
+                // source at all. It is also marginally *more* accurate: the
+                // intermediate is `Rgba8UnormSrgb`, so a copy through it encodes
+                // and re-decodes every texel, which costs up to 1/255 on bright
+                // values. Sampling the `Rgba8Unorm` source is exact.
+                let kind = if downsampling {
+                    ChainKind::Downsample
+                } else if crt_enabled {
+                    ChainKind::Effect
+                } else {
+                    break 'slangp &source_image.texture_view;
+                };
+
+                let device = render_context.render_device().clone();
+                // Each source has its own chains and target, built on first use;
+                // skip the source if its preset failed to load.
+                let Some((chain, target, frame_count)) =
+                    chains.chain(&device, &render_queue, source_id, inter_size, kind)
+                else {
+                    continue 'views;
+                };
+                // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
+                // 24px tiles). When render_width / tile_size is an even integer, a tile
+                // boundary lands exactly on the screen center, where the mask's manual
+                // frac() tiling has a coordinate discontinuity that duplicates a subpixel
+                // (a visible red vertical line). crt-royale's own fix (FIX_DISCONTINUITIES)
+                // uses ddx/ddy in a vertex-shared header and won't compile on the
+                // slang/glslang path. Instead, nudge the triad size a fraction so the
+                // center falls as far as possible from any tile boundary: pick the integer
+                // tile size near 24px whose center offset is furthest from a boundary. This
+                // keeps triads ~3px (visually identical, mask stays pixel-sharp) and moves
+                // the seam off-center. No-op on presets without this parameter.
+                if kind == ChainKind::Effect {
+                    use librashader::runtime::FilterChainParameters;
+                    let width = inter_size.x as f32;
+                    let mut best_tile = 24i32;
+                    let mut best_dist = -1.0f32;
+                    for tile in 22..=26 {
+                        let center_coord = width / (2.0 * tile as f32);
+                        let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
+                        if dist > best_dist {
+                            best_dist = dist;
+                            best_tile = tile;
+                        }
+                    }
+                    chain
+                        .parameters()
+                        .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
+                }
+                let lr_size = Size::new(inter_size.x, inter_size.y);
+                let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
+                let viewport = Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    mvp: None,
+                    output,
+                    size: lr_size,
+                };
+                if let Err(err) = chain.frame(
+                    &source_image.texture,
+                    &viewport,
+                    render_context.command_encoder(),
+                    *frame_count,
+                    None,
+                ) {
+                    error!("librashader frame failed: {err}");
+                    continue 'views;
+                }
+                *frame_count += 1;
+                &target.view
+            }
+        };
+
+        // The bind group is built here, while the chain's intermediate is still
+        // borrowed, and drawn from below — a `BindGroup` is a cheap handle, a
+        // `TextureView` borrow would keep `chains` locked for the whole pass.
+        let bind_group = render_context.render_device().create_bind_group(
+            "lottes_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline_resource.layout),
+            &BindGroupEntries::sequential((composite_input, sampler, uniform_binding.clone())),
+        );
+        quads.push(Quad {
+            bind_group,
+            uniform_index: uniform_index.index(),
+            rect,
+            scissor,
+        });
+    }
+
+    if quads.is_empty() {
+        return;
+    }
+
+    // --- Stage 2: composite every view into the view target ---
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("lottes_pass"),
         color_attachments: &[Some(view_target.get_unsampled_color_attachment())],
@@ -536,29 +711,31 @@ fn post_process_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-
-    // Restrict the fullscreen blit to this camera's viewport so grid-mode
-    // emulators each draw into their own quadrant instead of overdrawing
-    // the whole window. Without a viewport (single-emulator case) this is a
-    // no-op and the triangle covers the full target.
-    if let Some(viewport) = &camera.viewport {
-        render_pass.set_camera_viewport(viewport);
-    }
-
-    // Restrict the blit to the image rectangle (in `BorderMode::Black`) so the
-    // letterbox/pillarbox bars are left showing the camera's clear color rather
-    // than being overdrawn by the shader.
-    if let (Some(rect), Some(target)) = (border_scissor.0, camera.physical_target_size) {
-        let max = rect.max.min(target);
-        let min = rect.min.min(max);
-        if max.x > min.x && max.y > min.y {
-            render_pass.set_scissor_rect(min.x, min.y, max.x - min.x, max.y - min.y);
-        }
-    }
-
     render_pass.set_render_pipeline(pipeline);
-    render_pass.set_bind_group(0, &bind_group, &[uniform_index.index()]);
-    render_pass.draw(0..3, 0..1);
+    for quad in &quads {
+        // The viewport maps the fullscreen triangle onto this view's rectangle
+        // (clip-space clipping keeps it there), the scissor trims it to the
+        // image when the bars are meant to keep the clear color.
+        let size = quad.rect.size().as_vec2();
+        let min = quad.rect.min.as_vec2();
+        render_pass.set_viewport(min.x, min.y, size.x, size.y, 0.0, 1.0);
+        let scissor = quad.scissor.size();
+        render_pass.set_scissor_rect(quad.scissor.min.x, quad.scissor.min.y, scissor.x, scissor.y);
+        render_pass.set_bind_group(0, &quad.bind_group, &[quad.uniform_index]);
+        render_pass.draw(0..3, 0..1);
+    }
+}
+
+/// One emulator view's composite draw, prepared while the librashader chains
+/// are still being recorded and issued once the render pass is open.
+struct Quad {
+    bind_group: BindGroup,
+    /// Offset of this view's `PostProcessUniform` in the dynamic uniform buffer.
+    uniform_index: u32,
+    /// Where the quad goes, in physical framebuffer pixels.
+    rect: URect,
+    /// Sub-rect of `rect` the draw is clipped to (see [`BorderScissor`]).
+    scissor: URect,
 }
 
 #[derive(Resource)]
@@ -578,7 +755,6 @@ struct PostProcessPipeline {
 /// when that size changes (window resize / core resolution change).
 struct IntermediateTarget {
     size: UVec2,
-    texture: Texture,
     view: TextureView,
 }
 
@@ -600,23 +776,69 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
         view_formats: &[],
     });
     let view = texture.create_view(&TextureViewDescriptor::default());
-    IntermediateTarget {
-        size,
-        texture,
-        view,
+    IntermediateTarget { size, view }
+}
+
+/// Which of a source's presets a view wants to run. There is no passthrough
+/// variant: a view that wants neither of these skips librashader entirely (see
+/// [`post_process_pass`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChainKind {
+    /// The visible effect preset (CRT/LCD), selected on the command line.
+    Effect,
+    /// The DREZ downsample preset, run instead of the effect when the view
+    /// magnifies the source less than `--downsample`.
+    Downsample,
+}
+
+/// A filter chain built the first time a view actually asks for it.
+///
+/// Building one costs on the order of 10–20 ms of glslang/naga/pipeline
+/// compilation, so the ones a view never selects are never paid for — a grid
+/// whose cells all fall below `crt_limit` and above their source resolution
+/// builds none at all.
+enum LazyChain {
+    /// Not built yet; no view has needed it.
+    Pending,
+    /// Boxed only to keep the three variants a similar size — a `FilterChain`
+    /// is several hundred bytes and every source holds one of these per kind.
+    Ready(Box<FilterChain>),
+    /// The preset failed to load. Remembered so it is reported once rather
+    /// than retried (and re-logged) every frame.
+    Failed,
+}
+
+impl LazyChain {
+    /// The chain, building it via `load` on first call. `None` once loading has
+    /// failed, so the caller skips rendering.
+    fn get_or_load(
+        &mut self,
+        load: impl FnOnce() -> Option<FilterChain>,
+    ) -> Option<&mut FilterChain> {
+        if matches!(self, LazyChain::Pending) {
+            *self = match load() {
+                Some(chain) => LazyChain::Ready(Box::new(chain)),
+                None => LazyChain::Failed,
+            };
+        }
+        match self {
+            LazyChain::Ready(chain) => Some(chain),
+            _ => None,
+        }
     }
 }
 
-/// One emulator's librashader state: its own effect and passthrough chains, its
+/// One emulator's librashader state: its effect and downsample chains, its
 /// intermediate target, and its frame counter.
 struct SourceChains {
-    /// The visible effect preset (CRT/LCD), selected on the command line.
-    effect: FilterChain,
-    /// Plain passthrough (`stock.slangp`), used when the effect is toggled off.
-    passthrough: FilterChain,
+    effect: LazyChain,
+    downsample: LazyChain,
     /// Intermediate render target, recreated on resize.
     target: IntermediateTarget,
     /// RetroArch-style frame counter fed to the shaders (feedback/animation).
+    /// Only ticks on frames that actually run a chain, so an animated preset
+    /// resumes where it left off rather than jumping after a spell with the
+    /// effect switched off (during which nothing of it was on screen anyway).
     frame_count: usize,
 }
 
@@ -628,80 +850,94 @@ struct SourceChains {
 /// grid of images with different resolutions does) latches the last size and
 /// resamples the next frame's other cells through it — e.g. an 18×18 brush in
 /// the grid blurs every other image. One chain per source keeps that state
-/// isolated. Presets are loaded lazily the first time a source is rendered.
+/// isolated. Each chain is built lazily, the first time a view actually selects
+/// it (see [`LazyChain`]).
 ///
 /// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
 /// so this lives as a render-world resource, accessed via `ResMut`.
 #[derive(Resource)]
 struct SlangChains {
-    /// Path of the effect preset (`--shader`/`--slangp`), loaded per source.
+    /// Path of the effect preset (`--shader`/`--slangp`), built per source.
     effect_path: PathBuf,
-    /// Path of the passthrough preset (`stock.slangp`), loaded per source.
-    passthrough_path: PathBuf,
+    /// Path of the DREZ downsample preset.
+    downsample_path: PathBuf,
+    /// Magnification below which `downsample_path` replaces the effect;
+    /// `0` (from `--downsample 0`) never runs it. See [`wants_downsample`].
+    downsample_limit: f32,
     /// One set of chains + target per emulator, keyed by its source image.
+    /// A source that has never needed a chain has no entry at all.
     sources: HashMap<AssetId<Image>, SourceChains>,
 }
 
 impl SlangChains {
-    /// Return the per-source chains for `source`, loading its presets on first
-    /// use and (re)creating its intermediate target at `size`. Returns `None`
-    /// when a preset fails to load, so the caller skips rendering that source.
-    fn source_chains(
+    /// The `kind` chain for `source`, plus its intermediate target and frame
+    /// counter. Builds the chain on first use and (re)creates the target at
+    /// `size`. Returns `None` when the preset fails to load, so the caller
+    /// skips rendering that source.
+    fn chain(
         &mut self,
         device: &RenderDevice,
         queue: &RenderQueue,
         source: AssetId<Image>,
         size: UVec2,
-    ) -> Option<&mut SourceChains> {
-        use std::collections::hash_map::Entry;
-        match self.sources.entry(source) {
-            Entry::Occupied(e) => {
-                let sc = e.into_mut();
-                if sc.target.size != size {
-                    sc.target = build_target(device, size);
-                }
-                Some(sc)
-            }
-            Entry::Vacant(e) => {
-                let wdevice = device.wgpu_device();
-                let wqueue: &wgpu::Queue = queue;
-                #[allow(clippy::result_large_err)]
-                let load = |path: &PathBuf| {
-                    FilterChain::load_from_path(path, ShaderFeatures::NONE, wdevice, wqueue, None)
-                };
-                let effect = load(&self.effect_path)
-                    .inspect_err(|err| error!("failed to load effect preset: {err}"))
-                    .ok()?;
-                let passthrough = load(&self.passthrough_path)
-                    .inspect_err(|err| error!("failed to load passthrough preset: {err}"))
-                    .ok()?;
-                Some(e.insert(SourceChains {
-                    effect,
-                    passthrough,
-                    target: build_target(device, size),
-                    frame_count: 0,
-                }))
-            }
+        kind: ChainKind,
+    ) -> Option<(&mut FilterChain, &IntermediateTarget, &mut usize)> {
+        // Destructured so the preset paths stay readable while `sources` is
+        // borrowed mutably.
+        let Self {
+            effect_path,
+            downsample_path,
+            sources,
+            ..
+        } = self;
+        let sc = sources.entry(source).or_insert_with(|| SourceChains {
+            effect: LazyChain::Pending,
+            downsample: LazyChain::Pending,
+            target: build_target(device, size),
+            frame_count: 0,
+        });
+        if sc.target.size != size {
+            sc.target = build_target(device, size);
         }
+        let (slot, path) = match kind {
+            ChainKind::Effect => (&mut sc.effect, Some(&*effect_path)),
+            ChainKind::Downsample => (&mut sc.downsample, Some(&*downsample_path)),
+        };
+        let chain = slot.get_or_load(|| {
+            #[allow(clippy::result_large_err)]
+            let loaded = FilterChain::load_from_path(
+                path?,
+                ShaderFeatures::NONE,
+                device.wgpu_device(),
+                queue,
+                None,
+            );
+            loaded
+                .inspect_err(|err| error!("failed to load {kind:?} preset: {err}"))
+                .ok()
+        })?;
+        Some((chain, &sc.target, &mut sc.frame_count))
     }
 }
 
 /// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
-/// are loaded lazily, once per emulator source, on first render (see
-/// [`SlangChains::source_chains`]).
+/// are built lazily, once per emulator source and only for the presets a view
+/// actually selects (see [`SlangChains::chain`]).
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
     // The WGSL backend runs no filter chains; the single-pass shader loaded by
     // `init_blit_pipeline` does everything.
     let ShaderPath::Slangp {
         effect,
-        passthrough,
+        downsample,
+        downsample_limit,
     } = &*shader_path
     else {
         return;
     };
     commands.insert_resource(SlangChains {
         effect_path: effect.clone(),
-        passthrough_path: passthrough.clone(),
+        downsample_path: downsample.clone(),
+        downsample_limit: *downsample_limit,
         sources: HashMap::new(),
     });
 }
@@ -779,4 +1015,130 @@ fn init_blit_pipeline(
         sampler_black,
         pipeline_id,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The magnification the `crt_limit` check sees for showing `src` in a
+    /// `target`-sized viewport under `mode`, with square source pixels.
+    fn ratio(target: UVec2, src: UVec2, mode: ScaleMode) -> f32 {
+        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
+        pixel_ratio(target, src, uv_scale)
+    }
+
+    #[test]
+    fn ratio_is_the_on_screen_magnification() {
+        let src = UVec2::new(320, 240);
+        // Exactly 2x — the boundary a `crt_limit` of 2.0 tests against.
+        assert!((ratio(UVec2::new(640, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
+        // Pillarboxed in a wider window: the constrained axis still sets it.
+        assert!((ratio(UVec2::new(1280, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
+        // A grid cell of a 1920x1080 window at 5x4 lands below 2x.
+        assert!(ratio(UVec2::new(384, 270), src, ScaleMode::Fit) < 2.0);
+        // Maximized to the whole window, the same core is above it.
+        assert!(ratio(UVec2::new(1920, 1080), src, ScaleMode::Fit) >= 2.0);
+    }
+
+    #[test]
+    fn fixed_scale_ratio_matches_the_factor() {
+        let r = ratio(
+            UVec2::new(1920, 1080),
+            UVec2::new(320, 240),
+            ScaleMode::Fixed(3.0),
+        );
+        assert!((r - 3.0).abs() < 1e-4);
+    }
+
+    /// Non-square source pixels stretch the axes differently; the check takes
+    /// the tighter one (here vertical, on a half-width Amiga frame).
+    #[test]
+    fn ratio_uses_the_tighter_axis() {
+        let src = UVec2::new(320, 256);
+        let r = ratio(UVec2::new(1280, 512), src, ScaleMode::Fixed(2.0));
+        assert!((r - 2.0).abs() < 1e-4);
+    }
+
+    /// The bundled downsample preset has to parse and reference a shader that
+    /// is actually in the `system` tree — a preset that only fails at
+    /// `FilterChain::load_from_path` time shows up as a log line at runtime and
+    /// silently leaves minified views unfiltered.
+    #[test]
+    fn bundled_downsample_preset_resolves() {
+        use librashader::presets::ShaderPreset;
+        let path = crate::frontend::system_dir().join(DOWNSAMPLE_PRESET);
+        let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
+            .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
+        let pass = preset.passes.first().expect("preset should have a pass");
+        assert!(pass.path.is_file(), "missing shader {:?}", pass.path);
+    }
+
+    /// The on-screen footprint the downsample check sees for showing `src` in a
+    /// `target`-sized viewport under `mode`, with square source pixels.
+    fn footprint(target: UVec2, src: UVec2, mode: ScaleMode) -> UVec2 {
+        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
+        (target.as_vec2() * uv_scale)
+            .round()
+            .as_uvec2()
+            .max(UVec2::ONE)
+    }
+
+    #[test]
+    fn minification_is_detected_per_axis() {
+        let src = UVec2::new(320, 240);
+        // At the default limit, 1:1 and up are not minification — the boundary
+        // is exclusive.
+        assert!(!wants_downsample(
+            footprint(UVec2::new(320, 240), src, ScaleMode::Fit),
+            src,
+            1.0
+        ));
+        assert!(!wants_downsample(
+            footprint(UVec2::new(1920, 1080), src, ScaleMode::Fit),
+            src,
+            1.0
+        ));
+        // A 5x4 grid of a 1920x1080 window still shows it above 1:1 — well
+        // under the 1.5x `crt_limit`, but with nothing to filter away.
+        assert!(!wants_downsample(
+            footprint(UVec2::new(384, 270), src, ScaleMode::Fit),
+            src,
+            1.0
+        ));
+        // An 8x6 grid does squeeze it below its source resolution.
+        assert!(wants_downsample(
+            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
+            src,
+            1.0
+        ));
+        // A half-width Amiga frame stretched to 1:1 vertically is still
+        // squeezed horizontally, and aliases there.
+        let amiga = UVec2::new(640, 256);
+        assert!(wants_downsample(UVec2::new(512, 512), amiga, 1.0));
+    }
+
+    /// The limit is the same kind of threshold as `crt_limit`, from the other
+    /// side: raising it downsamples views that magnify below it, and `0`
+    /// switches the downsampler off however small the view gets.
+    #[test]
+    fn downsample_limit_thresholds_like_crt_limit() {
+        let src = UVec2::new(320, 240);
+        // A 5x4 grid cell shows the source at ~1.2x: untouched at the default,
+        // downsampled once the limit is raised past that.
+        let cell = footprint(UVec2::new(384, 270), src, ScaleMode::Fit);
+        assert!(!wants_downsample(cell, src, 1.0));
+        assert!(wants_downsample(cell, src, 1.5));
+        // Exactly at the limit the effect keeps it — the boundary is exclusive,
+        // mirroring `crt_limit`'s inclusive `>=`.
+        let one_to_one = footprint(UVec2::new(320, 240), src, ScaleMode::Fit);
+        assert!(!wants_downsample(one_to_one, src, 1.0));
+        // `0` never downsamples, however squeezed the view is.
+        assert!(!wants_downsample(
+            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
+            src,
+            0.0
+        ));
+        assert!(!wants_downsample(UVec2::new(1, 1), src, 0.0));
+    }
 }

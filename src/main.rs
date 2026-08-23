@@ -1,4 +1,6 @@
-#![allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+// Needed for bevy systems
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
@@ -13,8 +15,12 @@ use regex::Regex;
 mod libretro;
 
 mod audio;
+mod cache;
 mod cbmconvert;
 mod commands;
+mod degas;
+mod egui_ui;
+mod emu_file;
 mod emulator;
 mod fetch;
 mod files;
@@ -22,34 +28,38 @@ mod files;
 mod flash_emu;
 mod frontend;
 mod fuzzy_list;
-mod hud;
 mod ilbm;
 mod image_emu;
+mod jobs;
 mod libloader;
 mod load_error;
+mod m3u;
 mod media_keys;
+mod music_emu;
+mod music_vis;
+mod newsys;
 mod post_process;
 #[cfg(feature = "profile")]
 mod profiling;
 mod retro_emu;
 mod screensaver;
 mod speed_test;
-mod systems;
-mod text_input;
 mod utils;
+mod workfile;
+mod zx_scr;
 
 use commands::CommandPlugin;
+use commands::FilePickerSource;
 use frontend::{RetroPlugin, system_dir};
-use fuzzy_list::{FuzzyListPlugin, IndexedSource};
-use hud::HudPlugin;
-use post_process::{BorderMode, PostProcessPlugin, ScaleMode, ShaderPath};
+use post_process::{BorderMode, DOWNSAMPLE_PRESET, PostProcessPlugin, ScaleMode, ShaderPath};
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
-use text_input::TextInputPlugin;
 #[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
-use crate::files::{DbFilter, EmuFile, collect_db, collect_db_stdin, collect_file, collect_files};
+use crate::emu_file::EmuFile;
+use crate::files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
+use crate::newsys::NewSys;
 
 const CLAP_STYLES: Styles = Styles::styled()
     .header(
@@ -66,7 +76,14 @@ const CLAP_STYLES: Styles = Styles::styled()
     .placeholder(Style::new().fg_color(Some(styling::Color::Ansi(AnsiColor::Green))));
 
 #[derive(Parser, Debug, Resource, Clone)]
-#[command(name = "demarc", styles = CLAP_STYLES, color = ColorChoice::Always, 
+#[command(name = "demarc", version, styles = CLAP_STYLES, color = ColorChoice::Always,
+    // clap 4 drops the version from the help header, so put it back by hand.
+    help_template = "\
+{name} {version}
+{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}",
     about = "Demo scene emulator frontend for the command line",
     long_about = r#"
 DEMARC
@@ -105,8 +122,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = BorderModeArg::Black)]
     border: BorderModeArg,
 
-    /// Shader used to render the emulator screen. Defaults to the
-    /// LCD shader for Game Boy / GBA titles and the Lottes CRT shader otherwise.
+    /// Shader used to render the emulator screen.
     #[arg(long, value_enum)]
     shader: Option<ShaderArg>,
 
@@ -116,15 +132,21 @@ struct Args {
     #[arg(long)]
     slangp: Option<PathBuf>,
 
-    /// Only load db entries whose line matches this regex, e.g.
-    /// `-I '(Demo|Intro)'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; all patterns must match.
+    /// Path to lua script used for music visualization
+    #[arg(long)]
+    lua: Option<PathBuf>,
+
+    /// Only load db entries with a field matching this regex, e.g.
+    /// `-I '(Demo|Intro)'`. Matched against each field of the db line on its
+    /// own, so it can pick on any one of them but never spans two.
+    /// Repeatable; all patterns must match.
     #[arg(short = 'I', long, value_parser = Regex::new)]
     include: Vec<Regex>,
 
-    /// Exclude db entries matching regex. e.g.
-    /// `-X 'category:.*Disk'`. Matched against the raw db line, so it can
-    /// pick on any field. Repeatable; a match on any pattern excludes.
+    /// Exclude db entries with a field matching this regex, e.g.
+    /// `-X 'category:.*Disk'`. Matched against each field of the db line on
+    /// its own, so it can pick on any one of them but never spans two.
+    /// Repeatable; a match on any pattern excludes.
     #[arg(short = 'X', long, value_parser = Regex::new)]
     exclude: Vec<Regex>,
 
@@ -169,10 +191,6 @@ struct Args {
     #[arg(long)]
     max_time: Option<usize>,
 
-    /// Force vsync, slowing down or speeding up emulation to fit
-    #[arg(long)]
-    force_vsync: bool,
-
     /// Benchmark: run emulation unthrottled (no vsync, audio dropped) for two
     /// seconds, print the number of frames stepped, then exit.
     #[arg(long)]
@@ -189,6 +207,11 @@ struct Args {
     /// Render multiple emulators in a COLSxROWS grid, e.g. --grid=5x4
     #[arg(long, value_parser = parse_grid)]
     grid: Option<(u32, u32)>,
+
+    /// Start with the first grid cell maximized, as if it was the only
+    /// emulator running. Un-maximize (RightAlt+Enter) to see the whole grid.
+    #[arg(long)]
+    focus_first: bool,
 
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000033")]
@@ -217,6 +240,31 @@ struct Args {
     /// Skip demo after still screen and no audio
     #[arg(long, default_value_t = 0)]
     idle_timeout: i32,
+
+    /// Delay until info is shown for new file
+    #[arg(long, default_value_t = 4)]
+    info_delay: u64,
+
+    /// Duration of info showing for new file
+    #[arg(long, default_value_t = 8)]
+    info_duration: u64,
+
+    /// Turn the CRT filter off when the image is magnified less than this
+    /// factor, e.g. `2` disables it whenever a 320x240 screen is shown smaller
+    /// than 640x480. `0` never disables it.
+    #[arg(long, default_value_t = 1.0)]
+    crt_limit: f32,
+
+    /// Filter the image with the DREZ downsampler instead of the CRT/LCD
+    /// shader when the image is magnified less than this factor. `1` (the
+    /// default) switches to it whenever the image is shown *smaller* than its
+    /// source resolution.
+    #[arg(long, default_value_t = 1.0)]
+    downsample: f32,
+
+    // Max threads in bevy thread pool. Probably don't touch this.
+    #[arg(long, default_value_t = 4)]
+    max_threads: u32,
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -397,25 +445,35 @@ struct RenderSettings {
 
 #[derive(Resource, Default)]
 struct AppSettings {
+    system: NewSys,
     show_info: bool,
     files: Vec<EmuFile>,
     current_game: isize,
-    max_time: Option<usize>,
     current_emu: usize,
     maximized: bool,
     all_emus: bool,
     last_draw: f64,
-    text_list: Option<Entity>,
-    file_list: Option<Entity>,
     /// The file picker's search index, built lazily from `files` on first open
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.
-    file_source: Option<IndexedSource>,
+    file_source: Option<FilePickerSource>,
     hotkey_pressed: f32,
     mouse_index: Option<usize>,
     speed_test: bool,
     tv_mode: bool,
     idle_timeout: i32,
+    info_delay: u64,
+    info_duration: u64,
+    /// Minimum magnification (on-screen pixels per source pixel) the CRT filter
+    /// needs to stay on. Below it the effect is bypassed even when
+    /// [`RenderSettings::crt_effect`] is set, because the scanlines/phosphor
+    /// mask alias into mud at low magnification — most visibly in grid mode,
+    /// where each cell is a fraction of the window. `0` disables the check.
+    ///
+    /// Applied per emulator view (see `post_process::compute_uniform`), so the
+    /// same core can render without the filter in a small grid cell and with it
+    /// once maximized.
+    crt_limit: f32,
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -445,6 +503,27 @@ impl std::io::Write for FdWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+#[cfg(unix)]
+static SAVED_STDOUT: std::sync::OnceLock<FdWriter> = std::sync::OnceLock::new();
+
+/// Print a line to the real terminal, bypassing the `/dev/null` redirect that
+/// [`silence_stdout`] installs on fd 1 to muzzle the libretro cores. Falls back
+/// to the process stdout when nothing was redirected.
+pub(crate) fn println(text: impl std::fmt::Display) {
+    // Format up front and write once, so a line can't be torn in half by
+    // another thread's write between the text and its newline.
+    let mut line = text.to_string();
+    line.push('\n');
+    #[cfg(unix)]
+    if let Some(mut writer) = SAVED_STDOUT.get().copied() {
+        use std::io::Write;
+        let _ = writer.write_all(line.as_bytes());
+        return;
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(line.as_bytes());
 }
 
 /// Raise the process's soft open-file limit to the hard limit (or a large
@@ -501,7 +580,33 @@ fn silence_stdout() -> std::io::Result<FdWriter> {
     Ok(FdWriter(saved.into_raw_fd()))
 }
 
+/// Keep the OpenMP-using cores (bsnes, bsnes-hd, flycast) from eating the
+/// machine.
+///
+/// Those cores parallelise tiny per-frame regions — bsnes renders scanlines
+/// with an `omp parallel for` — but libgomp defaults to *active* waiting, so
+/// its `nproc - 1` workers busy-spin between regions. On a 48-thread box that
+/// is ~25 cores burned to render 224 scanlines, and it is also slower than not
+/// spinning at all (bsnes measured 294 fps spinning vs 377 fps passive).
+/// Passive waiting parks the workers instead, and a small pool avoids waking
+/// and joining dozens of threads per frame for work that never fills them.
+///
+/// Must run before the core is `dlopen`ed: libgomp reads these once, when its
+/// first parallel region starts.
+fn tame_openmp_cores() {
+    for (key, value) in [("OMP_WAIT_POLICY", "passive"), ("OMP_NUM_THREADS", "4")] {
+        // Leave anything the user set on the command line alone.
+        if std::env::var_os(key).is_none() {
+            // SAFETY: single-threaded here — this is the first thing `main`
+            // does, before any thread is spawned.
+            unsafe { std::env::set_var(key, value) };
+        }
+    }
+}
+
 fn main() {
+    tame_openmp_cores();
+
     #[cfg(unix)]
     raise_fd_limit();
 
@@ -521,6 +626,11 @@ fn main() {
     } else {
         silence_stdout().ok()
     };
+    // Hand the dup to `println` so the rest of the app can still print.
+    #[cfg(unix)]
+    if let Some(writer) = saved_stdout {
+        let _ = SAVED_STDOUT.set(writer);
+    }
 
     // Under `--features profile` the subscriber is built by Bevy's `LogPlugin`
     // instead (see `profiling::log_plugin`), because that's where the
@@ -550,9 +660,10 @@ fn main() {
         builder.init();
     }
 
-    // Trim the download cache before anything fetches into it, so this run's
-    // own downloads can't be evicted out from under it.
+    // Trim the caches before anything writes into them, so this run's own
+    // downloads and built discs can't be evicted out from under it.
     fetch::prune_cache();
+    newsys::prune_caches();
 
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
@@ -565,7 +676,12 @@ fn main() {
         exclude: &args.exclude,
     };
     if let Some(db) = &args.db {
-        collect_db(Path::new(db), &filter, &mut files).unwrap();
+        let path = Path::new(db);
+        if !path.exists() {
+            println(format!("** Error: Can't load database {path:?}"));
+            return;
+        }
+        collect_db(path, &filter, &mut files).unwrap();
     }
     // Anything piped in is a db too, so it can be filtered before loading.
     collect_db_stdin(&filter, &mut files).unwrap();
@@ -624,20 +740,21 @@ fn main() {
 
     // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
     // name — a `.wgsl` path selects the single-pass WGSL backend, anything
-    // else a `.slangp` preset run through librashader. The slangp passthrough
-    // (`stock.slangp`) is always the bundled one.
-    let passthrough = system_dir().join("shaders/slangp/stock.slangp");
+    // else a `.slangp` preset run through librashader.
+    let downsample = system_dir().join(DOWNSAMPLE_PRESET);
     let shader_path = match &args.slangp {
         Some(path) => ShaderPath::Slangp {
             effect: path.clone(),
-            passthrough,
+            downsample,
+            downsample_limit: args.downsample,
         },
         None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
             asset_path: shader.path().into(),
         },
         None => ShaderPath::Slangp {
             effect: system_dir().join(shader.path()),
-            passthrough,
+            downsample,
+            downsample_limit: args.downsample,
         },
     };
 
@@ -648,16 +765,20 @@ fn main() {
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
+    let sys = NewSys::new(&args);
     let settings = AppSettings {
+        system: sys,
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
         files,
-        max_time: args.max_time,
-        maximized: args.grid.is_none(),
+        maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,
         idle_timeout: args.idle_timeout,
+        info_delay: args.info_delay,
+        info_duration: args.info_duration,
+        crt_limit: args.crt_limit,
         ..Default::default()
     };
 
@@ -670,6 +791,7 @@ fn main() {
         // Drive the update loop as fast as possible regardless of window focus.
         app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
+
     // `main` installs its own tracing subscriber above, so the default one is
     // dropped — except in a profiling build, where `LogPlugin` owns the
     // subscriber (it carries the chrome-trace layer) and gets our writer.
@@ -684,6 +806,7 @@ fn main() {
         None,
     ));
 
+    let max_threads = args.max_threads as usize;
     app.insert_resource(args)
         .insert_resource(settings)
         .insert_resource(render_settings)
@@ -701,8 +824,8 @@ fn main() {
                     task_pool_options: bevy::app::TaskPoolOptions {
                         compute: bevy::app::TaskPoolThreadAssignmentPolicy {
                             min_threads: 1,
-                            max_threads: 2,
-                            percent: 0.0,
+                            max_threads,
+                            percent: 0.5,
                             on_thread_spawn: None,
                             on_thread_destroy: None,
                         },
@@ -725,11 +848,10 @@ fn main() {
             PostProcessPlugin {
                 shader: shader_path,
             },
-            HudPlugin,
-            TextInputPlugin,
-            FuzzyListPlugin,
+            egui_ui::EguiUiPlugin,
             ScreenSaverPlugin,
             SpeedTestPlugin,
+            jobs::JobsPlugin,
         ));
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);

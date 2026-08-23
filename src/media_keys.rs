@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::sync::mpsc;
 
 /// Media key events that can be listened to
@@ -177,7 +178,7 @@ mod linux_impl {
         #[zbus(property)]
         fn can_play(&self) -> bool {
             if let Ok(play_state) = self.play_state.lock() {
-                debug!("can_play {}", !play_state.is_playing);
+                debug!("can_play={}", !play_state.is_playing);
                 !play_state.is_playing
             } else {
                 true
@@ -187,7 +188,7 @@ mod linux_impl {
         #[zbus(property)]
         fn can_pause(&self) -> bool {
             if let Ok(play_state) = self.play_state.lock() {
-                debug!("can_pause {}", play_state.is_playing);
+                debug!("can_pause={}", play_state.is_playing);
                 play_state.is_playing
             } else {
                 true

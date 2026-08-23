@@ -1,0 +1,12 @@
+Amiga bitmap fonts, from TrueSchool Ascii's "Multi Platform Amiga Fonts v1.02"
+(https://github.com/rewtnull/amigafonts), `raw/` directory, unmodified.
+
+Format: headerless, 256 glyphs of 8x16 pixels, one byte per pixel row, most
+significant bit leftmost -- 4096 bytes per file. Both are the 8x8 Amiga fonts in
+Amiga aspect, i.e. every pixel row doubled. Character set is ISO-8859-1.
+
+  topaz.raw      Topaz_a500_v1.0.raw    -- Kickstart 1.x topaz.font
+  topaz1200.raw  Topaz_a1200_v1.0.raw   -- Kickstart 2.x/3.x topaz.font
+
+Topaz is (c) Amiga Inc; the raw versions are (c) dMG/t!s^dS! and released under
+the GPL font exception (http://www.gnu.org/licenses/gpl-faq.html#FontException).

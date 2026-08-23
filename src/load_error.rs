@@ -14,14 +14,13 @@
 //! error structs below — a `bail!("...")` string would only be matchable by
 //! substring, which breaks the moment someone rewords the message.
 
-use crate::systems::SystemType;
-
 /// No libretro core is installed for the system this file needs.
 #[derive(Debug, thiserror::Error)]
-#[error("no libretro core '{name}' for {system:?}")]
+#[error("no libretro core '{name}' for {system}")]
 pub struct NoCore {
     pub name: String,
-    pub system: SystemType,
+    /// The system that wanted it, as `System::name` reports it.
+    pub system: String,
 }
 
 /// A core was found but needs a BIOS the user hasn't supplied.
@@ -174,7 +173,7 @@ mod tests {
     fn classifies_through_context() {
         let err = anyhow::Error::new(NoCore {
             name: "vice_x64sc".into(),
-            system: SystemType::C64,
+            system: "C64".into(),
         })
         .context("could not prepare file")
         .context("load failed");

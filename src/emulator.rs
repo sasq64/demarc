@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::{image::Image, prelude::*};
@@ -9,88 +9,12 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::files::{EmuFile, prepare_file};
-#[cfg(feature = "flash")]
-use crate::flash_emu::FlashEmu;
-use crate::frontend::system_dir;
-use crate::image_emu::ImageEmu;
+use crate::emu_file::{EmuFile, FileSource, GameInfo, download_finished, download_started};
+use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
-use crate::retro_emu::{Backend, RetroCoreThreaded};
-use crate::systems::{SystemType, WorkingFile, get_core, tags_for_system};
-
-/// The tags one load hands to the core, in increasing order of precedence:
-///
-/// 1. what the entry itself carries — a db header line (`# Platform:Amiga
-///    puae_model:date`), a db line's own fields or an `.m3u` — together with
-///    whatever [`prepare_file`] worked out from the file (WHDLoad install, a
-///    large Amiga executable, a PS-X EXE, ...). Both are already merged into
-///    [`WorkingFile::settings`], detection last, since it saw the real file.
-/// 2. the tags from the command line, which the user asked for just now.
-///
-/// Two Amiga values name a release rather than a machine and are resolved here
-/// once everything is merged: `puae_model:date` picks the model from the year,
-/// and an `AGA Chipset` scene tag means A1200 whatever the year says.
-fn load_tags(
-    work_file: &WorkingFile,
-    cli_tags: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut tags = work_file.settings.clone();
-    for (key, val) in cli_tags {
-        tags.insert(key.clone(), val.clone());
-    }
-
-    if tags.get("puae_model").is_some_and(|m| m == "date") {
-        tags.insert("puae_model".into(), "A500".into());
-        if let Ok(year) = work_file.game_info.year.parse::<u32>() {
-            if year < 1990 {
-                tags.insert("puae_kickstart".into(), "kick33180.A500".into());
-            } else if year >= 1993 {
-                tags.insert("puae_model".into(), "A1200".into());
-            }
-        }
-    }
-
-    if tags.get("tags").is_some_and(|t| t.contains("AGA Chipset")) {
-        tags.insert("puae_model".into(), "A1200".into());
-    }
-    tags
-}
-
-pub fn create_core(
-    system_type: SystemType,
-    game: &Path,
-    mut tags: HashMap<String, String>,
-    speed_test: bool,
-) -> Result<Box<dyn Backend + Send + Sync>> {
-    if system_type == SystemType::Flash {
-        #[cfg(feature = "flash")]
-        return Ok(Box::new(FlashEmu::new(game, tags)?));
-        #[cfg(not(feature = "flash"))]
-        return Err(anyhow::anyhow!(
-            "Flash (SWF) support is not enabled; rebuild with --features flash"
-        ));
-    }
-    if system_type == SystemType::Ilbm || system_type == SystemType::Gfx {
-        return Ok(Box::new(ImageEmu::new(game)?));
-    }
-
-    tags_for_system(system_type, &mut tags);
-    println!("TAGS: {tags:?}");
-
-    // Propagate with `?` rather than re-`bail!`ing the message: formatting the
-    // error into a new string would drop the typed cause underneath it, which
-    // is what `load_error::classify` reads to tell "no core" from "missing
-    // BIOS" from "unknown file type".
-    let core = get_core(system_type, &tags)
-        .with_context(|| format!("could not pick a core for {game:?}"))?;
-    Ok(Box::new(RetroCoreThreaded::new(
-        Path::new(&core),
-        system_dir(),
-        Some(game),
-        tags,
-        speed_test,
-    )?))
-}
+use crate::newsys::NewSys;
+use crate::retro_emu::{Backend, ViewFocus, frame_bytes};
+use crate::workfile::WorkFile;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
 /// In [`InputMode::Keyboard`] (the default) they map to the corresponding
@@ -124,56 +48,91 @@ impl InputMode {
     }
 }
 
+/// A load started by [`Emulator::load_async`] whose download hasn't landed yet.
+struct PendingLoad {
+    /// The entry exactly as the frontend handed it over, still carrying its
+    /// original [`FileSource`]. [`Emulator::update_load`] rebuilds it with the
+    /// resolved path once the job finishes.
+    emu_file: EmuFile,
+    /// `(run_next, run_prev)` as they stood when the load was requested.
+    /// [`Emulator::load_async`] clears them so the frontend doesn't re-request
+    /// the same load every frame while the download runs; a load that fails
+    /// puts them back, which is what lets tv mode carry on past a dead link in
+    /// the direction it was already going.
+    advance: (bool, bool),
+    job: Job<std::path::PathBuf>,
+}
+
+/// What [`Emulator::update_load`] found this frame.
+pub(crate) enum LoadStatus {
+    /// No load in flight.
+    Idle,
+    /// A download is still running; the previously loaded core, if any, keeps
+    /// running meanwhile.
+    Pending,
+    /// The load finished this frame — `result` is `Ok` when the new core is
+    /// live.
+    ///
+    /// `title` names the entry this was for. It is carried here because on
+    /// failure there is nowhere else left to read it from:
+    /// [`Emulator::work_file`] still describes whatever was loaded before.
+    Done { title: String, result: Result<()> },
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
 /// `PostProcess` camera (matched via [`Self::image`]).
 #[derive(Component, Default)]
-pub(crate) struct Emulator {
-    pub(crate) core: Option<Box<dyn Backend + Send + Sync>>,
-    pub(crate) work_file: WorkingFile,
-    pub(crate) run_next: bool,
-    pub(crate) run_prev: bool,
-    pub(crate) next_frame: f64,
-    pub(crate) start_time: f64,
-    pub(crate) max_time: Option<usize>,
-    pub(crate) display_fps: f64,
-    pub(crate) match_fps: bool,
-    pub(crate) show_info: bool,
-    pub(crate) match_frames: usize,
-    pub(crate) tags: HashMap<String, String>,
-    pub(crate) sink: AudioSink,
-    pub(crate) key_map: HashMap<KeyCode, libretro::retro_key>,
-    pub(crate) audio_rate_adjust: f64,
-    pub(crate) audio_seen: bool,
-    pub(crate) disk_no: u32,
+pub struct Emulator {
+    pub core: Option<Box<dyn Backend + Send + Sync>>,
+    pub work_file: WorkFile,
+    pub run_next: bool,
+    pub run_prev: bool,
+    pub next_frame: f64,
+    pub start_time: f64,
+    pub max_time: Option<usize>,
+    pub display_fps: f64,
+    pub color_cycle: bool,
+    pub match_fps: bool,
+    pub show_info: bool,
+    pub match_frames: usize,
+    pub sink: AudioSink,
+    pub key_map: HashMap<KeyCode, libretro::retro_key>,
+    pub audio_rate_adjust: f64,
+    pub audio_seen: bool,
+    pub disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
     /// `PostProcess` camera samples it (`PostProcess::source == image`).
-    pub(crate) image: Handle<Image>,
+    pub image: Handle<Image>,
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+    pub width: u32,
+    pub height: u32,
     /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
     /// display refreshes much faster than a core produces frames, so this is
     /// what keeps `run_retro` from re-uploading the same pixels every frame.
-    pub(crate) frame_serial: u64,
-    pub(crate) paused: bool,
-    pub(crate) skipping: bool,
+    pub frame_hash: u64,
+    pub paused: bool,
+    pub skipping: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
-    pub(crate) input_mode: InputMode,
+    pub input_mode: InputMode,
     /// Benchmark mode: step the core once per update with no audio or pacing.
-    pub(crate) speed_test: bool,
-    pub(crate) is_image: bool,
-    pub(crate) buttons: u32,
+    pub speed_test: bool,
+    pub is_image: bool,
+    pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
+    pub title_info: GameInfo,
+    /// Download in flight for the next game, driven by [`Emulator::update_load`].
+    pending_load: Option<PendingLoad>,
+    pub load_delay_until: f64,
 }
 
-/// Audio ring-buffer fill level (in f32 samples) the PI controller aims to
-/// hold. Sits between the duplicate (2000) and frame-drop (12000) thresholds,
-/// leaving headroom on both sides.
+/// How long [`Emulator::load_delay_until`] holds off the next poll. Roughly the
+/// handful of frames this used to be at 60Hz, but no longer tied to frame rate.
+pub const LOAD_SETTLE_SECS: f64 = 0.1;
+
 const AUDIO_BUF_MIN: usize = 3000;
-const AUDIO_BUF_TARGET: f64 = 8000.0;
 const AUDIO_BUF_MAX: usize = 15000;
 
 impl Emulator {
@@ -311,11 +270,25 @@ impl Emulator {
         ])
     }
 
+    pub fn save_png(&self, path: impl AsRef<Path>) -> Result<()> {
+        if let Some(core) = self.core.as_ref() {
+            core.with_frame(&mut |width, height, pixels| {
+                let expected = width * height;
+                // if width == 0 || height == 0 || emu.state.frame.len() < expected {
+                //     return Err("no frame available".into());
+                // }
+                let bytes = frame_bytes(&pixels[..expected]).to_vec();
+                let buf = image::RgbaImage::from_raw(width as u32, height as u32, bytes).unwrap();
+                _ = buf.save(&path);
+            });
+        }
+        Ok(())
+    }
+
     pub fn new(
         images: &mut Assets<Image>,
-        tags: HashMap<String, String>,
         max_time: Option<usize>,
-        match_fps: bool,
+        color_cycle: bool,
         speed_test: bool,
     ) -> Self {
         let width = 720;
@@ -340,16 +313,23 @@ impl Emulator {
 
         let handle = images.add(image);
         Emulator {
-            tags,
             max_time,
             run_next: true,
             key_map: Self::build_keycode_map(),
             image: handle.clone(),
             width,
             height,
-            match_fps,
+            color_cycle,
             speed_test,
             ..Default::default()
+        }
+    }
+
+    /// Pass the frontend's view state on to the backend. See
+    /// [`Backend::focus`](crate::retro_emu::Backend::focus).
+    pub fn focus(&mut self, focus: ViewFocus) {
+        if let Some(core) = self.core.as_mut() {
+            core.focus(focus);
         }
     }
 
@@ -375,7 +355,7 @@ impl Emulator {
         let Some(core) = core else {
             return false;
         };
-        // Apply the PI controller's drift correction to the resampler ratio.
+
         sink.set_adjust(*audio_rate_adjust);
         let from = core.sample_rate();
         let mut got_audio = false;
@@ -400,12 +380,14 @@ impl Emulator {
             KeyCode::ArrowDown => Some(RETRO_DEVICE_ID_JOYPAD_DOWN),
             KeyCode::ArrowLeft => Some(RETRO_DEVICE_ID_JOYPAD_LEFT),
             KeyCode::ArrowRight => Some(RETRO_DEVICE_ID_JOYPAD_RIGHT),
-            KeyCode::KeyZ => Some(RETRO_DEVICE_ID_JOYPAD_START),
-            //KeyCode::KeyX => Some(RETRO_DEVICE_ID_JOYPAD_SELECT),
             KeyCode::KeyO => Some(RETRO_DEVICE_ID_JOYPAD_A),
             KeyCode::KeyX => Some(RETRO_DEVICE_ID_JOYPAD_B),
-            KeyCode::Enter | KeyCode::Space => Some(RETRO_DEVICE_ID_JOYPAD_B),
-            KeyCode::ShiftRight | KeyCode::Backspace => Some(RETRO_DEVICE_ID_JOYPAD_A),
+            KeyCode::KeyA => Some(RETRO_DEVICE_ID_JOYPAD_A),
+            KeyCode::KeyB => Some(RETRO_DEVICE_ID_JOYPAD_B),
+            KeyCode::KeyL => Some(RETRO_DEVICE_ID_JOYPAD_L),
+            KeyCode::KeyR => Some(RETRO_DEVICE_ID_JOYPAD_R),
+            KeyCode::Enter => Some(RETRO_DEVICE_ID_JOYPAD_START),
+            KeyCode::Backspace => Some(RETRO_DEVICE_ID_JOYPAD_SELECT),
             _ => None,
         }
     }
@@ -479,16 +461,13 @@ impl Emulator {
         if let Some(p) = abs_pointer {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
+        let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
         self.core.as_mut().unwrap().set_mouse_buttons(
-            mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1),
+            left,
             mouse_buttons.pressed(MouseButton::Right),
             mouse_buttons.pressed(MouseButton::Middle),
         );
         self.buttons = 0;
-    }
-
-    pub fn get_frame_size(&self) -> (usize, usize) {
-        self.core.as_ref().unwrap().get_frame_size()
     }
 
     pub fn set_mouse_buttons(&mut self, buttons: u32) {
@@ -507,44 +486,203 @@ impl Emulator {
         self.core.as_mut().unwrap().reset();
     }
 
-    pub fn load(&mut self, time: &Time, emu_file: &EmuFile) -> Result<()> {
-        let work_file = prepare_file(emu_file)?;
+    pub fn get_info(&self) -> String {
+        let system = self.work_file.get_meta("system", "???");
+        let GameInfo {
+            title,
+            group,
+            year,
+            category: typ,
+        } = &self.title_info;
+        let year = if *year == 0 {
+            "".into()
+        } else {
+            format!(" ({year})")
+        };
+        let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
+            info
+        } else {
+            if typ.is_empty() { system } else { typ.clone() }
+        };
+
+        format!("\"{title}\"\n{group}{year}\n{desc}")
+    }
+
+    /// Begin loading `emu_file`, downloading it first if it is URL-backed.
+    ///
+    /// Returns immediately. The download runs on the I/O pool and the actual
+    /// load happens in whichever [`update_load`](Self::update_load) call finds
+    /// it finished — so the core currently running keeps running (and playing)
+    /// until then, rather than the frontend stalling for the whole transfer.
+    ///
+    /// A load already in flight is abandoned; its result is discarded. That is
+    /// what makes a fresh request during a slow download — picking another
+    /// entry from the selector, say — take effect instead of being queued
+    /// behind it.
+    pub fn load_async(&mut self, emu_file: &EmuFile) {
+        if let Some(previous) = &self.pending_load {
+            previous.job.cancel();
+            // The abandoned job never reaches `update_load`, so its share of
+            // the counter has to be given back here.
+            download_finished();
+        }
+        download_started();
+
+        // Taken, not just read: leaving them set would have the frontend ask
+        // for this same load again on the very next frame.
+        let advance = (self.run_next, self.run_prev);
+        self.run_next = false;
+        self.run_prev = false;
+
+        let name = if emu_file.game_info.title.is_empty() {
+            "load".to_string()
+        } else {
+            emu_file.game_info.title.clone()
+        };
+
+        // Only the *resolution* runs off-thread. Unpacking, conversion and core
+        // creation stay on the main thread inside `load`, as before: they are
+        // the parts that touch shared state, and they are not what a slow
+        // mirror makes you wait on.
+        let mut source = emu_file.path.clone();
+        let job = Job::spawn(name, move |progress| {
+            let path = source.resolve_with_progress(&|done, total| {
+                progress.set_done(done);
+                progress.set_total(total.unwrap_or(0));
+            })?;
+            Ok(path.clone())
+        });
+
+        self.pending_load = Some(PendingLoad {
+            emu_file: emu_file.clone(),
+            advance,
+            job,
+        });
+    }
+
+    /// Drive a [`load_async`](Self::load_async) forward; call once per frame.
+    ///
+    /// When the download lands this calls [`load`](Self::load) with a
+    /// [`FileSource::Path`], so the caller sees exactly the outcome the old
+    /// synchronous `load` produced — just some frames later.
+    pub fn update_load(&mut self, time: &Time, sys: &NewSys) -> LoadStatus {
+        let Some(pending) = self.pending_load.as_mut() else {
+            return LoadStatus::Idle;
+        };
+        // `poll` hands the result over exactly once, so it has to be kept here
+        // rather than re-read after the `take` below.
+        let Some(resolved) = pending.job.poll() else {
+            return LoadStatus::Pending;
+        };
+        let PendingLoad {
+            mut emu_file,
+            advance,
+            ..
+        } = self.pending_load.take().expect("checked just above");
+        // Past the `poll` above the download is over one way or another --
+        // landed, failed or cancelled -- so it stops counting here, whichever
+        // of the branches below the outcome takes.
+        download_finished();
+
+        let title = emu_file.game_info.title.clone();
+        let path = match resolved {
+            Ok(path) => path,
+            // Unwrap `JobError::Failed` rather than wrapping it: `load_error::classify`
+            // downcasts along the error chain to tell a 404 from a dead mirror,
+            // and an extra layer on top would still work but buys nothing.
+            Err(JobError::Failed(err)) => {
+                return self.failed_load(advance, title, err);
+            }
+            Err(JobError::Cancelled) => {
+                return self.failed_load(advance, title, anyhow::anyhow!("load cancelled"));
+            }
+        };
+
+        // Detection happens inside `NewSys::load_file`, from the file itself, so
+        // handing `load` a resolved path loses nothing a URL would have told it.
+        emu_file.path = FileSource::Path(path);
+        match self.load(time, sys, &emu_file) {
+            Ok(()) => LoadStatus::Done {
+                title,
+                result: Ok(()),
+            },
+            Err(err) => self.failed_load(advance, title, err),
+        }
+    }
+
+    /// Report a load that didn't happen, re-arming the advance it consumed.
+    ///
+    /// Restoring `run_next`/`run_prev` leaves the frontend where the old
+    /// synchronous path left it on failure: still asking to move on, so tv mode
+    /// steps past the broken entry, while an interactive session clears them
+    /// itself and stops on the error message.
+    fn failed_load(
+        &mut self,
+        advance: (bool, bool),
+        title: String,
+        err: anyhow::Error,
+    ) -> LoadStatus {
+        (self.run_next, self.run_prev) = advance;
+        LoadStatus::Done {
+            title,
+            result: Err(err),
+        }
+    }
+
+    // The pair below is what a real progress bar would be built from. What the
+    // UI draws today is only the count of downloads in flight
+    // ([`crate::emu_file::downloads_in_progress`]), so outside the tests
+    // nothing calls them — but the byte counting behind `load_progress` is
+    // plumbed end to end already (`fetch` counts,
+    // [`FileSource::resolve_with_progress`] forwards).
+
+    /// True while a [`load_async`](Self::load_async) download is outstanding.
+    #[allow(dead_code)]
+    pub fn is_loading(&self) -> bool {
+        self.pending_load.is_some()
+    }
+
+    /// Byte progress of the download in flight. Reports an unknown total for a
+    /// multi-disk set and for a server that declares no size.
+    #[allow(dead_code)]
+    pub fn load_progress(&self) -> Option<&JobProgress> {
+        self.pending_load.as_ref().map(|p| p.job.progress())
+    }
+
+    pub fn load(&mut self, time: &Time, sys: &NewSys, emu_file: &EmuFile) -> Result<()> {
+        let mut source = emu_file.path.clone();
+        let path = source.resolve()?;
+
+        let meta = emu_file.meta.clone();
+
+        self.title_info = emu_file.game_info.clone();
+
+        // Before `load_file`, which builds the new backend at the end of it: a
+        // backend may own something the machine only has one of, and the next
+        // one cannot take it until this one has let go. `musix`'s sc68 plugin
+        // is the case that bites — libsc68 has a process-wide init that the
+        // plugin claims per song, so a second SNDH loaded while the first is
+        // still alive fails to init and no plugin is found for the file — but
+        // libretro cores are widely non-reentrant in the same way.
+        //
+        // The cost is that a load which fails leaves nothing running rather
+        // than the previous entry; the frontend already draws that state (it
+        // skips an emulator with no core), and tv mode steps on to the next.
         self.core = None;
-        let tags = load_tags(&work_file, &self.tags);
-        let core = create_core(
-            work_file.system_type,
-            &work_file.path,
-            tags,
-            self.speed_test,
-        )?;
-        let t = work_file.system_type;
-        if t == SystemType::Megadrive
-            || t == SystemType::SuperNintendo
-            || t == SystemType::Atari2600
-            || t == SystemType::Gameboy
-            || t == SystemType::Gba
-            || t == SystemType::Psx
-        {
+
+        let res = sys.load_file(path, &meta)?;
+        let core = res.backend;
+        if res.system.is_console() {
             self.input_mode = InputMode::Joystick1;
         }
-        if t == SystemType::Ilbm {
-            self.is_image = true;
-            let cycle_enabled = self.tags.get("color_cycle").is_some_and(|v| v == "enabled");
-            self.paused = !cycle_enabled;
-        } else {
-            // Loading a real emulator must clear any lingering still-image state
-            // from a previously opened ILBM, otherwise the fresh core inherits
-            // the image's paused flag and never runs.
-            self.is_image = false;
-            self.paused = false;
-        }
+
+        self.is_image = res.system.name().starts_with("Image");
+        self.paused = self.is_image && (!self.color_cycle);
 
         self.core = Some(core);
-        self.work_file = work_file;
-        // The new backend's serial has nothing to do with the old one's, so
-        // start from "nothing uploaded yet". A backend that begins at 0 does so
-        // with a blank frame, which is exactly what the texture already holds.
-        self.frame_serial = 0;
+        self.work_file = res.work_file;
+
+        self.frame_hash = 0;
         self.run_next = false;
         self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();
@@ -560,7 +698,7 @@ impl Emulator {
         core.skip_frames(frames);
         info!("SKIPPING");
         self.skipping = true;
-        self.paused = false;
+        self.paused = self.is_image;
     }
 
     pub fn run(&mut self, time: &Time) -> bool {
@@ -591,7 +729,6 @@ impl Emulator {
         if self.speed_test {
             return core.run();
         }
-
         if self.paused {
             self.next_frame = time.elapsed_secs_f64();
             return true;
@@ -628,7 +765,7 @@ impl Emulator {
         trace!("DELTA {delta} vs {}", self.display_fps,);
 
         if occupied_len > AUDIO_BUF_MAX {
-            warn!("Dropping frame");
+            trace!("Dropping frame");
             self.next_frame += frame_time;
             return true;
         }
@@ -649,7 +786,7 @@ impl Emulator {
         // otherwise the buffer is always empty and this would fire every frame.
         if has_audio && !self.skipping && occupied_len < AUDIO_BUF_MIN {
             result &= core.run();
-            warn!("Duplicating frame");
+            trace!("Duplicating frame");
         }
         let got_audio = self.update();
 
@@ -671,103 +808,183 @@ impl Emulator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::files::{DbFilter, collect_db_text};
-    use crate::systems::GameInfo;
+    use std::time::{Duration, Instant};
 
-    /// A `WorkingFile` as `prepare_file` would hand it over: the entry's own
-    /// tags plus anything detection added, and the release year.
-    fn work_file(year: &str, settings: &[(&str, &str)]) -> WorkingFile {
-        WorkingFile {
-            settings: settings
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-            game_info: GameInfo {
-                year: year.into(),
-                ..Default::default()
-            },
-            ..Default::default()
+    use bevy::MinimalPlugins;
+    use clap::Parser;
+    use url::Url;
+
+    use super::*;
+    use crate::Args;
+
+    /// Spins up the task pools `load_async` needs, and nothing else.
+    fn task_pools() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.update();
+        app
+    }
+
+    /// The system table with stock settings, which is all `update_load` needs
+    /// to hand the resolved file on to `load`.
+    fn systems() -> NewSys {
+        NewSys::new(&Args::parse_from(["demarc"]))
+    }
+
+    /// Pumps `update_load` until it stops reporting `Pending`.
+    fn drive_load(emu: &mut Emulator, sys: &NewSys) -> LoadStatus {
+        let time = Time::default();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match emu.update_load(&time, sys) {
+                LoadStatus::Pending => {
+                    assert!(emu.is_loading(), "a pending load must report as loading");
+                    assert!(Instant::now() < deadline, "load never finished");
+                    std::thread::yield_now();
+                }
+                status => return status,
+            }
         }
     }
 
-    fn cli(tags: &[(&str, &str)]) -> HashMap<String, String> {
-        tags.iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
+    #[test]
+    fn nothing_pending_is_idle() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
+        assert!(!emu.is_loading());
+        assert!(matches!(
+            emu.update_load(&Time::default(), &systems()),
+            LoadStatus::Idle
+        ));
     }
 
-    /// Tags a db carries — here from its `# Platform:Amiga puae_model:A500`
-    /// header — are what the core gets, and anything the command line names
-    /// still overrides them.
+    /// A failed download surfaces as `Done`, carrying the entry's title so the
+    /// frontend can name it — `work_file` still describes the previous load.
+    ///
+    /// Port 1 refuses immediately, so this fails fast without leaving the host.
     #[test]
-    fn db_tags_reach_the_core() {
-        let mut out = vec![];
-        collect_db_text(
-            "# Platform:Amiga puae_model:A500 puae_floppy_speed:100\n\
-             id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n",
-            &DbFilter::default(),
-            &mut out,
-        );
-        // What `prepare_file` passes on when it detects nothing itself: the
-        // entry's tags, unchanged.
-        let mut wf = work_file("1992", &[]);
-        wf.settings = out[0].tags.clone();
+    fn a_failed_download_finishes_the_load() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
 
-        let tags = load_tags(&wf, &HashMap::new());
-        assert_eq!(tags.get("puae_model").unwrap(), "A500");
-        assert_eq!(tags.get("puae_floppy_speed").unwrap(), "100");
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            game_info: GameInfo {
+                title: "Unreachable".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert!(emu.is_loading(), "the download starts in flight");
 
-        let tags = load_tags(&wf, &cli([("puae_model", "A1200")].as_slice()));
-        assert_eq!(tags.get("puae_model").unwrap(), "A1200", "--aga wins");
-    }
-
-    /// `puae_model:date` isn't a machine but an instruction: pick one from the
-    /// year of the release.
-    #[test]
-    fn date_picks_the_model() {
-        let by_year = |year: &str| {
-            let tags = load_tags(&work_file(year, &[("puae_model", "date")]), &HashMap::new());
-            (
-                tags.get("puae_model").cloned().unwrap_or_default(),
-                tags.contains_key("puae_kickstart"),
-            )
+        let LoadStatus::Done { title, result } = drive_load(&mut emu, &systems()) else {
+            panic!("expected the load to finish");
         };
-        assert_eq!(by_year("1988"), ("A500".into(), true), "1.3 Kickstart");
-        assert_eq!(by_year("1991"), ("A500".into(), false));
-        assert_eq!(by_year("1996"), ("A1200".into(), false));
-        // No year at all leaves the plain A500 the sentinel resolves to.
-        assert_eq!(by_year(""), ("A500".into(), false));
+        assert_eq!(title, "Unreachable");
+        assert!(result.is_err(), "a refused connection cannot load");
+        assert!(!emu.is_loading(), "the pending load is cleared either way");
+        // Nothing was swapped in, so the emulator still has no core.
+        assert!(emu.core.is_none());
     }
 
-    /// An AGA release needs an A1200 whatever the year, and whatever the db
-    /// header said.
+    /// The whole point of `update_load`: `load` is handed a resolved
+    /// `FileSource::Path`, never a URL, so it never blocks on the network.
     #[test]
-    fn aga_scene_tag_forces_a1200() {
-        let wf = work_file(
-            "1992",
-            &[
-                ("puae_model", "A500"),
-                ("tags", "Multiple Parts,AGA Chipset"),
-            ],
-        );
-        assert_eq!(
-            load_tags(&wf, &HashMap::new()).get("puae_model").unwrap(),
-            "A1200"
-        );
+    fn a_local_path_reaches_load_unchanged() {
+        let _app = task_pools();
+        let dir = tempfile::tempdir().unwrap();
+        // Nothing any system claims, so `load` fails once it gets there — after
+        // the resolution step this test is about.
+        let game = dir.path().join("demo.xyz");
+        std::fs::write(&game, b"not really anything").unwrap();
+
+        let mut emu = Emulator::default();
+        emu.load_async(&EmuFile {
+            path: FileSource::Path(game),
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            drive_load(&mut emu, &systems()),
+            LoadStatus::Done { .. }
+        ));
+        assert!(!emu.is_loading());
     }
 
-    /// What `prepare_file` reads out of the file itself — a WHDLoad install
-    /// here — is more specific than a db header covering thousands of lines,
-    /// so it is already merged over it by the time `load_tags` runs.
+    /// `load_async` consumes the advance request, so the frontend asks for the
+    /// load once rather than on every frame of the download; a failure hands it
+    /// back, which is how tv mode steps past a dead link.
     #[test]
-    fn detection_outranks_the_db_header() {
-        let wf = work_file(
-            "1992",
-            &[("puae_model", "A1200"), ("puae_use_whdload", "enabled")],
+    fn the_advance_request_is_taken_and_returned_on_failure() {
+        let _app = task_pools();
+        let mut emu = Emulator {
+            run_next: true,
+            ..Default::default()
+        };
+
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            ..Default::default()
+        });
+        assert!(
+            !emu.run_next && !emu.run_prev,
+            "the request is consumed while the download runs"
         );
-        let tags = load_tags(&wf, &HashMap::new());
-        assert_eq!(tags.get("puae_model").unwrap(), "A1200");
-        assert_eq!(tags.get("puae_use_whdload").unwrap(), "enabled");
+
+        assert!(matches!(
+            drive_load(&mut emu, &systems()),
+            LoadStatus::Done { .. }
+        ));
+        assert!(emu.run_next, "a failed load re-arms the advance");
+    }
+
+    /// The backwards direction survives a failure too, so an explicit PrevFile
+    /// onto a dead link keeps going backwards rather than reversing.
+    #[test]
+    fn a_failed_load_re_arms_the_direction_it_had() {
+        let _app = task_pools();
+        let mut emu = Emulator {
+            run_prev: true,
+            ..Default::default()
+        };
+
+        emu.load_async(&EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            ..Default::default()
+        });
+        assert!(matches!(
+            drive_load(&mut emu, &systems()),
+            LoadStatus::Done { .. }
+        ));
+        assert!(emu.run_prev && !emu.run_next);
+    }
+
+    /// Starting a second load replaces the first: only one download can be
+    /// outstanding, so the frontend can't stack them up frame after frame.
+    #[test]
+    fn a_second_load_replaces_the_first() {
+        let _app = task_pools();
+        let mut emu = Emulator::default();
+        let entry = |title: &str| EmuFile {
+            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            game_info: GameInfo {
+                title: title.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        emu.load_async(&entry("First"));
+        emu.load_async(&entry("Second"));
+
+        let sys = systems();
+        let LoadStatus::Done { title, .. } = drive_load(&mut emu, &sys) else {
+            panic!("expected the load to finish");
+        };
+        assert_eq!(title, "Second", "the newer load is the one that lands");
+        assert!(matches!(
+            emu.update_load(&Time::default(), &sys),
+            LoadStatus::Idle
+        ));
     }
 }

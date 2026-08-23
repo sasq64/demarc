@@ -1,6 +1,6 @@
 [package]
 name = "demarc"
-version = "1.3.1"
+version = "1.5.0"
 edition = "2024"
 description = "A command line emulator frontend for the demoscene"
 repository = "https://github.com/sasq64/demarc"
@@ -40,6 +40,15 @@ image = { version = "0.25.10", default-features = false, features = [
     "bmp",
     "jpeg",
     "gif",
+    "tiff",
+    "tga",
+] }
+# PCX, which `image` itself doesn't carry. From the image-rs org, and it plugs
+# into `image` through its decoding/sniffing hooks (see `image_emu::load_image`)
+# rather than being a decoder we drive ourselves. Only the `pcx` format is
+# enabled; the rest of the crate's formats would pull in dependencies of their own.
+image-extras = { version = "0.1.1", default-features = false, features = [
+    "pcx",
 ] }
 tracing-subscriber = "0.3.23"
 ringbuf = "0.5.0"
@@ -67,6 +76,8 @@ percent-encoding = "2"
 sha2 = "0.11"
 thiserror = "2"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+#musix = { path = "../musicplayer" }
+musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
 #
@@ -78,7 +89,7 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 # therefore pins gpu-allocator 0.28 to `windows 0.62.2`; if `just win` ever dies
 # in wgpu-hal/src/dx12 with "multiple different versions of crate windows", check
 # that edge in Cargo.lock first.
-ruffle_core ={ git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
+ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
     "audio",
     "mp3",
     "nellymoser",
@@ -95,6 +106,29 @@ nucleo-matcher = "0.3"
 # `--filter`: matched against each raw db line while collecting (see collect_db).
 regex = "1"
 unarc-rs = "0.6.1"
+walkdir = "2.5.0"
+# Luau, for the music visualization script (src/music_vis.rs). Luau rather than
+# PUC-Lua for its native `buffer` type: the script draws into a byte-addressed
+# block with `buffer.writeu32` instead of crossing the FFI once per pixel.
+# `luau` builds the interpreter from C++ source via `luau0-src`; no `vendored`
+# feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
+# `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
+mlua = { version = "0.11", features = ["luau", "send"] }
+# egui, for the ongoing port of the frontend UI (src/egui_ui.rs). 0.42 is the
+# release built against Bevy 0.19 and wgpu-types 29, matching the versions above.
+# `picking` and `open_url` are off: the app does its own hit-testing and never
+# opens a browser. `manage_clipboard` stays on so egui text fields can paste.
+bevy_egui = { version = "0.42", default-features = false, features = [
+    "render",
+    "bevy_ui",
+    "default_fonts",
+    "manage_clipboard",
+] }
+
+# Hot-reload for that script. Already in the tree via bevy's `file_watcher`.
+notify = "8"
+# `get_spectrum()` for the script. Already in the tree via `rubato`.
+realfft = "3.5"
 
 [features]
 default = []
@@ -123,6 +157,12 @@ libc = "0.2"
 zbus = { version = "5", features = ["tokio"] }
 # Runtime that drives the MPRIS D-Bus listener in src/media_keys.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# Preferred screen-saver inhibition path under Wayland: `zwp_idle_inhibit_v1`
+# talks straight to the compositor, so it doesn't need a D-Bus idle daemon to be
+# running (see src/screensaver.rs). All three are already in the tree via winit.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+raw-window-handle = "0.6"
 
 [profile.release]
 lto = "thin"
@@ -136,7 +176,10 @@ opt-level = 2
 # a few. Use `cargo build --profile release-fast`.
 [profile.release-fast]
 inherits = "release"
-lto = false
+# Must be "off", not `false`: `false` means thin-*local* LTO, which combined with
+# many codegen units + incremental produces `undefined hidden symbol: anon.*.llvm.*`
+# link errors.
+lto = "off"
 codegen-units = 256
 incremental = true
 strip = false

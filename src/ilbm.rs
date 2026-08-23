@@ -10,15 +10,35 @@ struct Chunk<'a> {
 }
 
 impl<'a> Chunk<'a> {
+    /// Parse the chunk at the start of `data`, returning `None` if the 8-byte
+    /// header doesn't fit or the size field runs past the end of the data. A
+    /// parsed chunk therefore always holds exactly its header plus payload,
+    /// which is what makes the accessors below infallible.
+    fn parse(data: &'a [u8]) -> Option<Self> {
+        let size = u32::from_be_bytes(data.get(4..8)?.try_into().unwrap()) as usize;
+        let end = size.checked_add(8)?;
+        (end <= data.len()).then(|| Chunk { data: &data[..end] })
+    }
+
+    /// Wrap the outermost chunk of a file without trusting its size field:
+    /// real-world IFF files routinely carry a stale FORM size (both short and
+    /// past the end of the file), so the whole buffer is kept and the chunks
+    /// inside are read as far as they go. Sub-chunks are parsed strictly, so a
+    /// malformed one is still rejected.
+    fn parse_outer(data: &'a [u8]) -> Option<Self> {
+        (data.len() >= 8).then_some(Chunk { data })
+    }
+
     pub fn id(&self) -> String {
         String::from_utf8_lossy(&self.data[0..4]).into()
     }
+    /// Size of the payload actually present, which for a strictly parsed chunk
+    /// is the size the header declares.
     pub fn size(&self) -> usize {
-        let len = u32::from_be_bytes(self.data[4..8].try_into().unwrap());
-        len as usize
+        self.data.len() - 8
     }
-    pub fn data(&self) -> &[u8] {
-        &self.data[8..8 + self.size()]
+    pub fn data(&self) -> &'a [u8] {
+        &self.data[8..]
     }
 
     /// Iterate over the subchunks contained in this chunk.
@@ -51,12 +71,9 @@ impl<'a> Iterator for Chunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset + 8 > self.data.len() {
-            return None;
-        }
-        let chunk = Chunk {
-            data: &self.data[self.offset..],
-        };
+        // A chunk that doesn't fit ends the iteration; the file is malformed
+        // from here on and the caller reports whatever it failed to find.
+        let chunk = Chunk::parse(self.data.get(self.offset..)?)?;
         let size = chunk.size();
         // Data is padded to an even byte boundary; the pad byte is not
         // counted in the size field.
@@ -74,6 +91,9 @@ struct BmHeader {
     num_planes: u8,
     masking: u8,
     compression: u8,
+    /// Pixel aspect ratio as stored, width : height. Zero when not filled in.
+    x_aspect: u8,
+    y_aspect: u8,
 }
 
 impl BmHeader {
@@ -87,6 +107,8 @@ impl BmHeader {
             num_planes: data[8],
             masking: data[9],
             compression: data[10],
+            x_aspect: data[14],
+            y_aspect: data[15],
         })
     }
 }
@@ -102,38 +124,75 @@ const CAMG_LACE: u32 = 0x0004;
 
 /// Integer pixel-replication factors that turn an Amiga image's non-square
 /// pixels into square ones for display. On the Amiga a lores pixel is roughly
-/// square, a hires pixel is half as wide (so hires images are stretched
-/// vertically), and an interlaced pixel is half as tall (so lores-interlace
-/// images are stretched horizontally). A hires-interlace pixel is square again.
+/// square, a hires pixel is half as wide and a super-hires one a quarter as
+/// wide (so those images are stretched vertically), while an interlaced pixel
+/// is half as tall (so lores-interlace images are stretched horizontally). A
+/// hires-interlace pixel is square again; a super-hires interlace pixel is
+/// still half as wide as it is tall.
 ///
 /// The resolution comes from the CAMG viewport mode when present; only the
 /// HIRES/SHRES/LACE bits are trusted because old writers leave garbage in the
-/// other bits. When no CAMG mode is present the size is inferred from the pixel
-/// dimensions (the classic 320x512 -> 640x512 and 640x256 -> 640x512 cases).
-/// PBM (PC DeluxePaint) images always have square pixels and are left alone.
-fn display_scale(form_type: &str, width: usize, height: usize, camg: u32) -> (usize, usize) {
+/// other bits. SHRES additionally has to be backed up by the width: the
+/// extended mode ids (Productivity, DblPAL and friends) set that bit on
+/// 640-pixel screens whose pixels are already square, whereas a genuine
+/// super-hires screen is 1280 pixels wide (1024+ even trimmed down).
+///
+/// When no CAMG mode is present the size is inferred from the pixel dimensions
+/// (the classic 320x512 -> 640x512 and 640x256 -> 640x512 cases); super-hires
+/// is not guessed at, as such a picture is Amiga-only and in practice always
+/// carries a CAMG. PBM (PC DeluxePaint) images always have square pixels and
+/// are left alone.
+///
+/// A BMHD that declares equal x and y aspect overrides all of that: the ratio
+/// itself is too often left at a writer's stale default (10:11 on a hires
+/// screen, say) to be worth reading in general, but writing the two the same
+/// is a deliberate "these pixels are square" that some modern pictures rely on
+/// — an image drawn square and saved in a hires mode id would otherwise be
+/// stretched to twice its intended height.
+fn display_scale(form_type: &str, header: &BmHeader, camg: u32) -> (usize, usize) {
+    let width = header.width as usize;
+    let height = header.height as usize;
     if form_type == "PBM " {
         return (1, 1);
     }
+    if header.x_aspect != 0 && header.x_aspect == header.y_aspect {
+        return (1, 1);
+    }
     let mode = camg & (CAMG_HIRES | CAMG_SHRES | CAMG_LACE);
-    let (hires, lace) = if mode != 0 {
-        (camg & (CAMG_HIRES | CAMG_SHRES) != 0, camg & CAMG_LACE != 0)
+    // Horizontal pixels per lores pixel: 1 lores, 2 hires, 4 super-hires.
+    let (hres, lace) = if mode != 0 {
+        let hres = if camg & CAMG_SHRES != 0 && width >= 1024 {
+            4
+        } else if camg & (CAMG_HIRES | CAMG_SHRES) != 0 {
+            2
+        } else {
+            1
+        };
+        (hres, camg & CAMG_LACE != 0)
     } else {
         // No usable viewport mode: fall back to the dimensions. Hires screens
         // are ~640+ wide; interlaced screens are ~400+ lines tall.
-        (width >= 512, height >= 400)
+        (if width >= 512 { 2 } else { 1 }, height >= 400)
     };
-    match (hires, lace) {
-        (true, false) => (1, 2), // hires: thin pixels, double the height
-        (false, true) => (2, 1), // lores interlace: wide pixels, double the width
-        _ => (1, 1),             // lores or hires-interlace: already square
+    match (hres, lace) {
+        (4, false) => (1, 4), // super-hires: quarter-width pixels
+        (4, true) => (1, 2),  // super-hires interlace: half-width pixels
+        (2, false) => (1, 2), // hires: half-width pixels
+        (1, true) => (2, 1),  // lores interlace: half-height pixels
+        _ => (1, 1),          // lores, or hires interlace: already square
     }
 }
 
 /// Replicate each element of a `width` x `height` grid `sx` times horizontally
 /// and `sy` times vertically (nearest-neighbour upscale). Used to apply the
 /// aspect-ratio correction from [`display_scale`] to pixels or palette indices.
-fn scale_grid<T: Copy>(src: &[T], width: usize, height: usize, sx: usize, sy: usize) -> Vec<T> {
+pub(crate) fn scale_grid<T: Copy>(
+    src: &[T],
+    width: usize,
+    height: usize,
+    sx: usize,
+    sy: usize,
+) -> Vec<T> {
     if sx == 1 && sy == 1 {
         return src.to_vec();
     }
@@ -148,8 +207,11 @@ fn scale_grid<T: Copy>(src: &[T], width: usize, height: usize, sx: usize, sy: us
     out
 }
 
-/// Decompress a ByteRun1 (PackBits) encoded body into `expected` bytes.
-fn unpack_byterun1(src: &[u8], expected: usize) -> Result<Vec<u8>> {
+/// Decompress a ByteRun1 (PackBits) encoded body into `expected` bytes,
+/// returning the output and how many bytes of `src` it consumed. (Callers that
+/// store something after the packed data — see [`crate::degas`] — need to know
+/// where it ends.)
+pub(crate) fn unpack_byterun1(src: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
     let mut out = Vec::with_capacity(expected);
     let mut i = 0;
     while i < src.len() && out.len() < expected {
@@ -175,7 +237,7 @@ fn unpack_byterun1(src: &[u8], expected: usize) -> Result<Vec<u8>> {
             out.resize(out.len() + count, byte);
         }
     }
-    Ok(out)
+    Ok((out, i))
 }
 
 /// A colour-cycling range (CRNG chunk), as used by DeluxePaint. The colours in
@@ -341,7 +403,7 @@ fn decode_pbm(width: usize, height: usize, compression: u8, body: &[u8]) -> Resu
     let expected = row_bytes * height;
     let raw = match compression {
         0 => body.to_vec(),
-        1 => unpack_byterun1(body, expected)?,
+        1 => unpack_byterun1(body, expected)?.0,
         c => bail!("unsupported PBM compression: {c}"),
     };
     if raw.len() < expected {
@@ -450,6 +512,27 @@ fn parse_ranges(form: &Chunk) -> Vec<CycleRange> {
             })
         })
         .collect()
+}
+
+/// Whether a colour map holds the full 8 bits per component AGA can display, or
+/// only the 4 bits an OCS/ECS colour register could store. A 4-bit value is
+/// written out either replicated into both nibbles (`$f` -> `0xff`, what the
+/// IFF spec asks for) or in the high nibble alone (`$f` -> `0xf0`, what plenty
+/// of older writers do), so a map that is entirely one of those two shapes came
+/// from 4-bit hardware and anything else needs AGA.
+///
+/// Returns the number of significant bits per component, or `None` for an empty
+/// map. Best effort: a genuine 8-bit palette that happens to use only such
+/// values — a black-and-white one, say — reads as 4-bit, which is the right
+/// answer about its colours if not about the machine that made it.
+fn palette_bits(cmap: &[u8]) -> Option<u8> {
+    let components = &cmap[..cmap.len() - cmap.len() % 3];
+    if components.is_empty() {
+        return None;
+    }
+    let replicated = components.iter().all(|b| b >> 4 == b & 0xf);
+    let high_nibble_only = components.iter().all(|b| b & 0xf == 0);
+    Some(if replicated || high_nibble_only { 4 } else { 8 })
 }
 
 /// Expand a 12-bit `$0RGB` colour word (4 bits per component) to 8-bit RGB by
@@ -621,7 +704,7 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
 
     let planar = match header.compression {
         0 => body.data().to_vec(),
-        1 => unpack_byterun1(body.data(), expected)?,
+        1 => unpack_byterun1(body.data(), expected)?.0,
         c => bail!("unsupported compression: {c}"),
     };
     if planar.len() < expected {
@@ -662,10 +745,9 @@ fn decode_ilbm(form: &Chunk, header: &BmHeader, width: usize, height: usize) -> 
 /// its pixel content and any colour-cycling ranges.
 fn parse(bytes: &[u8]) -> Result<Parsed> {
     // A valid FORM needs at least the 8-byte chunk header plus a 4-byte type.
-    if bytes.len() < 12 {
-        bail!("not an IFF FORM: too short ({} bytes)", bytes.len());
-    }
-    let form = Chunk { data: bytes };
+    let form = Chunk::parse_outer(bytes)
+        .filter(|c| c.data().len() >= 4)
+        .ok_or_else(|| anyhow!("not an IFF FORM: too short ({} bytes)", bytes.len()))?;
     if form.id() != "FORM" {
         bail!("not an IFF FORM");
     }
@@ -787,7 +869,7 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
         }
     };
 
-    let (xscale, yscale) = display_scale(&form_type, width, height, camg);
+    let (xscale, yscale) = display_scale(&form_type, &header, camg);
 
     Ok(Parsed {
         width,
@@ -797,6 +879,92 @@ fn parse(bytes: &[u8]) -> Result<Parsed> {
         ranges: parse_ranges(&form),
         content,
     })
+}
+
+/// One-line description of an IFF image's format, size and colour mode, for
+/// the frontend's info display — e.g. `Amiga IFF 320x400 (HAM8)`. Only the
+/// header chunks are read, never the BODY, so it is cheap and describes an
+/// image whichever of the two decode paths it goes down. Best effort: a file
+/// whose headers say nothing useful is just called an IFF image.
+pub fn describe(bytes: &[u8]) -> String {
+    const UNKNOWN: &str = "IFF image";
+    let Some(form) = Chunk::parse_outer(bytes).filter(|c| c.data().len() >= 4) else {
+        return UNKNOWN.into();
+    };
+    if form.id() != "FORM" {
+        return UNKNOWN.into();
+    }
+    let form_type = form
+        .data()
+        .get(0..4)
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    let mut name = (match form_type.as_str() {
+        "ILBM" => "Amiga",
+        "ACBM" => "Amiga",
+        "PBM " => "PC",
+        "RGB8" => "Amiga",
+        "RGBN" => "Amiga",
+        _ => return UNKNOWN.into(),
+    })
+    .to_string();
+    let Some(header) = form
+        .find("BMHD")
+        .and_then(|c| BmHeader::parse(c.data()).ok())
+    else {
+        return name;
+    };
+    let width = header.width as usize;
+    let height = header.height as usize;
+    let num_planes = header.num_planes as usize;
+    let camg = form
+        .find("CAMG")
+        .and_then(|c| {
+            c.data()
+                .get(0..4)
+                .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        })
+        .unwrap_or(0);
+
+    let mut mode = match form_type.as_str() {
+        // The truecolour forms carry their depth in the form type itself; the
+        // plane count doesn't describe them. RGB8 is 24-bit, RGBN 12-bit.
+        "RGB8" => "True color".to_string(),
+        "RGBN" => "12-bit".to_string(),
+        _ if camg & CAMG_HAM != 0 => format!("HAM{num_planes}"),
+        _ if camg & CAMG_EHB != 0 => "64 colors/EHB".to_string(),
+        // A deep ILBM's planes are colour bits rather than register bits, so
+        // 24 or more of them mean truecolour rather than a palette.
+        _ if num_planes >= 24 => "True color".to_string(),
+        _ => format!("{} colors", 1usize << num_planes),
+    };
+    // Colour depth of the palette itself: AGA widened the colour registers from
+    // 4 to 8 bits per component, so which one a picture's colours were authored
+    // at says which chipset it is for. Only meaningful for the Amiga paletted
+    // forms — a PC PBM's palette is a VGA one, and the truecolour forms carry
+    // their colours per pixel rather than in the CMAP.
+    let cmap = matches!(form_type.as_str(), "ILBM" | "ACBM") && num_planes < 24;
+    if let Some(bits) = cmap
+        .then(|| form.find("CMAP"))
+        .flatten()
+        .and_then(|c| palette_bits(c.data()))
+        && name == "Amiga"
+    {
+        name = format!("Amiga {}", if bits == 8 { "AGA" } else { "OCS" });
+    }
+    // A dynamic-palette chunk is what makes such a picture what it is, so name
+    // the one in play (see [`attach_line_palettes`]).
+    if let Some(chunk) = ["SHAM", "CTBL", "BEAM", "PCHG"]
+        .into_iter()
+        .find(|id| form.find(id).is_some())
+    {
+        mode = format!("{mode}/{chunk}");
+    }
+
+    // The displayed size, not the stored one: aspect correction replicates
+    // pixels, and that is the picture the frontend shows.
+    let (xscale, yscale) = display_scale(&form_type, &header, camg);
+    format!("{name} {}x{} ({mode})", width * xscale, height * yscale)
 }
 
 /// Decode an in-memory IFF image into an RGBA image (colours resolved, cycling
@@ -911,11 +1079,13 @@ fn ham_pixel(index: usize, num_planes: usize, palette: &[[u8; 3]], prev: &mut [u
     *prev
 }
 
+#[allow(dead_code)]
 /// Load an ILBM/IFF image from a file into an RGBA image.
 pub fn load(path: impl AsRef<Path>) -> Result<RgbaImage> {
     load_from_memory(&fs::read(path.as_ref())?)
 }
 
+#[allow(dead_code)]
 /// Load an ILBM/IFF image from a file into an [`IndexedImage`] (see
 /// [`load_indexed_from_memory`]).
 pub fn load_indexed(path: impl AsRef<Path>) -> Result<IndexedImage> {
@@ -978,7 +1148,7 @@ mod tests {
     /// HAM6 and HAM8 hold-and-modify images.
     #[test]
     fn test_ham() {
-        check("GINA", 320, 200); // HAM6
+        check("AH_Swimmer.iff", 320, 200); // HAM6
         check("FearFace.HAM8", 640, 512); // HAM8
     }
 
@@ -1048,7 +1218,7 @@ mod tests {
     /// not plain palette lookups) so callers fall back to the RGBA path.
     #[test]
     fn test_indexed_rejects_non_palette() {
-        assert!(load_indexed(get_path("GINA")).is_err(), "HAM");
+        assert!(load_indexed(get_path("AH_Swimmer.iff")).is_err(), "HAM");
         assert!(load_indexed(get_path("24.iff")).is_err(), "deep");
         assert!(load_indexed(get_path("WorldMap2.24")).is_err(), "RGB8");
     }
@@ -1121,6 +1291,9 @@ mod tests {
         check("Seascape.dr", 704, 480); // hires interlace
         // PBM (PC DeluxePaint) always has square pixels, even at hires-ish sizes.
         check("water.lbm", 640, 480);
+        // A hires mode id on a picture whose BMHD says its pixels are square
+        // (10:10) is left at its stored size.
+        check("CK_Welcome_To_Omega_6.iff", 640, 256);
     }
 
     /// `scale_grid` replicates each cell into an `sx` x `sy` block.
@@ -1134,23 +1307,107 @@ mod tests {
         assert_eq!(scale_grid(&[1u8, 2, 3, 4], 2, 2, 1, 1), vec![1, 2, 3, 4]);
     }
 
+    /// Super-hires: quarter-width pixels, so the height is quadrupled.
+    /// `dalton-big-wheel-1280x256` is the same picture as the hires-interlace
+    /// `dalton-big-wheel-640x512`, and must come out the same shape.
+    #[test]
+    fn test_super_hires() {
+        check("dalton-big-wheel-1280x256.ilbm", 1280, 1024);
+        // Productivity (a Multiscan mode id) sets the SHRES bit on a screen
+        // that is already square, and must not be stretched.
+        check("attaq.lbm", 640, 480);
+    }
+
+    /// A `BmHeader` of the given size, with the aspect fields left unfilled
+    /// (as plenty of real writers leave them).
+    fn hdr(width: u16, height: u16) -> BmHeader {
+        BmHeader {
+            width,
+            height,
+            num_planes: 8,
+            masking: 0,
+            compression: 0,
+            x_aspect: 0,
+            y_aspect: 0,
+        }
+    }
+
     /// The `display_scale` mode logic, exercised directly.
     #[test]
     fn test_display_scale() {
-        assert_eq!(display_scale("ILBM", 640, 256, CAMG_HIRES), (1, 2)); // hires
-        assert_eq!(display_scale("ILBM", 320, 512, CAMG_LACE), (2, 1)); // lores lace
-        assert_eq!(
-            display_scale("ILBM", 640, 512, CAMG_HIRES | CAMG_LACE),
-            (1, 1)
-        );
-        assert_eq!(display_scale("ILBM", 320, 200, 0), (1, 1)); // lores
+        let scale = |w, h, camg| display_scale("ILBM", &hdr(w, h), camg);
+        assert_eq!(scale(640, 256, CAMG_HIRES), (1, 2)); // hires
+        assert_eq!(scale(320, 512, CAMG_LACE), (2, 1)); // lores lace
+        assert_eq!(scale(640, 512, CAMG_HIRES | CAMG_LACE), (1, 1));
+        assert_eq!(scale(320, 200, 0), (1, 1)); // lores
+        // Super-hires (the mode id sets HIRES too), plain and interlaced.
+        let shres = CAMG_HIRES | CAMG_SHRES;
+        assert_eq!(scale(1280, 256, shres), (1, 4));
+        assert_eq!(scale(1280, 512, shres | CAMG_LACE), (1, 2));
+        // A 640-wide screen claiming SHRES is an extended mode id (Productivity
+        // here), not a super-hires screen: treat it as hires.
+        assert_eq!(scale(640, 480, 0x00039024), (1, 1));
+        assert_eq!(scale(640, 256, 0x00039020), (1, 2));
         // Garbage in the high bits must not read as a resolution.
-        assert_eq!(display_scale("ILBM", 320, 200, 0x4800), (1, 1));
+        assert_eq!(scale(320, 200, 0x4800), (1, 1));
         // No CAMG mode: infer from dimensions (the user's fallback rule).
-        assert_eq!(display_scale("ILBM", 320, 512, 0), (2, 1));
-        assert_eq!(display_scale("ILBM", 640, 256, 0), (1, 2));
+        assert_eq!(scale(320, 512, 0), (2, 1));
+        assert_eq!(scale(640, 256, 0), (1, 2));
+        // Super-hires is never inferred without a CAMG.
+        assert_eq!(scale(1280, 256, 0), (1, 2));
         // PBM is always square, even at hires dimensions.
-        assert_eq!(display_scale("PBM ", 640, 480, 0), (1, 1));
+        assert_eq!(display_scale("PBM ", &hdr(640, 480), 0), (1, 1));
+    }
+
+    /// A BMHD declaring equal x and y aspect means square pixels, and wins over
+    /// the mode id: a picture drawn square but saved as a hires screen must not
+    /// be stretched to twice its height.
+    #[test]
+    fn test_square_aspect_overrides_mode() {
+        let square = |w, h, camg| {
+            let mut h = hdr(w, h);
+            (h.x_aspect, h.y_aspect) = (10, 10);
+            display_scale("ILBM", &h, camg)
+        };
+        assert_eq!(square(640, 256, CAMG_HIRES), (1, 1));
+        assert_eq!(square(320, 512, CAMG_LACE), (1, 1));
+        // An unequal ratio is not trusted: too many writers leave a stale
+        // default there, so the mode id still decides.
+        let mut stale = hdr(640, 256);
+        (stale.x_aspect, stale.y_aspect) = (10, 11);
+        assert_eq!(display_scale("ILBM", &stale, CAMG_HIRES), (1, 2));
+    }
+
+    /// `palette_bits` tells a 4-bit (OCS/ECS) colour map from an 8-bit (AGA)
+    /// one, in both of the ways a 4-bit value gets written out.
+    #[test]
+    fn test_palette_bits() {
+        assert_eq!(palette_bits(&[0xff, 0x11, 0xaa]), Some(4)); // nibble-replicated
+        assert_eq!(palette_bits(&[0xf0, 0x10, 0xa0]), Some(4)); // high nibble only
+        assert_eq!(palette_bits(&[0xff, 0x11, 0xab]), Some(8)); // needs 8 bits
+        assert_eq!(palette_bits(&[]), None);
+        // A trailing partial entry is ignored rather than misread.
+        assert_eq!(palette_bits(&[0x12]), None);
+    }
+
+    /// `describe` names the colour depth of the palette: AGA images carry full
+    /// 8-bit components, OCS/ECS ones only 4 bits per component.
+    #[test]
+    fn test_describe_chipset() {
+        let d = |f: &str| describe(&fs::read(get_path(f)).unwrap());
+        assert_eq!(d("aplacet.lbm"), "Amiga AGA 640x512 (256 colors)");
+        assert_eq!(d("ghost"), "Amiga OCS 320x256 (16 colors)");
+        assert_eq!(d("TEST.ACBM"), "Amiga OCS 320x256 (8 colors)");
+        assert_eq!(d("FearFace.HAM8"), "Amiga AGA 640x512 (HAM8)");
+        assert_eq!(
+            d("DECKER-BattleMech.lbm"),
+            "Amiga OCS 640x512 (64 colors/EHB)"
+        );
+        assert_eq!(d("amiga-ferrari.dhr"), "Amiga OCS 704x512 (16 colors/CTBL)");
+        // Truecolour images have no palette to judge, and a PC PBM's palette is
+        // not an Amiga one.
+        assert_eq!(d("24.iff"), "Amiga 455x341 (True color)");
+        assert_eq!(d("water.lbm"), "PC 640x480 (256 colors)");
     }
 
     /// Non-IFF and unsupported forms should error rather than panic.
@@ -1158,5 +1415,69 @@ mod tests {
     fn test_rejects_garbage() {
         assert!(load_from_memory(b"not an iff file at all").is_err());
         assert!(load_from_memory(&[]).is_err());
+    }
+
+    /// Build a minimal 16x2 one-plane ILBM whose BODY chunk declares `body_size`
+    /// bytes but only carries `body`, for the malformed-chunk tests below.
+    fn ilbm_with_body(body_size: u32, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"ILBM");
+        out.extend_from_slice(b"BMHD");
+        out.extend_from_slice(&20u32.to_be_bytes());
+        // width, height, x, y, planes, masking, compression, pad, transparent,
+        // aspect x/y, page width/height.
+        out.extend_from_slice(&16u16.to_be_bytes());
+        out.extend_from_slice(&2u16.to_be_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&[1, 0, 0, 0]);
+        out.extend_from_slice(&[0; 8]);
+        out.extend_from_slice(b"BODY");
+        out.extend_from_slice(&body_size.to_be_bytes());
+        out.extend_from_slice(body);
+        let mut form = b"FORM".to_vec();
+        form.extend_from_slice(&(out.len() as u32).to_be_bytes());
+        form.extend_from_slice(&out);
+        form
+    }
+
+    /// A chunk whose size field runs past the end of the file must be rejected,
+    /// not sliced out of bounds. `describe` reads the same chunks and must
+    /// survive it too.
+    #[test]
+    fn test_rejects_bad_chunk_size() {
+        // A sane file built the same way still loads, so the rejections below
+        // are about the bad size and nothing else.
+        let ok = ilbm_with_body(4, &[0xff, 0x00, 0xff, 0x00]);
+        assert!(load_from_memory(&ok).is_ok(), "control image should load");
+
+        for bad in [5u32, 1 << 20, u32::MAX] {
+            let bytes = ilbm_with_body(bad, &[0xff, 0x00, 0xff, 0x00]);
+            assert!(
+                load_from_memory(&bytes).is_err(),
+                "BODY declaring {bad} bytes should be rejected"
+            );
+            describe(&bytes);
+        }
+    }
+
+    /// Truncating a real file anywhere must give an error or a valid image,
+    /// never a panic.
+    #[test]
+    fn test_truncated_files_dont_panic() {
+        for file in [
+            "abydos.ilbm",
+            "AH_Swimmer.iff",
+            "TEST.ACBM",
+            "water.lbm",
+            "spock.rgbn",
+        ] {
+            let bytes = fs::read(get_path(file)).unwrap();
+            for len in (0..bytes.len()).step_by(97) {
+                let part = &bytes[..len];
+                let _ = load_from_memory(part);
+                let _ = load_indexed_from_memory(part);
+                describe(part);
+            }
+        }
     }
 }

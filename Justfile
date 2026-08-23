@@ -81,8 +81,15 @@ site:
     zola -r {{ZOLA}} build
     rsync -avz {{ZOLA}}/public/ sasq@minnberg.se:/var/www/html/
 
+# Hyprland >= 0.5x parses its config as Lua, and `hyprctl keyword` only works
+# with the legacy parser ("keyword can't work with non-legacy parsers. Use
+# eval."), so drive the monitor through `hyprctl eval` instead.
 pal:
-    hyprctl keyword monitor "eDP-1,2880x1920@50,auto,2"
+    hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "2880x1920@50", position = "auto", scale = 2 })'
 
 ntsc:
-    hyprctl keyword monitor "eDP-1,2880x1920@60,auto,2"
+    hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "2880x1920@60", position = "auto", scale = 2 })'
+
+# Back to the panel's native refresh rate.
+native:
+    hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2 })'
