@@ -130,30 +130,3 @@ ENTER = Maximize/Unmazimize
 A = Select all emulators
 
 ```
-
-## RELEASE
-
-Releases are built by [dist](https://opensource.axo.dev/cargo-dist/)
-(`dist-workspace.toml` + `.github/workflows/release.yml`). To cut one:
-
-```sh
-# bump `version` in Cargo.toml, then
-just release-check          # sanity check what would be built
-git commit -am "release: 1.3.1"
-git tag v1.3.1
-git push && git push --tags
-```
-
-Pushing the tag builds all three targets, then creates the GitHub Release with
-the archives, checksums and the shell/powershell installers. `just release-local`
-builds the current host's artifacts into `target/distrib` without touching CI.
-
-The tag must match the version in Cargo.toml exactly, prerelease suffix
-included -- a `v1.3.1-rc.1` tag needs `version = "1.3.1-rc.1"`, otherwise dist
-fails the run with "this workspace doesn't have anything for dist to Release".
-Tags with a prerelease suffix are published as GitHub prereleases.
-
-After bumping the `dist` version in `dist-workspace.toml`, run `dist init --yes`
-to regenerate the workflow.
-
-
