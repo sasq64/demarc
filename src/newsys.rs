@@ -217,18 +217,12 @@ pub trait System: Send + Sync {
     }
 
     fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                if let Some(found) = self.get_first_file(&path)? {
-                    return Ok(Some(found));
-                }
-                continue;
-            } else if self.can_load(&path) {
-                return Ok(Some(path.to_owned()));
-            }
-        }
-        Ok(None)
+        walk_dir_find(dir, 0, |file, ext, _| {
+            if self.can_load(file) {
+                return Ok(Some(file.to_owned()));
+            };
+            Ok(None)
+        })
     }
 
     // Try to load a program with this system. WorkFile may change. On successful
