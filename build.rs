@@ -84,6 +84,17 @@ const MARKER_FILES: &[&str] = &[
     "pcsx-card2.mcd",
 ];
 
+/// Directories under `system/` that are never packed, whatever they contain.
+///
+/// `MARKER_FILES` can only name files it knows in advance, which is no help
+/// against a subtree whose file names are the user's. PCem is the case in
+/// point: it looks for BIOS ROMs under `pcem/roms/` (copyrighted, so never
+/// ours to ship) and writes NVR, logs and configs into `pcem/` beside them,
+/// with names taken from whichever machine config was loaded. In a debug build
+/// `system_dir()` is this very directory, so without this the emulator would
+/// be filling up the archive as it ran.
+const SKIP_DIRS: &[&str] = &["system/pcem"];
+
 /// Pack the loose `system/` directory into `system.zip` (embedded into the
 /// binary via `include_bytes!`), then emit a SHA-256 of the resulting archive
 /// as the `SYSTEM_ZIP_CHECKSUM` env var. The runtime writes that checksum next
@@ -130,7 +141,8 @@ fn build_system_zip() {
     println!("cargo:rustc-env=SYSTEM_ZIP_CHECKSUM={hex}");
 }
 
-/// Recursively gather every directory and (non-marker) file under `dir`.
+/// Recursively gather every directory and (non-marker) file under `dir`,
+/// skipping the subtrees named by [`SKIP_DIRS`].
 fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
         return;
@@ -138,6 +150,10 @@ fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in read_dir.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            let rel = path.to_string_lossy().replace('\\', "/");
+            if SKIP_DIRS.contains(&rel.as_ref()) {
+                continue;
+            }
             out.push(path.clone());
             collect_entries(&path, out);
         } else if !MARKER_FILES.contains(&entry.file_name().to_string_lossy().as_ref()) {

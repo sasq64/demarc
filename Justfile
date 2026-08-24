@@ -50,6 +50,24 @@ iff:
 royale file="demos/rebels.adf":
     cargo run --profile release-fast -- --shuffle --slangp slang-shaders/crt/crt-royale.slangp {{file}}
 
+# Build the PCem libretro core out of external/pcem. PCem itself is GPLv2 and
+# is not shipped with demarc; point demarc at the result with
+# DEMARC_CORE_DIR, or copy it into <system dir>/cores.
+#
+# BIOS ROMs are not included and never will be: put them under
+# <system dir>/pcem/roms/<machine>/ (external/pcem/docs/roms.txt lists what
+# each machine needs).
+pcem-core:
+    cmake -B external/pcem/build-lr -G Ninja -S external/pcem \
+        -DPCEM_DISPLAY_ENGINE=libretro -DCMAKE_BUILD_TYPE=Release
+    ninja -C external/pcem/build-lr
+    @echo "core at external/pcem/build-lr/src/pcem_libretro.so"
+
+# Run a PCem machine config through the locally built core.
+pc file:
+    DEMARC_CORE_DIR={{justfile_directory()}}/external/pcem/build-lr/src \
+        cargo run --profile release-fast -- {{file}}
+
 install:
     cargo build --release
     sudo cp target/release/demarc /usr/local/bin
