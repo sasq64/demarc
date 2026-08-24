@@ -1,18 +1,32 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::System;
+use anyhow::{Context, Result};
+
+use super::utils::read_at;
+use super::{System, get_ext, walk_dir};
+use crate::libloader;
+use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::system_dir;
+use crate::workfile::WorkFile;
 
 const CORE_NAME_PCEM: &str = "pcem";
+const CORE_NAME_DOSBOX: &str = "dosbox_pure";
 
-/// PC/DOS through PCem.
+/// PC/DOS through PCem or DOSBox.
 ///
-/// Content is a PCem machine `.cfg` — the same file the desktop PCem writes
-/// into its `configs/` directory and takes with `--config`. It names the
-/// machine, CPU, video and sound cards and the disc images to mount, so it is
-/// the whole of the configuration; the core has no machine picker.
+/// Two very different ways of running a PC, picked by what the release is:
 ///
-/// BIOS ROMs are not shipped (they are copyrighted) and must be placed under
+/// - A PCem machine `.cfg` — the same file the desktop PCem writes into its
+///   `configs/` directory and takes with `--config` — goes to PCem. It names
+///   the machine, CPU, video and sound cards and the disc images to mount, so
+///   it is the whole of the configuration; the core has no machine picker.
+/// - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which
+///   brings its own DOS and mounts the directory the program sits in as C:.
+///   Nothing else is needed, which is what most DOS releases arrive as.
+///
+/// Neither core ships BIOS ROMs — DOSBox needs none, and PCem's are
+/// copyrighted, so they must be placed under
 /// `<system dir>/pcem/roms/<machine>/`; `docs/roms.txt` in the PCem tree lists
 /// what each machine needs. Everything the machine writes — NVR, logs — goes
 /// under `<save dir>/pcem/`.
@@ -35,13 +49,125 @@ fn is_pcem_config(path: &Path) -> bool {
     })
 }
 
+/// The largest a `.com` can be: DOS loads one into a single segment, below the
+/// stack it puts at the top of it.
+const MAX_COM_SIZE: u64 = 0xff00;
+
+/// Does this look like something DOS would run?
+///
+/// `.exe` is the only one of the three with anything to check, and the check
+/// matters: the same extension and the same `MZ` header belong to every
+/// Windows program ever built, and DOSBox can run none of those. What sits at
+/// `e_lfanew` tells them apart — a second header there means the `MZ` is only
+/// the stub in front of a `NE` (Windows 3.x, OS/2) or `PE` (Win32) image.
+/// `LE`/`LX` stays: that is a DOS extender, which is how half the demos of the
+/// era were built.
+fn is_dos_program(path: &Path) -> bool {
+    let Ok(size) = fs::metadata(path).map(|m| m.len()) else {
+        return false;
+    };
+    match get_ext(path).as_str() {
+        "exe" => {
+            let Ok(header) = read_at(path, 0, 0x40) else {
+                return false;
+            };
+            if header.len() < 0x40 || !matches!(&header[..2], b"MZ" | b"ZM") {
+                return false;
+            }
+            let lfanew = u64::from(u32::from_le_bytes(header[0x3c..0x40].try_into().unwrap()));
+            // Plain DOS executables leave the field alone, so anything that
+            // isn't a sane offset into the file is one of those.
+            if lfanew < 0x40 || lfanew + 2 > size {
+                return true;
+            }
+            !matches!(
+                read_at(path, lfanew, 2).unwrap_or_default().as_slice(),
+                b"NE" | b"PE"
+            )
+        }
+        // A `.com` is a raw memory image with no header to recognise, so its
+        // size is all there is to go on.
+        "com" => size > 0 && size <= MAX_COM_SIZE,
+        // A batch file is text, and an empty one starts nothing.
+        "bat" => size > 0 && fs::read(path).is_ok_and(|b| std::str::from_utf8(&b).is_ok()),
+        _ => false,
+    }
+}
+
+/// How much we want to start a given program, biggest first.
+///
+/// A release is usually a directory holding one program worth running and
+/// several that aren't — an installer, a setup tool, a viewer for the .NFO —
+/// and the walk reaches them in whatever order the filesystem gives. So rank
+/// them: the file named after the release is what the release is, a `.bat` is
+/// the author saying "start here", and anything called INSTALL or SETUP is the
+/// one thing we know we don't want.
+fn launch_rank(path: &Path, release: &str) -> i32 {
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    let mut rank = match get_ext(path).as_str() {
+        "bat" => 2,
+        "exe" => 1,
+        _ => 0,
+    };
+    if !release.is_empty() && stem == release {
+        rank += 10;
+    }
+    if ["install", "setup", "config", "uninstal", "readme"].contains(&stem.as_str()) {
+        rank -= 20;
+    }
+    rank
+}
+
 impl System for PcSystem {
     fn extensions(&self) -> &'static [&'static str] {
-        &["cfg"]
+        &["cfg", "exe", "com", "bat"]
     }
 
     fn can_load(&self, path: &Path) -> bool {
-        self.handles_ext(path) && is_pcem_config(path)
+        if !self.handles_ext(path) {
+            return false;
+        }
+        if get_ext(path) == "cfg" {
+            is_pcem_config(path)
+        } else {
+            is_dos_program(path)
+        }
+    }
+
+    /// Pick what to start out of a directory.
+    ///
+    /// A PCem config wins over any program beside it: it describes a whole
+    /// machine, disc images and all, so a release shipping one means to be run
+    /// that way. Failing that, the best-ranked DOS program — see
+    /// [`launch_rank`], since the walk order says nothing about which of them
+    /// the release is.
+    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
+        let release = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        let mut config = None;
+        let mut best: Option<(i32, PathBuf)> = None;
+        walk_dir(dir, 0, |path, ext, _| {
+            if !self.can_load(path) {
+                return Ok(());
+            }
+            if ext == "cfg" {
+                config.get_or_insert_with(|| path.to_owned());
+            } else {
+                let rank = launch_rank(path, &release);
+                if best.as_ref().is_none_or(|(top, _)| rank > *top) {
+                    best = Some((rank, path.to_owned()));
+                }
+            }
+            Ok(())
+        })?;
+        Ok(config.or_else(|| best.map(|(_, path)| path)))
     }
 
     fn core_name(&self) -> &'static str {
@@ -50,6 +176,27 @@ impl System for PcSystem {
 
     fn name(&self) -> &'static str {
         "PC"
+    }
+
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let core = libloader::get_libretro(core_for(&path.path)).context("Could not load core")?;
+        Ok(Box::new(RetroCoreThreaded::new(
+            &core,
+            system_dir(),
+            Some(path),
+            path.get_all_meta(),
+            false,
+        )?))
+    }
+}
+
+/// Which core runs this file: PCem drives a machine config, DOSBox runs a
+/// program on a DOS of its own.
+fn core_for(path: &Path) -> &'static str {
+    if get_ext(path) == "cfg" {
+        CORE_NAME_PCEM
+    } else {
+        CORE_NAME_DOSBOX
     }
 }
 
@@ -66,7 +213,11 @@ mod tests {
     use crate::libretro::RETROK_RETURN;
     use crate::newsys::NewSys;
 
-    fn write(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
+        write_bytes(dir, name, body.as_bytes())
+    }
+
+    fn write_bytes(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, body).unwrap();
         path
@@ -101,6 +252,97 @@ mod tests {
         // A key that merely starts with "model" is not the model key.
         let lookalike = write(dir.path(), "look.cfg", "model_name = foo\n");
         assert!(!sys.can_load(&lookalike));
+    }
+
+    /// An MZ header is not enough on its own: every Windows program has one
+    /// too, and DOSBox can run none of them.
+    #[test]
+    fn tells_a_dos_program_from_a_windows_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+
+        // A DOS executable: `MZ`, and e_lfanew left as it comes.
+        let mut dos = vec![0u8; 0x80];
+        dos[..2].copy_from_slice(b"MZ");
+        let dos = write_bytes(dir.path(), "demo.exe", &dos);
+        assert!(sys.can_load(&dos));
+        assert_eq!(core_for(&dos), CORE_NAME_DOSBOX);
+
+        // The same header in front of a PE image is a Windows program.
+        let mut win = vec![0u8; 0x100];
+        win[..2].copy_from_slice(b"MZ");
+        win[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        win[0x80..0x84].copy_from_slice(b"PE\0\0");
+        let win = write_bytes(dir.path(), "setup32.exe", &win);
+        assert!(!sys.can_load(&win));
+
+        // A DOS extender (LE/LX behind the stub) is how the demos were built.
+        let mut dos4gw = vec![0u8; 0x100];
+        dos4gw[..2].copy_from_slice(b"MZ");
+        dos4gw[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        dos4gw[0x80..0x82].copy_from_slice(b"LE");
+        let dos4gw = write_bytes(dir.path(), "dos4gw.exe", &dos4gw);
+        assert!(sys.can_load(&dos4gw));
+
+        // Not an executable at all.
+        let text = write(dir.path(), "notes.exe", "just a text file\n");
+        assert!(!sys.can_load(&text));
+
+        // `.com` has no header, only a size DOS could load into one segment.
+        let com = write_bytes(dir.path(), "tiny.com", &[0xcd, 0x20]);
+        assert!(sys.can_load(&com));
+        let huge = write_bytes(dir.path(), "big.com", &vec![0u8; 0x1_0000]);
+        assert!(!sys.can_load(&huge));
+        let empty = write_bytes(dir.path(), "nothing.com", &[]);
+        assert!(!sys.can_load(&empty));
+
+        // A batch file starts a program, an empty one starts nothing.
+        let bat = write(dir.path(), "go.bat", "@echo off\r\ndemo.exe\r\n");
+        assert!(sys.can_load(&bat));
+        let blank = write(dir.path(), "blank.bat", "");
+        assert!(!sys.can_load(&blank));
+    }
+
+    /// The two cores split by content, not by system: a machine config drives
+    /// PCem, everything else runs on DOSBox's own DOS.
+    #[test]
+    fn routes_each_kind_of_content_to_its_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = write(dir.path(), "486.cfg", "model = ami486\n");
+        assert_eq!(core_for(&cfg), CORE_NAME_PCEM);
+        assert_eq!(core_for(Path::new("demo.exe")), CORE_NAME_DOSBOX);
+        assert_eq!(core_for(Path::new("go.bat")), CORE_NAME_DOSBOX);
+        assert_eq!(core_for(Path::new("tiny.com")), CORE_NAME_DOSBOX);
+    }
+
+    /// What a release directory holds is rarely one program, and the walk
+    /// order says nothing about which of them the release is.
+    #[test]
+    fn picks_what_the_release_means_to_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+
+        let release = dir.path().join("crystal");
+        fs::create_dir_all(&release).unwrap();
+        let mut exe = vec![0u8; 0x80];
+        exe[..2].copy_from_slice(b"MZ");
+        // Reached first by the walk, and the last thing anyone wants to run.
+        write_bytes(&release, "install.exe", &exe);
+        write_bytes(&release, "crystal.exe", &exe);
+        write_bytes(&release, "zzsetup.exe", &exe);
+
+        let found = sys.get_first_file(&release).unwrap().unwrap();
+        assert!(
+            found.ends_with("crystal.exe"),
+            "picked {found:?} out of the release"
+        );
+
+        // A machine config beside the programs describes the whole machine, so
+        // it wins - and takes the release to PCem rather than DOSBox.
+        write(&release, "crystal.cfg", "model = ami486\n");
+        let found = sys.get_first_file(&release).unwrap().unwrap();
+        assert!(found.ends_with("crystal.cfg"), "picked {found:?}");
+        assert_eq!(core_for(&found), CORE_NAME_PCEM);
     }
 
     /// How long to give the machine. The XT counts all 640K before it looks
