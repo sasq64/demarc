@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use libloading::Library;
 use tracing::{debug, error, info, trace, warn};
@@ -292,6 +293,7 @@ pub struct RetroCoreDirect {
     retro_run_fn: unsafe extern "C" fn(),
     retro_load_game_fn: unsafe extern "C" fn(*const retro_game_info) -> bool,
     retro_deinit_fn: unsafe extern "C" fn(),
+    retro_unload_game_fn: unsafe extern "C" fn(),
     retro_reset_fn: unsafe extern "C" fn(),
     retro_set_keyboard: Option<unsafe extern "C" fn(bool, c_uint, c_uint, c_ushort)>,
     disk_callback: retro_disk_control_callback,
@@ -315,8 +317,7 @@ pub struct RetroCoreDirect {
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
         if self.lib.is_some() {
-            let _guard = CurrentEmuGuard::enter(self);
-            unsafe { (self.retro_deinit_fn)() }
+            self.shut_down();
         }
     }
 }
@@ -351,9 +352,34 @@ impl Drop for CurrentEmuGuard {
 }
 
 impl RetroCoreDirect {
-    pub fn unload(&mut self) {
+    /// Give the content back and shut the core down, in that order.
+    ///
+    /// Both halves matter, and `retro_unload_game` most of all: a core that
+    /// runs its emulation on a thread of its own only stops that thread here.
+    /// DOSBox Pure is one — its `retro_deinit` frees a couple of buffers and
+    /// nothing else, so skipping the unload leaves the DOS thread running, and
+    /// the `dlclose` below then pulls the code out from under it. That is a
+    /// SIGSEGV in a thread with no Rust frames in it at all.
+    ///
+    /// Called on the thread that called `retro_run`, which is what cores that
+    /// hand work to another thread expect: the shutdown handshake is with the
+    /// frontend thread they have been synchronising with all along.
+    fn shut_down(&mut self) {
         let _guard = CurrentEmuGuard::enter(self);
-        unsafe { (self.retro_deinit_fn)() }
+        unsafe {
+            (self.retro_unload_game_fn)();
+            (self.retro_deinit_fn)();
+        }
+    }
+
+    /// Shut the core down and unload the library.
+    ///
+    /// Idempotent: `lib` is taken, and [`Drop`] checks it, so a core that has
+    /// been unloaded is not shut down twice.
+    pub fn unload(&mut self) {
+        self.shut_down();
+        // Only now, with the core's own threads stopped, is it safe to unmap
+        // the code they were running.
         self.lib = None;
     }
 
@@ -744,6 +770,8 @@ impl RetroCoreDirect {
                 lib.get(b"retro_run")?;
             let retro_deinit_sym: libloading::Symbol<unsafe extern "C" fn()> =
                 lib.get(b"retro_deinit")?;
+            let retro_unload_game_sym: libloading::Symbol<unsafe extern "C" fn()> =
+                lib.get(b"retro_unload_game")?;
             let retro_reset_sym: libloading::Symbol<unsafe extern "C" fn()> =
                 lib.get(b"retro_reset")?;
             let retro_set_controller_port_device: libloading::Symbol<
@@ -752,6 +780,7 @@ impl RetroCoreDirect {
 
             let retro_run_fn: unsafe extern "C" fn() = *retro_run_sym;
             let retro_deinit_fn: unsafe extern "C" fn() = *retro_deinit_sym;
+            let retro_unload_game_fn: unsafe extern "C" fn() = *retro_unload_game_sym;
             let retro_reset_fn: unsafe extern "C" fn() = *retro_reset_sym;
             let retro_get_avinfo_fn: unsafe extern "C" fn(*mut retro_system_av_info) =
                 *retro_get_system_av_info;
@@ -763,6 +792,7 @@ impl RetroCoreDirect {
                 retro_run_fn,
                 retro_load_game_fn,
                 retro_deinit_fn,
+                retro_unload_game_fn,
                 retro_reset_fn,
                 retro_set_keyboard: None,
                 disk_callback: retro_disk_control_callback::default(),
@@ -1412,6 +1442,14 @@ impl Backend for RetroCoreThreaded {
     }
 }
 
+/// How long to wait for the worker to shut the core down before giving up on
+/// it. Generous: it covers a core still finishing the frame it is in the
+/// middle of, and every core here is done long inside it. What it rules out is
+/// the other case — a core wedged in its own shutdown taking the whole
+/// application down with it, since this runs on the main thread while the user
+/// is trying to quit.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl Drop for RetroCoreThreaded {
     fn drop(&mut self) {
         // Ask the worker to stop. It only checks for Unload at the top of its
@@ -1419,9 +1457,27 @@ impl Drop for RetroCoreThreaded {
         // a full `update_tx.send()`. Keep draining the channel so that send
         // completes and the worker can loop back, observe the Unload, and
         // return — otherwise the join below would deadlock. `recv` returns Err
-        // once the worker has returned and dropped its SyncSender.
+        // once the worker has dropped its SyncSender, which it does after the
+        // core has been unloaded, so a disconnect means the join is free.
         let _ = self.cmd_tx.send(RetroCmd::Unload);
-        while self.update_rx.get_mut().unwrap().recv().is_ok() {}
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        let rx = self.update_rx.get_mut().unwrap();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok(_) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // The worker is stuck inside the core — the one place this
+                    // has been seen is a core whose emulation thread never
+                    // stops. Leave it running rather than joining it: a hung
+                    // worker would otherwise hang the caller, which is the main
+                    // thread on its way out of the process.
+                    error!("Core did not shut down in {SHUTDOWN_TIMEOUT:?}, leaving it running");
+                    return;
+                }
+            }
+        }
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
