@@ -588,7 +588,10 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_SET_GEOMETRY => {
                     let geom = &(*(data as *mut retro_game_geometry));
                     self.state.aspect_ratio = geometry_aspect(geom);
-                    info!("Got GEOMETRY ASPECT {}", self.state.aspect_ratio);
+                    info!(
+                        "Got GEOMETRY {}x{} ASPECT {}",
+                        geom.base_width, geom.base_height, self.state.aspect_ratio
+                    );
                 }
                 RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK => {
                     let callback = data as *mut retro_keyboard_callback;

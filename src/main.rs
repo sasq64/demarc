@@ -174,6 +174,10 @@ struct Args {
     #[arg(long)]
     xmem: bool,
 
+    /// DOS: Enable Gravis Ultrasound
+    #[arg(long)]
+    gus: bool,
+
     /// C64: Always use JiffyDOS to load
     /// Amiga: Turn off disk rotation emulation
     #[arg(long, verbatim_doc_comment)]

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -136,6 +137,19 @@ impl System for PcSystem {
         } else {
             is_dos_program(path)
         }
+    }
+
+    /// DOSBox Pure reports the raw framebuffer ratio (a 320x200 mode comes out
+    /// as 1.6, i.e. 16:10) unless aspect correction is on. With it on the core
+    /// leaves the framebuffer alone and only reports the pixel-aspect-corrected
+    /// display ratio, which is what a CRT showed and what our scaler wants.
+    fn default_meta(&self) -> HashMap<&str, &str> {
+        [
+            ("dosbox_pure_gus", "true"),
+            ("dosbox_pure_memory_size", "64"),
+            ("dosbox_pure_aspect_correction", "true"),
+        ]
+        .into()
     }
 
     /// Pick what to start out of a directory.
@@ -406,7 +420,10 @@ mod tests {
             // it has already finished, so a `false` means "nothing ready yet",
             // not "no more frames".
             if !loaded.backend.run() {
-                assert!(Instant::now() < deadline, "the core stopped producing frames");
+                assert!(
+                    Instant::now() < deadline,
+                    "the core stopped producing frames"
+                );
                 std::thread::yield_now();
                 continue;
             }
@@ -532,7 +549,10 @@ mod tests {
 
         while frame < DEMO_FRAME_LIMIT {
             if !loaded.backend.run() {
-                assert!(Instant::now() < deadline, "the core stopped producing frames");
+                assert!(
+                    Instant::now() < deadline,
+                    "the core stopped producing frames"
+                );
                 std::thread::yield_now();
                 continue;
             }
@@ -576,7 +596,10 @@ mod tests {
         let mut watched = 0;
         while watched < ANIMATION_FRAMES {
             if !loaded.backend.run() {
-                assert!(Instant::now() < deadline, "the core stopped producing frames");
+                assert!(
+                    Instant::now() < deadline,
+                    "the core stopped producing frames"
+                );
                 std::thread::yield_now();
                 continue;
             }
