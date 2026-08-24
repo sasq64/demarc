@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, WindowMode};
+use percent_encoding::percent_decode_str;
+use url::Url;
 
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
@@ -50,6 +52,10 @@ pub struct CmdMessage(pub Cmd);
 /// Id the file picker is opened under, echoed back by
 /// [`FuzzyListSelect`] so its selections are told apart from any other list's.
 pub const FILE_PICKER_ID: usize = 1;
+
+/// Id of the second list, over one entry's download URLs, that Shift+Enter in
+/// the file picker opens (see [`handle_textlist`]).
+pub const DOWNLOAD_PICKER_ID: usize = 2;
 
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
@@ -148,19 +154,59 @@ fn handle_textlist(
     mut show_list: MessageWriter<ShowFuzzyList>,
     time: Res<Time>,
     hud: Res<HudState>,
+    // The entry whose downloads the list opened by Shift+Enter is showing, kept
+    // until that list reports back (its own `item` is a URL index, not a file).
+    mut download_pick: Local<Option<usize>>,
 ) {
     // The file picker is the egui list in `crate::egui_ui`, which closes itself
     // once a row is picked; `item` is the stable index into `settings.files`,
     // independent of the current search filter.
-    for &FuzzyListSelect { id, item, .. } in file_reader.read() {
-        info!("Got SELECT {id} {item:?}");
-        if id == FILE_PICKER_ID {
-            settings.current_game = item as isize;
-            writer.write(CmdMessage(Cmd::Reload));
-        } else {
-            if item < HOTKEYS.len() {
-                let cmd = HOTKEYS[item].cmd;
-                writer.write(CmdMessage(cmd));
+    for &FuzzyListSelect { id, item, alt, .. } in file_reader.read() {
+        info!("Got SELECT {id} {item:?} alt={alt}");
+        match id {
+            FILE_PICKER_ID => {
+                // Shift+Enter picks the download instead of starting it: an
+                // entry's URLs are alternatives (a mirror, the same release
+                // packed differently), and a plain load takes whichever of them
+                // answers first. A second list over their file names lets the
+                // user say which one to use.
+                let picker = alt
+                    .then(|| original_file(&settings, item).and_then(DownloadSource::new))
+                    .flatten();
+                if let Some(source) = picker {
+                    *download_pick = Some(item);
+                    show_list.write(ShowFuzzyList {
+                        id: DOWNLOAD_PICKER_ID,
+                        source: Arc::new(source),
+                    });
+                    continue;
+                }
+                settings.current_game = item as isize;
+                writer.write(CmdMessage(Cmd::Reload));
+            }
+            DOWNLOAD_PICKER_ID => {
+                let Some(file) = download_pick.take() else {
+                    continue;
+                };
+                // Narrow the entry down to the one URL, so the load fetches
+                // that and nothing else -- `FileSource::resolve` would
+                // otherwise re-apply its own idea of which of them to take.
+                // The picker's snapshot still holds them all, so the entry can
+                // be pointed at a different download later.
+                let url = original_file(&settings, file)
+                    .and_then(download_urls)
+                    .and_then(|urls| urls.get(item).cloned());
+                if let Some(url) = url {
+                    settings.files[file].path = FileSource::Url(vec![url]);
+                }
+                settings.current_game = file as isize;
+                writer.write(CmdMessage(Cmd::Reload));
+            }
+            _ => {
+                if item < HOTKEYS.len() {
+                    let cmd = HOTKEYS[item].cmd;
+                    writer.write(CmdMessage(cmd));
+                }
             }
         }
     }
@@ -194,6 +240,77 @@ fn handle_textlist(
                 source: Arc::new(source),
             });
         }
+    }
+}
+
+/// The entry as the picker first saw it. [`FilePickerSource`] snapshots
+/// `settings.files` when the picker is first built, so an entry that has since
+/// been narrowed to a single download still has all of its URLs here — and can
+/// be pointed at another one of them.
+fn original_file(settings: &AppSettings, index: usize) -> Option<&EmuFile> {
+    settings
+        .file_source
+        .as_ref()
+        .and_then(|source| source.info.get(index))
+        .or_else(|| settings.files.get(index))
+}
+
+/// The URLs of an entry there is something to choose between: several remote
+/// alternatives. A local path, or a single URL, has nothing to pick from.
+fn download_urls(file: &EmuFile) -> Option<&Vec<Url>> {
+    match &file.path {
+        FileSource::Url(urls) if urls.len() > 1 => Some(urls),
+        _ => None,
+    }
+}
+
+/// The file-name part of `url`, percent-decoded for display: the last path
+/// segment, without any `?query` or `#fragment`. A URL ending in a slash has no
+/// file name, so it is listed whole.
+fn url_file_name(url: &Url) -> String {
+    let name = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or_default();
+    let name = percent_decode_str(name).decode_utf8_lossy();
+    if name.is_empty() {
+        url.as_str().to_owned()
+    } else {
+        name.into_owned()
+    }
+}
+
+/// Backs the download picker: the file-name part of each of one entry's URLs,
+/// with the whole URL in the info field below the list — mirrors of the same
+/// release often share a file name, and the host is what tells them apart.
+///
+/// The `id` a selection reports is the index of the URL in the entry's own
+/// list, which is how [`handle_textlist`] finds it again.
+struct DownloadSource {
+    names: AllWordsSource,
+    urls: Vec<Url>,
+}
+
+impl DownloadSource {
+    /// The picker over `file`'s downloads, or `None` when there is nothing to
+    /// pick between (see [`download_urls`]).
+    fn new(file: &EmuFile) -> Option<Self> {
+        let urls = download_urls(file)?;
+        let names = urls.iter().map(url_file_name).collect();
+        Some(Self {
+            names: AllWordsSource::new(names),
+            urls: urls.clone(),
+        })
+    }
+}
+
+impl FuzzySource for DownloadSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+        self.names.search(query, limit)
+    }
+
+    fn get_info(&self, id: usize) -> String {
+        self.urls.get(id).map(Url::to_string).unwrap_or_default()
     }
 }
 
@@ -685,6 +802,7 @@ impl Plugin for CommandPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
 
     const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
 
@@ -740,6 +858,49 @@ mod tests {
     fn urls_without_a_path_are_still_bounded() {
         let out = trunc_url("https://a-very-long-host-name.example.org", 20);
         assert_eq!(out.chars().count(), 20);
+    }
+
+    #[test]
+    fn download_rows_are_the_file_name_part_of_the_url() {
+        assert_eq!(url_file_name(&Url::parse(URL).unwrap()), "zentro4.zip");
+        // Percent escapes are shown as the characters they stand for...
+        assert_eq!(
+            url_file_name(&Url::parse("https://a.org/d/Count%20Duckula.zip").unwrap()),
+            "Count Duckula.zip"
+        );
+        // ...and a query string is not part of the name.
+        assert_eq!(
+            url_file_name(&Url::parse("https://a.org/get?id=1").unwrap()),
+            "get"
+        );
+        // Nothing to name: the whole URL is listed instead.
+        let dir = "https://a.org/pub/";
+        assert_eq!(url_file_name(&Url::parse(dir).unwrap()), dir);
+    }
+
+    /// The download picker is only worth opening when the entry really has
+    /// alternatives to pick between.
+    #[test]
+    fn only_entries_with_several_urls_have_downloads_to_pick() {
+        let file = |urls: &[&str]| EmuFile {
+            path: FileSource::Url(urls.iter().map(|u| Url::parse(u).unwrap()).collect()),
+            ..Default::default()
+        };
+        assert!(DownloadSource::new(&EmuFile::default()).is_none());
+        assert!(DownloadSource::new(&file(&[URL])).is_none());
+
+        let source = DownloadSource::new(&file(&[URL, "https://mirror.example/demo.lha"])).unwrap();
+        let rows = source.search("", DEFAULT_MAX_RESULTS);
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            vec!["zentro4.zip", "demo.lha"]
+        );
+        // The id a row reports is its index into the entry's URLs, and the
+        // info field spells the chosen one out in full.
+        assert_eq!(
+            source.get_info(rows[1].id),
+            "https://mirror.example/demo.lha"
+        );
     }
 
     #[test]

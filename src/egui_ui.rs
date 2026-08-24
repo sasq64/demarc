@@ -101,8 +101,8 @@ pub struct ShowFuzzyList {
     pub source: Arc<dyn FuzzySource>,
 }
 
-/// Emitted when the user picks a row (Enter) in the list opened by
-/// [`ShowFuzzyList`].
+/// Emitted when the user picks a row (Enter, or Shift+Enter — see
+/// [`FuzzyListSelect::alt`]) in the list opened by [`ShowFuzzyList`].
 #[derive(Message, Debug, Clone)]
 pub struct FuzzyListSelect {
     /// The list's `id`, so callers can tell their pickers apart.
@@ -111,6 +111,9 @@ pub struct FuzzyListSelect {
     pub item: usize,
     #[allow(dead_code)]
     pub text: String,
+    /// Set when the row was picked with Shift held (Shift+Enter), asking the
+    /// caller for its alternative action on the item rather than the default.
+    pub alt: bool,
 }
 
 #[derive(Default, Message, Clone)]
@@ -310,8 +313,9 @@ fn scroll_area<T: AsRef<str>>(
 /// [`HudState::list_source`], with a fixed-height info field
 /// ([`FuzzySource::get_info`]) below it, centred on screen. The search box takes
 /// keyboard focus for as long as the picker is up, with Up/Down/PageUp/PageDown
-/// moving the highlighted row, Enter emitting a [`FuzzyListSelect`] for it and
-/// Escape closing the picker without one.
+/// moving the highlighted row, Enter (or Shift+Enter, which sets
+/// [`FuzzyListSelect::alt`]) emitting a [`FuzzyListSelect`] for it and Escape
+/// closing the picker without one.
 fn render_list(
     ctx: &egui::Context,
     state: &mut HudState,
@@ -338,7 +342,7 @@ fn render_list(
     // the presses keeps a held-down arrow moving at the key repeat rate even
     // when several repeats land in one frame.
     let len = state.list_items.len();
-    let (row_steps, page_steps, pick, close) = ctx.input_mut(|i| {
+    let (row_steps, page_steps, pick, alt, close) = ctx.input_mut(|i| {
         let none = egui::Modifiers::NONE;
         let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
             - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
@@ -346,9 +350,13 @@ fn render_list(
             - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
         // Enter belongs to the list, not the search box, and Escape closes the
         // whole picker; both are consumed so the `TextEdit` never acts on them.
-        let pick = i.consume_key(none, egui::Key::Enter);
+        // Shift+Enter picks the row as well, reported back as `alt` so a
+        // caller can offer a second action on the same item. Taken before the
+        // plain Enter, whose `NONE` modifiers would not match it anyway.
+        let alt = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
+        let pick = alt || i.consume_key(none, egui::Key::Enter);
         let close = i.consume_key(none, egui::Key::Escape);
-        (rows, pages, pick, close)
+        (rows, pages, pick, alt, close)
     });
     if close {
         state.show_list = false;
@@ -369,6 +377,7 @@ fn render_list(
             id: state.list_id,
             item: item.id,
             text: item.text.clone(),
+            alt,
         });
         state.show_list = false;
         return;
