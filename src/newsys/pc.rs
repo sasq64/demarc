@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use tracing::{info, warn};
 
 use super::utils::read_at;
 use super::{System, get_ext, walk_dir};
@@ -13,6 +14,19 @@ use crate::workfile::WorkFile;
 
 const CORE_NAME_PCEM: &str = "pcem";
 const CORE_NAME_DOSBOX: &str = "dosbox_pure";
+
+/// Meta key asking for the Watcom extender to be placed beside the program.
+const META_DOS4GW: &str = "dos4gw";
+
+/// What the extender is called once it is in place. DOS uppercases every name
+/// it prints and most releases ship it this way, so the copy matches.
+const DOS4GW_EXE: &str = "DOS4GW.EXE";
+
+/// Where a copy of it is kept, under the system dir. Not something we ship —
+/// like the PCem ROMs beside it, it has to be put there by hand.
+fn dos4gw_source() -> PathBuf {
+    system_dir().join("pcem").join("dos4gw.exe")
+}
 
 /// PC/DOS through PCem or DOSBox.
 ///
@@ -25,6 +39,11 @@ const CORE_NAME_DOSBOX: &str = "dosbox_pure";
 /// - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which
 ///   brings its own DOS and mounts the directory the program sits in as C:.
 ///   Nothing else is needed, which is what most DOS releases arrive as.
+///
+/// A DOS release is often missing the extender it was linked against, since
+/// that came with the compiler rather than the demo. `dos4gw=true` on an entry
+/// says so: the release is copied somewhere writable and a `DOS4GW.EXE` is put
+/// beside the program — see [`place_extender`].
 ///
 /// Neither core ships BIOS ROMs — DOSBox needs none, and PCem's are
 /// copyrighted, so they must be placed under
@@ -120,7 +139,95 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
     if ["install", "setup", "config", "uninstal", "readme"].contains(&stem.as_str()) {
         rank -= 20;
     }
+    // An extender is loaded by the program that was linked against it, never
+    // started by hand: on its own it puts up a usage banner and quits. It is
+    // worth the same penalty, since a release shipping one holds the program
+    // that needs it too.
+    if EXTENDERS.contains(&stem.as_str()) {
+        rank -= 20;
+    }
     rank
+}
+
+/// The DOS extenders and DPMI hosts a release ships beside its program.
+const EXTENDERS: &[&str] = &[
+    "dos4gw", "dos4g", "dos32a", "cwsdpmi", "cwsdpr0", "pmodew", "wdosx", "dpmiload", "dpmi16bi",
+];
+
+/// Get the release into a directory we may write to, still pointing at
+/// `target`.
+///
+/// What comes along is the whole of what we were given, not just the program:
+/// a release directory holds the data files it opens, and DOSBox mounts that
+/// directory as C:. Anything unpacked from an archive is in a temp dir
+/// already and only needs the path narrowed.
+fn make_writable(file: &mut WorkFile, target: &Path) -> Result<()> {
+    if file.is_temporary() {
+        file.path = target.to_owned();
+        return Ok(());
+    }
+    let rel = if file.path.is_dir() {
+        target
+            .strip_prefix(&file.path)
+            .context("Program is not inside the release")?
+            .to_owned()
+    } else {
+        // A program pointed at directly. `make_temp` would copy that one file
+        // and nothing else, so aim it at the directory the program sits in —
+        // which is the release, as far as anything here can tell — and walk
+        // back down to the program afterwards.
+        let name = target.file_name().context("Program has no file name")?;
+        let dir = target.parent().unwrap_or(Path::new(""));
+        file.path = if dir.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            dir.to_owned()
+        };
+        PathBuf::from(name)
+    };
+    file.make_temp()?;
+    file.path = file.path.join(rel);
+    Ok(())
+}
+
+/// Put the Watcom extender beside the program we are about to start.
+///
+/// A program linked against DOS/4GW loads `DOS4GW.EXE` at startup, from the
+/// current directory or the PATH, and plenty of releases were packed without
+/// it — it came with the compiler, and every machine of the era had one lying
+/// around. DOSBox starts in the directory it mounted as C:, which is the one
+/// the program sits in, so that is where the copy goes.
+fn place_extender(file: &WorkFile, source: &Path) -> Result<()> {
+    if !source.is_file() {
+        warn!("No extender to copy at {source:?}");
+        return Ok(());
+    }
+    let dir = file.path.parent().context("Program has no directory")?;
+    // A release that ships its own extender has already answered the question,
+    // and DOS names come back from an archive in every case there is.
+    let has_one = fs::read_dir(dir)?.filter_map(Result::ok).any(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(DOS4GW_EXE)
+    });
+    if has_one {
+        info!("{dir:?} already holds an extender");
+        return Ok(());
+    }
+    let target = dir.join(DOS4GW_EXE);
+    fs::copy(source, &target)
+        .with_context(|| format!("Could not copy {source:?} to {target:?}"))?;
+    info!("Placed {target:?}");
+    Ok(())
+}
+
+/// Is a meta value one of the ways of saying yes?
+fn is_set(file: &WorkFile, key: &str) -> bool {
+    matches!(
+        file.get_meta(key, "").to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    ) || file.has_tag("dos4gw")
 }
 
 impl System for PcSystem {
@@ -137,6 +244,35 @@ impl System for PcSystem {
         } else {
             is_dos_program(path)
         }
+    }
+
+    /// Narrow a release down to the program to start, and give it the
+    /// extender if the release was marked as needing one.
+    ///
+    /// The default [`System::load`] does the narrowing; what it can't do is
+    /// the order this needs. Copying the release into a temp dir moves every
+    /// path inside it, so which file to start has to be settled first and
+    /// followed across the copy afterwards.
+    fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        let target = if file.path.is_dir() {
+            match self.get_first_file(&file.path)? {
+                Some(path) => path,
+                None => return Ok(false),
+            }
+        } else if self.can_load(&file.path) {
+            file.path.clone()
+        } else {
+            return Ok(false);
+        };
+        // A machine config brings its own DOS on its own disc images, so the
+        // extender is only ever a question for a program run under DOSBox.
+        if get_ext(&target) != "cfg" && is_set(file, META_DOS4GW) {
+            make_writable(file, &target)?;
+            place_extender(file, &dos4gw_source())?;
+        } else {
+            file.path = target;
+        }
+        Ok(true)
     }
 
     /// DOSBox Pure reports the raw framebuffer ratio (a 320x200 mode comes out
@@ -357,6 +493,106 @@ mod tests {
         let found = sys.get_first_file(&release).unwrap().unwrap();
         assert!(found.ends_with("crystal.cfg"), "picked {found:?}");
         assert_eq!(core_for(&found), CORE_NAME_PCEM);
+    }
+
+    /// The extender is shipped beside the program that loads it, so it is the
+    /// one `.exe` in a release that never starts anything.
+    #[test]
+    fn passes_over_an_extender_shipped_beside_the_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+        let mut exe = vec![0u8; 0x80];
+        exe[..2].copy_from_slice(b"MZ");
+
+        let release = dir.path().join("release");
+        fs::create_dir_all(&release).unwrap();
+        // Named so that neither wins on the release name, and written first so
+        // that the walk reaches the extender before the demo.
+        write_bytes(&release, "DOS4GW.EXE", &exe);
+        write_bytes(&release, "trip.exe", &exe);
+        let found = sys.get_first_file(&release).unwrap().unwrap();
+        assert!(found.ends_with("trip.exe"), "picked {found:?}");
+
+        // On its own it is still all there is to start.
+        let bare = dir.path().join("bare");
+        fs::create_dir_all(&bare).unwrap();
+        write_bytes(&bare, "dos4gw.exe", &exe);
+        let found = sys.get_first_file(&bare).unwrap().unwrap();
+        assert!(found.ends_with("dos4gw.exe"), "picked {found:?}");
+    }
+
+    /// `dos4gw=true` says the release was packed without the extender it was
+    /// linked against, which means writing into the release — so it has to be
+    /// a copy of one.
+    #[test]
+    fn puts_the_extender_beside_a_release_asking_for_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+        let mut exe = vec![0u8; 0x80];
+        exe[..2].copy_from_slice(b"MZ");
+
+        let release = dir.path().join("crystal");
+        fs::create_dir_all(release.join("data")).unwrap();
+        write_bytes(&release, "crystal.exe", &exe);
+        write(&release.join("data"), "tune.mod", "not really a module");
+
+        // Without the option the release is started where it lies.
+        let mut plain = WorkFile::new(release.clone());
+        assert!(sys.load(&mut plain).unwrap());
+        assert_eq!(plain.path, release.join("crystal.exe"));
+        assert!(!plain.is_temporary());
+
+        let meta = HashMap::from([(META_DOS4GW.to_string(), "true".to_string())]);
+        let mut wf = WorkFile::new_with_meta(release.clone(), meta);
+        assert!(sys.load(&mut wf).unwrap());
+
+        // The whole release came along, data files and all, since that
+        // directory is what DOSBox mounts as C:.
+        assert!(wf.is_temporary(), "{:?} is not a copy", wf.path);
+        assert!(wf.path.ends_with("crystal.exe"), "{:?}", wf.path);
+        let copied = wf.path.parent().unwrap();
+        assert!(copied.join("data").join("tune.mod").is_file());
+
+        // Whatever happened, it did not happen in the user's own files.
+        assert!(!release.join(DOS4GW_EXE).exists());
+
+        // The extender itself is not ours to ship, so only check it landed
+        // when there is one in the system dir to land.
+        if dos4gw_source().is_file() {
+            assert!(
+                copied.join(DOS4GW_EXE).is_file(),
+                "no extender in {copied:?}"
+            );
+        }
+    }
+
+    /// A release that packed its own extender keeps it: it is the version the
+    /// program was built against, and ours would overwrite it.
+    #[test]
+    fn keeps_an_extender_the_release_brought_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write(dir.path(), "dos4gw.exe", "ours");
+
+        let release = dir.path().join("release");
+        fs::create_dir_all(&release).unwrap();
+        // Lowercase here, uppercase in the copy we would make: the same file
+        // to DOS, two files on this filesystem.
+        write(&release, "dos4gw.exe", "theirs");
+        let program = write(&release, "demo.exe", "MZ");
+
+        place_extender(&WorkFile::new(program), &source).unwrap();
+        assert_eq!(
+            fs::read_to_string(release.join("dos4gw.exe")).unwrap(),
+            "theirs"
+        );
+        assert_eq!(fs::read_dir(&release).unwrap().count(), 2);
+
+        // With none there, the copy is made under the name DOS uses.
+        let empty = dir.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        let program = write(&empty, "demo.exe", "MZ");
+        place_extender(&WorkFile::new(program), &source).unwrap();
+        assert_eq!(fs::read_to_string(empty.join(DOS4GW_EXE)).unwrap(), "ours");
     }
 
     /// How long to give the machine. The XT counts all 640K before it looks
