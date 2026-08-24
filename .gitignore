@@ -5,10 +5,6 @@
 __pycache__/
 /system/vice/*dump*
 /system/*.mcd
-# PCem BIOS ROMs (user-supplied, copyrighted) and the NVR/logs/configs the
-# emulated machines write beside them. build.rs skips the whole subtree too.
-/system/pcem/
-/system/musix/sc68/sc68.cfg
 /test_*png
 /system/musix/sc68/sc68.cfg
 /files/win/*.gz
