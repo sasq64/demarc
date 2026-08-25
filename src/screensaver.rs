@@ -76,7 +76,7 @@ fn sync_screen_saver(
 /// rectangle-cover test. On Wayland the position is never reported (it stays
 /// [`WindowPosition::Automatic`]), so we fall back to an exact size match
 /// against a monitor — which is what a fullscreened window produces.
-fn covers_a_monitor(window: &Window, monitors: &Query<&Monitor>) -> bool {
+pub(crate) fn covers_a_monitor(window: &Window, monitors: &Query<&Monitor>) -> bool {
     let win_w = window.physical_width();
     let win_h = window.physical_height();
     if win_w == 0 || win_h == 0 {

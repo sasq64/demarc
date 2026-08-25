@@ -83,6 +83,15 @@ release-local:
 HOME := x'${HOME}'
 ZOLA := HOME / "projects/docs/minnberg"
 
+# The dialog driver that runs inside wine alongside a Windows demo (source in
+# tools/autodlg). It is a checked-in binary, so a change to it only reaches
+# demarc once this has been run and system/win/demarc-autodlg.exe committed.
+# `+crt-static` so the driver depends on nothing but wine's own kernel32 and
+# user32: it has to start in whatever state the demo's prefix happens to be in.
+autodlg:
+    cd tools/autodlg && RUSTFLAGS="-C target-feature=+crt-static" cargo xwin build --release --target x86_64-pc-windows-msvc
+    cp tools/autodlg/target/x86_64-pc-windows-msvc/release/demarc-autodlg.exe system/win/
+
 # `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
 # tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under
 # `#ifdef __GNUC__`, which clang-cl doesn't define, so clang rejects the

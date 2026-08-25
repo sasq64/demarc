@@ -11,7 +11,7 @@ _Main goal_: Make it easy to watch oldschool (PAL) demos
 
 Supported systems:
 
-C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Playstation, Gameboy Color, Gameboy Advance
+C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Playstation, Gameboy Color, Gameboy Advance, PC (DOS, and Windows through wine)
 
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay
@@ -130,6 +130,66 @@ SHIFT+N = Next file in all emulators
   files next to the executable come along (`--many` splits it into single files)
 * If other _executables_ found in a directory, each of the executables are added
 
+### Windows demos
+
+A Windows (PE) executable is run under [wine](https://www.winehq.org) inside a
+fullscreen [gamescope](https://github.com/ValveSoftware/gamescope), on top of
+demarc rather than inside it — the demo draws to the screen itself and plays its
+own sound, while demarc sits behind it showing a black frame. Shaders, the grid
+and screenshots therefore don't apply to it. Needs `wine` and `gamescope` on the
+`PATH`; the wine prefix is `~/.wine-demos`, kept apart from the user's own
+`~/.wine`, and wine creates it on first run. Stopping a demo closes that prefix
+with `wineserver -k` — wine's service processes put themselves in sessions of
+their own and outlive the demo otherwise, and they hold demarc's pipes open
+while they do, which used to hang the quit. Starting one closes it too, since a
+demarc that was killed rather than quit never got to: otherwise they pile up a
+set per launch. Anything `wineserver -k` can't reach is killed by matching
+`WINEPREFIX` in `/proc` — a wine process that outlives its own server (a wedged
+`winedevice.exe`, usually) belongs to no server that could be asked to close it,
+and stays until the machine goes down. So one Windows demo at a time.
+
+Nearly every PC demo opens with a setup dialog, which nobody is there to answer,
+so `demarc-autodlg.exe` (source in `tools/autodlg`) runs in the same wine
+session, picks the resolution `wine_res` asks for and presses Start/Go/Run before
+handing over. It also starts the demo itself, and writes a line when the demo
+starts and another when it ends — which is the only way demarc can know either.
+The process it launched is a gamescope, and gamescope waits on its whole tree:
+wine's services outlive the demo inside it, so a session showing nothing looks
+exactly like a session showing a demo. Without the driver's word for it a
+finished demo goes unnoticed and keeps the screen. So the driver runs whatever
+`wine_res` says; `pick` only stops it pressing anything.
+
+`wine_desktop=true` runs the demo inside a wine virtual desktop
+(`explorer /desktop=`) the size of the session. Demos switch display modes on
+their way to fullscreen, and under gamescope's Xwayland that means tearing down
+and remapping an X window, which a handful of them — Equinox's *Kings of the
+Playground* among them — do not survive. Inside a virtual desktop the mode
+switch is wine's own business and never reaches X. It's off by default, since
+the desktop is a window manager of wine's own sitting between the demo and the
+screen and most demos do better without one; turn it on for the ones that crash
+or never draw.
+
+`wine_res=pick` turns that off for a release: the dialog comes up untouched, for
+you to answer with the keyboard and mouse — for the demo whose dialog the driver
+reads wrongly, or the one with an option only a person can decide. The driver is
+still there (`--no-go`), since it is what starts the demo and what reports its
+end, but it presses nothing. Since the size isn't known until you choose it, a
+pick session runs at 1920x1200, big enough to hold any mode such a dialog offers;
+a demo started at less than that gets a picture that size in the middle of the
+screen. The demo's window also keeps its title bar, undecorating being another
+thing the driver is told not to do here.
+
+The driver is a checked-in binary, so a change to `tools/autodlg` only reaches
+demarc once it is rebuilt and `system/win/demarc-autodlg.exe` committed:
+
+```sh
+just autodlg
+```
+
+which cross-compiles it with `cargo-xwin`, the same way `just win` builds demarc
+itself, and copies it into place. `+crt-static`, so the driver depends on
+nothing but wine's own `kernel32` and `user32`.
+
 ### Tags
 
 Tags configure the emulator per file. They come from a db header (`# Platform:Atari
@@ -141,6 +201,8 @@ demarc adds a few of its own:
 | --- | --- |
 | `boot_file` | Which file in a release directory to auto start, e.g. `boot_file=TLKTLK2.PRG`. Overrides the guess demarc makes (named like a program — `.prg`, `.tos`, `.ttp`, `.app` — nearest the top of the release, and the biggest of those). Matched case insensitively, by file name or by path within the release (`DEMO/TLKTLK2.PRG`) |
 | `psx_core` | `beetle` to load a PlayStation release with Beetle (needs a BIOS) instead of the default pcsx_rearmed |
+| `wine_desktop` | `true` runs a Windows demo inside a wine virtual desktop, for the ones that don't survive a real display mode change (see above). Off by default |
+| `wine_res` | Resolution a Windows demo is run at, e.g. `wine_res=1024x768`. Defaults to `800x600`, which is what the setup dialogs of the era all offer — the size is picked by matching the label on the dialog, so a size the demo doesn't list is one it won't run at. `wine_res=pick` leaves the dialog alone so you answer it yourself |
 
 An Atari ST release directory is loaded as a hard drive, and the program is
 started from the drive's `AUTO` folder. The release's own `AUTO` folder is moved

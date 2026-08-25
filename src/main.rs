@@ -45,6 +45,10 @@ mod retro_emu;
 mod screensaver;
 mod speed_test;
 mod utils;
+// Windows demos run through wine inside gamescope, neither of which exists
+// anywhere else.
+#[cfg(target_os = "linux")]
+mod wine_emu;
 mod workfile;
 mod zx_scr;
 
@@ -889,6 +893,10 @@ fn main() {
         ));
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);
+    // A Windows demo takes the screen off demarc while it runs; this puts it
+    // back afterwards.
+    #[cfg(target_os = "linux")]
+    app.add_plugins(wine_emu::WinePlugin);
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
     // this restores the actually-requested fullscreen mode afterward.

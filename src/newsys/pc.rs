@@ -10,6 +10,8 @@ use super::{System, get_ext, walk_dir};
 use crate::libloader;
 use crate::retro_emu::{Backend, RetroCoreThreaded};
 use crate::system_dir;
+#[cfg(target_os = "linux")]
+use crate::wine_emu::WineEmu;
 use crate::workfile::WorkFile;
 
 const CORE_NAME_PCEM: &str = "pcem";
@@ -22,8 +24,7 @@ const META_DOS4GW: &str = "dos4gw";
 /// it prints and most releases ship it this way, so the copy matches.
 const DOS4GW_EXE: &str = "DOS4GW.EXE";
 
-/// Where a copy of it is kept, under the system dir. Not something we ship —
-/// like the PCem ROMs beside it, it has to be put there by hand.
+/// Where a copy of it is kept, under the system dir.
 fn dos4gw_source() -> PathBuf {
     system_dir().join("pcem").join("dos4gw.exe")
 }
@@ -39,6 +40,9 @@ fn dos4gw_source() -> PathBuf {
 /// - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which
 ///   brings its own DOS and mounts the directory the program sits in as C:.
 ///   Nothing else is needed, which is what most DOS releases arrive as.
+/// - A Windows program — the same `.exe`, with a `PE` image behind the DOS stub
+///   — goes to wine, on Linux, where it runs on top of demarc rather than
+///   inside it. See [`crate::wine_emu`]; `wine_res` sets the size it runs at.
 ///
 /// A DOS release is often missing the extender it was linked against, since
 /// that came with the compiler rather than the demo. `dos4gw=true` on an entry
@@ -73,38 +77,65 @@ fn is_pcem_config(path: &Path) -> bool {
 /// stack it puts at the top of it.
 const MAX_COM_SIZE: u64 = 0xff00;
 
+/// What an `MZ` file turns out to be once the stub is looked past.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExeKind {
+    /// Not an executable at all.
+    None,
+    /// DOS — a DOS extender (`LE`/`LX`) included, which is how half the demos
+    /// of the era were built.
+    Dos,
+    /// A `PE` image behind the stub: Win32.
+    Windows,
+    /// `NE`: Windows 3.x or OS/2, which is not what any of this is for.
+    Legacy,
+}
+
+/// Read what kind of program an `.exe` holds.
+///
+/// The check matters: the same extension and the same `MZ` header belong to
+/// every Windows program ever built, and DOSBox can run none of those. What
+/// sits at `e_lfanew` tells them apart — a second header there means the `MZ`
+/// is only the stub in front of the real image.
+///
+/// The offset is not required to clear the DOS header. A size-optimised
+/// release — which is most of the 64K Windows intros — overlaps the two, so
+/// that the `PE` lands as early as 0x0c and the fields behind it double as the
+/// rest of the DOS header. Only an offset landing on the `MZ` magic itself is
+/// out of bounds.
+fn exe_kind(path: &Path) -> ExeKind {
+    let Ok(size) = fs::metadata(path).map(|m| m.len()) else {
+        return ExeKind::None;
+    };
+    let Ok(header) = read_at(path, 0, 0x40) else {
+        return ExeKind::None;
+    };
+    if header.len() < 0x40 || !matches!(&header[..2], b"MZ" | b"ZM") {
+        return ExeKind::None;
+    }
+    let lfanew = u64::from(u32::from_le_bytes(header[0x3c..0x40].try_into().unwrap()));
+    // Plain DOS executables leave the field alone, so anything that isn't a
+    // sane offset into the file is one of those.
+    if lfanew < 2 || lfanew + 4 > size {
+        return ExeKind::Dos;
+    }
+    match read_at(path, lfanew, 4).unwrap_or_default().as_slice() {
+        b"PE\0\0" => ExeKind::Windows,
+        [b'N', b'E', ..] => ExeKind::Legacy,
+        _ => ExeKind::Dos,
+    }
+}
+
 /// Does this look like something DOS would run?
 ///
-/// `.exe` is the only one of the three with anything to check, and the check
-/// matters: the same extension and the same `MZ` header belong to every
-/// Windows program ever built, and DOSBox can run none of those. What sits at
-/// `e_lfanew` tells them apart — a second header there means the `MZ` is only
-/// the stub in front of a `NE` (Windows 3.x, OS/2) or `PE` (Win32) image.
-/// `LE`/`LX` stays: that is a DOS extender, which is how half the demos of the
-/// era were built.
+/// `.exe` is the only one of the three with anything to check — see
+/// [`exe_kind`].
 fn is_dos_program(path: &Path) -> bool {
     let Ok(size) = fs::metadata(path).map(|m| m.len()) else {
         return false;
     };
     match get_ext(path).as_str() {
-        "exe" => {
-            let Ok(header) = read_at(path, 0, 0x40) else {
-                return false;
-            };
-            if header.len() < 0x40 || !matches!(&header[..2], b"MZ" | b"ZM") {
-                return false;
-            }
-            let lfanew = u64::from(u32::from_le_bytes(header[0x3c..0x40].try_into().unwrap()));
-            // Plain DOS executables leave the field alone, so anything that
-            // isn't a sane offset into the file is one of those.
-            if lfanew < 0x40 || lfanew + 2 > size {
-                return true;
-            }
-            !matches!(
-                read_at(path, lfanew, 2).unwrap_or_default().as_slice(),
-                b"NE" | b"PE"
-            )
-        }
+        "exe" => exe_kind(path) == ExeKind::Dos,
         // A `.com` is a raw memory image with no header to recognise, so its
         // size is all there is to go on.
         "com" => size > 0 && size <= MAX_COM_SIZE,
@@ -112,6 +143,22 @@ fn is_dos_program(path: &Path) -> bool {
         "bat" => size > 0 && fs::read(path).is_ok_and(|b| std::str::from_utf8(&b).is_ok()),
         _ => false,
     }
+}
+
+/// Whether a Windows program can be started at all here.
+///
+/// wine and gamescope are Linux-only, so everywhere else a `.exe` with a `PE`
+/// image in it is something nothing can run — and claiming it would take the
+/// release away from the picture and music systems that can at least show what
+/// it shipped beside the program.
+const CAN_RUN_WINDOWS: bool = cfg!(target_os = "linux");
+
+/// Does this look like a Windows program?
+///
+/// The exact complement of the `.exe` half of [`is_dos_program`], read the
+/// same way — see [`exe_kind`].
+fn is_windows_program(path: &Path) -> bool {
+    get_ext(path) == "exe" && exe_kind(path) == ExeKind::Windows
 }
 
 /// How much we want to start a given program, biggest first.
@@ -242,7 +289,7 @@ impl System for PcSystem {
         if get_ext(path) == "cfg" {
             is_pcem_config(path)
         } else {
-            is_dos_program(path)
+            is_dos_program(path) || (CAN_RUN_WINDOWS && is_windows_program(path))
         }
     }
 
@@ -254,16 +301,36 @@ impl System for PcSystem {
     /// path inside it, so which file to start has to be settled first and
     /// followed across the copy afterwards.
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        let target = if file.path.is_dir() {
-            match self.get_first_file(&file.path)? {
-                Some(path) => path,
-                None => return Ok(false),
+        let mut config = None;
+        let mut best: Option<(i32, PathBuf)> = None;
+        walk_dir(file, 0, |path, ext, _| {
+            if !self.can_load(path) {
+                return Ok(());
             }
-        } else if self.can_load(&file.path) {
-            file.path.clone()
-        } else {
+            if ext == "cfg" {
+                config.get_or_insert_with(|| path.to_owned());
+            } else {
+                let release = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                let rank = launch_rank(path, &release);
+                if best.as_ref().is_none_or(|(top, _)| rank > *top) {
+                    best = Some((rank, path.to_owned()));
+                }
+            }
+            Ok(())
+        })?;
+
+        let Some(target) = config.or(best.map(|b| b.1)) else {
             return Ok(false);
         };
+
+        if file.has_tag("512x384") {
+            file.set_meta("wine_res", "512x384");
+        }
+
         // A machine config brings its own DOS on its own disc images, so the
         // extender is only ever a question for a program run under DOSBox.
         if get_ext(&target) != "cfg" && is_set(file, META_DOS4GW) {
@@ -280,55 +347,43 @@ impl System for PcSystem {
     /// leaves the framebuffer alone and only reports the pixel-aspect-corrected
     /// display ratio, which is what a CRT showed and what our scaler wants.
     fn default_meta(&self) -> HashMap<&str, &str> {
-        [
+        #[allow(unused_mut)]
+        let mut meta: HashMap<&str, &str> = [
             ("dosbox_pure_gus", "true"),
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
         ]
-        .into()
-    }
-
-    /// Pick what to start out of a directory.
-    ///
-    /// A PCem config wins over any program beside it: it describes a whole
-    /// machine, disc images and all, so a release shipping one means to be run
-    /// that way. Failing that, the best-ranked DOS program — see
-    /// [`launch_rank`], since the walk order says nothing about which of them
-    /// the release is.
-    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        let release = dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_ascii_lowercase();
-        let mut config = None;
-        let mut best: Option<(i32, PathBuf)> = None;
-        walk_dir(dir, 0, |path, ext, _| {
-            if !self.can_load(path) {
-                return Ok(());
-            }
-            if ext == "cfg" {
-                config.get_or_insert_with(|| path.to_owned());
-            } else {
-                let rank = launch_rank(path, &release);
-                if best.as_ref().is_none_or(|(top, _)| rank > *top) {
-                    best = Some((rank, path.to_owned()));
-                }
-            }
-            Ok(())
-        })?;
-        Ok(config.or_else(|| best.map(|(_, path)| path)))
-    }
-
-    fn core_name(&self) -> &'static str {
-        CORE_NAME_PCEM
+        .into();
+        // The size a Windows demo is asked to run at, and the size demarc gives
+        // the gamescope it runs in, plus whether it gets a wine virtual desktop
+        // to run in. Spelled out here rather than left to the backend so they
+        // show up with the rest of an entry's settings.
+        #[cfg(target_os = "linux")]
+        {
+            meta.insert(crate::wine_emu::META_RES, crate::wine_emu::DEFAULT_RES);
+            meta.insert(
+                crate::wine_emu::META_DESKTOP,
+                if crate::wine_emu::DEFAULT_DESKTOP {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
+        meta
     }
 
     fn name(&self) -> &'static str {
         "PC"
     }
 
+    /// A Windows program is not emulated at all — it is run, on top of demarc,
+    /// by [`WineEmu`]. Everything else goes to one of the two cores.
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        #[cfg(target_os = "linux")]
+        if is_windows_program(&path.path) {
+            return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
+        }
         let core = libloader::get_libretro(core_for(&path.path)).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
@@ -418,13 +473,16 @@ mod tests {
         assert!(sys.can_load(&dos));
         assert_eq!(core_for(&dos), CORE_NAME_DOSBOX);
 
-        // The same header in front of a PE image is a Windows program.
+        // The same header in front of a PE image is a Windows program: never a
+        // DOS one, and ours to start only where wine can run it.
         let mut win = vec![0u8; 0x100];
         win[..2].copy_from_slice(b"MZ");
         win[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
         win[0x80..0x84].copy_from_slice(b"PE\0\0");
         let win = write_bytes(dir.path(), "setup32.exe", &win);
-        assert!(!sys.can_load(&win));
+        assert!(!is_dos_program(&win));
+        assert!(is_windows_program(&win));
+        assert_eq!(sys.can_load(&win), CAN_RUN_WINDOWS);
 
         // A DOS extender (LE/LX behind the stub) is how the demos were built.
         let mut dos4gw = vec![0u8; 0x100];
@@ -433,6 +491,27 @@ mod tests {
         dos4gw[0x80..0x82].copy_from_slice(b"LE");
         let dos4gw = write_bytes(dir.path(), "dos4gw.exe", &dos4gw);
         assert!(sys.can_load(&dos4gw));
+        assert!(!is_windows_program(&dos4gw));
+
+        // An offset pointing past the end of the file is a DOS program with a
+        // field it never set, not a Windows one whose image we failed to find.
+        let mut stub = vec![0u8; 0x80];
+        stub[..2].copy_from_slice(b"MZ");
+        stub[0x3c..0x40].copy_from_slice(&0x1000u32.to_le_bytes());
+        let stub = write_bytes(dir.path(), "stub.exe", &stub);
+        assert!(!is_windows_program(&stub));
+        assert!(is_dos_program(&stub));
+
+        // A 64K intro packs the two headers into one: `e_lfanew` points at
+        // 0x0c, so the PE header's own fields make up the rest of the DOS
+        // header. Well inside it, and still a Windows program.
+        let mut tiny = vec![0u8; 0x1000];
+        tiny[..2].copy_from_slice(b"MZ");
+        tiny[0x0c..0x10].copy_from_slice(b"PE\0\0");
+        tiny[0x3c..0x40].copy_from_slice(&0x0cu32.to_le_bytes());
+        let tiny = write_bytes(dir.path(), "intro64k.exe", &tiny);
+        assert!(!is_dos_program(&tiny));
+        assert!(is_windows_program(&tiny));
 
         // Not an executable at all.
         let text = write(dir.path(), "notes.exe", "just a text file\n");
@@ -451,6 +530,36 @@ mod tests {
         assert!(sys.can_load(&bat));
         let blank = write(dir.path(), "blank.bat", "");
         assert!(!sys.can_load(&blank));
+    }
+
+    /// A release directory holding a Windows program is the release, and on
+    /// Linux it is ours to start.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn claims_a_windows_release_for_wine() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+
+        let release = dir.path().join("kotpg");
+        fs::create_dir_all(&release).unwrap();
+        let mut pe = vec![0u8; 0x100];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        // The one thing in the release nobody wants to start, reached first.
+        write_bytes(&release, "install.exe", &pe);
+        write_bytes(&release, "kotpg.exe", &pe);
+
+        let mut wf = WorkFile::new(release.clone());
+        assert!(sys.load(&mut wf).unwrap());
+        assert!(wf.path.ends_with("kotpg.exe"), "picked {:?}", wf.path);
+
+        // The size the dialog driver is told to pick, unless an entry says
+        // otherwise - see `crate::wine_emu`.
+        assert_eq!(
+            sys.default_meta().get(crate::wine_emu::META_RES),
+            Some(&"800x600")
+        );
     }
 
     /// The two cores split by content, not by system: a machine config drives
