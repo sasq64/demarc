@@ -21,8 +21,9 @@ use crate::{
 use super::System;
 
 const CORE_NAME_UAE: &str = "puae";
-/// Amiberry's libretro port, only ever a local build — the buildbot does not
-/// ship it, so it needs `$DEMARC_CORE_DIR` pointing at one (see AMIBERRY.md).
+/// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
+/// downloaded from its own release instead (see `ALT_SOURCES`) — or taken from
+/// `$DEMARC_CORE_DIR` when a local build is being tested (see AMIBERRY.md).
 const CORE_NAME_AMIBERRY: &str = "amiberry";
 
 /// Which core the `amiga_core` option asks for. Anything else, including the

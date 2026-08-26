@@ -46,6 +46,44 @@ fn buildbot_url(name: &str) -> String {
     )
 }
 
+/// Cores the libretro buildbot does not ship, paired with the base url of the
+/// release that does. Each holds one zip per platform, named
+/// `<name>_libretro-<system>.zip` and containing the library under the same
+/// name the buildbot uses, so nothing downstream has to know the difference.
+const ALT_SOURCES: &[(&str, &str)] = &[(
+    "amiberry",
+    "https://github.com/sasq64/amiberry/releases/download/latest",
+)];
+
+/// The platform segment used by the [`ALT_SOURCES`] archives, which name
+/// platforms their own way rather than the buildbot's. `None` on a platform
+/// no such release builds for.
+fn alt_system() -> Option<&'static str> {
+    if cfg!(target_os = "windows") {
+        Some("windows-x64")
+    } else if cfg!(target_os = "macos") {
+        cfg!(target_arch = "aarch64").then_some("macos-arm64")
+    } else if cfg!(target_arch = "x86_64") {
+        Some("linux-x86_64")
+    } else {
+        None
+    }
+}
+
+/// Download url of `name` from its own release, if it has one for this
+/// platform.
+fn alt_url(name: &str) -> Option<String> {
+    let (_, base) = ALT_SOURCES.iter().find(|(core, _)| *core == name)?;
+    Some(format!("{base}/{name}_libretro-{}.zip", alt_system()?))
+}
+
+/// Where the zipped core for the current platform is downloaded from: the
+/// core's own release when [`ALT_SOURCES`] names one, the libretro nightly
+/// buildbot otherwise.
+fn core_url(name: &str) -> String {
+    alt_url(name).unwrap_or_else(|| buildbot_url(name))
+}
+
 /// Download (blocking) the bytes at `url`.
 fn download(url: &str) -> anyhow::Result<Vec<u8>> {
     println!("Downloading {url}...");
@@ -109,7 +147,8 @@ pub fn prune_cache() {
 /// Cached under the user's cache directory, refetched from
 /// `https://buildbot.libretro.com/nightly/<system>/latest/<name>_libretro.<ext>.zip`
 /// when the copy there is older than [`MAX_AGE`] — where `<system>` is
-/// "linux/x86_64", "apple/osx/arm64" or "windows/x86_64".
+/// "linux/x86_64", "apple/osx/arm64" or "windows/x86_64". Cores the buildbot
+/// does not ship come from their own release instead, see [`ALT_SOURCES`].
 ///
 /// Returns `None` only if there is nothing usable at all: a download that
 /// fails with a cached core to fall back on still returns that core. On macOS
@@ -147,7 +186,7 @@ fn local_core_in(dirs: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
 /// Implementation of [`get_libretro`] against an explicit cache, so the
 /// download logic can be exercised without touching the user's real one.
 fn get_libretro_from(cache: &FileCache, name: &str) -> Option<PathBuf> {
-    let url = buildbot_url(name);
+    let url = core_url(name);
     let lib = dylib_name(name);
     // The library itself is the marker: an archive that unpacked to anything
     // else is not a core, and must not be cached as one.
@@ -196,13 +235,26 @@ mod tests {
     }
 
     #[test]
+    fn alt_source_url_names_this_platform() {
+        let Some(url) = alt_url("amiberry") else {
+            return; // No release for this platform; the buildbot url stands.
+        };
+        assert_eq!(core_url("amiberry"), url);
+        assert!(url.starts_with("https://github.com/sasq64/amiberry/releases/"));
+        assert!(url.ends_with(&format!("amiberry_libretro-{}.zip", alt_system().unwrap())));
+        // A core with no alternative source still goes to the buildbot.
+        assert_eq!(alt_url("snes9x"), None);
+        assert_eq!(core_url("snes9x"), buildbot_url("snes9x"));
+    }
+
+    #[test]
     fn returns_cached_library_without_network() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = FileCache::at(tmp.path().join("cores"), 1024 * 1024);
         // Populate the entry the way a successful download would, so the
         // lookup under test is a hit and never reaches the buildbot.
         let entry = cache
-            .get_dir(&buildbot_url("snes9x"), &dylib_name("snes9x"), |dir| {
+            .get_dir(&core_url("snes9x"), &dylib_name("snes9x"), |dir| {
                 std::fs::write(dir.join(dylib_name("snes9x")), b"stub")?;
                 Ok(())
             })
@@ -228,6 +280,18 @@ mod tests {
         );
         // A core no directory holds falls through to the download path.
         assert_eq!(local_core_in(&dirs, "snes9x"), None);
+    }
+
+    /// Fetches the real release, so it is not part of the normal run:
+    /// `cargo test downloads_amiberry -- --ignored`.
+    #[test]
+    #[ignore = "downloads the amiberry release"]
+    fn downloads_amiberry_from_its_own_release() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = FileCache::at(tmp.path().join("cores"), 200 * 1024 * 1024);
+        let path = get_libretro_from(&cache, "amiberry").expect("amiberry core");
+        assert_eq!(path.file_name().unwrap(), &*dylib_name("amiberry"));
+        assert!(std::fs::metadata(&path).unwrap().len() > 1024 * 1024);
     }
 
     #[test]
