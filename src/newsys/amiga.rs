@@ -32,6 +32,53 @@ fn use_amiberry(file: &WorkFile) -> bool {
     file.get_meta("amiga_core", "").contains("amiberry")
 }
 
+/// Rewrite the `puae_*` options demarc emits into the `amiberry_*` options the
+/// Amiberry libretro core understands, best effort.
+///
+/// Amiberry silently drops any option it doesn't recognise, so without this
+/// every demo boots as a default OCS A500 / 68000 / KS 1.3 regardless of the
+/// puae config — AGA included (see `docs/AMIBERRY.md`, "Integration gaps"). It
+/// can't be a pure rename: several puae options (`puae_fpu_model`,
+/// `puae_fastmem_size`, `puae_chipmem_size`, the display and floppy tweaks) have
+/// no Amiberry equivalent and are simply left behind. An already-present
+/// `amiberry_*` key (e.g. hand-written in an m3u) always wins over the
+/// translation.
+fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
+    // Direct renames: the value space is the same in both cores.
+    for (puae, amiberry) in [
+        ("puae_model", "amiberry_model"),
+        ("puae_cpu_model", "amiberry_cpu_model"),
+        ("puae_z3mem_size", "amiberry_z3mem_size"),
+        ("puae_kickstart", "amiberry_kickstart"),
+        ("puae_video_standard", "amiberry_video_standard"),
+    ] {
+        if let Some(v) = meta.get(puae).cloned() {
+            meta.entry(amiberry.to_string()).or_insert(v);
+        }
+    }
+
+    // Amiberry exposes no Zorro II fastmem option, but its Zorro III fast RAM
+    // (`amiberry_z3mem_size`, which we added) covers the same need. Fold
+    // `puae_fastmem_size` into it when the config didn't already ask for Z3.
+    if !meta.contains_key("amiberry_z3mem_size")
+        && let Some(v) = meta.get("puae_fastmem_size").cloned()
+    {
+        meta.insert("amiberry_z3mem_size".into(), v);
+    }
+
+    // p-uae runs the CPU unthrottled by default; Amiberry throttles it to the
+    // modelled machine's clock unless told otherwise, which crawls on an
+    // accelerated model (see `docs/AMIBERRY.md`, "Starstruck"). Match p-uae's
+    // behaviour for 68020+ configs via the `amiberry_cpu_speed` option we added.
+    let accelerated = meta
+        .get("amiberry_cpu_model")
+        .is_some_and(|m| m != "68000" && m != "68010");
+    if accelerated {
+        meta.entry("amiberry_cpu_speed".into())
+            .or_insert("max".into());
+    }
+}
+
 /// First longword of an AmigaDOS executable (`HUNK_HEADER`).
 const HUNK_MAGIC: [u8; 4] = [0x00, 0x00, 0x03, 0xF3];
 
@@ -453,7 +500,9 @@ impl System for AmigaSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let mut meta = path.get_all_meta();
         let core_name = if use_amiberry(path) {
+            puae_to_amiberry(&mut meta);
             CORE_NAME_AMIBERRY
         } else {
             CORE_NAME_UAE
@@ -463,7 +512,7 @@ impl System for AmigaSystem {
             &core,
             system_dir(),
             Some(path),
-            path.get_all_meta(),
+            meta,
             false,
         )?))
     }
@@ -602,6 +651,63 @@ mod tests {
             0,
             HUNK_END,
         ]));
+    }
+
+    fn amiberry(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        let mut meta: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        puae_to_amiberry(&mut meta);
+        meta
+    }
+
+    #[test]
+    fn renames_puae_options() {
+        let meta = amiberry(&[("puae_model", "A1200"), ("puae_cpu_model", "68030")]);
+        assert_eq!(meta.get("amiberry_model").unwrap(), "A1200");
+        assert_eq!(meta.get("amiberry_cpu_model").unwrap(), "68030");
+    }
+
+    #[test]
+    fn drops_options_without_an_amiberry_equivalent() {
+        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_chipmem_size", "4")]);
+        assert!(!meta.keys().any(|k| k.starts_with("amiberry_")));
+    }
+
+    #[test]
+    fn folds_fastmem_into_z3mem_only_when_z3_is_unset() {
+        assert_eq!(
+            amiberry(&[("puae_fastmem_size", "8")])
+                .get("amiberry_z3mem_size")
+                .unwrap(),
+            "8"
+        );
+        assert_eq!(
+            amiberry(&[("puae_fastmem_size", "8"), ("puae_z3mem_size", "128")])
+                .get("amiberry_z3mem_size")
+                .unwrap(),
+            "128"
+        );
+    }
+
+    #[test]
+    fn unthrottles_accelerated_cpus_only() {
+        assert_eq!(
+            amiberry(&[("puae_cpu_model", "68030")])
+                .get("amiberry_cpu_speed")
+                .unwrap(),
+            "max"
+        );
+        assert!(
+            !amiberry(&[("puae_model", "A500")]).contains_key("amiberry_cpu_speed")
+        );
+    }
+
+    #[test]
+    fn keeps_hand_written_amiberry_options() {
+        let meta = amiberry(&[("puae_model", "A1200"), ("amiberry_model", "A4040")]);
+        assert_eq!(meta.get("amiberry_model").unwrap(), "A4040");
     }
 
     #[test]
