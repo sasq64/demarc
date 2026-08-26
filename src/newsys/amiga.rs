@@ -360,6 +360,7 @@ impl System for AmigaSystem {
         [
             ("puae_model", "A500"),
             ("puae_crop", "smaller"),
+            ("amiberry_crop_overscan", "disabled"),
             ("puae_horizontal_pos", "-5"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
@@ -393,6 +394,7 @@ impl System for AmigaSystem {
                     file.set_meta("puae_kickstart", "kick33180.A500");
                 } else if aga || self.aga {
                     file.set_meta("puae_model", "A1200");
+                    file.set_meta("amiberry_model", "A1200");
                     if year >= 1993 {
                         file.set_meta("puae_model", "A1200");
                     }
@@ -403,12 +405,19 @@ impl System for AmigaSystem {
                         file.set_meta("puae_fastmem_size", "8");
                         file.set_meta("puae_z3mem_size", "128");
                         file.set_meta("puae_fpu_model", "68882");
+                        file.set_meta("amiberry_model", "A4040");
+                        file.set_meta("amiberry_cpu_model", "68040");
+                        file.set_meta("amiberry_z3mem_size", "128");
+                        file.set_meta("amiberry_jit", "enabled");
+                        file.set_meta("amiberry_cpu_speed", "max");
+                        file.set_meta("amiberry_kickstart", "kick40068.A4000");
                     }
                 }
             }
         } else {
             if aga || self.aga {
                 file.set_meta("puae_model", "A1200");
+                file.set_meta("amiberry_model", "A1200");
             }
         }
         if self.fast_load {
@@ -417,8 +426,14 @@ impl System for AmigaSystem {
         if self.xmem {
             file.set_meta("puae_fastmem_size", "8");
             file.set_meta("puae_z3mem_size", "128");
+            file.set_meta("amiberry_z3mem_size", "128");
         }
         if self.fast {
+            file.set_meta("amiberry_cpu_model", "68040");
+            file.set_meta("amiberry_z3mem_size", "128");
+            file.set_meta("amiberry_jit", "enabled");
+            file.set_meta("amiberry_cpu_speed", "max");
+            file.set_meta("amiberry_kickstart", "kick40068.A4000");
             file.set_meta("puae_model", "A1200");
             file.set_meta("puae_fpu_model", "68882");
         }
@@ -502,11 +517,12 @@ impl System for AmigaSystem {
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let mut meta = path.get_all_meta();
         let core_name = if use_amiberry(path) {
-            puae_to_amiberry(&mut meta);
+            //puae_to_amiberry(&mut meta);
             CORE_NAME_AMIBERRY
         } else {
             CORE_NAME_UAE
         };
+        debug!("Starting {core_name} with meta {meta:?}");
         let core = libloader::get_libretro(core_name).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
@@ -699,9 +715,7 @@ mod tests {
                 .unwrap(),
             "max"
         );
-        assert!(
-            !amiberry(&[("puae_model", "A500")]).contains_key("amiberry_cpu_speed")
-        );
+        assert!(!amiberry(&[("puae_model", "A500")]).contains_key("amiberry_cpu_speed"));
     }
 
     #[test]
