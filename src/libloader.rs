@@ -144,9 +144,9 @@ pub fn prune_cache() {
 
 /// Locate and if necessary download a libretro dynamic library.
 ///
-/// A hand-built core in `$DEMARC_CORE_DIR` or `<system dir>/cores` wins over
-/// the buildbot (see [`local_core`]); otherwise the library is
-/// cached under the user's cache directory, refetched from
+/// A hand-built core in `$DEMARC_CORE_DIR` wins over the buildbot (see
+/// [`local_core`]); otherwise the library is cached under the user's cache
+/// directory, refetched from
 /// `https://buildbot.libretro.com/nightly/<system>/latest/<name>_libretro.<ext>.zip`
 /// when the copy there is older than [`MAX_AGE`] — where `<system>` is
 /// "linux/x86_64", "apple/osx/arm64" or "windows/x86_64". Cores the buildbot

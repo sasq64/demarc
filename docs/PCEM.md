@@ -90,7 +90,7 @@ images and CMOS can be one relocatable directory:
 ### In demarc
 
 - `src/newsys/pc.rs` — `PcSystem`, the config sniffer, the screen decoder, the boot test
-- `src/libloader.rs` — `$DEMARC_CORE_DIR` / `<system dir>/cores` override
+- `src/libloader.rs` — `$DEMARC_CORE_DIR` override
 - `build.rs` — `SKIP_DIRS`, so `system/pcem/` never enters `system.zip`
 - `testdata/pc/ibmxt.cfg`, `scripts/libretro-smoke.py`, `Justfile`, `.gitignore`
 - `testdata/pc/2ndreality.cfg` + `fdboot.img`, `2ndreality.img`, `ami486.nvr`
