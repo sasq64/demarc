@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{
     collections::HashMap,
     fs,
@@ -12,13 +12,24 @@ use super::utils::{copy_dir_all, has_any_extension, read_header};
 use crate::{
     Args,
     frontend::system_dir,
+    libloader,
     newsys::{collect_disk_images, utils::has_extension, walk_dir},
+    retro_emu::{Backend, RetroCoreThreaded},
     workfile::WorkFile,
 };
 
 use super::System;
 
 const CORE_NAME_UAE: &str = "puae";
+/// Amiberry's libretro port, only ever a local build — the buildbot does not
+/// ship it, so it needs `$DEMARC_CORE_DIR` pointing at one (see AMIBERRY.md).
+const CORE_NAME_AMIBERRY: &str = "amiberry";
+
+/// Which core the `amiga_core` option asks for. Anything else, including the
+/// option being unset, is the default p-uae core.
+fn use_amiberry(file: &WorkFile) -> bool {
+    file.get_meta("amiga_core", "").contains("amiberry")
+}
 
 /// First longword of an AmigaDOS executable (`HUNK_HEADER`).
 const HUNK_MAGIC: [u8; 4] = [0x00, 0x00, 0x03, 0xF3];
@@ -438,6 +449,22 @@ impl System for AmigaSystem {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let core_name = if use_amiberry(path) {
+            CORE_NAME_AMIBERRY
+        } else {
+            CORE_NAME_UAE
+        };
+        let core = libloader::get_libretro(core_name).context("Could not load core")?;
+        Ok(Box::new(RetroCoreThreaded::new(
+            &core,
+            system_dir(),
+            Some(path),
+            path.get_all_meta(),
+            false,
+        )?))
     }
 }
 

@@ -115,7 +115,33 @@ pub fn prune_cache() {
 /// fails with a cached core to fall back on still returns that core. On macOS
 /// the quarantine flag is cleared so the result can be `dlopen`ed.
 pub fn get_libretro(name: &str) -> Option<PathBuf> {
+    if let Some(path) = local_core(name) {
+        return Some(path);
+    }
     get_libretro_from(&CORES, name)
+}
+
+/// A locally built core, taking precedence over the buildbot.
+///
+/// `$DEMARC_CORE_DIR` is a colon-separated list of directories searched for
+/// `<name>_libretro.<ext>`; the first hit wins. Nothing else in the cache path
+/// runs, so a local build is never written to (or evicted from) the cache.
+/// Exists so a core built from source can be tested without overwriting the
+/// downloaded copy.
+fn local_core(name: &str) -> Option<PathBuf> {
+    let path = local_core_in(&std::env::var_os("DEMARC_CORE_DIR")?, name)?;
+    tracing::info!("Using local core {}", path.display());
+    Some(path)
+}
+
+/// Implementation of [`local_core`] against an explicit path list, so the
+/// search can be exercised without setting an environment variable.
+fn local_core_in(dirs: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    let lib = dylib_name(name);
+    std::env::split_paths(dirs).find_map(|dir| {
+        let path = dir.join(&lib);
+        path.is_file().then_some(path)
+    })
 }
 
 /// Implementation of [`get_libretro`] against an explicit cache, so the
@@ -186,6 +212,22 @@ mod tests {
             get_libretro_from(&cache, "snes9x"),
             Some(entry.join(dylib_name("snes9x")))
         );
+    }
+
+    #[test]
+    fn local_core_found_in_search_path() {
+        let empty = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dylib_name("amiberry");
+        std::fs::write(dir.path().join(&lib), b"local build").unwrap();
+
+        let dirs = std::env::join_paths([empty.path(), dir.path()]).unwrap();
+        assert_eq!(
+            local_core_in(&dirs, "amiberry"),
+            Some(dir.path().join(&lib))
+        );
+        // A core no directory holds falls through to the download path.
+        assert_eq!(local_core_in(&dirs, "snes9x"), None);
     }
 
     #[test]

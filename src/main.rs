@@ -604,7 +604,36 @@ fn tame_openmp_cores() {
     }
 }
 
+/// Keep glibc's per-thread malloc arenas from crowding the address space a
+/// JIT core needs for its translation cache.
+///
+/// The x86-64 JIT in the Amiga cores (Amiberry, p-uae) addresses the emulator's
+/// globals RIP-relative, so its translation cache has to land within ±2GB of
+/// them. Amiberry reserves 4GB of "natmem" immediately below the core's
+/// library, which eats the whole window on that side, leaving only the space
+/// above. glibc reserves 64MB of address space per malloc arena and allows
+/// `8 * nproc` of them, so on a many-core box demarc's own threads wall that
+/// window off. The core's 16MB request then fails and its allocator halves it
+/// until something fits — measured here as an **8KB** cache, which thrashes:
+/// TBL's Starstruck rendered visibly slower for it.
+///
+/// A cap costs a little allocator concurrency and buys the window back (16MB
+/// cache, zero failed allocations). Must run before any thread allocates,
+/// which is why it is the first thing `main` does.
+#[cfg(all(unix, target_env = "gnu"))]
+fn cap_malloc_arenas() {
+    // Leave an explicit choice on the command line alone, the way
+    // `tame_openmp_cores` does.
+    if std::env::var_os("MALLOC_ARENA_MAX").is_some() {
+        return;
+    }
+    // SAFETY: `mallopt` is thread-safe, and nothing has spawned a thread yet.
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 8) };
+}
+
 fn main() {
+    #[cfg(all(unix, target_env = "gnu"))]
+    cap_malloc_arenas();
     tame_openmp_cores();
 
     #[cfg(unix)]
