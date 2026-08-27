@@ -24,7 +24,15 @@ pub const DEFAULT_MAX_RESULTS: usize = 500_000;
 /// Backs the searchable list with items. Implement this to plug in smarter
 /// matching without touching the UI: prefix trees, fuzzy scoring, or an
 /// external index/database.
-pub trait FuzzySource: Send + Sync + 'static {
+///
+/// `T` is what one item *is* to the caller — the record the list is a view of
+/// ([`get_data`](FuzzySource::get_data) hands it back, so a caller holding an
+/// id needn't keep its own copy of the list to resolve it). A source with
+/// nothing behind its rows but their text leaves `T` at `()` and inherits the
+/// default `get_data`; the bundled sources go further and implement the trait
+/// for *every* `T`, so a plain list of strings drops into a picker whose other
+/// sources do carry records.
+pub trait FuzzySource<T = ()>: Send + Sync + 'static {
     /// Return the ids of the items matching `query`, best match first, capped
     /// at `limit`. An empty/whitespace query should return the head of the full
     /// list (the unfiltered view).
@@ -46,6 +54,14 @@ pub trait FuzzySource: Send + Sync + 'static {
     fn get_info(&self, _id: usize) -> String {
         String::new()
     }
+
+    /// The record behind the item with this id, borrowed from the source, or
+    /// `None` when there is nothing behind it (the default) or the id is not
+    /// one of ours. Borrowed rather than cloned: the picker asks for it as the
+    /// selection moves, and a record can be a good deal bigger than a row.
+    fn get_data(&self, _id: usize) -> Option<&T> {
+        None
+    }
 }
 
 /// Simple in-memory source: case-insensitive substring match over a
@@ -63,16 +79,11 @@ impl SubstringSource {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
     }
-}
 
-impl From<Vec<String>> for SubstringSource {
-    fn from(items: Vec<String>) -> Self {
-        Self::new(items)
-    }
-}
-
-impl FuzzySource for SubstringSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+    /// The matching ids. Inherent as well as trait method so a caller holding
+    /// the source itself needn't say which `T` it means -- the source carries
+    /// no records, so it implements [`FuzzySource`] for all of them.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.trim().to_lowercase();
         self.lowercased
             .iter()
@@ -83,8 +94,24 @@ impl FuzzySource for SubstringSource {
             .collect()
     }
 
-    fn get_text(&self, id: usize) -> String {
+    pub fn get_text(&self, id: usize) -> String {
         self.items[id].clone()
+    }
+}
+
+impl From<Vec<String>> for SubstringSource {
+    fn from(items: Vec<String>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl<T> FuzzySource<T> for SubstringSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
@@ -104,16 +131,9 @@ impl AllWordsSource {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
     }
-}
 
-impl From<Vec<String>> for AllWordsSource {
-    fn from(items: Vec<String>) -> Self {
-        Self::new(items)
-    }
-}
-
-impl FuzzySource for AllWordsSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+    /// See [`SubstringSource::search`] for why this is inherent too.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         self.lowercased
@@ -125,8 +145,24 @@ impl FuzzySource for AllWordsSource {
             .collect()
     }
 
-    fn get_text(&self, id: usize) -> String {
+    pub fn get_text(&self, id: usize) -> String {
         self.items[id].clone()
+    }
+}
+
+impl From<Vec<String>> for AllWordsSource {
+    fn from(items: Vec<String>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl<T> FuzzySource<T> for AllWordsSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
@@ -222,34 +258,9 @@ impl IndexedSource {
         }
         acc
     }
-}
 
-impl From<Vec<String>> for IndexedSource {
-    fn from(items: Vec<String>) -> Self {
-        Self::new(items)
-    }
-}
-
-/// Intersect two ascending, de-duplicated id lists into a new ascending list.
-fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
-    let mut out = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                out.push(a[i]);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    out
-}
-
-impl FuzzySource for IndexedSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+    /// See [`SubstringSource::search`] for why this is inherent too.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         // Empty/whitespace query: unfiltered head of the list, in original order.
@@ -328,8 +339,42 @@ impl FuzzySource for IndexedSource {
         scored.into_iter().map(|(_, i)| i as usize).collect()
     }
 
-    fn get_text(&self, id: usize) -> String {
+    pub fn get_text(&self, id: usize) -> String {
         self.inner.items[id].clone()
+    }
+}
+
+impl From<Vec<String>> for IndexedSource {
+    fn from(items: Vec<String>) -> Self {
+        Self::new(items)
+    }
+}
+
+/// Intersect two ascending, de-duplicated id lists into a new ascending list.
+fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                out.push(a[i]);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
+}
+
+impl<T> FuzzySource<T> for IndexedSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
@@ -377,8 +422,12 @@ mod tests {
     #[test]
     fn sources_describe_nothing_by_default() {
         // `get_info` is optional; a source that doesn't implement it leaves the
-        // info field empty, which hides it.
-        assert_eq!(SubstringSource::new(items()).get_info(0), "");
+        // info field empty, which hides it. Same for `get_data`: a plain list
+        // of strings has no record behind a row.
+        let src = SubstringSource::new(items());
+        let src: &dyn FuzzySource = &src;
+        assert_eq!(src.get_info(0), "");
+        assert_eq!(src.get_data(0), None);
     }
 
     #[test]
