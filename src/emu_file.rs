@@ -38,11 +38,90 @@ pub fn downloads_in_progress() -> usize {
     DOWNLOADS_IN_PROGRESS.load(Ordering::Relaxed)
 }
 
+/// The download URLs of one release, kept as the `&'static str` slices they
+/// were parsed out of rather than as [`Url`]s.
+///
+/// A db is mostly URLs — one line often carries several — and a parsed [`Url`]
+/// costs a `String` plus the byte offsets into it, where the text it was sliced
+/// out of is already `'static` and alive for the whole run (see [`EmuFile`]).
+/// So the URLs are parsed once on the way in, to warn about and drop anything
+/// that isn't one, and the text of the survivors is what gets kept.
+///
+/// Nearly everything downstream wants that text and nothing more, fetching
+/// included — though what actually reaches the download cache is normalized
+/// first, see [`cache_keys`]. The one caller that needs to take a URL apart
+/// parses on demand — see [`Self::urls`].
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct UrlList(Vec<&'static str>);
+
+impl UrlList {
+    /// The URLs of a db `download` field: `;`-separated, with anything that
+    /// doesn't parse as a URL logged and left out. An empty list means the
+    /// entry has nothing to fetch and is dropped by the caller.
+    pub fn parse_field(field: &'static str) -> Self {
+        Self(
+            field
+                .split(';')
+                .filter(|p| match Url::parse(p) {
+                    Ok(_) => true,
+                    Err(err) => {
+                        warn!("Skipping unparseable URL {p:?}: {err}");
+                        false
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// A list of the one URL that was picked out of a longer one, so a load
+    /// fetches that and nothing else.
+    pub fn one(url: &'static str) -> Self {
+        Self(vec![url])
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn first(&self) -> Option<&'static str> {
+        self.get(0)
+    }
+
+    pub fn get(&self, index: usize) -> Option<&'static str> {
+        self.0.get(index).copied()
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &'static str> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn as_slice(&self) -> &[&'static str] {
+        &self.0
+    }
+
+    /// The URLs parsed, for a caller that needs more than the text — taking a
+    /// URL apart into its path segments, say. Every entry parsed once already
+    /// (see [`Self::parse_field`]), so this cannot fail.
+    pub fn urls(&self) -> Vec<Url> {
+        self.iter().filter_map(|u| Url::parse(u).ok()).collect()
+    }
+}
+
+impl From<Vec<&'static str>> for UrlList {
+    fn from(urls: Vec<&'static str>) -> Self {
+        Self(urls)
+    }
+}
+
 /// Where an [`EmuFile`]'s data comes from: either an already-local path or one
 /// or more remote URLs that are downloaded on demand (see [`FileSource::resolve`]).
 #[derive(Clone, Debug)]
 pub enum FileSource {
-    Url(Vec<Url>),
+    Url(UrlList),
     Path(PathBuf),
 }
 
@@ -64,22 +143,21 @@ impl From<&Path> for FileSource {
     }
 }
 
-fn url_extension(url: &Url) -> Option<String> {
+/// The lowercase extension of a URL's *path*, so a `?query` or `#fragment`
+/// trailing the file name can't be mistaken for one.
+fn url_extension(url: &str) -> Option<String> {
+    let url = Url::parse(url).ok()?;
     Path::new(url.path())
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
 }
 
-fn is_disk_image(path: &Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
-        let ext = ext.to_lowercase();
-        return [
-            "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
-        ]
-        .contains(&ext.as_str());
-    }
-    false
+fn is_disk_image_url(url: &str) -> bool {
+    const DISK_IMAGE_EXTENSIONS: [&str; 10] = [
+        "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
+    ];
+    url_extension(url).is_some_and(|e| DISK_IMAGE_EXTENSIONS.contains(&e.as_str()))
 }
 
 /// Narrow the URLs of one release down to the ones worth downloading.
@@ -96,24 +174,24 @@ fn is_disk_image(path: &Path) -> bool {
 ///
 /// Filtering everything away would leave nothing to fetch, so a filter that
 /// empties the list is dropped and the URLs are returned as they came in.
-pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
+pub fn filter_release_urls<'a>(urls: &[&'a str]) -> Vec<&'a str> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 3] = ["sid", "pdf", "rtf"];
 
-    let mut images: Vec<Url> = urls
+    let mut images: Vec<&'a str> = urls
         .iter()
-        .filter(|u| is_disk_image(Path::new(u.path())))
-        .cloned()
+        .copied()
+        .filter(|u| is_disk_image_url(u))
         .collect();
 
     if images.is_empty() {
         images = urls
             .iter()
+            .copied()
             .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
-            .cloned()
             .collect();
     };
-    if images.is_empty() { urls } else { images }
+    if images.is_empty() { urls.to_vec() } else { images }
 }
 
 /// Download the first of `urls` that succeeds, using `fetch` for each attempt.
@@ -127,13 +205,14 @@ pub fn filter_release_urls(urls: Vec<Url>) -> Vec<Url> {
 ///
 /// `fetch` is a parameter so the walk can be tested without a network.
 fn fetch_first_available(
-    urls: &[Url],
+    urls: &[impl AsRef<str>],
     on_progress: OnProgress<'_>,
     mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
     let mut last_error = None;
     for url in urls {
-        match fetch(url.as_ref(), on_progress) {
+        let url = url.as_ref();
+        match fetch(url, on_progress) {
             Ok(path) => return Ok(path),
             Err(e) => {
                 warn!("download failed for {url}: {e:#}");
@@ -142,6 +221,27 @@ fn fetch_first_available(
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow!("no download url")))
+}
+
+/// The URLs in the form the download cache keys its entries on.
+///
+/// NOTE: that form is the *normalized* URL — what [`Url`] prints back — not the
+/// db's own text, which is what [`UrlList`] holds since it stopped keeping
+/// parsed [`Url`]s. The two differ wherever parsing rewrites a URL (a bare host
+/// gaining its trailing slash, an escape being canonicalised), and feeding the
+/// raw text to [`crate::fetch`] would orphan every entry downloaded up to now
+/// and quietly re-fetch it. Normalizing here keeps the existing cache matching.
+///
+/// The comment on [`crate::fetch::fetch_url_with_progress`] describes the key
+/// as the URL as the db writes it, which is what the raw text would give — so
+/// this is the thing to drop if the cache is ever allowed to churn once.
+///
+/// A URL that doesn't parse is passed through untouched. [`UrlList`] drops
+/// those on the way in, so this only stands in for the lists built by hand.
+fn cache_keys(urls: &[&str]) -> Vec<String> {
+    urls.iter()
+        .map(|u| Url::parse(u).map_or_else(|_| (*u).to_owned(), |parsed| parsed.to_string()))
+        .collect()
 }
 
 impl FileSource {
@@ -171,8 +271,11 @@ impl FileSource {
             // download every disk image so they sit together in one directory
             // (built into an m3u later). Otherwise take the first entry that
             // downloads, treating the rest as fallbacks.
-            let urls = filter_release_urls(urls.clone());
-            let p = if urls.iter().any(|u| is_disk_image(Path::new(u.path()))) {
+            let picked = filter_release_urls(urls.as_slice());
+            // Normalized rather than passed on as they are stored — see
+            // `cache_keys` for why the cache wants that form.
+            let urls = cache_keys(&picked);
+            let p = if urls.iter().any(|u| is_disk_image_url(u)) {
                 fetch_urls(&urls)?
             } else {
                 fetch_first_available(&urls, on_progress, fetch_url_with_progress)?
@@ -186,12 +289,15 @@ impl FileSource {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+/// The whole file list lives for the run (see [`EmuFile`]), so the strings here
+/// are `&'static str` — either literals, slices of the leaked db text, or
+/// individually leaked (see [`crate::files`]).
+#[derive(Default, Debug, Clone, Copy)]
 pub struct GameInfo {
-    pub title: String,
-    pub group: String,
+    pub title: &'static str,
+    pub group: &'static str,
     pub year: u32,
-    pub category: String,
+    pub category: &'static str,
 }
 
 // EmuFile can be:
@@ -203,18 +309,21 @@ pub struct GameInfo {
 // * Directory (if leaf)
 // * Archive (sytem type unknown)
 
+/// The list of these is built once at startup and kept for the whole run, so
+/// every string an entry holds is `&'static str`: the db is read into a leaked
+/// text the fields are sliced out of, and the few strings built at runtime
+/// (m3u tags, file stems) are leaked one by one. That keeps entries cheap to
+/// clone and hand around — no per-entry `String` allocations at all.
 #[derive(Default, Clone, Debug)]
 pub struct EmuFile {
     pub path: FileSource,
-    pub meta: HashMap<String, String>,
+    pub meta: HashMap<&'static str, &'static str>,
     pub game_info: GameInfo,
 }
 
 impl EmuFile {
-    pub fn get_meta(&self, name: impl Into<String>) -> String {
-        self.meta
-            .get(&name.into())
-            .map_or("".into(), |s| s.to_string())
+    pub fn get_meta(&self, name: &str) -> &'static str {
+        self.meta.get(name).copied().unwrap_or("")
     }
 }
 
@@ -226,9 +335,8 @@ mod tests {
     /// Run `fetch_first_available` over `urls`, failing every URL whose path
     /// isn't `works`, and report which URLs were tried alongside the result.
     fn walk(urls: &[&str], works: &str) -> (Vec<String>, Result<PathBuf>) {
-        let urls: Vec<Url> = urls.iter().map(|u| Url::parse(u).unwrap()).collect();
         let tried = RefCell::new(Vec::new());
-        let result = fetch_first_available(&urls, &|_, _| {}, |url, _| {
+        let result = fetch_first_available(urls, &|_, _| {}, |url, _| {
             tried.borrow_mut().push(url.to_string());
             if url.ends_with(works) {
                 Ok(PathBuf::from(works))

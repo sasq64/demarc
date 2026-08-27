@@ -276,7 +276,7 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
 /// which is what ends up in the generated m3u, so two disks of one set whose
 /// URLs differ only in a directory would land on the same name here — they stay
 /// apart in the cache, but the copy below still flattens them.
-pub fn fetch_urls(urls: &[Url]) -> anyhow::Result<PathBuf> {
+pub fn fetch_urls(urls: &[impl AsRef<str>]) -> anyhow::Result<PathBuf> {
     let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
     for url in urls {
         let cached = fetch_url(url.as_ref())?;

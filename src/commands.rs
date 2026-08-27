@@ -16,7 +16,10 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::{AppSettings, RenderSettings};
-use crate::{EmuFile, emu_file::FileSource};
+use crate::{
+    EmuFile,
+    emu_file::{FileSource, UrlList},
+};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -195,9 +198,9 @@ fn handle_textlist(
                 // be pointed at a different download later.
                 let url = original_file(&settings, file)
                     .and_then(download_urls)
-                    .and_then(|urls| urls.get(item).cloned());
+                    .and_then(|urls| urls.get(item));
                 if let Some(url) = url {
-                    settings.files[file].path = FileSource::Url(vec![url]);
+                    settings.files[file].path = FileSource::Url(UrlList::one(url));
                 }
                 settings.current_game = file as isize;
                 writer.write(CmdMessage(Cmd::Reload));
@@ -257,7 +260,7 @@ fn original_file(settings: &AppSettings, index: usize) -> Option<&EmuFile> {
 
 /// The URLs of an entry there is something to choose between: several remote
 /// alternatives. A local path, or a single URL, has nothing to pick from.
-fn download_urls(file: &EmuFile) -> Option<&Vec<Url>> {
+fn download_urls(file: &EmuFile) -> Option<&UrlList> {
     match &file.path {
         FileSource::Url(urls) if urls.len() > 1 => Some(urls),
         _ => None,
@@ -295,11 +298,13 @@ impl DownloadSource {
     /// The picker over `file`'s downloads, or `None` when there is nothing to
     /// pick between (see [`download_urls`]).
     fn new(file: &EmuFile) -> Option<Self> {
-        let urls = download_urls(file)?;
+        // The one place a URL has to be taken apart rather than just shown, so
+        // the one place worth parsing them (see [`UrlList::urls`]).
+        let urls = download_urls(file)?.urls();
         let names = urls.iter().map(url_file_name).collect();
         Some(Self {
             names: AllWordsSource::new(names),
-            urls: urls.clone(),
+            urls,
         })
     }
 }
@@ -441,7 +446,7 @@ fn entry_name(file: &EmuFile) -> String {
     if info.title.is_empty() {
         "???".into()
     } else if info.group.is_empty() {
-        info.title.clone()
+        info.title.to_string()
     } else {
         format!("{} / {}", info.title, info.group)
     }
@@ -479,7 +484,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
             .unwrap_or_else(|| p.display().to_string()),
         FileSource::Url(urls) => urls
             .first()
-            .map(|u| trunc_url(u.as_str(), width))
+            .map(|u| trunc_url(u, width))
             .unwrap_or_default(),
     };
     if !source.is_empty() {
@@ -896,14 +901,15 @@ mod tests {
     /// alternatives to pick between.
     #[test]
     fn only_entries_with_several_urls_have_downloads_to_pick() {
-        let file = |urls: &[&str]| EmuFile {
-            path: FileSource::Url(urls.iter().map(|u| Url::parse(u).unwrap()).collect()),
+        let file = |urls: Vec<&'static str>| EmuFile {
+            path: FileSource::Url(urls.into()),
             ..Default::default()
         };
         assert!(DownloadSource::new(&EmuFile::default()).is_none());
-        assert!(DownloadSource::new(&file(&[URL])).is_none());
+        assert!(DownloadSource::new(&file(vec![URL])).is_none());
 
-        let source = DownloadSource::new(&file(&[URL, "https://mirror.example/demo.lha"])).unwrap();
+        let source =
+            DownloadSource::new(&file(vec![URL, "https://mirror.example/demo.lha"])).unwrap();
         let rows = source.search("", DEFAULT_MAX_RESULTS);
         assert_eq!(
             rows.iter()
@@ -921,10 +927,10 @@ mod tests {
     /// snapshot rather than at whatever `settings.files` holds by now.
     #[test]
     fn the_file_picker_hands_the_entry_behind_a_row_back() {
-        let file = |title: &str, url: &str| EmuFile {
-            path: FileSource::Url(vec![Url::parse(url).unwrap()]),
+        let file = |title: &'static str, url: &'static str| EmuFile {
+            path: FileSource::Url(UrlList::one(url)),
             game_info: GameInfo {
-                title: title.to_string(),
+                title,
                 ..Default::default()
             },
             ..Default::default()
@@ -942,7 +948,7 @@ mod tests {
         let entry = source.get_data(rows[0]).expect("the row is one of ours");
         assert_eq!(entry.game_info.title, "Deus Ex Machina");
         assert!(
-            matches!(&entry.path, FileSource::Url(urls) if urls[0].as_str() == "https://a.org/d.lha")
+            matches!(&entry.path, FileSource::Url(urls) if urls.first() == Some("https://a.org/d.lha"))
         );
         // An id that is not one of ours has nothing behind it.
         assert!(source.get_data(files.len()).is_none());

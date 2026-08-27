@@ -493,8 +493,8 @@ impl Emulator {
             group,
             year,
             category: typ,
-        } = &self.title_info;
-        let year = if *year == 0 {
+        } = self.title_info;
+        let year = if year == 0 {
             "".into()
         } else {
             format!(" ({year})")
@@ -502,7 +502,7 @@ impl Emulator {
         let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
             info
         } else {
-            if typ.is_empty() { system } else { typ.clone() }
+            if typ.is_empty() { system } else { typ.to_string() }
         };
 
         format!("\"{title}\"\n{group}{year}\n{desc}")
@@ -535,10 +535,11 @@ impl Emulator {
         self.run_prev = false;
 
         let name = if emu_file.game_info.title.is_empty() {
-            "load".to_string()
+            "load"
         } else {
-            emu_file.game_info.title.clone()
-        };
+            emu_file.game_info.title
+        }
+        .to_string();
 
         // Only the *resolution* runs off-thread. Unpacking, conversion and core
         // creation stay on the main thread inside `load`, as before: they are
@@ -584,7 +585,7 @@ impl Emulator {
         // of the branches below the outcome takes.
         download_finished();
 
-        let title = emu_file.game_info.title.clone();
+        let title = emu_file.game_info.title.to_string();
         let path = match resolved {
             Ok(path) => path,
             // Unwrap `JobError::Failed` rather than wrapping it: `load_error::classify`
@@ -653,9 +654,16 @@ impl Emulator {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
-        let meta = emu_file.meta.clone();
+        // `NewSys` and the `WorkFile` it builds own their meta, so the entry's
+        // borrowed pairs are copied into `String`s here, at the one boundary
+        // where the file list hands work off.
+        let meta: HashMap<String, String> = emu_file
+            .meta
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
 
-        self.title_info = emu_file.game_info.clone();
+        self.title_info = emu_file.game_info;
 
         // Before `load_file`, which builds the new backend at the end of it: a
         // backend may own something the machine only has one of, and the next
@@ -812,10 +820,9 @@ mod tests {
 
     use bevy::MinimalPlugins;
     use clap::Parser;
-    use url::Url;
 
     use super::*;
-    use crate::Args;
+    use crate::{Args, emu_file::UrlList};
 
     /// Spins up the task pools `load_async` needs, and nothing else.
     fn task_pools() -> App {
@@ -868,9 +875,9 @@ mod tests {
         let mut emu = Emulator::default();
 
         emu.load_async(&EmuFile {
-            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
             game_info: GameInfo {
-                title: "Unreachable".into(),
+                title: "Unreachable",
                 ..Default::default()
             },
             ..Default::default()
@@ -923,7 +930,7 @@ mod tests {
         };
 
         emu.load_async(&EmuFile {
-            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
             ..Default::default()
         });
         assert!(
@@ -949,7 +956,7 @@ mod tests {
         };
 
         emu.load_async(&EmuFile {
-            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
             ..Default::default()
         });
         assert!(matches!(
@@ -965,10 +972,10 @@ mod tests {
     fn a_second_load_replaces_the_first() {
         let _app = task_pools();
         let mut emu = Emulator::default();
-        let entry = |title: &str| EmuFile {
-            path: FileSource::Url(vec![Url::parse("http://127.0.0.1:1/demo.zip").unwrap()]),
+        let entry = |title: &'static str| EmuFile {
+            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
             game_info: GameInfo {
-                title: title.into(),
+                title,
                 ..Default::default()
             },
             ..Default::default()

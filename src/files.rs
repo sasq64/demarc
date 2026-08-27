@@ -7,18 +7,17 @@ use std::{
 
 use anyhow::{Result, bail};
 use regex::Regex;
-use tracing::{info, warn};
-use url::Url;
+use tracing::info;
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo},
+    emu_file::{EmuFile, FileSource, GameInfo, UrlList},
     m3u::M3u,
     utils::{is_disk_image, unpack_if_packed},
 };
 
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
-    let mut title: String = "".into();
-    let mut group: String = "".into();
+    let mut title: &'static str = "";
+    let mut group: &'static str = "";
     let mut year: u32 = 0;
     let mut meta = HashMap::new();
 
@@ -34,13 +33,13 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     info!("{:?}", m3u.tags);
     for (key, val) in m3u.tags {
         if key == "title" {
-            title = val.clone();
+            title = leak(val);
         } else if key == "group" {
-            group = val.clone();
+            group = leak(val);
         } else if key == "year" {
             year = val.parse::<u32>().unwrap_or(0);
         } else {
-            meta.insert(key, val);
+            meta.insert(leak(key), leak(val));
         }
     }
     Ok(EmuFile {
@@ -50,9 +49,20 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             title,
             group,
             year,
-            category: "".into(),
+            category: "",
         },
     })
+}
+
+/// Give a runtime-built string the `'static` lifetime an [`EmuFile`] wants.
+///
+/// The file list is built once and kept for the whole run, so nothing collected
+/// into it is ever freed anyway; leaking says so in the type and lets entries
+/// hold plain `&'static str` instead of `String`. Only used for the handful of
+/// strings that aren't already slices of the leaked db text — m3u tags and file
+/// stems — so the leak is bounded by the size of the file list.
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
 }
 
 /// Parse a `key:value`-per-field line, e.g.
@@ -97,19 +107,24 @@ pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Res
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
     let text = db_text(data, &format!("db file {}", path.display()))?;
-    collect_db_text(&text, filter, out);
+    collect_db_text(text, filter, out);
     Ok(())
 }
 
 /// Turn the raw bytes of a db into its text, unpacking it first when it is a
 /// packed file (see [`unpack_if_packed`]). `what` names the source for errors.
-fn db_text(data: Vec<u8>, what: &str) -> Result<String> {
+///
+/// The text is leaked, because the entries [`collect_db_text`] builds from it
+/// borrow their fields straight out of it and are kept for the whole run — see
+/// [`leak`]. This is the one big leak: a db is read once, and slicing it beats
+/// copying every field of every line into its own `String`.
+fn db_text(data: Vec<u8>, what: &str) -> Result<&'static str> {
     let data = match unpack_if_packed(data) {
         Ok(data) => data,
         Err(err) => bail!("Failed to unpack {what}: {err}"),
     };
     match String::from_utf8(data) {
-        Ok(text) => Ok(text),
+        Ok(text) => Ok(leak(text)),
         Err(err) => bail!("Failed to read {what}: {err}"),
     }
 }
@@ -163,7 +178,7 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
         bail!("Failed to read db from stdin: {err}");
     }
     let text = db_text(data, "db from stdin")?;
-    collect_db_text(&text, filter, out);
+    collect_db_text(text, filter, out);
     Ok(())
 }
 
@@ -174,10 +189,10 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
 ///
 /// Only a comment made up entirely of `key:value` pairs is a header, so an
 /// ordinary prose comment never turns into meta.
-fn parse_db_header<'a>(
-    comment: &'a str,
-    platform: &mut Option<&'a str>,
-    meta: &mut HashMap<&'a str, &'a str>,
+fn parse_db_header(
+    comment: &'static str,
+    platform: &mut Option<&'static str>,
+    meta: &mut HashMap<&'static str, &'static str>,
 ) {
     let Some(fields) = comment
         .split_whitespace()
@@ -199,11 +214,11 @@ fn parse_db_header<'a>(
 }
 
 /// Parse the contents of a db file — see [`collect_db`] for the format.
-pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
-    let mut file_platform: Option<&str> = None;
+pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
+    let mut file_platform: Option<&'static str> = None;
 
     // Meta from header comments, applied to every entry below them.
-    let mut file_meta = HashMap::<&str, &str>::new();
+    let mut file_meta = HashMap::<&'static str, &'static str>::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -225,22 +240,13 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
             // A `platform` field on the line itself is inserted below and wins.
             meta.insert("platform", platform);
         }
-        let mut urls = vec![];
+        let mut urls = UrlList::default();
         for (key, val) in fields {
             if key == "download" {
                 if val.trim().is_empty() {
                     continue;
                 }
-                urls = val
-                    .split(';')
-                    .filter_map(|p| match Url::parse(p) {
-                        Ok(u) => Some(u),
-                        Err(err) => {
-                            warn!("Skipping unparseable URL {p:?}: {err}");
-                            None
-                        }
-                    })
-                    .collect();
+                urls = UrlList::parse_field(val);
             }
             meta.insert(key, val);
         }
@@ -261,13 +267,10 @@ pub(crate) fn collect_db_text(text: &str, filter: &DbFilter, out: &mut Vec<EmuFi
         let year = year_s.parse::<u32>().unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
-            meta: meta
-                .into_iter()
-                .map(|(k, v)| (k.into(), v.into()))
-                .collect(),
+            meta,
             game_info: GameInfo {
-                title: title.into(),
-                group: author.into(),
+                title,
+                group: author,
                 year,
                 ..Default::default()
             },
@@ -282,7 +285,7 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
     {
         handle_m3u(in_path)
     } else {
-        let title = in_path.file_stem().unwrap().to_string_lossy().to_string();
+        let title = leak(in_path.file_stem().unwrap().to_string_lossy().into_owned());
         Ok(EmuFile {
             path: in_path.into(),
             //system_type: get_system_type(in_path),
@@ -391,7 +394,7 @@ mod tests {
             panic!("db entries stay URLs until loaded, got {:?}", zentro.path)
         };
         assert_eq!(
-            urls.iter().map(Url::as_str).collect::<Vec<_>>(),
+            urls.as_slice(),
             [
                 "http://example.com/zentro4",
                 "http://example.com/zentro4.dms"
@@ -400,9 +403,9 @@ mod tests {
         assert_eq!(zentro.game_info.title, "Zentro 4");
         assert_eq!(zentro.game_info.group, "Zenith");
         assert_eq!(zentro.game_info.year, 1992);
-        assert_eq!(zentro.meta.get("category").unwrap(), "Demo");
-        assert_eq!(zentro.meta.get("party").unwrap(), "The Party 1992");
-        assert_eq!(zentro.meta.get("tags").unwrap(), "has effects");
+        assert_eq!(zentro.get_meta("category"), "Demo");
+        assert_eq!(zentro.get_meta("party"), "The Party 1992");
+        assert_eq!(zentro.get_meta("tags"), "has effects");
 
         // Fields in any order, missing ones simply left empty.
         let nexus = &out[1];
@@ -428,16 +431,12 @@ mod tests {
             assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
             assert_eq!(eod.game_info.year, 2008, "{packed}");
             // The `# Platform:C64` header applies just as it does unpacked.
-            assert_eq!(eod.meta.get("platform").unwrap(), "C64", "{packed}");
-            assert_eq!(eod.meta.get("category").unwrap(), "demo", "{packed}");
+            assert_eq!(eod.get_meta("platform"), "C64", "{packed}");
+            assert_eq!(eod.get_meta("category"), "demo", "{packed}");
             let FileSource::Url(urls) = &eod.path else {
                 panic!("db entries stay URLs until loaded, got {:?}", eod.path)
             };
-            assert_eq!(
-                urls.iter().map(Url::as_str).collect::<Vec<_>>(),
-                ["https://example.com/eod.d64"],
-                "{packed}"
-            );
+            assert_eq!(urls.as_slice(), ["https://example.com/eod.d64"], "{packed}");
             assert_eq!(out[1].game_info.title, "Nexus 7", "{packed}");
         }
     }
@@ -455,7 +454,7 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].game_info.title, "Speedball Demo");
-        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
+        assert_eq!(out[0].get_meta("category"), "Demo");
         assert!(
             !out[0].meta.contains_key("platform"),
             "no header, no platform"
@@ -477,7 +476,7 @@ mod tests {
             collect_db_text(DB, filter, &mut out);
             (
                 out.iter()
-                    .map(|f| f.game_info.title.clone())
+                    .map(|f| f.game_info.title)
                     .collect::<Vec<_>>(),
                 out,
             )
@@ -492,7 +491,7 @@ mod tests {
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
         assert_eq!(
-            out[0].meta.get("platform").unwrap(),
+            out[0].get_meta("platform"),
             "Amiga",
             "header still applies"
         );
@@ -547,7 +546,7 @@ mod tests {
             let mut out = vec![];
             collect_db_text(DB, filter, &mut out);
             out.iter()
-                .map(|f| f.game_info.title.clone())
+                .map(|f| f.game_info.title)
                 .collect::<Vec<_>>()
         };
 
@@ -601,13 +600,13 @@ mod tests {
         let mut out = vec![];
         collect_db(&db, &DbFilter::default(), &mut out).unwrap();
         assert_eq!(
-            out[0].meta.get("platform").unwrap(),
+            out[0].get_meta("platform"),
             "Amiga",
             "header applies"
         );
-        assert_eq!(out[0].meta.get("category").unwrap(), "Demo");
+        assert_eq!(out[0].get_meta("category"), "Demo");
         assert_eq!(
-            out[1].meta.get("platform").unwrap(),
+            out[1].get_meta("platform"),
             "C64",
             "line overrides header"
         );
@@ -628,24 +627,16 @@ mod tests {
             &mut out,
         );
 
-        assert_eq!(out[0].meta.get("platform").unwrap(), "Amiga");
-        assert_eq!(out[0].meta.get("puae_model").unwrap(), "A500");
+        assert_eq!(out[0].get_meta("platform"), "Amiga");
+        assert_eq!(out[0].get_meta("puae_model"), "A500");
         assert!(!out[0].meta.contains_key("Just"));
         assert!(!out[0].meta.contains_key("comment"));
 
         // A later header overrides, and the platform from the first one still
         // applies.
-        assert_eq!(out[1].meta.get("puae_model").unwrap(), "A1200");
-        assert_eq!(out[1].meta.get("tags").unwrap(), "aga");
-        assert_eq!(out[1].meta.get("platform").unwrap(), "Amiga");
-    }
-
-    fn filter(urls: &[&str]) -> Vec<String> {
-        let parsed = urls.iter().map(|u| Url::parse(u).unwrap()).collect();
-        filter_release_urls(parsed)
-            .iter()
-            .map(Url::to_string)
-            .collect()
+        assert_eq!(out[1].get_meta("puae_model"), "A1200");
+        assert_eq!(out[1].get_meta("tags"), "aga");
+        assert_eq!(out[1].get_meta("platform"), "Amiga");
     }
 
     /// A disk image among the URLs makes the release disk based: everything
@@ -654,7 +645,7 @@ mod tests {
     #[test]
     fn disk_images_win() {
         assert_eq!(
-            filter(&[
+            filter_release_urls(&[
                 "https://x.com/a.pdf",
                 "https://x.com/a1.d64",
                 "https://x.com/a2.D64",
@@ -674,7 +665,7 @@ mod tests {
     #[test]
     fn extras_dropped() {
         assert_eq!(
-            filter(&[
+            filter_release_urls(&[
                 "https://x.com/demo.sid",
                 "https://x.com/demo.zip",
                 "https://x.com/scan.PDF",
@@ -689,7 +680,7 @@ mod tests {
     #[test]
     fn all_filtered_keeps_input() {
         assert_eq!(
-            filter(&["https://x.com/a.sid", "https://x.com/b.pdf"]),
+            filter_release_urls(&["https://x.com/a.sid", "https://x.com/b.pdf"]),
             vec!["https://x.com/a.sid", "https://x.com/b.pdf"]
         );
     }
