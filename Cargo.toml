@@ -129,6 +129,7 @@ bevy_egui = { version = "0.42", default-features = false, features = [
 notify = "8"
 # `get_spectrum()` for the script. Already in the tree via `rubato`.
 realfft = "3.5"
+resvg = "0.48.1"
 
 [features]
 default = []

@@ -1,11 +1,14 @@
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
-    egui::{self, Ui, scroll_area::ScrollAreaOutput},
+    egui::{self, Align, Color32, TextFormat, Ui, scroll_area::ScrollAreaOutput},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzySource};
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
+
+use resvg::tiny_skia;
+use resvg::usvg::{self, Tree};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -34,11 +37,67 @@ const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
+static ICON_SVG: &[u8] = include_bytes!("../data/coupdecoeur.svg");
+
+/// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
+/// pixel size. `target_size` is in physical pixels.
+fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui::ColorImage> {
+    let opt = usvg::Options::default();
+
+    // If your SVG uses system fonts (text elements), you need a fontdb.
+    // Skip this if your SVG is pure vector shapes.
+    // let mut fontdb = usvg::fontdb::Database::new();
+    // fontdb.load_system_fonts();
+
+    let tree = Tree::from_data(svg_bytes, &opt)?;
+
+    let [w, h] = target_size;
+    let mut pixmap =
+        tiny_skia::Pixmap::new(w, h).ok_or_else(|| anyhow::anyhow!("invalid pixmap dimensions"))?;
+
+    // Scale the SVG's own viewBox size to fit target_size.
+    let svg_size = tree.size();
+    let transform =
+        tiny_skia::Transform::from_scale(w as f32 / svg_size.width(), h as f32 / svg_size.height());
+
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    // tiny_skia::Pixmap stores premultiplied RGBA — egui::ColorImage
+    // wants straight (non-premultiplied) RGBA, so unpremultiply per pixel.
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for px in pixmap.pixels() {
+        let a = px.alpha();
+        if a == 0 {
+            rgba.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            let unpremul = |c: u8| ((c as u32 * 255) / a as u32) as u8;
+            rgba.extend_from_slice(&[
+                unpremul(px.red()),
+                unpremul(px.green()),
+                unpremul(px.blue()),
+                a,
+            ]);
+        }
+    }
+
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        &rgba,
+    ))
+}
+
+/// Call once (e.g. lazily on first frame, or in app init) and cache the handle.
+fn load_icon_texture(ctx: &egui::Context) -> anyhow::Result<egui::TextureHandle> {
+    let image = rasterize_svg(ICON_SVG, [64, 64])?;
+    Ok(ctx.load_texture("icon-svg", image, egui::TextureOptions::LINEAR))
+}
+
 fn setup_egui(
     mut contexts: EguiContexts,
     app_font: Res<AppFont>,
     fonts: Res<Assets<Font>>,
     mut done: Local<bool>,
+    mut state: ResMut<Images>,
 ) -> Result {
     if *done {
         return Ok(());
@@ -47,6 +106,9 @@ fn setup_egui(
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
+
+    let heart = load_icon_texture(ctx)?;
+    state.heart = Some(heart);
 
     // egui owns its font bytes (it re-parses them for its own atlas), so this
     // copies out of the Bevy asset instead of sharing the `Blob`.
@@ -107,7 +169,7 @@ pub struct ShowFuzzyList {
 pub struct FuzzyListSelect {
     /// The list's `id`, so callers can tell their pickers apart.
     pub id: usize,
-    /// Stable id of the chosen item (see [`FuzzyItem::id`]).
+    /// Stable id of the chosen item, as reported by [`FuzzySource::search`].
     pub item: usize,
     #[allow(dead_code)]
     pub text: String,
@@ -142,9 +204,9 @@ pub struct HudState {
     /// The query `list_items` was filtered with, so the source is only asked
     /// again when the text actually changed (the box is polled every frame).
     list_last_query: Option<String>,
-    /// The results currently shown, in display order. Their [`FuzzyItem::id`]s
-    /// are what a selection reports, so they survive re-filtering.
-    list_items: Vec<FuzzyItem>,
+    /// The ids of the results currently shown, in display order. An id is what
+    /// a selection reports, so it survives re-filtering.
+    list_items: Vec<usize>,
     /// Index into `list_items` of the highlighted row.
     list_selected: usize,
     /// The list's scroll offset in points, mirrored out of the [`egui::ScrollArea`]
@@ -159,6 +221,11 @@ pub struct HudState {
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
     list_source: Option<Arc<dyn FuzzySource>>,
+}
+
+#[derive(Resource, Default)]
+pub struct Images {
+    heart: Option<egui::TextureHandle>,
 }
 
 impl HudState {
@@ -234,16 +301,17 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
 }
 
 /// Draws the scrollable, fixed-row-height list of `items`, highlighting row
-/// `selected` and scrolling the least that keeps it in view. Rows are borrowed:
-/// anything that can be seen as a `&str` (`String`, `&str`, [`FuzzyItem`], ...)
-/// can be listed without copying its text out first.
+/// `selected` and scrolling the least that keeps it in view. Each visible row is
+/// handed to `render` along with the rect it was allocated, so the items can be
+/// anything at all -- only their painting is the caller's business.
 ///
 /// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
-fn scroll_area<T: AsRef<str>>(
+fn scroll_area<T>(
     ui: &mut Ui,
     selected: usize,
     list_scroll: f32,
     items: &[T],
+    render: impl Fn(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<()> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
@@ -292,17 +360,8 @@ fn scroll_area<T: AsRef<str>>(
                             SELECTED_ROW_COLOR.linear_multiply(level),
                         );
                     }
-                    // Painted rather than laid out as a `Label`: rows are
-                    // single-line and anything too long is clipped.
-                    let clip =
-                        egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
-                    ui.painter().with_clip_rect(clip).text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        items[row].as_ref(),
-                        egui::FontId::proportional(ROW_SIZE),
-                        TEXT_COLOR,
-                    );
+
+                    render(ui, rect, &items[row]);
                 }
             })
         })
@@ -319,7 +378,9 @@ fn scroll_area<T: AsRef<str>>(
 fn render_list(
     ctx: &egui::Context,
     state: &mut HudState,
+    images: &Images,
     writer: &mut MessageWriter<FuzzyListSelect>,
+    render: impl Fn(&mut Ui, egui::Rect, usize),
 ) {
     if !state.show_list {
         return;
@@ -372,11 +433,11 @@ fn render_list(
     };
     state.list_selected = selected;
 
-    if pick && let Some(item) = state.list_items.get(selected) {
+    if pick && let Some(&item) = state.list_items.get(selected) {
         writer.write(FuzzyListSelect {
             id: state.list_id,
-            item: item.id,
-            text: item.text.clone(),
+            item,
+            text: source.get_text(item),
             alt,
         });
         state.show_list = false;
@@ -385,7 +446,7 @@ fn render_list(
 
     // Describe the highlighted item, asking the source only when it changes
     // (arrow keys, or a new filter) rather than every frame.
-    let info_item = state.list_items.get(selected).map(|item| item.id);
+    let info_item = state.list_items.get(selected).copied();
     if info_item != state.list_info_item {
         state.list_info = info_item.map(|id| source.get_info(id)).unwrap_or_default();
         state.list_info_item = info_item;
@@ -419,12 +480,19 @@ fn render_list(
                 }
             });
 
-            let scrolled = scroll_area(ui, selected, state.list_scroll, &state.list_items);
+            let scrolled = scroll_area(
+                ui,
+                selected,
+                state.list_scroll,
+                &state.list_items,
+                |ui, rect, &id| render(ui, rect, id),
+            );
             state.list_scroll = scrolled.state.offset.y;
 
             // The info box stays hidden while there is nothing to say.
             if !state.list_info.is_empty() {
                 panel_frame().show(ui, |ui| {
+                    ui.image((images.heart.as_ref().unwrap().id(), egui::vec2(32.0, 32.0)));
                     ui.set_width(ui.available_width());
                     ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
                     ui.add(
@@ -517,6 +585,7 @@ fn heading_with_shadow(
 fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
+    images: Res<Images>,
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
     window: Single<&mut Window, With<PrimaryWindow>>,
@@ -587,7 +656,50 @@ fn update_ui(
         });
 
     render_downloads(ctx, rect.min);
-    render_list(ctx, &mut state, &mut selected);
+    // Cloned out before `state` is borrowed mutably below; the row painter
+    // looks each visible row's text up through it. `render_list` bails out
+    // itself when there is no source, so the painter never runs without one.
+    let source = state.list_source.clone();
+    render_list(ctx, &mut state, &images, &mut selected, |ui, rect, id| {
+        let Some(source) = source.as_ref() else {
+            return;
+        };
+        let text = source.get_text(id);
+        let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
+        let font = egui::FontId::proportional(ROW_SIZE);
+        let format = TextFormat {
+            font_id: font.clone(),
+            extra_letter_spacing: -8.0, // negative = pull glyphs together
+            color: Color32::from_rgb(220, 220, 20),
+            valign: Align::Center,
+            ..Default::default()
+        };
+
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &text,
+            0.0,
+            egui::TextFormat::simple(font.clone(), TEXT_COLOR),
+        );
+        job.append("  \u{f091} ", 0.0, format);
+
+        let galley = ui.painter().layout_job(job);
+        let pos = egui::Align2::LEFT_CENTER
+            .anchor_size(rect.left_center(), galley.size())
+            .min;
+        let painter = ui.painter().with_clip_rect(clip);
+        painter.galley(pos, galley.clone(), TEXT_COLOR);
+        // Position the image right after the last glyph's end.
+        let end_x = pos.x + galley.rect.width();
+        let mut image_rect =
+            egui::Rect::from_min_size(egui::pos2(end_x, pos.y), egui::vec2(32.0, 32.0));
+        let tid = images.heart.as_ref().unwrap().id();
+        for _ in 0..3 {
+            egui::Image::new((tid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+            image_rect.min.x += 12.0;
+            image_rect.max.x += 12.0;
+        }
+    });
     Ok(())
 }
 
@@ -650,6 +762,7 @@ impl Plugin for EguiUiPlugin {
                     open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
                 ),
             )
+            .insert_resource(Images::default())
             .insert_resource(HudState::default());
     }
 }

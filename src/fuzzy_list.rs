@@ -21,32 +21,25 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 /// far more items than can be shown; this caps how many we pull and render.
 pub const DEFAULT_MAX_RESULTS: usize = 500_000;
 
-/// One filtered result: the text to display plus a stable `id` identifying the
-/// item in the underlying source (an index into a `Vec`, a database row id, …).
-/// The `id` is what a selection reports back, so callers get a handle that is
-/// stable regardless of the current filter/order.
-#[derive(Debug, Clone)]
-pub struct FuzzyItem {
-    pub id: usize,
-    pub text: String,
-}
-
-impl AsRef<str> for FuzzyItem {
-    fn as_ref(&self) -> &str {
-        &self.text
-    }
-}
-
 /// Backs the searchable list with items. Implement this to plug in smarter
 /// matching without touching the UI: prefix trees, fuzzy scoring, or an
 /// external index/database.
 pub trait FuzzySource: Send + Sync + 'static {
-    /// Return the items matching `query`, best match first, capped at `limit`.
-    /// An empty/whitespace query should return the head of the full list (the
-    /// unfiltered view).
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem>;
+    /// Return the ids of the items matching `query`, best match first, capped
+    /// at `limit`. An empty/whitespace query should return the head of the full
+    /// list (the unfiltered view).
+    ///
+    /// An id is a stable handle on an item in the underlying source (an index
+    /// into a `Vec`, a database row id, …) — it is what a selection reports
+    /// back, so callers get something that holds regardless of the current
+    /// filter/order.
+    fn search(&self, query: &str, limit: usize) -> Vec<usize>;
 
-    /// Free-form detail about the item with this [`FuzzyItem::id`], shown in the
+    /// The line to display for the item with this id. Asked for the rows on
+    /// screen only, so a source is free to build it on the spot.
+    fn get_text(&self, id: usize) -> String;
+
+    /// Free-form detail about the item with this id, shown in the
     /// multi-line field below the list as the selection moves. Newlines are
     /// honoured and long lines wrap. The default returns nothing, which hides
     /// the field entirely — implement it to describe the highlighted item.
@@ -79,18 +72,19 @@ impl From<Vec<String>> for SubstringSource {
 }
 
 impl FuzzySource for SubstringSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.trim().to_lowercase();
         self.lowercased
             .iter()
             .enumerate()
             .filter(|(_, s)| q.is_empty() || s.contains(&q))
             .take(limit)
-            .map(|(i, _)| FuzzyItem {
-                id: i,
-                text: self.items[i].clone(),
-            })
+            .map(|(i, _)| i)
             .collect()
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.items[id].clone()
     }
 }
 
@@ -119,7 +113,7 @@ impl From<Vec<String>> for AllWordsSource {
 }
 
 impl FuzzySource for AllWordsSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         self.lowercased
@@ -127,11 +121,12 @@ impl FuzzySource for AllWordsSource {
             .enumerate()
             .filter(|(_, s)| words.iter().all(|w| s.contains(w)))
             .take(limit)
-            .map(|(i, _)| FuzzyItem {
-                id: i,
-                text: self.items[i].clone(),
-            })
+            .map(|(i, _)| i)
             .collect()
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.items[id].clone()
     }
 }
 
@@ -254,22 +249,12 @@ fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
 }
 
 impl FuzzySource for IndexedSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         // Empty/whitespace query: unfiltered head of the list, in original order.
         if words.is_empty() {
-            return self
-                .inner
-                .items
-                .iter()
-                .take(limit)
-                .enumerate()
-                .map(|(id, text)| FuzzyItem {
-                    id,
-                    text: text.clone(),
-                })
-                .collect();
+            return (0..self.inner.items.len().min(limit)).collect();
         }
 
         // Prune to candidate ids using every word long enough to be indexed
@@ -299,10 +284,7 @@ impl FuzzySource for IndexedSource {
             let mut out = Vec::new();
             for i in 0..self.inner.items.len() as u32 {
                 if verify(i) {
-                    out.push(FuzzyItem {
-                        id: i as usize,
-                        text: self.inner.items[i as usize].clone(),
-                    });
+                    out.push(i as usize);
                     if out.len() >= limit {
                         break;
                     }
@@ -343,13 +325,11 @@ impl FuzzySource for IndexedSource {
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         scored.truncate(limit);
-        scored
-            .into_iter()
-            .map(|(_, i)| FuzzyItem {
-                id: i as usize,
-                text: self.inner.items[i as usize].clone(),
-            })
-            .collect()
+        scored.into_iter().map(|(_, i)| i as usize).collect()
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.inner.items[id].clone()
     }
 }
 
@@ -367,8 +347,12 @@ mod tests {
     #[test]
     fn substring_source_filters_case_insensitively() {
         let src = SubstringSource::new(items());
-        let texts =
-            |q: &str| -> Vec<String> { src.search(q, 256).into_iter().map(|r| r.text).collect() };
+        let texts = |q: &str| -> Vec<String> {
+            src.search(q, 256)
+                .into_iter()
+                .map(|id| src.get_text(id))
+                .collect()
+        };
 
         // Empty query is the unfiltered list…
         assert_eq!(texts(""), items());
@@ -386,8 +370,8 @@ mod tests {
         let hits = src.search("cherry", 256);
         assert_eq!(hits.len(), 1);
         // The id indexes the source, not the filtered view.
-        assert_eq!(hits[0].id, 3);
-        assert_eq!(hits[0].text, "cherry");
+        assert_eq!(hits[0], 3);
+        assert_eq!(src.get_text(hits[0]), "cherry");
     }
 
     #[test]
@@ -400,18 +384,18 @@ mod tests {
     #[test]
     fn all_words_source_matches_every_word_in_any_order() {
         let src = AllWordsSource::new(items());
+        let texts = |q: &str| -> Vec<String> {
+            src.search(q, 256)
+                .into_iter()
+                .map(|id| src.get_text(id))
+                .collect()
+        };
 
         // Empty query returns everything.
-        let all: Vec<String> = src.search("", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(all, items());
+        assert_eq!(texts(""), items());
 
         // Two words, out of order, both as substrings of the same item.
-        let hits: Vec<String> = src
-            .search("na an", 256)
-            .into_iter()
-            .map(|r| r.text)
-            .collect();
-        assert_eq!(hits, vec!["banana"]);
+        assert_eq!(texts("na an"), vec!["banana"]);
 
         // A word matching nothing filters the item out even if others match.
         assert!(src.search("apple zzz", 256).is_empty());
@@ -420,13 +404,18 @@ mod tests {
     #[test]
     fn indexed_source_matches_words_in_any_order_and_ranks() {
         let src = IndexedSource::new(items());
+        let texts = |q: &str| -> Vec<String> {
+            src.search(q, 256)
+                .into_iter()
+                .map(|id| src.get_text(id))
+                .collect()
+        };
 
         // Empty query returns the head of the list, in order.
-        let all: Vec<String> = src.search("", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(all, items());
+        assert_eq!(texts(""), items());
 
         // Substring match finds the right rows regardless of order…
-        let hits: Vec<String> = src.search("ap", 256).into_iter().map(|r| r.text).collect();
+        let hits = texts("ap");
         assert!(hits.contains(&"apple".to_string()));
         assert!(hits.contains(&"apricot".to_string()));
         assert!(hits.contains(&"grape".to_string()));
@@ -434,24 +423,19 @@ mod tests {
         // …and reports the stable source id, not the ranked position.
         let cherry = src.search("cherry", 256);
         assert_eq!(cherry.len(), 1);
-        assert_eq!(cherry[0].id, 3);
-        assert_eq!(cherry[0].text, "cherry");
+        assert_eq!(cherry[0], 3);
+        assert_eq!(src.get_text(cherry[0]), "cherry");
 
         // Case-insensitive, and two out-of-order words both as substrings of one
         // item (the `AllWordsSource` semantics), via the < 3-char fallback path.
-        let banana: Vec<String> = src
-            .search("NA an", 256)
-            .into_iter()
-            .map(|r| r.text)
-            .collect();
-        assert_eq!(banana, vec!["banana"]);
+        assert_eq!(texts("NA an"), vec!["banana"]);
 
         // A word matching nothing filters the item out.
         assert!(src.search("apple zzz", 256).is_empty());
 
         // Ranking puts the closest match first: an exact/prefix hit outranks a
         // mid-word one for the same query.
-        let ranked: Vec<String> = src.search("ap", 256).into_iter().map(|r| r.text).collect();
+        let ranked = texts("ap");
         assert_eq!(
             ranked[0], "apple",
             "prefix match should rank ahead of 'grape'"

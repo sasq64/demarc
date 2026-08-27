@@ -12,7 +12,7 @@ use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::AllWordsSource;
-use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
+use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::{AppSettings, RenderSettings};
@@ -305,8 +305,12 @@ impl DownloadSource {
 }
 
 impl FuzzySource for DownloadSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
     }
 
     fn get_info(&self, id: usize) -> String {
@@ -345,8 +349,12 @@ impl FilePickerSource {
 }
 
 impl FuzzySource for FilePickerSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
     }
 
     fn get_info(&self, id: usize) -> String {
@@ -892,15 +900,14 @@ mod tests {
         let source = DownloadSource::new(&file(&[URL, "https://mirror.example/demo.lha"])).unwrap();
         let rows = source.search("", DEFAULT_MAX_RESULTS);
         assert_eq!(
-            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            rows.iter()
+                .map(|&id| source.get_text(id))
+                .collect::<Vec<_>>(),
             vec!["zentro4.zip", "demo.lha"]
         );
         // The id a row reports is its index into the entry's URLs, and the
         // info field spells the chosen one out in full.
-        assert_eq!(
-            source.get_info(rows[1].id),
-            "https://mirror.example/demo.lha"
-        );
+        assert_eq!(source.get_info(rows[1]), "https://mirror.example/demo.lha");
     }
 
     #[test]
