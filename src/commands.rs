@@ -243,15 +243,15 @@ fn handle_textlist(
     }
 }
 
-/// The entry as the picker first saw it. [`FilePickerSource`] snapshots
-/// `settings.files` when the picker is first built, so an entry that has since
-/// been narrowed to a single download still has all of its URLs here — and can
-/// be pointed at another one of them.
+/// The entry as the picker first saw it, asked of the picker's own source.
+/// [`FilePickerSource`] snapshots `settings.files` when the picker is first
+/// built, so an entry that has since been narrowed to a single download still
+/// has all of its URLs here — and can be pointed at another one of them.
 fn original_file(settings: &AppSettings, index: usize) -> Option<&EmuFile> {
     settings
         .file_source
         .as_ref()
-        .and_then(|source| source.info.get(index))
+        .and_then(|source| source.get_data(index))
         .or_else(|| settings.files.get(index))
 }
 
@@ -304,7 +304,7 @@ impl DownloadSource {
     }
 }
 
-impl FuzzySource for DownloadSource {
+impl FuzzySource<EmuFile> for DownloadSource {
     fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
     }
@@ -319,15 +319,16 @@ impl FuzzySource for DownloadSource {
 }
 
 /// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
-/// the list, paired with the fuller per-entry detail (year, type, party, …)
-/// shown in the info field below it.
+/// the list, paired with the entries themselves — the fuller detail (year,
+/// type, party, …) shown in the info field below the list, and the entry a
+/// selection is *of*, handed back by [`FuzzySource::get_data`].
 ///
 /// Both are built once, on first open, and reused on every open after that —
 /// cloning is a pair of `Arc` bumps, not a re-index.
 #[derive(Clone)]
 pub struct FilePickerSource {
     names: IndexedSource,
-    /// Info text per entry, indexed by the same id `names` reports.
+    /// The entries themselves, indexed by the same id `names` reports.
     info: Arc<Vec<EmuFile>>,
     width: u32,
 }
@@ -348,7 +349,7 @@ impl FilePickerSource {
     }
 }
 
-impl FuzzySource for FilePickerSource {
+impl FuzzySource<EmuFile> for FilePickerSource {
     fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
     }
@@ -359,6 +360,10 @@ impl FuzzySource for FilePickerSource {
 
     fn get_info(&self, id: usize) -> String {
         entry_info(&self.info[id], self.width as usize)
+    }
+
+    fn get_data(&self, id: usize) -> Option<&EmuFile> {
+        self.info.get(id)
     }
 }
 
@@ -810,6 +815,7 @@ impl Plugin for CommandPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::emu_file::GameInfo;
     use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
 
     const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
@@ -908,6 +914,38 @@ mod tests {
         // The id a row reports is its index into the entry's URLs, and the
         // info field spells the chosen one out in full.
         assert_eq!(source.get_info(rows[1]), "https://mirror.example/demo.lha");
+    }
+
+    /// The file picker is a list *of entries*: the id a row reports resolves
+    /// back to the entry itself, which is how [`original_file`] gets at the
+    /// snapshot rather than at whatever `settings.files` holds by now.
+    #[test]
+    fn the_file_picker_hands_the_entry_behind_a_row_back() {
+        let file = |title: &str, url: &str| EmuFile {
+            path: FileSource::Url(vec![Url::parse(url).unwrap()]),
+            game_info: GameInfo {
+                title: title.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let files = [
+            file("Zentrophy", URL),
+            file("Deus Ex Machina", "https://a.org/d.lha"),
+        ];
+        let source = FilePickerSource::new(&files);
+
+        let rows = source.search("machina", DEFAULT_MAX_RESULTS);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(source.get_text(rows[0]), "Deus Ex Machina");
+        // The row resolves to the entry, URLs and all.
+        let entry = source.get_data(rows[0]).expect("the row is one of ours");
+        assert_eq!(entry.game_info.title, "Deus Ex Machina");
+        assert!(
+            matches!(&entry.path, FileSource::Url(urls) if urls[0].as_str() == "https://a.org/d.lha")
+        );
+        // An id that is not one of ours has nothing behind it.
+        assert!(source.get_data(files.len()).is_none());
     }
 
     #[test]

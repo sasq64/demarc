@@ -1,11 +1,20 @@
 use bevy::{prelude::*, window::PrimaryWindow};
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
-    egui::{self, Align, Color32, TextFormat, Ui, scroll_area::ScrollAreaOutput},
+    egui::{self, Ui, scroll_area::ScrollAreaOutput},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
+use crate::EmuFile;
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
+
+/// What the pickers in this app are lists *of*. Every source handed to
+/// [`ShowFuzzyList`] agrees on this one type, so a caller holding the `item` of
+/// a [`FuzzyListSelect`] can ask the source for the entry behind it
+/// ([`FuzzySource::get_data`]) instead of keeping its own copy of the list.
+/// A source whose rows are not entries at all -- the hotkey list, say -- has no
+/// data to hand back and simply inherits the default.
+pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
 
 use resvg::tiny_skia;
 use resvg::usvg::{self, Tree};
@@ -38,6 +47,7 @@ const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
 static ICON_SVG: &[u8] = include_bytes!("../data/coupdecoeur.svg");
+static STAR_SVG: &[u8] = include_bytes!("../data/viewingtip.svg");
 
 /// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
 /// pixel size. `target_size` is in physical pixels.
@@ -87,9 +97,13 @@ fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui
 }
 
 /// Call once (e.g. lazily on first frame, or in app init) and cache the handle.
-fn load_icon_texture(ctx: &egui::Context) -> anyhow::Result<egui::TextureHandle> {
-    let image = rasterize_svg(ICON_SVG, [64, 64])?;
-    Ok(ctx.load_texture("icon-svg", image, egui::TextureOptions::LINEAR))
+fn load_icon_texture(
+    ctx: &egui::Context,
+    name: &str,
+    pixels: &[u8],
+) -> anyhow::Result<egui::TextureHandle> {
+    let image = rasterize_svg(pixels, [64, 64])?;
+    Ok(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
 }
 
 fn setup_egui(
@@ -107,8 +121,10 @@ fn setup_egui(
     };
     let ctx = contexts.ctx_mut()?;
 
-    let heart = load_icon_texture(ctx)?;
+    let heart = load_icon_texture(ctx, "heart_icon", ICON_SVG)?;
+    let star = load_icon_texture(ctx, "star_icon", STAR_SVG)?;
     state.heart = Some(heart);
+    state.star = Some(star);
 
     // egui owns its font bytes (it re-parses them for its own atlas), so this
     // copies out of the Bevy asset instead of sharing the `Blob`.
@@ -160,7 +176,7 @@ pub enum HudLocation {
 #[derive(Message, Clone)]
 pub struct ShowFuzzyList {
     pub id: usize,
-    pub source: Arc<dyn FuzzySource>,
+    pub source: ListSource,
 }
 
 /// Emitted when the user picks a row (Enter, or Shift+Enter — see
@@ -220,12 +236,13 @@ pub struct HudState {
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
-    list_source: Option<Arc<dyn FuzzySource>>,
+    list_source: Option<ListSource>,
 }
 
 #[derive(Resource, Default)]
 pub struct Images {
     heart: Option<egui::TextureHandle>,
+    star: Option<egui::TextureHandle>,
 }
 
 impl HudState {
@@ -286,7 +303,7 @@ fn visible_rows(ctx: &egui::Context) -> f32 {
 /// Re-filters the list against the search box. The source is asked only when
 /// the query changed since the last frame -- or when the list was just opened,
 /// since the source itself may be a new one by then.
-fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
+fn sync_results(state: &mut HudState, source: &ListSource) {
     let changed = state.list_last_query.as_deref() != Some(state.list_query.as_str());
     if !changed && !state.list_reopened {
         return;
@@ -378,7 +395,6 @@ fn scroll_area<T>(
 fn render_list(
     ctx: &egui::Context,
     state: &mut HudState,
-    images: &Images,
     writer: &mut MessageWriter<FuzzyListSelect>,
     render: impl Fn(&mut Ui, egui::Rect, usize),
 ) {
@@ -492,7 +508,6 @@ fn render_list(
             // The info box stays hidden while there is nothing to say.
             if !state.list_info.is_empty() {
                 panel_frame().show(ui, |ui| {
-                    ui.image((images.heart.as_ref().unwrap().id(), egui::vec2(32.0, 32.0)));
                     ui.set_width(ui.available_width());
                     ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
                     ui.add(
@@ -660,20 +675,35 @@ fn update_ui(
     // looks each visible row's text up through it. `render_list` bails out
     // itself when there is no source, so the painter never runs without one.
     let source = state.list_source.clone();
-    render_list(ctx, &mut state, &images, &mut selected, |ui, rect, id| {
+    render_list(ctx, &mut state, &mut selected, |ui, rect, id| {
         let Some(source) = source.as_ref() else {
             return;
         };
         let text = source.get_text(id);
+
+        let mut cdc = 0;
+        let mut vt = false;
+        if let Some(emu_file) = source.get_data(id) {
+            if let Some(pouet) = emu_file.meta.get("pouet") {
+                for (i, s) in pouet.split(",").enumerate() {
+                    if i == 0 {
+                        cdc = s.parse::<u32>().unwrap_or(0);
+                    } else if i == 3 {
+                        vt = s.split(" ").any(|s| s == "15");
+                    }
+                }
+            }
+        }
+
         let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
         let font = egui::FontId::proportional(ROW_SIZE);
-        let format = TextFormat {
-            font_id: font.clone(),
-            extra_letter_spacing: -8.0, // negative = pull glyphs together
-            color: Color32::from_rgb(220, 220, 20),
-            valign: Align::Center,
-            ..Default::default()
-        };
+        // let format = TextFormat {
+        //     font_id: font.clone(),
+        //     extra_letter_spacing: -8.0, // negative = pull glyphs together
+        //     color: Color32::from_rgb(220, 220, 20),
+        //     valign: Align::Center,
+        //     ..Default::default()
+        // };
 
         let mut job = egui::text::LayoutJob::default();
         job.append(
@@ -681,7 +711,7 @@ fn update_ui(
             0.0,
             egui::TextFormat::simple(font.clone(), TEXT_COLOR),
         );
-        job.append("  \u{f091} ", 0.0, format);
+        //job.append("  \u{f091} ", 0.0, format);
 
         let galley = ui.painter().layout_job(job);
         let pos = egui::Align2::LEFT_CENTER
@@ -690,14 +720,20 @@ fn update_ui(
         let painter = ui.painter().with_clip_rect(clip);
         painter.galley(pos, galley.clone(), TEXT_COLOR);
         // Position the image right after the last glyph's end.
-        let end_x = pos.x + galley.rect.width();
+        let end_x = pos.x + galley.rect.width() + 10.0;
         let mut image_rect =
             egui::Rect::from_min_size(egui::pos2(end_x, pos.y), egui::vec2(32.0, 32.0));
         let tid = images.heart.as_ref().unwrap().id();
-        for _ in 0..3 {
+        let vid = images.star.as_ref().unwrap().id();
+        for _ in 0..cdc {
             egui::Image::new((tid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
             image_rect.min.x += 12.0;
             image_rect.max.x += 12.0;
+        }
+        if vt {
+            image_rect.min.x += 12.0;
+            image_rect.max.x += 12.0;
+            egui::Image::new((vid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
         }
     });
     Ok(())
