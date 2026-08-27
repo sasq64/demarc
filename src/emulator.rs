@@ -493,6 +493,7 @@ impl Emulator {
             group,
             year,
             category: typ,
+            ..
         } = self.title_info;
         let year = if year == 0 {
             "".into()
@@ -502,7 +503,11 @@ impl Emulator {
         let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
             info
         } else {
-            if typ.is_empty() { system } else { typ.to_string() }
+            if typ.is_empty() {
+                system
+            } else {
+                typ.to_string()
+            }
         };
 
         format!("\"{title}\"\n{group}{year}\n{desc}")

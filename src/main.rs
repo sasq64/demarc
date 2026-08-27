@@ -154,9 +154,15 @@ struct Args {
     #[arg(short = 'X', long, value_parser = Regex::new)]
     exclude: Vec<Regex>,
 
-    /// Shuffle the list of files into a random order.
+    /// Shuffle the list of files into a random order. Same as `--sort random`.
     #[arg(long)]
     shuffle: bool,
+
+    /// How to order the list of files: `random` to shuffle, or `rank` to put
+    /// the best-ranked demos first (db entries with a pouet rank; anything
+    /// unranked keeps its order at the end).
+    #[arg(long, value_enum)]
+    sort: Option<SortArg>,
 
     /// When to show overlay info text
     #[arg(long, value_enum, default_value_t = InfoDisplay::OnMulti)]
@@ -317,6 +323,14 @@ fn parse_grid(s: &str) -> Result<(u32, u32), String> {
         return Err("grid dimensions must be at least 1".into());
     }
     Ok((cols, rows))
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum SortArg {
+    /// Shuffle into a random order.
+    Random,
+    /// Best pouet.net rank first; unranked entries last.
+    Rank,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -748,9 +762,17 @@ fn main() {
         }
     }
 
-    if args.shuffle {
-        use rand::seq::SliceRandom;
-        files.shuffle(&mut rand::rng());
+    // `--shuffle` is the older spelling of `--sort random`; an explicit
+    // `--sort` wins over it.
+    match args.sort.or(args.shuffle.then_some(SortArg::Random)) {
+        Some(SortArg::Random) => {
+            use rand::seq::SliceRandom;
+            files.shuffle(&mut rand::rng());
+        }
+        // Ranks are positions, so the best comes first. Entries without a rank
+        // sort last, keeping the order they were collected in.
+        Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.unwrap_or(u32::MAX)),
+        None => {}
     }
 
     let multiple = files.len() > 1;

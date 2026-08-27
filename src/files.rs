@@ -50,6 +50,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             group,
             year,
             category: "",
+            ..Default::default()
         },
     })
 }
@@ -80,6 +81,16 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
         result.push((key, val));
     }
     result
+}
+
+/// The pouet.net rank out of a db line's `pouet` field.
+///
+/// The field is `pouet:<cdc>,<thumbs>,<rank>,...` — the release's id on pouet,
+/// how many thumbs up it has and where it sits in pouet's ranking, 1 being the
+/// best. A release that isn't on pouet has no field at all, and one that is but
+/// hasn't been ranked leaves the item empty, so both give `None`.
+pub(crate) fn parse_pouet_rank(field: &str) -> Option<u32> {
+    field.split(',').nth(2)?.trim().parse().ok()
 }
 
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
@@ -265,6 +276,7 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
             .unwrap_or_default();
         meta.insert("year", year_s);
         let year = year_s.parse::<u32>().unwrap_or(0);
+        let rank = meta.get("pouet").copied().and_then(parse_pouet_rank);
         out.push(EmuFile {
             path: FileSource::Url(urls),
             meta,
@@ -272,6 +284,7 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
                 title,
                 group: author,
                 year,
+                rank,
                 ..Default::default()
             },
         });
@@ -359,6 +372,32 @@ mod tests {
     use crate::emu_file::filter_release_urls;
 
     use super::*;
+
+    /// The rank is the third item of the `pouet` field. A release that is on
+    /// pouet but unranked leaves that item empty, and one that isn't there at
+    /// all has no field, so neither gets a rank to sort on.
+    #[test]
+    fn pouet_rank_comes_from_the_third_item() {
+        assert_eq!(parse_pouet_rank("17,828,1,8,1 5 11"), Some(1));
+        assert_eq!(parse_pouet_rank("0,146,382,,"), Some(382));
+        assert_eq!(parse_pouet_rank("0,1,,,"), None);
+        assert_eq!(parse_pouet_rank("0,1"), None);
+        assert_eq!(parse_pouet_rank(""), None);
+    }
+
+    /// A db line's `pouet` field ranks the entry; a line without one doesn't.
+    #[test]
+    fn collect_db_reads_the_pouet_rank() {
+        let mut out = vec![];
+        collect_db_text(
+            "title:Ranked\tdownload:http://example.com/a.zip\tpouet:0,146,382,,\n\
+             title:Unranked\tdownload:http://example.com/b.zip\n",
+            &DbFilter::default(),
+            &mut out,
+        );
+        assert_eq!(out[0].game_info.rank, Some(382));
+        assert_eq!(out[1].game_info.rank, None);
+    }
 
     #[test]
     fn missing_directory_is_an_error() {
@@ -475,9 +514,7 @@ mod tests {
             let mut out = vec![];
             collect_db_text(DB, filter, &mut out);
             (
-                out.iter()
-                    .map(|f| f.game_info.title)
-                    .collect::<Vec<_>>(),
+                out.iter().map(|f| f.game_info.title).collect::<Vec<_>>(),
                 out,
             )
         };
@@ -490,11 +527,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
-        assert_eq!(
-            out[0].get_meta("platform"),
-            "Amiga",
-            "header still applies"
-        );
+        assert_eq!(out[0].get_meta("platform"), "Amiga", "header still applies");
 
         let exclude = re("category:Musicdisk");
         let (kept, _) = titles(&DbFilter {
@@ -545,9 +578,7 @@ mod tests {
         let titles = |filter: &DbFilter| {
             let mut out = vec![];
             collect_db_text(DB, filter, &mut out);
-            out.iter()
-                .map(|f| f.game_info.title)
-                .collect::<Vec<_>>()
+            out.iter().map(|f| f.game_info.title).collect::<Vec<_>>()
         };
 
         // `.*` stops at the field end, so the `Firefox` in the title of the
@@ -599,17 +630,9 @@ mod tests {
 
         let mut out = vec![];
         collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-        assert_eq!(
-            out[0].get_meta("platform"),
-            "Amiga",
-            "header applies"
-        );
+        assert_eq!(out[0].get_meta("platform"), "Amiga", "header applies");
         assert_eq!(out[0].get_meta("category"), "Demo");
-        assert_eq!(
-            out[1].get_meta("platform"),
-            "C64",
-            "line overrides header"
-        );
+        assert_eq!(out[1].get_meta("platform"), "C64", "line overrides header");
     }
 
     /// The other pairs of a header line become meta on every entry below it,

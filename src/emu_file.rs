@@ -191,7 +191,11 @@ pub fn filter_release_urls<'a>(urls: &[&'a str]) -> Vec<&'a str> {
             .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
             .collect();
     };
-    if images.is_empty() { urls.to_vec() } else { images }
+    if images.is_empty() {
+        urls.to_vec()
+    } else {
+        images
+    }
 }
 
 /// Download the first of `urls` that succeeds, using `fetch` for each attempt.
@@ -298,6 +302,10 @@ pub struct GameInfo {
     pub group: &'static str,
     pub year: u32,
     pub category: &'static str,
+    /// Where the release sits in pouet.net's ranking, if it is on pouet at all:
+    /// a position, so 1 is the best-rated release and a bigger number a worse
+    /// one. Filled in from the third item of a db line's `pouet` field.
+    pub rank: Option<u32>,
 }
 
 // EmuFile can be:
