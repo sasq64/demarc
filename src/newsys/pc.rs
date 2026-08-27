@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::utils::read_at;
 use super::{System, get_ext, walk_dir};
@@ -177,9 +177,11 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
         .unwrap_or_default()
         .to_string_lossy()
         .to_ascii_lowercase();
+
+    let win = is_windows_program(path);
     let mut rank = match get_ext(path).as_str() {
-        "bat" => 2,
-        "exe" => 1,
+        "bat" => 10,
+        "exe" => 20 + if win { 0 } else { 1 },
         _ => 0,
     };
     if !release.is_empty() && stem == release {
@@ -419,6 +421,7 @@ impl System for PcSystem {
         // A machine config brings its own DOS on its own disc images, so the
         // extender is only ever a question for a program run under DOSBox.
         if get_ext(&target) != "cfg" && is_set(file, META_DOS4GW) {
+            debug!("Needs DOS4GW");
             make_writable(file, &target)?;
             place_extender(file, &dos4gw_source())?;
         } else {
