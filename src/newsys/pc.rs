@@ -142,7 +142,7 @@ fn is_dos_program(path: &Path) -> bool {
         // size is all there is to go on.
         "com" => size > 0 && size <= MAX_COM_SIZE,
         // A batch file is text, and an empty one starts nothing.
-        //"bat" => size > 0 && fs::read(path).is_ok_and(|b| std::str::from_utf8(&b).is_ok()),
+        "bat" => size > 0 && fs::read(path).is_ok_and(|b| std::str::from_utf8(&b).is_ok()),
         _ => false,
     }
 }
@@ -168,9 +168,13 @@ fn is_windows_program(path: &Path) -> bool {
 /// A release is usually a directory holding one program worth running and
 /// several that aren't — an installer, a setup tool, a viewer for the .NFO —
 /// and the walk reaches them in whatever order the filesystem gives. So rank
-/// them: the file named after the release is what the release is, a `.bat` is
-/// the author saying "start here", and anything called INSTALL or SETUP is the
-/// one thing we know we don't want.
+/// them: the file named after the release is what the release is, and anything
+/// called INSTALL or SETUP is the one thing we know we don't want.
+///
+/// A `.bat` loses to any `.exe` beside it. It reads like the author saying
+/// "start here", but a release that ships one is as often using it to print the
+/// .NFO or set a variable before handing over — whereas the `.exe` beside it is
+/// the demo itself, and starts the same either way.
 fn launch_rank(path: &Path, release: &str) -> i32 {
     let stem = path
         .file_stem()
@@ -352,6 +356,39 @@ fn is_set(file: &WorkFile, key: &str) -> bool {
     ) || file.has_tag("dos4gw")
 }
 
+impl PcSystem {
+    /// Which of the files in a release is the one to start.
+    ///
+    /// A machine config describes the whole machine, so it wins outright;
+    /// otherwise the programs are ranked against each other and the best one
+    /// taken — see [`launch_rank`]. `dir` names the release, which is how a
+    /// program named after it is recognised, and may equally be a single file.
+    fn pick_target(&self, dir: &Path) -> Result<Option<PathBuf>> {
+        let release = dir
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        let mut config = None;
+        let mut best: Option<(i32, PathBuf)> = None;
+        walk_dir(dir, 0, |path, ext, _| {
+            if !self.can_load(path) {
+                return Ok(());
+            }
+            if ext == "cfg" {
+                config.get_or_insert_with(|| path.to_owned());
+            } else {
+                let rank = launch_rank(path, &release);
+                if best.as_ref().is_none_or(|(top, _)| rank > *top) {
+                    best = Some((rank, path.to_owned()));
+                }
+            }
+            Ok(())
+        })?;
+        Ok(config.or(best.map(|b| b.1)))
+    }
+}
+
 impl System for PcSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["cfg", "exe", "com", "bat"]
@@ -375,30 +412,15 @@ impl System for PcSystem {
     /// the order this needs. Copying the release into a temp dir moves every
     /// path inside it, so which file to start has to be settled first and
     /// followed across the copy afterwards.
-    fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        let mut config = None;
-        let mut best: Option<(i32, PathBuf)> = None;
-        walk_dir(file, 0, |path, ext, _| {
-            if !self.can_load(path) {
-                return Ok(());
-            }
-            if ext == "cfg" {
-                config.get_or_insert_with(|| path.to_owned());
-            } else {
-                let release = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_ascii_lowercase();
-                let rank = launch_rank(path, &release);
-                if best.as_ref().is_none_or(|(top, _)| rank > *top) {
-                    best = Some((rank, path.to_owned()));
-                }
-            }
-            Ok(())
-        })?;
+    /// The default walks for the first file it can load, in whatever order the
+    /// filesystem hands them over — which for a release directory holding
+    /// several programs is not a choice at all. See [`PcSystem::pick_target`].
+    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
+        self.pick_target(dir)
+    }
 
-        let Some(target) = config.or(best.map(|b| b.1)) else {
+    fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        let Some(target) = self.pick_target(file)? else {
             return Ok(false);
         };
 
@@ -693,6 +715,31 @@ mod tests {
         let found = sys.get_first_file(&release).unwrap().unwrap();
         assert!(found.ends_with("crystal.cfg"), "picked {found:?}");
         assert_eq!(core_for(&found), CORE_NAME_PCEM);
+    }
+
+    /// A `.bat` beside the program is as often a wrapper printing the .NFO as
+    /// it is the way in, and the program starts the same without it.
+    #[test]
+    fn starts_the_program_rather_than_the_batch_file_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = PcSystem {};
+        let mut exe = vec![0u8; 0x80];
+        exe[..2].copy_from_slice(b"MZ");
+
+        // Named so that neither of them wins on the release name.
+        let release = dir.path().join("release");
+        fs::create_dir_all(&release).unwrap();
+        write(&release, "go.bat", "@echo off\r\ndemo.exe\r\n");
+        write_bytes(&release, "trip.exe", &exe);
+        let found = sys.get_first_file(&release).unwrap().unwrap();
+        assert!(found.ends_with("trip.exe"), "picked {found:?}");
+
+        // With no program to run it is still what starts the release.
+        let bare = dir.path().join("bare");
+        fs::create_dir_all(&bare).unwrap();
+        write(&bare, "go.bat", "@echo off\r\n");
+        let found = sys.get_first_file(&bare).unwrap().unwrap();
+        assert!(found.ends_with("go.bat"), "picked {found:?}");
     }
 
     /// The extender is shipped beside the program that loads it, so it is the
