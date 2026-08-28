@@ -515,7 +515,7 @@ impl System for AmigaSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let mut meta = path.get_all_meta();
+        let meta = path.get_all_meta();
         let core_name = if use_amiberry(path) {
             //puae_to_amiberry(&mut meta);
             CORE_NAME_AMIBERRY

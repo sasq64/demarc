@@ -219,7 +219,7 @@ pub trait System: Send + Sync {
     }
 
     fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        walk_dir_find(dir, 0, |file, ext, _| {
+        walk_dir_find(dir, 0, |file, _ext, _header| {
             if self.can_load(file) {
                 return Ok(Some(file.to_owned()));
             };
