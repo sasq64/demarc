@@ -305,10 +305,120 @@ impl AmigaSystem {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Cpu {
+    M68000,
+    M68020,
+    M68030,
+    M68040,
+    M68060,
+}
+
+impl From<Cpu> for String {
+    fn from(value: Cpu) -> Self {
+        (match value {
+            Cpu::M68000 => "68000",
+            Cpu::M68020 => "68020",
+            Cpu::M68030 => "68030",
+            Cpu::M68040 => "68040",
+            Cpu::M68060 => "68060",
+        })
+        .into()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Machine {
+    A500OLD,
+    A500,
+    A1200,
+    A4000,
+}
+
+impl From<Machine> for String {
+    fn from(value: Machine) -> Self {
+        (match value {
+            Machine::A500OLD => "A500OG",
+            Machine::A500 => "A500",
+            Machine::A1200 => "A1200",
+            Machine::A4000 => "A4040",
+        })
+        .into()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Kickstart {
+    V12,
+    V13,
+    V20,
+    V31A1200,
+    V31A4000,
+}
+
+impl From<Kickstart> for String {
+    fn from(value: Kickstart) -> Self {
+        (match value {
+            Kickstart::V12 => "kick33180.A500",
+            Kickstart::V13 => "kick34005.A500",
+            Kickstart::V20 => "kick37175.A500",
+            Kickstart::V31A1200 => "kick40068.1200",
+            Kickstart::V31A4000 => "kick40068.A4000",
+        })
+        .into()
+    }
+}
+
+impl WorkFile {
+    pub fn set_fast_mem(&mut self, mb: usize) {
+        let mbs = mb.to_string();
+        self.set_meta("puae_fastmem_size", &mbs);
+        self.set_meta("puae_z3mem_size", &mbs);
+        self.set_meta("amiberry_z3mem_size", &mbs);
+    }
+
+    pub fn set_z3_mem(&mut self, mb: usize) {
+        let mbs = mb.to_string();
+        self.set_meta("puae_z3mem_size", &mbs);
+        self.set_meta("amiberry_z3mem_size", &mbs);
+    }
+
+    pub fn set_cpu(&mut self, cpu: Cpu) {
+        self.set_meta("puae_cpu_model", cpu);
+        self.set_meta("amiberry_cpu_model", cpu);
+    }
+    pub fn set_machine(&mut self, machine: Machine) {
+        self.set_meta("puae_model", machine);
+        self.set_meta("amiberry_model", machine);
+    }
+
+    pub fn set_kickstart(&mut self, kickstart: Kickstart) {
+        self.set_meta("puae_kickstart", kickstart);
+        self.set_meta("amiberry_kickstart", kickstart);
+    }
+
+    pub fn set_fast(&mut self) {
+        self.set_meta("amiberry_cpu_model", "68040");
+        self.set_meta("amiberry_z3mem_size", "128");
+        self.set_meta("amiberry_jit", "enabled");
+        self.set_meta("amiberry_cpu_speed", "max");
+        self.set_meta("amiberry_kickstart", "kick40068.A4000");
+        self.set_meta("puae_model", "A1200");
+        self.set_meta("amiberry_model", "A4040");
+        self.set_meta("puae_fpu_model", "68882");
+    }
+
+    pub fn is_aga(&self) -> bool {
+        let model = self.get_meta("puae_model", "");
+        model == "A1200" || model == "A4000"
+    }
+}
+
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 {
-        wf.set_meta("puae_model", "A1200");
+        wf.set_machine(Machine::A1200);
+        //wf.set_meta("puae_model", "A1200");
     }
 
     let target_dir = WorkFile::new_dir()?;
@@ -318,8 +428,9 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     fs::create_dir(&c_dir)?;
     fs::copy(system_dir().join("c").join("echo"), c_dir.join("echo"))?;
     let mut text: String = "".into();
-    let model = wf.get_meta("puae_model", "");
-    if model == "A1200" || model == "A4000" {
+    if wf.is_aga() {
+        //let model = wf.get_meta("puae_model", "");
+        //if model == "A1200" || model == "A4000" {
         fs::copy(
             system_dir().join("c").join("SetPatch"),
             c_dir.join("SetPatch"),
@@ -392,51 +503,59 @@ impl System for AmigaSystem {
             file.set_meta("puae_model", "A500");
             if let Ok(year) = file.get_meta("year", "").parse::<u32>() {
                 if year < 1990 {
-                    file.set_meta("puae_kickstart", "kick33180.A500");
+                    file.set_kickstart(Kickstart::V12);
+                    //file.set_meta("puae_kickstart", "kick33180.A500");
                 } else if aga || self.aga {
-                    file.set_meta("puae_model", "A1200");
-                    file.set_meta("amiberry_model", "A1200");
-                    if year >= 1993 {
-                        file.set_meta("puae_model", "A1200");
-                    }
+                    file.set_machine(Machine::A4000);
+                    // file.set_meta("puae_model", "A1200");
+                    // file.set_meta("amiberry_model", "A1200");
+                    // if year >= 1993 {
+                    //     file.set_meta("puae_model", "A1200");
+                    // }
                     if year >= 1995 {
-                        file.set_meta("puae_cpu_model", "68030");
+                        file.set_cpu(Cpu::M68040);
+                        //file.set_meta("puae_cpu_model", "68030");
                     }
                     if year >= 1997 {
-                        file.set_meta("puae_fastmem_size", "8");
-                        file.set_meta("puae_z3mem_size", "128");
-                        file.set_meta("puae_fpu_model", "68882");
-                        file.set_meta("amiberry_model", "A4040");
-                        file.set_meta("amiberry_cpu_model", "68040");
-                        file.set_meta("amiberry_z3mem_size", "128");
-                        file.set_meta("amiberry_jit", "enabled");
-                        file.set_meta("amiberry_cpu_speed", "max");
-                        file.set_meta("amiberry_kickstart", "kick40068.A4000");
+                        file.set_fast();
+                        // file.set_meta("puae_fastmem_size", "8");
+                        // file.set_meta("puae_z3mem_size", "128");
+                        // file.set_meta("puae_fpu_model", "68882");
+                        // file.set_meta("amiberry_model", "A4040");
+                        // file.set_meta("amiberry_cpu_model", "68040");
+                        // file.set_meta("amiberry_z3mem_size", "128");
+                        // file.set_meta("amiberry_jit", "enabled");
+                        // file.set_meta("amiberry_cpu_speed", "max");
+                        // file.set_meta("amiberry_kickstart", "kick40068.A4000");
                     }
                 }
             }
         } else {
             if aga || self.aga {
-                file.set_meta("puae_model", "A1200");
-                file.set_meta("amiberry_model", "A1200");
+                file.set_machine(Machine::A1200);
+                //file.set_meta("puae_model", "A1200");
+                //file.set_meta("amiberry_model", "A1200");
             }
         }
         if self.fast_load {
             file.set_meta("puae_floppy_speed", "0");
         }
         if self.xmem {
-            file.set_meta("puae_fastmem_size", "8");
-            file.set_meta("puae_z3mem_size", "128");
-            file.set_meta("amiberry_z3mem_size", "128");
+            file.set_fast_mem(8);
+            file.set_z3_mem(128);
+            // file.set_meta("puae_fastmem_size", "8");
+            // file.set_meta("puae_z3mem_size", "128");
+            // file.set_meta("amiberry_z3mem_size", "128");
         }
         if self.fast {
-            file.set_meta("amiberry_cpu_model", "68040");
-            file.set_meta("amiberry_z3mem_size", "128");
-            file.set_meta("amiberry_jit", "enabled");
-            file.set_meta("amiberry_cpu_speed", "max");
-            file.set_meta("amiberry_kickstart", "kick40068.A4000");
-            file.set_meta("puae_model", "A1200");
-            file.set_meta("puae_fpu_model", "68882");
+            file.set_fast();
+            // file.set_meta("amiberry_cpu_model", "68040");
+            // file.set_meta("amiberry_z3mem_size", "128");
+            // file.set_meta("amiberry_jit", "enabled");
+            // file.set_meta("amiberry_cpu_speed", "max");
+            // file.set_meta("amiberry_kickstart", "kick40068.A4000");
+            // file.set_meta("puae_model", "A1200");
+            // file.set_meta("puae_fpu_model", "68882");
         }
         if self.silent_drive {
             file.set_meta("puae_floppy_sound", "100");
@@ -477,20 +596,23 @@ impl System for AmigaSystem {
         })?;
 
         if self.xmem {
-            file.set_meta("puae_z3mem_size", "128");
+            file.set_fast_mem(8);
             file.set_meta("puae_chipmem_size", "4");
-            file.set_meta("puae_fastmem_size", "8");
         }
 
         if file.get_meta("platform", "").contains("AGA") {
-            file.set_meta("puae_model", "A1200");
+            file.set_machine(Machine::A1200);
+            //file.set_meta("puae_model", "A1200");
         }
         if file.has_tag("amos") {
             info!("AMOS DEMO");
-            file.set_meta("puae_cpu_model", "68030");
-            file.set_meta("puae_z3mem_size", "128");
+            file.set_fast();
+            file.set_fast_mem(8);
+            file.set_z3_mem(8);
+            // file.set_meta("puae_cpu_model", "68030");
+            // file.set_meta("puae_z3mem_size", "128");
+            // file.set_meta("puae_fastmem_size", "8");
             file.set_meta("puae_chipmem_size", "4");
-            file.set_meta("puae_fastmem_size", "8");
             file.make_temp()?;
             let l_dir = file.temp_dir().unwrap().join("libs");
             fs::create_dir(&l_dir)?;
