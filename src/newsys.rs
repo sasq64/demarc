@@ -1,3 +1,4 @@
+use crate::emu_file::{Override, Patch};
 use crate::m3u::M3u;
 use crate::newsys::amstrad::AmstradSystem;
 use crate::newsys::atari_2600::Atari2600System;
@@ -25,6 +26,7 @@ use c64::C64System;
 use gameboy::GameboySystem;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
 use utils::{is_archive, unpack_into};
@@ -143,6 +145,114 @@ pub fn get_ext(path: &Path) -> String {
         .and_then(|e| e.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase()
+}
+
+/// Apply what `overrides.toml` says about this release, once it is unpacked and
+/// before any system looks at it — see [`crate::overrides`].
+///
+/// The three parts are independent and any of them may be absent: meta goes on
+/// the [`WorkFile`], patches are written into the release, and `boot_file`
+/// points the path at the one program to start so that the systems' own file
+/// picking is skipped.
+fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
+    for (key, val) in &over.meta {
+        debug!("Override sets {key}={val}");
+        file.set_meta(key, *val);
+    }
+    if !over.patches.is_empty() {
+        apply_patches(file, &over.patches)?;
+    }
+    if let Some(boot) = over.boot_file {
+        match find_named(&release_dir(file), boot)? {
+            Some(path) => {
+                info!("Override starts {path:?}");
+                file.path = path;
+            }
+            // The archive it named is not the one that was downloaded, most
+            // likely. Falling back to the systems' own pick still runs
+            // something, which beats refusing to load the release at all.
+            None => warn!("Override names {boot:?}, which is not in {:?}", file.path),
+        }
+    }
+    Ok(())
+}
+
+/// The directory holding the release, whether the work file points at the
+/// directory itself or at one file inside it.
+fn release_dir(file: &WorkFile) -> PathBuf {
+    if file.path.is_dir() {
+        file.path.clone()
+    } else {
+        file.path.parent().unwrap_or(Path::new(".")).to_owned()
+    }
+}
+
+/// Write an override's patches into the release.
+///
+/// A patch is nearly always a config file the release was packed without: a
+/// DOS demo asks its own `.CFG` where the sound card is, and without one it
+/// either runs silent or refuses to start. So a target that isn't there yet is
+/// created rather than skipped, in the directory the release was unpacked to.
+///
+/// The release is copied somewhere writable first, since it may just as well be
+/// a plain directory on disk as a temp dir full of unpacked files — and the one
+/// thing a patch must not do is edit the user's own copy of a release.
+fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
+    file.make_temp()?;
+    let dir = release_dir(file);
+    for patch in patches {
+        let data = patch.bytes()?;
+        let target = match find_named(&dir, patch.target)? {
+            Some(path) => path,
+            None => dir.join(patch.target),
+        };
+        write_patch(&target, patch.offset, &data)
+            .with_context(|| format!("Could not patch {target:?}"))?;
+        info!(
+            "Patched {target:?} with {} bytes{}",
+            data.len(),
+            if patch.info.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", patch.info)
+            }
+        );
+    }
+    Ok(())
+}
+
+/// Write `data` into `target`: replacing it entirely when there is no offset,
+/// or overwriting the bytes at `offset` when there is. A file too short to
+/// reach the offset is extended with zeros, the way DOS itself would.
+fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> {
+    let Some(offset) = offset else {
+        return Ok(fs::write(target, data)?);
+    };
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(target)?;
+    let offset = offset as u64;
+    if out.metadata()?.len() < offset {
+        out.set_len(offset)?;
+    }
+    out.seek(SeekFrom::Start(offset))?;
+    out.write_all(data)?;
+    Ok(())
+}
+
+/// The file called `name` anywhere inside `dir`, ignoring case — the names in a
+/// DOS release come back from an archive in every case there is, and an override
+/// is written from what the demo's own documentation calls the file.
+fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
+    walk_dir_find(dir, 0, |path, _ext, _header| {
+        let found = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .is_some_and(|f| f.eq_ignore_ascii_case(name));
+        Ok(found.then(|| path.to_owned()))
+    })
 }
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for
@@ -304,7 +414,14 @@ impl NewSys {
         }
     }
 
-    pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
+    /// Load a release, with `over` carrying whatever `overrides.toml` had to
+    /// say about it (see [`crate::overrides`]) and `None` when it had nothing.
+    pub fn load_file(
+        &self,
+        path: &Path,
+        meta: &HashMap<String, String>,
+        over: Option<&Override>,
+    ) -> Result<LoadResult<'_>> {
         debug!("Trying to load: {path:?}");
         let mut wf = WorkFile::new_with_meta(path, meta.clone());
         if path.is_file() {
@@ -328,6 +445,14 @@ impl NewSys {
                 }
             }
         }
+        // Now that the release is unpacked and its own meta is in place: an
+        // override may write files into it, name the one to start and set meta
+        // of its own, which beats what the release says about itself.
+        if let Some(over) = over {
+            apply_override(&mut wf, over)?;
+        }
+
+        // Last, so that `-x` on the command line beats every other source.
         for (key, val) in &self.meta {
             debug!("Adding {key}={val}");
             wf.set_meta(key, val);
@@ -430,11 +555,87 @@ mod tests {
         let args = Args::parse_from(["demarc"]);
         let s = NewSys::new(&args);
 
-        let mut result = s.load_file(path, &HashMap::new()).unwrap();
+        let mut result = s.load_file(path, &HashMap::new(), None).unwrap();
         println!("{:?}", result.work_file.get_all_meta());
         assert_eq!(result.system.name(), name);
         result.backend.run();
         result.work_file
+    }
+
+    /// An override writes the config file a DOS release was packed without and
+    /// names which of its programs to start, both found inside the release
+    /// whatever case the archive spelled them in.
+    #[test]
+    fn an_override_patches_the_release_and_picks_what_starts_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let release = dir.path().join("inside");
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("INSTALL.EXE"), b"MZ").unwrap();
+        fs::write(release.join("INSIDE.EXE"), b"MZ").unwrap();
+
+        let over = Override {
+            boot_file: Some("inside.exe"),
+            meta: HashMap::from([("dosbox_pure_cycles", "max")]),
+            patches: vec![Patch {
+                target: "SOUND.CFG",
+                offset: None,
+                data: "AAEC",
+                info: "GUS 0x240",
+            }],
+            ..Default::default()
+        };
+
+        let mut wf = WorkFile::new(release.clone());
+        apply_override(&mut wf, &over).unwrap();
+
+        assert_eq!(wf.get_meta("dosbox_pure_cycles", ""), "max");
+        assert!(
+            wf.is_temporary() && wf.path.starts_with(wf.temp_dir().unwrap()),
+            "patching works on a copy, never the user's own files"
+        );
+        assert!(wf.path.ends_with("INSIDE.EXE"), "started {:?}", wf.path);
+        // Written next to the program, which is the directory DOSBox mounts.
+        let cfg = wf.path.parent().unwrap().join("SOUND.CFG");
+        assert_eq!(fs::read(cfg).unwrap(), [0, 1, 2]);
+        assert!(
+            release.join("INSIDE.EXE").exists() && !release.join("SOUND.CFG").exists(),
+            "the release itself is untouched"
+        );
+    }
+
+    /// A patch with an offset writes into the file it names rather than
+    /// replacing it, and one naming a file that isn't there creates it.
+    #[test]
+    fn a_patch_may_write_into_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let release = dir.path().join("demo");
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("demo.exe"), b"0123456789").unwrap();
+
+        let patches = [
+            Patch {
+                target: "demo.exe",
+                offset: Some(4),
+                data: "AAEC",
+                ..Default::default()
+            },
+            Patch {
+                target: "new.cfg",
+                offset: Some(2),
+                data: "AAEC",
+                ..Default::default()
+            },
+        ];
+        let mut wf = WorkFile::new(release);
+        apply_patches(&mut wf, &patches).unwrap();
+
+        assert_eq!(
+            fs::read(wf.path.join("demo.exe")).unwrap(),
+            b"0123\0\x01\x02789",
+            "the three bytes at the offset, and nothing else"
+        );
+        // Nothing there to write into, so the gap in front is zero filled.
+        assert_eq!(fs::read(wf.path.join("new.cfg")).unwrap(), [0, 0, 0, 1, 2]);
     }
 
     #[test]

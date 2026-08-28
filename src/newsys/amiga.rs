@@ -304,6 +304,7 @@ impl AmigaSystem {
         }
     }
 }
+
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 {

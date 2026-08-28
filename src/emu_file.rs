@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -153,6 +153,19 @@ fn url_extension(url: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+/// The file name at the end of a URL's *path*, percent-decoded, so it can be
+/// compared with the name an override names. `None` for a URL with no path at
+/// all, e.g. `https://example.com`.
+fn url_file_name(url: &str) -> Option<String> {
+    let url = Url::parse(url).ok()?;
+    let name = Path::new(url.path()).file_name()?.to_str()?;
+    Some(
+        percent_encoding::percent_decode_str(name)
+            .decode_utf8_lossy()
+            .into_owned(),
+    )
+}
+
 fn is_disk_image_url(url: &str) -> bool {
     const DISK_IMAGE_EXTENSIONS: [&str; 10] = [
         "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
@@ -249,6 +262,31 @@ fn cache_keys(urls: &[&str]) -> Vec<String> {
 }
 
 impl FileSource {
+    /// Narrow a URL-backed source down to the one URL whose file name is
+    /// `name`, for an [`Override`] that says which of a release's downloads is
+    /// the demo.
+    ///
+    /// A demozoo release often lists the demo, its soundtrack and a scan of the
+    /// disk label side by side, and [`filter_release_urls`] can only guess
+    /// between them from the extensions. Naming the file settles it.
+    ///
+    /// A name that matches nothing leaves the list alone and warns: the entry
+    /// still has its URLs, so the load falls back to guessing rather than
+    /// failing outright — which is what happens when a mirror renames a file
+    /// out from under an override written months ago.
+    pub fn pick_download(&mut self, name: &str) {
+        let FileSource::Url(urls) = self else {
+            return;
+        };
+        let picked = urls
+            .iter()
+            .find(|url| url_file_name(url).is_some_and(|f| f.eq_ignore_ascii_case(name)));
+        match picked {
+            Some(url) => *urls = UrlList::one(url),
+            None => warn!("No download named {name:?} among {:?}", urls.as_slice()),
+        }
+    }
+
     /// Ensure the data is available locally — downloading the URL (cached, see
     /// [`crate::fetch::fetch_url`]) the first time — and return the resulting
     /// local path. A [`FileSource::Path`] is returned as-is.
@@ -335,6 +373,51 @@ impl EmuFile {
     }
 }
 
+#[derive(Default, Debug, Clone)]
+pub struct Patch {
+    // File name of file to be patched
+    pub target: &'static str,
+    // Offset into file where data goes. None means replace entire file (normal case)
+    pub offset: Option<usize>,
+    // Data, base64 encoded
+    pub data: &'static str,
+    // Info to user
+    pub info: &'static str,
+}
+
+impl Patch {
+    /// The bytes to write, decoded from [`Self::data`].
+    ///
+    /// Kept encoded rather than decoded up front because that is the form the
+    /// toml carries and the form the struct is built from; a patch is a config
+    /// file of a few dozen bytes, so decoding it per load costs nothing.
+    pub fn bytes(&self) -> Result<Vec<u8>> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(self.data.trim())
+            .with_context(|| format!("Bad base64 in patch for {:?}", self.target))
+    }
+}
+
+/// A per-release fixup, read from `overrides.toml` and keyed on the demozoo id
+/// of the release it is for — see [`crate::overrides`].
+///
+/// A release the db describes correctly needs none of this; these are for the
+/// ones where the db's own answer is wrong or ambiguous — several downloads
+/// where only one is the demo, an archive holding more than one program, a DOS
+/// release whose sound config has to say GUS before it makes any noise.
+#[derive(Default, Debug, Clone)]
+pub struct Override {
+    // If Some, select the URL ending with this file-name for download
+    pub download: Option<&'static str>,
+    // If Some, override file selection by system and pass this file directly to load()
+    pub boot_file: Option<&'static str>,
+    // Add this meta-data to WorkFile
+    pub meta: HashMap<&'static str, &'static str>,
+    // Patch these files after unpacking
+    pub patches: Vec<Patch>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +473,43 @@ mod tests {
             result.unwrap_err().to_string(),
             "https://b.example/demo.zip is dead"
         );
+    }
+
+    /// An override naming one of a release's downloads narrows the list to it,
+    /// so the load fetches the demo rather than the soundtrack beside it. The
+    /// name is matched against the URL's own file name, whatever the scheme —
+    /// a demozoo db writes half its links as `SceneOrgFile:/…`.
+    #[test]
+    fn an_override_picks_the_download_it_names() {
+        let listing = || {
+            FileSource::Url(
+                vec![
+                    "https://media.demozoo.org/music/tune.mp3",
+                    "SceneOrgFile:/parties/2000/mekka/inside.zip",
+                ]
+                .into(),
+            )
+        };
+
+        let mut source = listing();
+        // Written in whatever case the release's own docs use.
+        source.pick_download("INSIDE.ZIP");
+        let FileSource::Url(urls) = &source else {
+            panic!("still a URL list, {source:?}")
+        };
+        assert_eq!(
+            urls.as_slice(),
+            ["SceneOrgFile:/parties/2000/mekka/inside.zip"]
+        );
+
+        // A name that matches nothing — a mirror renamed the file since the
+        // override was written — leaves the list to be guessed at as before.
+        let mut source = listing();
+        source.pick_download("gone.zip");
+        let FileSource::Url(urls) = &source else {
+            panic!("still a URL list, {source:?}")
+        };
+        assert_eq!(urls.len(), 2);
     }
 
     /// Nothing to try is an error rather than a panic — an entry whose URLs all

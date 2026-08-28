@@ -477,7 +477,11 @@ fn run_retro(
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
             let game = settings.files[settings.current_game as usize].clone();
-            emu.load_async(&game);
+            let over = settings.override_for(&game);
+            if let Some(o) = &over {
+                debug!("Found override for {game:?}: {o:?}");
+            }
+            emu.load_async(&game, over.as_ref());
             continue;
         }
 

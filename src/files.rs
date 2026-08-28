@@ -61,8 +61,9 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
 /// into it is ever freed anyway; leaking says so in the type and lets entries
 /// hold plain `&'static str` instead of `String`. Only used for the handful of
 /// strings that aren't already slices of the leaked db text — m3u tags and file
-/// stems — so the leak is bounded by the size of the file list.
-fn leak(s: String) -> &'static str {
+/// stems, and the overrides read at startup (see [`crate::overrides`]) — so the
+/// leak is bounded by the size of the file list.
+pub(crate) fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 

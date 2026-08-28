@@ -9,7 +9,9 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::emu_file::{EmuFile, FileSource, GameInfo, download_finished, download_started};
+use crate::emu_file::{
+    EmuFile, FileSource, GameInfo, Override, download_finished, download_started,
+};
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
 use crate::newsys::NewSys;
@@ -60,6 +62,10 @@ struct PendingLoad {
     /// puts them back, which is what lets tv mode carry on past a dead link in
     /// the direction it was already going.
     advance: (bool, bool),
+    /// What `overrides.toml` had to say about this release, if anything. Held
+    /// here because the parts of it that apply after the download — the file to
+    /// start, the files to patch — are only used once the load actually runs.
+    over: Option<Override>,
     job: Job<std::path::PathBuf>,
 }
 
@@ -524,7 +530,7 @@ impl Emulator {
     /// what makes a fresh request during a slow download — picking another
     /// entry from the selector, say — take effect instead of being queued
     /// behind it.
-    pub fn load_async(&mut self, emu_file: &EmuFile) {
+    pub fn load_async(&mut self, emu_file: &EmuFile, over: Option<&Override>) {
         if let Some(previous) = &self.pending_load {
             previous.job.cancel();
             // The abandoned job never reaches `update_load`, so its share of
@@ -551,6 +557,11 @@ impl Emulator {
         // the parts that touch shared state, and they are not what a slow
         // mirror makes you wait on.
         let mut source = emu_file.path.clone();
+        // The one part of an override that has to happen before the transfer:
+        // which of the release's downloads is the demo.
+        if let Some(name) = over.and_then(|o| o.download) {
+            source.pick_download(name);
+        }
         let job = Job::spawn(name, move |progress| {
             let path = source.resolve_with_progress(&|done, total| {
                 progress.set_done(done);
@@ -562,6 +573,7 @@ impl Emulator {
         self.pending_load = Some(PendingLoad {
             emu_file: emu_file.clone(),
             advance,
+            over: over.cloned(),
             job,
         });
     }
@@ -583,6 +595,7 @@ impl Emulator {
         let PendingLoad {
             mut emu_file,
             advance,
+            over,
             ..
         } = self.pending_load.take().expect("checked just above");
         // Past the `poll` above the download is over one way or another --
@@ -607,7 +620,7 @@ impl Emulator {
         // Detection happens inside `NewSys::load_file`, from the file itself, so
         // handing `load` a resolved path loses nothing a URL would have told it.
         emu_file.path = FileSource::Path(path);
-        match self.load(time, sys, &emu_file) {
+        match self.load(time, sys, &emu_file, over.as_ref()) {
             Ok(()) => LoadStatus::Done {
                 title,
                 result: Ok(()),
@@ -655,7 +668,13 @@ impl Emulator {
         self.pending_load.as_ref().map(|p| p.job.progress())
     }
 
-    pub fn load(&mut self, time: &Time, sys: &NewSys, emu_file: &EmuFile) -> Result<()> {
+    pub fn load(
+        &mut self,
+        time: &Time,
+        sys: &NewSys,
+        emu_file: &EmuFile,
+        over: Option<&Override>,
+    ) -> Result<()> {
         let mut source = emu_file.path.clone();
         let path = source.resolve()?;
 
@@ -683,7 +702,7 @@ impl Emulator {
         // skips an emulator with no core), and tv mode steps on to the next.
         self.core = None;
 
-        let res = sys.load_file(path, &meta)?;
+        let res = sys.load_file(path, &meta, over)?;
         let core = res.backend;
         if res.system.is_console() {
             self.input_mode = InputMode::Joystick1;
@@ -879,14 +898,17 @@ mod tests {
         let _app = task_pools();
         let mut emu = Emulator::default();
 
-        emu.load_async(&EmuFile {
-            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
-            game_info: GameInfo {
-                title: "Unreachable",
+        emu.load_async(
+            &EmuFile {
+                path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
+                game_info: GameInfo {
+                    title: "Unreachable",
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        });
+            None,
+        );
         assert!(emu.is_loading(), "the download starts in flight");
 
         let LoadStatus::Done { title, result } = drive_load(&mut emu, &systems()) else {
@@ -911,10 +933,13 @@ mod tests {
         std::fs::write(&game, b"not really anything").unwrap();
 
         let mut emu = Emulator::default();
-        emu.load_async(&EmuFile {
-            path: FileSource::Path(game),
-            ..Default::default()
-        });
+        emu.load_async(
+            &EmuFile {
+                path: FileSource::Path(game),
+                ..Default::default()
+            },
+            None,
+        );
 
         assert!(matches!(
             drive_load(&mut emu, &systems()),
@@ -934,10 +959,13 @@ mod tests {
             ..Default::default()
         };
 
-        emu.load_async(&EmuFile {
-            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
-            ..Default::default()
-        });
+        emu.load_async(
+            &EmuFile {
+                path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
+                ..Default::default()
+            },
+            None,
+        );
         assert!(
             !emu.run_next && !emu.run_prev,
             "the request is consumed while the download runs"
@@ -960,10 +988,13 @@ mod tests {
             ..Default::default()
         };
 
-        emu.load_async(&EmuFile {
-            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
-            ..Default::default()
-        });
+        emu.load_async(
+            &EmuFile {
+                path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
+                ..Default::default()
+            },
+            None,
+        );
         assert!(matches!(
             drive_load(&mut emu, &systems()),
             LoadStatus::Done { .. }
@@ -986,8 +1017,8 @@ mod tests {
             ..Default::default()
         };
 
-        emu.load_async(&entry("First"));
-        emu.load_async(&entry("Second"));
+        emu.load_async(&entry("First"), None);
+        emu.load_async(&entry("Second"), None);
 
         let sys = systems();
         let LoadStatus::Done { title, .. } = drive_load(&mut emu, &sys) else {

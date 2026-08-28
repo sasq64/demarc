@@ -1,6 +1,7 @@
 // Needed for bevy systems
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use bevy::render::extract_resource::ExtractResource;
@@ -38,6 +39,7 @@ mod media_keys;
 mod music_emu;
 mod music_vis;
 mod newsys;
+mod overrides;
 mod post_process;
 #[cfg(feature = "profile")]
 mod profiling;
@@ -61,7 +63,7 @@ use speed_test::SpeedTestPlugin;
 #[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
-use crate::emu_file::EmuFile;
+use crate::emu_file::{EmuFile, Override};
 use crate::files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use crate::newsys::NewSys;
 
@@ -116,6 +118,14 @@ struct Args {
     /// Any files/dirs given are still collected and become the selector's list.
     #[arg(short, long)]
     select: bool,
+
+    /// Name of the file inside the release to start, skipping the systems' own
+    /// file picking — the command-line spelling of an override's `boot` key,
+    /// for a local archive or directory that has no db entry to write one for.
+    /// Matched on the file name alone (ignoring case) anywhere inside the
+    /// release, e.g. `--boot-file demo.exe`.
+    #[arg(long)]
+    boot_file: Option<String>,
 
     /// How to map emulator screen onto window: `stretch`, `fit`, `zoom`, or a
     /// scale factor like `2` or `2.5` (fractional allowed).
@@ -496,6 +506,47 @@ struct AppSettings {
     /// same core can render without the filter in a small grid cell and with it
     /// once maximized.
     crt_limit: f32,
+
+    /// Per-release fixups read from `overrides.toml` at startup, keyed on the
+    /// demozoo id of the release each one is for — see [`crate::overrides`].
+    /// Empty when there is no such file, which is the normal case.
+    demozoo_overrides: HashMap<usize, Override>,
+
+    /// `--boot-file`: the program to start, for every release loaded this run.
+    /// An overrides file can only name one per demozoo id, so this is how a
+    /// local archive or directory — which has no id — gets the same treatment.
+    boot_file: Option<&'static str>,
+}
+
+impl AppSettings {
+    /// The override to load `file` with: whatever `overrides.toml` said about
+    /// the release it is, with `--boot-file` written over the top.
+    ///
+    /// Entries are matched on the `id` field a db line carries, so the file
+    /// only ever finds anything for a release loaded out of a db; a file named
+    /// on the command line has no id. The ids are demozoo's, so a db from
+    /// somewhere else can in principle collide with one — the overrides exist
+    /// for demos demarc gets wrong, and are written against the demozoo db they
+    /// were tried on. `--boot-file` is not keyed on anything and so applies to
+    /// every release loaded, which is what makes it usable on a local archive
+    /// or directory; being asked for by hand, it also beats the file.
+    fn override_for(&self, file: &EmuFile) -> Option<Override> {
+        let from_file = if self.demozoo_overrides.is_empty() {
+            None
+        } else {
+            file.get_meta("id")
+                .parse::<usize>()
+                .ok()
+                .and_then(|id| self.demozoo_overrides.get(&id))
+        };
+        match (from_file, self.boot_file) {
+            (over, None) => over.cloned(),
+            (over, boot) => Some(Override {
+                boot_file: boot,
+                ..over.cloned().unwrap_or_default()
+            }),
+        }
+    }
 }
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
@@ -827,6 +878,8 @@ fn main() {
     };
     let sys = NewSys::new(&args);
     let settings = AppSettings {
+        demozoo_overrides: overrides::load_default(),
+        boot_file: args.boot_file.clone().map(files::leak),
         system: sys,
         current_game: -1,
         show_info: args.info == InfoDisplay::Always

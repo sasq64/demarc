@@ -130,6 +130,13 @@ notify = "8"
 # `get_spectrum()` for the script. Already in the tree via `rubato`.
 realfft = "3.5"
 resvg = "0.48.1"
+# `overrides.toml`, the per-release fixups read at startup (src/overrides.rs).
+# 1.x follows the TOML 1.1 spec, which is what lets an entry's `patch = { ... }`
+# span several lines; a 0.9 parser would reject the file as written.
+toml = "1.1.4"
+serde = { version = "1.0.229", features = ["derive"] }
+# The `contents` of a patch, which is binary and so is written base64 in the toml.
+base64 = "0.23.1"
 
 [features]
 default = []

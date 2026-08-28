@@ -963,7 +963,7 @@ mod tests {
         let args = Args::parse_from(["demarc"]);
         let systems = NewSys::new(&args);
         let mut loaded = systems
-            .load_file(&cfg, &HashMap::new())
+            .load_file(&cfg, &HashMap::new(), None)
             .expect("failed to load the XT config");
         assert_eq!(loaded.system.name(), "PC");
 
@@ -1094,7 +1094,7 @@ mod tests {
         let args = Args::parse_from(["demarc"]);
         let systems = NewSys::new(&args);
         let mut loaded = systems
-            .load_file(&cfg, &HashMap::new())
+            .load_file(&cfg, &HashMap::new(), None)
             .expect("failed to load the Second Reality config");
         assert_eq!(loaded.system.name(), "PC");
 
