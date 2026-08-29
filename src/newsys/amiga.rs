@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fs,
     io::{BufReader, Read, Seek, SeekFrom},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use tracing::{debug, info};
 
@@ -81,6 +81,22 @@ fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
 
 /// First longword of an AmigaDOS executable (`HUNK_HEADER`).
 const HUNK_MAGIC: [u8; 4] = [0x00, 0x00, 0x03, 0xF3];
+
+/// Whether one of `files` is an AmigaDOS executable — which is to say, whether
+/// the directory they came from is one release rather than a directory of
+/// unrelated ones. [`crate::files::collect_files`] asks before it splits a
+/// directory into one playlist entry per file, because the whole directory is
+/// mounted as the hard drive the program is started from: split up, the
+/// executable arrives on its own and every data file it opens by a relative
+/// path (`musikk/p61.dhreph2`) is missing, so the demo quits on the first read.
+pub fn holds_executable(files: &[PathBuf]) -> bool {
+    files.iter().any(|path| {
+        // Custom music (`.cus`, `.fp`) is a player plus its tune, and so looks
+        // exactly like an executable — `load()` skips it for the same reason.
+        !has_any_extension(path, &["cus", "fp"])
+            && read_header(path, 4).is_ok_and(|data| data.starts_with(&HUNK_MAGIC))
+    })
+}
 
 // Hunk block ids, as they appear on disk (see `dos/doshunks.h`).
 const HUNK_NAME: u32 = 0x3E8;
@@ -231,10 +247,20 @@ fn parse_exe<R: Read + Seek>(reader: &mut HunkReader<R>) -> Option<()> {
     }
 
     for size in sizes {
-        // Every hunk starts with the block holding its contents, and the header
+        // LoadSeg() reads one block at a time and skips the ones that carry no
+        // memory, wherever they turn up, so a hunk may open with debugger or
+        // name blocks before the block holding its contents — `eph-fels.exe`
+        // leads with a HUNK_DEBUG.
+        let mut block = reader.long()? & MEM_MASK;
+        while block == HUNK_NAME || block == HUNK_DEBUG {
+            let count = reader.long()?;
+            reader.skip(u64::from(count) * 4)?;
+            block = reader.long()? & MEM_MASK;
+        }
+        // Every hunk then has the block holding its contents, and the header
         // already reserved the memory for it. A block may ask for less than was
         // reserved — crunchers do that to get scratch space — but never more.
-        match reader.long()? & MEM_MASK {
+        match block {
             // An overlaid executable stops here and continues with an overlay
             // table describing hunks loaded on demand; the header is as far as
             // this walk usefully goes.
@@ -401,13 +427,14 @@ impl WorkFile {
     }
 
     fn set_fast(&mut self) {
-        self.set_machine(Machine::A1200);
-        self.set_cpu(Cpu::M68060);
+        self.set_machine(Machine::A4000);
+        //self.set_cpu(Cpu::M68030);
         self.set_fast_mem(8);
         self.set_z3_mem(128);
         self.set_meta("amiberry_jit", "enabled");
         self.set_meta("amiberry_cpu_speed", "max");
         self.set_meta("puae_fpu_model", "68882");
+        self.set_meta("amiberry_fpu_model", "68882");
     }
 
     fn is_aga(&self) -> bool {
@@ -419,24 +446,29 @@ impl WorkFile {
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 {
-        wf.set_machine(Machine::A1200);
+        if !wf.is_aga() {
+            wf.set_machine(Machine::A1200);
+        }
         //wf.set_meta("puae_model", "A1200");
     }
 
     let target_dir = WorkFile::new_dir()?;
+    // `system/amihdd/` is the skeleton of the generated drive: C: with the
+    // commands a startup-sequence may reach for (`echo`, `SetPatch`, ...) and
+    // LIBS: with the system libraries that aren't in ROM. The rest of those
+    // shipped on the Workbench disk, so a drive without a LIBS: has none of
+    // them. A demo that opens one gets a NULL back and, since it has nothing to
+    // draw with, closes what it did open and exits with a zero return code and
+    // no message — `eph-fels` does exactly that when `lowlevel.library` (the
+    // keyboard and joypad, which nearly every AGA demo reads) isn't there,
+    // which looks from the outside like it never ran. The release's own copies
+    // win: they are copied over these below.
+    copy_dir_all(system_dir().join("amihdd"), &target_dir)?;
     let s_dir = target_dir.join("s");
-    fs::create_dir(&s_dir)?;
-    let c_dir = target_dir.join("c");
-    fs::create_dir(&c_dir)?;
-    fs::copy(system_dir().join("c").join("echo"), c_dir.join("echo"))?;
+    fs::create_dir_all(&s_dir)?;
+
     let mut text: String = "".into();
     if wf.is_aga() {
-        //let model = wf.get_meta("puae_model", "");
-        //if model == "A1200" || model == "A4000" {
-        fs::copy(
-            system_dir().join("c").join("SetPatch"),
-            c_dir.join("SetPatch"),
-        )?;
         text += "SetPatch QUIET\n";
     }
     if copy_all {
@@ -598,6 +630,18 @@ impl System for AmigaSystem {
             Ok(())
         })?;
 
+        // A release that ships a file actually named `*.exe` means that one to
+        // be started. Failing that, the shallowest executable: the one meant to
+        // be run sits at the top of the release, while the deeper directories
+        // hold the parts it loads (an intro, a trackmo's chapters, a bonus).
+        // Ties are broken by path so the pick is stable.
+        exes.sort_by(|a, b| {
+            has_extension(b, "exe")
+                .cmp(&has_extension(a, "exe"))
+                .then_with(|| a.components().count().cmp(&b.components().count()))
+                .then_with(|| a.cmp(b))
+        });
+
         if self.xmem {
             file.set_fast_mem(8);
             file.set_meta("puae_chipmem_size", "4");
@@ -616,13 +660,13 @@ impl System for AmigaSystem {
             // file.set_meta("puae_z3mem_size", "128");
             // file.set_meta("puae_fastmem_size", "8");
             file.set_meta("puae_chipmem_size", "4");
-            file.make_temp()?;
-            let l_dir = file.temp_dir().unwrap().join("libs");
-            fs::create_dir(&l_dir)?;
-            fs::copy(
-                system_dir().join("libs").join("mathtrans.library"),
-                l_dir.join("mathtrans.library"),
-            )?;
+            // file.make_temp()?;
+            // let l_dir = file.temp_dir().unwrap().join("libs");
+            // fs::create_dir(&l_dir)?;
+            // fs::copy(
+            //     system_dir().join("libs").join("mathtrans.library"),
+            //     l_dir.join("mathtrans.library"),
+            // )?;
         }
 
         if is_dir {
@@ -701,6 +745,17 @@ mod tests {
     fn accepts_trailing_data() {
         let mut file = MINIMAL.to_vec();
         file.extend([0xDEAD, 0xBEEF]);
+        assert!(parses(&file));
+    }
+
+    /// A hunk may open with blocks that carry no memory, which LoadSeg() skips
+    /// wherever it meets them — `eph-fels.exe` puts a HUNK_DEBUG in front of its
+    /// first HUNK_CODE, and rejecting it costs the real demo to a lesser file.
+    #[test]
+    fn accepts_debug_block_before_the_hunk_contents() {
+        let mut file = MINIMAL[..6].to_vec();
+        file.extend([HUNK_DEBUG, 2, 0xF00D, 0xF00D]);
+        file.extend(&MINIMAL[6..]);
         assert!(parses(&file));
     }
 

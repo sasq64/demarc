@@ -7,7 +7,7 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-use super::utils::{build_m3u, copy_dir_all, has_extension};
+use super::utils::{build_m3u, copy_dir_all, has_extension, read_header};
 
 use crate::{
     newsys::{
@@ -67,6 +67,26 @@ fn free_name(dir: &Path, name: &str) -> PathBuf {
 /// GEMDOS executable called anything else, however big — `molz.tos` is a
 /// 651-byte loader sitting next to the 652K part it loads.
 const PROGRAM_EXTENSIONS: [&str; 4] = ["prg", "tos", "ttp", "app"];
+
+/// Whether one of `files` is a GEMDOS executable — which is to say, whether the
+/// directory they came from is one release rather than a directory of unrelated
+/// ones. [`crate::files::collect_files`] asks before it splits a directory into
+/// one playlist entry per file, because the whole directory becomes the hard
+/// drive the program is booted from and its data files have to come along.
+///
+/// The magic is only two bytes, so a program extension is wanted with it. That
+/// misses a release whose executable is named something else — [`load`] takes
+/// those, going by the magic alone — but a false positive here would fold a
+/// directory of separate demos into a single entry, which is the worse way to
+/// be wrong.
+///
+/// [`load`]: System::load
+pub fn holds_executable(files: &[PathBuf]) -> bool {
+    files.iter().any(|path| {
+        PROGRAM_EXTENSIONS.iter().any(|ext| has_extension(path, ext))
+            && read_header(path, 2).is_ok_and(|data| data == GEMDOS_MAGIC)
+    })
+}
 
 /// Which of `exes` to boot.
 ///

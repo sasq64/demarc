@@ -354,6 +354,16 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
         return Ok(());
     }
 
+    // An Amiga or Atari ST release is loaded as a hard drive: the directory the
+    // executable sits in becomes the drive, so the data files beside it come
+    // along. Taken apart into one entry per file the executable would arrive on
+    // its own and quit on the first data file it couldn't open, so the
+    // directory is the entry and isn't recursed into. `--many` still splits it.
+    if !many && crate::newsys::holds_hard_drive_release(&files) {
+        out.push(collect_file(dir)?);
+        return Ok(());
+    }
+
     // Mixed types in directory, add every valid file one by one. A directory
     // holding nothing but disk images is left to the loader, which mounts the
     // whole set rather than each image on its own.
@@ -398,6 +408,28 @@ mod tests {
         );
         assert_eq!(out[0].game_info.rank, Some(382));
         assert_eq!(out[1].game_info.rank, None);
+    }
+
+    /// An Amiga release is one entry, not one per file: the directory is
+    /// mounted as the hard drive it boots from, so the executable's data files
+    /// have to come with it. `--many` still asks for the files on their own.
+    #[test]
+    fn amiga_release_directory_is_collected_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let release = dir.path().join("eph-fels");
+        fs::create_dir_all(release.join("musikk")).unwrap();
+        fs::write(release.join("fels.exe"), [0x00, 0x00, 0x03, 0xF3]).unwrap();
+        fs::write(release.join("fels.readme"), b"a readme").unwrap();
+        fs::write(release.join("musikk").join("tune.p61"), b"a tune").unwrap();
+
+        let mut out = vec![];
+        collect_files(dir.path(), &mut out, false).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(&out[0].path, FileSource::Path(p) if *p == release));
+
+        let mut out = vec![];
+        collect_files(dir.path(), &mut out, true).unwrap();
+        assert!(out.len() > 1, "--many splits the release up again");
     }
 
     #[test]

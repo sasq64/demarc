@@ -52,6 +52,18 @@ mod sinclair;
 mod snes;
 mod tic80;
 
+/// Whether `files` — the files directly inside one directory — are a single
+/// release that has to be loaded as a whole, rather than unrelated demos that
+/// happen to sit side by side. Amiga and Atari ST releases are mounted as a
+/// hard drive and started from it, so the executable's data files have to come
+/// with it; see the two systems' own predicates for what each recognises.
+///
+/// [`crate::files::collect_files`] asks before it splits a directory into one
+/// playlist entry per file, the same way it asks [`holds_boot_list`].
+pub fn holds_hard_drive_release(files: &[PathBuf]) -> bool {
+    amiga::holds_executable(files) || atari_st::holds_executable(files)
+}
+
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
 /// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and
@@ -669,6 +681,15 @@ mod tests {
         let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
         assert!(work_file.get_meta("puae_use_whdload", "") == "disabled");
         assert!(work_file.get_meta("puae_model", "") == "A500");
+
+        // The generated drive carries a LIBS: of its own. Kickstart has only
+        // some of the system libraries in ROM, and a demo that opens one of the
+        // others — `lowlevel.library` for the keyboard and joypad — exits with
+        // no message at all when OpenLibrary() comes back empty.
+        assert!(
+            work_file.path.join("libs").join("lowlevel.library").exists(),
+            "generated drive has no LIBS:lowlevel.library"
+        );
 
         // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
         // needs an A1200.
