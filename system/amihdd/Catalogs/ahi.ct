@@ -1,0 +1,134 @@
+## version $VER: ahi.catalog 4.2 (dd.mm.yy)
+## language xxx
+## codeset 0
+;
+## chunk AUTH Translated by Your Name <you@tellus.universe>
+;
+; $Id: ahi.cd,v 4.2 1997/05/03 19:59:56 lcs Exp $
+; $Log: ahi.cd,v $
+; Revision 4.2  1997/05/03 19:59:56  lcs
+; Set version to 4
+;
+; Revision 4.1  1997/04/02 22:29:53  lcs
+; Bumped to version 4
+;
+; Revision 1.4  1997/02/20 10:26:13  lcs
+; New Flexcat caused some problems
+;
+; Revision 1.3  1997/02/10 02:23:06  lcs
+; Infowindow in the requester added.
+;
+; Revision 1.2  1997/02/04 22:14:27  lcs
+; The users preffered audio mode can now be selected in the requester
+;
+; Revision 1.1  1997/02/02 22:37:47  lcs
+; Initial revision
+;
+;
+;
+; Input and Output connector name
+;
+msgDefault
+
+;Default
+;
+; The requesters menu
+msgMenuControl
+
+;\000\000Control
+;
+msgMenuLastMode
+
+;L\000Last Mode
+;
+msgMenuNextMode
+
+;N\000Next Mode
+;
+msgMenuPropertyList
+
+;?\000Property List...
+;
+msgMenuRestore
+
+;R\000Restore
+;
+msgMenuOK
+
+;O\000OK
+;
+msgMenuCancel
+
+;C\000Cancel
+;
+; Mode name in requester whose driver cannot be opened
+;
+msgUnknown
+
+;UNKNOWN:Audio ID 0x%08lx
+;
+; The requester gadgets
+;
+msgReqOK
+
+;OK
+;
+msgReqCancel
+
+;Cancel
+;
+msgReqFrequency
+
+;Frequency
+;
+; Name of default mode in requester
+;
+msgDefaultMode
+
+;Default audio mode
+;
+; The requester's info-winodow
+;
+msgReqInfoTitle
+
+;Mode Properties
+;
+msgReqInfoAudioID
+
+;Audio mode ID: 0x%08lx
+;
+msgReqInfoResolution
+
+;Resolution: %ld bit %s
+;
+msgReqInfoMono
+
+;mono
+;
+msgReqInfoStereo
+
+;stereo
+;
+msgReqInfoStereoPan
+
+;stereo with panning
+;
+msgReqInfoChannels
+
+;Channels: %ld
+;
+msgReqInfoMixrate
+
+;Mixing rates: %ld-%ld Hz
+;
+msgReqInfoHiFi
+
+;HiFi mixing
+;
+msgReqInfoRecordHalf
+
+;Record in half duplex
+;
+msgReqInfoRecordFull
+
+;Record in full duplex
