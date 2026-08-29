@@ -1,5 +1,6 @@
 /target
-/system/WHD*
+/system/WHDSaves
+/system/WHDLoad*
 /libretro/
 /slang-shaders/
 __pycache__/
