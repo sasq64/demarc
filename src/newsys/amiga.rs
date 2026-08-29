@@ -305,6 +305,7 @@ impl AmigaSystem {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 enum Cpu {
     M68000,
@@ -327,6 +328,7 @@ impl From<Cpu> for String {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 enum Machine {
     A500OLD,
@@ -347,6 +349,7 @@ impl From<Machine> for String {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Kickstart {
     V12,
@@ -362,7 +365,7 @@ impl From<Kickstart> for String {
             Kickstart::V12 => "kick33180.A500",
             Kickstart::V13 => "kick34005.A500",
             Kickstart::V20 => "kick37175.A500",
-            Kickstart::V31A1200 => "kick40068.1200",
+            Kickstart::V31A1200 => "kick40068.A1200",
             Kickstart::V31A4000 => "kick40068.A4000",
         })
         .into()
@@ -370,45 +373,44 @@ impl From<Kickstart> for String {
 }
 
 impl WorkFile {
-    pub fn set_fast_mem(&mut self, mb: usize) {
+    fn set_fast_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
         self.set_meta("puae_fastmem_size", &mbs);
         self.set_meta("puae_z3mem_size", &mbs);
         self.set_meta("amiberry_z3mem_size", &mbs);
     }
 
-    pub fn set_z3_mem(&mut self, mb: usize) {
+    fn set_z3_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
         self.set_meta("puae_z3mem_size", &mbs);
         self.set_meta("amiberry_z3mem_size", &mbs);
     }
 
-    pub fn set_cpu(&mut self, cpu: Cpu) {
+    fn set_cpu(&mut self, cpu: Cpu) {
         self.set_meta("puae_cpu_model", cpu);
         self.set_meta("amiberry_cpu_model", cpu);
     }
-    pub fn set_machine(&mut self, machine: Machine) {
+    fn set_machine(&mut self, machine: Machine) {
         self.set_meta("puae_model", machine);
         self.set_meta("amiberry_model", machine);
     }
 
-    pub fn set_kickstart(&mut self, kickstart: Kickstart) {
+    fn set_kickstart(&mut self, kickstart: Kickstart) {
         self.set_meta("puae_kickstart", kickstart);
         self.set_meta("amiberry_kickstart", kickstart);
     }
 
-    pub fn set_fast(&mut self) {
-        self.set_meta("amiberry_cpu_model", "68040");
-        self.set_meta("amiberry_z3mem_size", "128");
+    fn set_fast(&mut self) {
+        self.set_machine(Machine::A1200);
+        self.set_cpu(Cpu::M68060);
+        self.set_fast_mem(8);
+        self.set_z3_mem(128);
         self.set_meta("amiberry_jit", "enabled");
         self.set_meta("amiberry_cpu_speed", "max");
-        self.set_meta("amiberry_kickstart", "kick40068.A4000");
-        self.set_meta("puae_model", "A1200");
-        self.set_meta("amiberry_model", "A4040");
         self.set_meta("puae_fpu_model", "68882");
     }
 
-    pub fn is_aga(&self) -> bool {
+    fn is_aga(&self) -> bool {
         let model = self.get_meta("puae_model", "");
         model == "A1200" || model == "A4000"
     }
@@ -474,6 +476,7 @@ impl System for AmigaSystem {
             ("puae_crop", "smaller"),
             ("amiberry_crop_overscan", "disabled"),
             ("puae_horizontal_pos", "-5"),
+            ("amiberry_video_vresolution", "auto"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
         .into()
