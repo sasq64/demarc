@@ -217,7 +217,12 @@ const EXTENDERS: &[&str] = &[
 /// and none of them is a size to run a demo at. The bounds are what a display
 /// could actually be — 320x200 at the bottom, 8K at the top — which throws all
 /// three out without needing to understand the rest of the name.
+// Only consumed from the `wine_res` handling below, which is Linux-only; kept
+// available everywhere so `reads_a_resolution_only_where_a_name_holds_one`
+// exercises the same parsing on every platform.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const MIN_SIDE: u32 = 120;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const MAX_SIDE: u32 = 7680;
 
 /// What can sit between the two numbers, most telling first.
@@ -227,6 +232,7 @@ const MAX_SIDE: u32 = 7680;
 /// included. So a name carrying both — `elevated_1920x1080` — is read by its
 /// `x`, and the `_` form is what is left for the names spelled
 /// `elevated_1920_1080`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
 
 /// Read the resolution a Windows release named itself after.
@@ -240,6 +246,7 @@ const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
 ///
 /// The digits are taken as they lie, so `vga640x480` reads as well as
 /// `demo_640x480` does; only the numbers have to make sense, per [`MIN_SIDE`].
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn res_from_name(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy().into_owned();
     RES_SEPARATORS
@@ -249,6 +256,7 @@ fn res_from_name(path: &Path) -> Option<String> {
 
 /// The first `<digits><separator><digits>` in `stem` that could be a screen
 /// mode, normalised to `WIDTHxHEIGHT`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn scan_res(stem: &str, separators: &[char]) -> Option<String> {
     let bytes = stem.as_bytes();
     for (i, sep) in stem.match_indices(separators) {
@@ -424,6 +432,7 @@ impl System for PcSystem {
             return Ok(false);
         };
 
+        #[cfg(target_os = "linux")]
         if file.has_tag("512x384") {
             file.set_meta(crate::wine_emu::META_RES, "512x384");
         }
@@ -432,6 +441,7 @@ impl System for PcSystem {
         // the one thing that has to be known before it starts - see
         // [`res_from_name`]. An entry that sets `wine_res` itself has said it
         // more deliberately, so it wins.
+        #[cfg(target_os = "linux")]
         if is_windows_program(&target)
             && !file.has_meta(crate::wine_emu::META_RES)
             && let Some(res) = res_from_name(&target)
