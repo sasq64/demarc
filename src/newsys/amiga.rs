@@ -39,7 +39,7 @@ fn use_amiberry(file: &WorkFile) -> bool {
 /// every demo boots as a default OCS A500 / 68000 / KS 1.3 regardless of the
 /// puae config — AGA included (see `docs/AMIBERRY.md`, "Integration gaps"). It
 /// can't be a pure rename: several puae options (`puae_fpu_model`, the display
-/// and floppy tweaks) have no Amiberry equivalent and are simply left behind.
+/// tweaks) have no Amiberry equivalent and are simply left behind.
 /// An already-present
 /// `amiberry_*` key (e.g. hand-written in an m3u) always wins over the
 /// translation.
@@ -56,6 +56,15 @@ fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
         ("puae_fastmem_size", "amiberry_fastmem_size"),
         ("puae_kickstart", "amiberry_kickstart"),
         ("puae_video_standard", "amiberry_video_standard"),
+        // Both spell drive speed as a percentage of 300 RPM with 0 meaning
+        // turbo, but the two cores disagree on the default: p-uae ships 100
+        // (accurate) and Amiberry ships 0 (turbo). Turbo loading breaks the
+        // custom trackloaders old A500 demos boot from — TEK's Hologon dies in
+        // an address error at the line-F vector — so `default_meta` pins
+        // `puae_floppy_speed` to 100 and this carries it across. `--fast-load`
+        // still wins, because it sets the puae key before the defaults are
+        // filled in.
+        ("puae_floppy_speed", "amiberry_floppy_speed"),
     ] {
         if let Some(v) = meta.get(puae).cloned() {
             meta.entry(amiberry.to_string()).or_insert(v);
@@ -528,12 +537,14 @@ impl System for AmigaSystem {
     fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("puae_model", "A500"),
+            ("amiberry_floppy_speed", "100"),
             ("puae_crop", "smaller"),
-            ("amiberry_crop_overscan", "disabled"),
+            ("amiberry_crop_overscan", "manual"),
+            ("amiberry_crop_width", "340"),
+            ("amiberry_crop_height", "278"),
             ("puae_horizontal_pos", "-5"),
             ("amiberry_video_vresolution", "auto"),
             //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
-            ("amiberry_overscan", "overscan"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
         .into()
@@ -566,16 +577,11 @@ impl System for AmigaSystem {
                     file.set_kickstart(Kickstart::V12);
                     //file.set_meta("puae_kickstart", "kick33180.A500");
                 } else if aga || self.aga {
-                    file.set_machine(Machine::A1200);
                     // file.set_meta("puae_model", "A1200");
                     // file.set_meta("amiberry_model", "A1200");
                     // if year >= 1993 {
                     //     file.set_meta("puae_model", "A1200");
                     // }
-                    if year >= 1995 {
-                        file.set_cpu(Cpu::M68030);
-                        //file.set_meta("puae_cpu_model", "68030");
-                    }
                     if year >= 1997 {
                         file.set_fast();
                         // file.set_meta("puae_fastmem_size", "8");
@@ -587,6 +593,12 @@ impl System for AmigaSystem {
                         // file.set_meta("amiberry_jit", "enabled");
                         // file.set_meta("amiberry_cpu_speed", "max");
                         // file.set_meta("amiberry_kickstart", "kick40068.A4000");
+                    } else if year >= 1995 {
+                        file.set_machine(Machine::A1200);
+                        file.set_cpu(Cpu::M68030);
+                        //file.set_meta("puae_cpu_model", "68030");
+                    } else {
+                        file.set_machine(Machine::A1200);
                     }
                 }
             }
@@ -681,7 +693,7 @@ impl System for AmigaSystem {
         }
 
         if file.get_meta("platform", "").contains("AGA") {
-            file.set_machine(Machine::A1200);
+            //file.set_machine(Machine::A1200);
             //file.set_meta("puae_model", "A1200");
         }
         if file.has_tag("amos") {
@@ -702,6 +714,13 @@ impl System for AmigaSystem {
             // )?;
         }
 
+        if file.get_meta("amiga_core", "") == "" {
+            file.set_meta(
+                "amiga_core",
+                if file.is_aga() { "amiberry" } else { "puae" },
+            );
+        }
+
         if is_dir {
             return Ok(true);
         }
@@ -718,10 +737,11 @@ impl System for AmigaSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let meta = path.get_all_meta();
+        let mut meta = path.get_all_meta();
         let core_name = if path.get_meta("amiga_core", "").contains("puae") {
             CORE_NAME_UAE
         } else {
+            puae_to_amiberry(&mut meta);
             CORE_NAME_AMIBERRY
         };
         debug!("Starting {core_name} with meta {meta:?}");
@@ -923,8 +943,27 @@ mod tests {
 
     #[test]
     fn drops_options_without_an_amiberry_equivalent() {
-        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_floppy_speed", "100")]);
+        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_crop", "smaller")]);
         assert!(!meta.keys().any(|k| k.starts_with("amiberry_")));
+    }
+
+    #[test]
+    fn renames_floppy_speed() {
+        // Amiberry's own default is turbo, which breaks old trackloaders, so
+        // the accurate speed `default_meta` pins has to reach it.
+        assert_eq!(
+            amiberry(&[("puae_floppy_speed", "100")])
+                .get("amiberry_floppy_speed")
+                .unwrap(),
+            "100"
+        );
+        // `--fast-load` still gets through.
+        assert_eq!(
+            amiberry(&[("puae_floppy_speed", "0")])
+                .get("amiberry_floppy_speed")
+                .unwrap(),
+            "0"
+        );
     }
 
     #[test]

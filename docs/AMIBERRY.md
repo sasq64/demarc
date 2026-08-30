@@ -74,6 +74,38 @@ under `src/` is patched — the fixes all live in the libretro port.
 | `amiberry_cpu_model` extended to 68040/68060 (+ matching FPU, `address_space_24=false`) | `libretro.cpp` cpu_model push |
 | Directory-as-harddrive mount | `libretro.cpp:4281` |
 | A4000 kickstart fallback to `kick40068.A1200`, now with a warning | `libretro.cpp:1826`, `:1890` |
+| Floppy images pushed as `-s floppy0=` instead of a positional arg | `libretro.cpp:1868`, `:5089` |
+
+### Why the floppy path can't be a positional argument
+
+`main.cpp`'s positional dispatch matches the disk-image extensions with the
+case-**sensitive** `_tcscmp` (`main.cpp:1542`), and `get_filename_extension`
+(`main.cpp:1248`) returns the extension verbatim — no case folding. The `.rp9`
+and `.lha` arms one screen up use `_tcsicmp`, so the inconsistency is plainly a
+slip rather than a decision.
+
+An uppercase `.DMS` or `.ADF` therefore misses every arm, falls through to the
+generic tail that only recognises configs and statefiles, and is dropped in
+silence; the core logs *"No game content provided; booting to Workbench"* and
+you get the Kickstart insert-disk hand. Scene releases are full of uppercase
+extensions (`PHENOMENA-Enigma.DMS` is what found this), so it is not an edge
+case. `.fdi` and `.raw` are advertised in `valid_extensions` but absent from
+that branch in any case, so they never inserted at all.
+
+`-s floppy0=<path>` sets `floppyslots[0].df` (`cfgfile.cpp:6673`) — the same
+field `disk_insert(0, ...)` would have written, and the one the disc-swap code
+reads back (`libretro.cpp:2437`) — while bypassing the extension matching
+entirely. This mirrors what the CD branch already does with `cdimage0=`
+(`libretro.cpp:5039`), for a related reason.
+
+`.uae` deliberately keeps the positional path: a config file handed over as
+content still has to reach main.cpp's config loader. The one thing given up is
+main.cpp's lookup of a `<image name>.uae` in the configurations dir, which
+would fight with the core options anyway.
+
+The case-sensitivity itself is worth fixing upstream (`_tcscmp` → `_tcsicmp` on
+`main.cpp:1516`, `:1534`, `:1542` — `.uss` and the CD extensions have it too),
+but that is `src/`, which we do not patch.
 
 On the demarc side: `$DEMARC_CORE_DIR` in `src/libloader.rs` (`local_core()`),
 `cap_malloc_arenas()` in `src/main.rs` (see [the JIT cache
