@@ -267,7 +267,7 @@ impl System for PSXSystem {
         let mut disc = None;
         let mut exe = None;
 
-        let psx_core = file.get_meta("psx_core", "");
+        let psx_core = file.get_meta_or("psx_core", "");
         let use_beetle = psx_core.contains("beetle") || psx_core.contains("mednafen");
 
         walk_dir(&file.path.clone(), 4, |path, ext, _header| {
@@ -316,7 +316,7 @@ impl System for PSXSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let psx_core = path.get_meta("psx_core", "");
+        let psx_core = path.get_meta_or("psx_core", "");
         let use_beetle = psx_core.contains("beetle") || psx_core.contains("mednafen");
         let core_name = if use_beetle {
             CORE_NAME_BEETLE

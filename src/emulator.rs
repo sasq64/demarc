@@ -493,7 +493,7 @@ impl Emulator {
     }
 
     pub fn get_info(&self) -> String {
-        let system = self.work_file.get_meta("system", "???");
+        let system = self.work_file.get_meta_or("system", "???");
         let GameInfo {
             title,
             group,

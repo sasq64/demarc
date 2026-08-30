@@ -83,7 +83,9 @@ const PROGRAM_EXTENSIONS: [&str; 4] = ["prg", "tos", "ttp", "app"];
 /// [`load`]: System::load
 pub fn holds_executable(files: &[PathBuf]) -> bool {
     files.iter().any(|path| {
-        PROGRAM_EXTENSIONS.iter().any(|ext| has_extension(path, ext))
+        PROGRAM_EXTENSIONS
+            .iter()
+            .any(|ext| has_extension(path, ext))
             && read_header(path, 2).is_ok_and(|data| data == GEMDOS_MAGIC)
     })
 }
@@ -228,7 +230,7 @@ impl System for AtariStSystem {
         // What the release itself asks for, as against what is guessed for it
         // below: a hard drive load replaces a guess, but never a request.
         let machine_given = {
-            let machine = file.get_meta("hatari_machinetype", "");
+            let machine = file.get_meta_or("hatari_machinetype", "");
             !machine.is_empty() && machine != "date"
         } || file.has_tag("ste");
         let ram_given = file.has_meta("hatari_ramsize")
@@ -240,8 +242,8 @@ impl System for AtariStSystem {
         // never a machine the core knows, so it has to be resolved here whether
         // the year says anything or not — see [`MACHINE_TYPES`] for what an
         // unresolved one costs.
-        if file.get_meta("hatari_machinetype", "") == "date" {
-            let year = file.get_meta("year", "").parse::<u32>().unwrap_or(0);
+        if file.get_meta_or("hatari_machinetype", "") == "date" {
+            let year = file.get_meta_or("year", "").parse::<u32>().unwrap_or(0);
             info!("FMT: picking the machine from year {year}");
             if year > 1994 {
                 file.set_meta("hatari_machinetype", "ste");
@@ -259,7 +261,7 @@ impl System for AtariStSystem {
 
         // A machine the core can't parse takes everything after it down with
         // it, so nothing may reach it but the four it knows.
-        let mut machine = file.get_meta("hatari_machinetype", "");
+        let mut machine = file.get_meta_or("hatari_machinetype", "");
         if !machine.is_empty() && !MACHINE_TYPES.contains(&machine.as_str()) {
             warn!("Ignoring unknown hatari_machinetype {machine:?}");
             machine = MACHINE_TYPES[0].into();
@@ -303,7 +305,7 @@ impl System for AtariStSystem {
                 file.path = images[0].clone();
             }
         } else if !exes.is_empty() {
-            let prg = pick_program(&exes, &file.path, &file.get_meta("boot_file", ""))
+            let prg = pick_program(&exes, &file.path, &file.get_meta_or("boot_file", ""))
                 .expect("exes is not empty");
             info!("FMT: booting {prg:?} from a GEMDOS hard drive");
 

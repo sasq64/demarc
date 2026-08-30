@@ -603,7 +603,7 @@ mod tests {
         let mut wf = WorkFile::new(release.clone());
         apply_override(&mut wf, &over).unwrap();
 
-        assert_eq!(wf.get_meta("dosbox_pure_cycles", ""), "max");
+        assert_eq!(wf.get_meta_or("dosbox_pure_cycles", ""), "max");
         assert!(
             wf.is_temporary() && wf.path.starts_with(wf.temp_dir().unwrap()),
             "patching works on a copy, never the user's own files"
@@ -682,23 +682,27 @@ mod tests {
         // A plain executable is booted from a generated startup-sequence on a
         // stock A500, not through WHDLoad.
         let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-        assert!(work_file.get_meta("puae_use_whdload", "") == "disabled");
-        assert!(work_file.get_meta("puae_model", "") == "A500");
+        assert!(work_file.get_meta_or("puae_use_whdload", "") == "disabled");
+        assert!(work_file.get_meta_or("puae_model", "") == "A500");
 
         // The generated drive carries a LIBS: of its own. Kickstart has only
         // some of the system libraries in ROM, and a demo that opens one of the
         // others — `lowlevel.library` for the keyboard and joypad — exits with
         // no message at all when OpenLibrary() comes back empty.
         assert!(
-            work_file.path.join("libs").join("lowlevel.library").exists(),
+            work_file
+                .path
+                .join("libs")
+                .join("lowlevel.library")
+                .exists(),
             "generated drive has no LIBS:lowlevel.library"
         );
 
         // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
         // needs an A1200.
         let work_file = test_load(&testdata.join("nexus7"), "Amiga");
-        assert!(work_file.get_meta("puae_use_whdload", "") == "enabled");
-        assert!(work_file.get_meta("puae_model", "") == "A1200");
+        assert!(work_file.get_meta_or("puae_use_whdload", "") == "enabled");
+        assert!(work_file.get_meta_or("puae_model", "") == "A1200");
     }
     /// A bare music file has no system of its own, so it falls through every
     /// other system to [`MusicSystem`] — both on its own and as the only

@@ -359,7 +359,7 @@ fn place_extender(file: &WorkFile, source: &Path) -> Result<()> {
 /// Is a meta value one of the ways of saying yes?
 fn is_set(file: &WorkFile, key: &str) -> bool {
     matches!(
-        file.get_meta(key, "").to_ascii_lowercase().as_str(),
+        file.get_meta_or(key, "").to_ascii_lowercase().as_str(),
         "true" | "1" | "yes"
     ) || file.has_tag("dos4gw")
 }
@@ -870,13 +870,13 @@ mod tests {
 
         let mut wf = WorkFile::new(release.clone());
         assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta(crate::wine_emu::META_RES, ""), "1920x1080");
+        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1920x1080");
 
         // What the entry says was decided by a person, and beats a file name.
         let meta = HashMap::from([(crate::wine_emu::META_RES.to_string(), "800x600".to_string())]);
         let mut wf = WorkFile::new_with_meta(release, meta);
         assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta(crate::wine_emu::META_RES, ""), "800x600");
+        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "800x600");
 
         // The same release, spelled the other way.
         let elevated = dir.path().join("elevated");
@@ -884,7 +884,7 @@ mod tests {
         write_bytes(&elevated, "elevated_1440_900.exe", &pe);
         let mut wf = WorkFile::new(elevated);
         assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta(crate::wine_emu::META_RES, ""), "1440x900");
+        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1440x900");
 
         // A DOS program runs under DOSBox, which has no such setting to fill.
         let dos = dir.path().join("dos");

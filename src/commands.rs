@@ -660,7 +660,7 @@ fn handle_cmd(
                         }
                         let disk_no = emu.disk_no;
                         emu.set_disk(disk_no);
-                        let floppy = emu.work_file.get_meta("system", "").starts_with("C64");
+                        let floppy = emu.work_file.get_meta_or("system", "").starts_with("C64");
                         let d = emu.disk_no + 1;
 
                         writer.write(SetHudText {
@@ -722,7 +722,7 @@ fn handle_cmd(
                         });
                     }
                     Cmd::Screenshot => {
-                        let title = emu.work_file.get_meta("title", "shot");
+                        let title = emu.work_file.get_meta_or("title", "shot");
                         let name = format!("{}-{}.png", title, time.elapsed_secs() as i32);
                         _ = emu.save_png(&name);
                         writer.write(SetHudText {

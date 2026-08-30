@@ -61,7 +61,7 @@ impl WorkFile {
         self.meta.contains_key(key)
     }
 
-    pub fn get_meta(&self, arg: &str, def: impl Into<String>) -> String {
+    pub fn get_meta_or(&self, arg: &str, def: impl Into<String>) -> String {
         self.meta.get(arg).map_or(def.into(), |s| s.to_string())
     }
 
