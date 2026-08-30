@@ -1,0 +1,62 @@
+# Overrides for specific demos from demozoo
+# Can selects which file to download, and which file in the archive to load
+# Can also add meta data and patch files from the archive, data as base64 and full replacement for now
+
+[zoo.15]
+boot = "HEAVEN7W.EXE"
+
+# [zoo.100]
+# wine = {
+#   WINEARCH = "win32",
+#   WINEDLLOVERRIDES = "mscoree,mshtml=",
+# }
+
+[zoo.102]
+file = "rgba_tbc_elevated_2016.zip"
+boot = "elevated_1280x720.exe"
+
+[zoo.108]
+file = "2nd_real.zip"
+
+[zoo.138]
+file = "variform_by_kewlers.zip"
+
+[zoo.18030]
+file = "inside.zip"
+patch = {
+  info = "GUS 0x240",
+  target = "SOUND.CFG",
+  contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+}
+
+# Ninja II by Melon Dezign
+[zoo.18032]
+file = "ninja2.zip"
+patch = {
+  info = "GUS 0x240",
+  target = "NINJA2.CFG",
+  contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==",
+}
+
+[zoo.68604]
+file = "puls.zip"
+libretro = { dosbox_pure_cycles = "max" }
+
+# Tube by Baze / 3CS
+[zoo.57849]
+libretro = { dosbox_pure_cycles = 150000 }
+
+[zoo.119665]
+assign = { Love = "SYS:" }
+
+# Debris
+
+#
+# Use 32-bit supporting wine, then
+#
+# export WINEPREFIX=~/.wine-debris32
+# WINEARCH=win32 WINEDLLOVERRIDES="mscoree,mshtml="
+# wine wineboot -u
+# wine reg add 'HKCU\Software\Wine\Direct3D' /v renderer /t REG_SZ /d gl /f
+#
+# Run non-fullscreen

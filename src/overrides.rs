@@ -20,6 +20,9 @@
 //! [zoo.18030]
 //! file = "inside.zip"
 //! patch = { target = "SOUND.CFG", contents = "U0RJR1VT…", info = "GUS 0x240" }
+//!
+//! [zoo.119665]
+//! assign = { Love = "SYS:" }         # AmigaDOS assigns to make before booting
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -112,6 +115,12 @@ struct RawOverride {
     /// Anything else that belongs on the entry, under its own name.
     #[serde(default)]
     meta: toml::Table,
+    /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
+    /// They are folded into the single `assign` meta value the Amiga system
+    /// reads when it writes the startup-sequence — see
+    /// [`handle_exe`](crate::newsys::amiga).
+    #[serde(default)]
+    assign: toml::Table,
     /// One patch, or an array of them.
     patch: Option<Patches>,
 }
@@ -193,6 +202,20 @@ impl RawOverride {
                 };
                 meta.insert(leak(key), leak(value));
             }
+        }
+
+        // `Name=Target;Name2=Target2`, which is the shape
+        // `newsys::amiga::handle_exe` splits back apart. Written out here
+        // rather than kept as a table because meta is strings all the way down.
+        let mut assigns = Vec::new();
+        for (key, value) in self.assign {
+            let Some(value) = meta_value(&value) else {
+                bail!("assign {key} is a {}, not a value", value.type_str());
+            };
+            assigns.push(format!("{key}={value}"));
+        }
+        if !assigns.is_empty() {
+            meta.insert("assign", leak(assigns.join(";")));
         }
 
         let patches = self
@@ -285,6 +308,28 @@ mod tests {
         assert_eq!(inside.patches[0].info, "GUS 0x240");
         assert_eq!(inside.patches[0].offset, None);
         assert_eq!(inside.patches[0].bytes().unwrap(), [0, 1, 2]);
+    }
+
+    /// `assign` is written as a table of AmigaDOS names, and arrives as the one
+    /// `assign` meta string `newsys::amiga` splits back apart.
+    #[test]
+    fn folds_assigns_into_one_meta_value() {
+        let overrides = parse(
+            r#"
+            [zoo.119665]
+            assign = { Love = "SYS:" }
+
+            [zoo.2]
+            assign = { Data = "DH0:data", Music = "DH0:mod" }
+            "#,
+        )
+        .unwrap();
+        assert_eq!(overrides[&119665].meta["assign"], "Love=SYS:");
+        assert_eq!(overrides[&2].meta["assign"], "Data=DH0:data;Music=DH0:mod");
+        // Nothing written, nothing set — the Amiga side never sees the key.
+        assert!(!parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&3]
+            .meta
+            .contains_key("assign"));
     }
 
     /// A release needing more than one file written gets an array of patches,
