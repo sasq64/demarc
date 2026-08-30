@@ -774,9 +774,17 @@ fn main() {
     // Load entries from a tab-separated demo database (id, title, author, date,
     // party, category, tags, download — named or in that order). Each URL is
     // fetched on demand when loaded.
+
+    // A Windows demo takes the whole screen for its own wine + gamescope
+    // session, so it has nothing to render into a grid cell: leave those
+    // entries out of a grid rather than let one blank the grid while it runs.
+    let mut exclude = args.exclude.clone();
+    if args.grid.is_some() {
+        exclude.push(Regex::new("(?i)^platform:windows$").unwrap());
+    }
     let filter = DbFilter {
         include: &args.include,
-        exclude: &args.exclude,
+        exclude: &exclude,
     };
     if let Some(db) = &args.db {
         let path = Path::new(db);
