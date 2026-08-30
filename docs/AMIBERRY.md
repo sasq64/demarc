@@ -70,6 +70,7 @@ under `src/` is patched — the fixes all live in the libretro port.
 | `amiberry_jit` option — sets `cachesize` + clears cycle-exact | `libretro.cpp:684`, `:814`, `:4101` |
 | `amiberry_cpu_speed` option (`default`/`real`/`max`) | `libretro.cpp:686`, `:830`, `:4132` |
 | `amiberry_z3mem_size` option (up to 512 MB) | `libretro.cpp:683`, `:790` |
+| `amiberry_chipmem_size` / `amiberry_bogomem_size` / `amiberry_fastmem_size` options (puae value space) | `libretro.cpp` variables + option_defs, chip/bogo/fastmem push |
 | `amiberry_cpu_model` extended to 68040/68060 (+ matching FPU, `address_space_24=false`) | `libretro.cpp` cpu_model push |
 | Directory-as-harddrive mount | `libretro.cpp:4281` |
 | A4000 kickstart fallback to `kick40068.A1200`, now with a warning | `libretro.cpp:1826`, `:1890` |
@@ -131,10 +132,12 @@ A mapping layer in `amiga.rs` is the obvious fix, but note it cannot be a pure
 rename — see the option-coverage gaps below.
 
 **2. Option coverage.** Even renamed, Amiberry's libretro exposes no equivalent
-for `puae_fpu_model`, `puae_fastmem_size` or `puae_chipmem_size`. We added
-`amiberry_z3mem_size`, `amiberry_cpu_speed` (the nearest thing to
-`puae_cpu_throttle`, and the one that matters — see Starstruck below) and
-040/060 CPUs; the rest are still missing.
+for `puae_fpu_model`. We added `amiberry_z3mem_size`, `amiberry_chipmem_size`,
+`amiberry_bogomem_size` and `amiberry_fastmem_size` (all four taking the same
+values as their `puae_*` counterparts, so they are plain renames in
+`amiga.rs`), `amiberry_cpu_speed` (the nearest thing to `puae_cpu_throttle`,
+and the one that matters — see Starstruck below) and 040/060 CPUs; the rest are
+still missing.
 
 **3. Startup ROM scan cost.** Amiberry recursively CRC32/SHA1-scans the whole
 demarc `system/` dir (fuse, vice, musix, pcem ROMs, win…) on every load — about
@@ -315,7 +318,7 @@ and it applies to **any** JIT core, p-uae included.
 ## Open items
 
 1. **`puae_*` → `amiberry_*` mapping** in `amiga.rs`, plus the missing options
-   (fpu_model, fastmem_size, chipmem_size). Without it every demo still runs as
+   (fpu_model). Without it every demo still runs as
    a default OCS A500 unless its m3u spells out `amiberry_*` by hand, the way
    `tbl/demo.m3u` does.
 2. **Upstream `bip_*` wrapper fix** — route the 2-arg wrappers through

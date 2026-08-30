@@ -38,9 +38,9 @@ fn use_amiberry(file: &WorkFile) -> bool {
 /// Amiberry silently drops any option it doesn't recognise, so without this
 /// every demo boots as a default OCS A500 / 68000 / KS 1.3 regardless of the
 /// puae config — AGA included (see `docs/AMIBERRY.md`, "Integration gaps"). It
-/// can't be a pure rename: several puae options (`puae_fpu_model`,
-/// `puae_fastmem_size`, `puae_chipmem_size`, the display and floppy tweaks) have
-/// no Amiberry equivalent and are simply left behind. An already-present
+/// can't be a pure rename: several puae options (`puae_fpu_model`, the display
+/// and floppy tweaks) have no Amiberry equivalent and are simply left behind.
+/// An already-present
 /// `amiberry_*` key (e.g. hand-written in an m3u) always wins over the
 /// translation.
 fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
@@ -49,21 +49,17 @@ fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
         ("puae_model", "amiberry_model"),
         ("puae_cpu_model", "amiberry_cpu_model"),
         ("puae_z3mem_size", "amiberry_z3mem_size"),
+        // Chip and Slow RAM count in the same 512K / 256K units in both cores,
+        // because both hand the value straight to cfgfile.
+        ("puae_chipmem_size", "amiberry_chipmem_size"),
+        ("puae_bogomem_size", "amiberry_bogomem_size"),
+        ("puae_fastmem_size", "amiberry_fastmem_size"),
         ("puae_kickstart", "amiberry_kickstart"),
         ("puae_video_standard", "amiberry_video_standard"),
     ] {
         if let Some(v) = meta.get(puae).cloned() {
             meta.entry(amiberry.to_string()).or_insert(v);
         }
-    }
-
-    // Amiberry exposes no Zorro II fastmem option, but its Zorro III fast RAM
-    // (`amiberry_z3mem_size`, which we added) covers the same need. Fold
-    // `puae_fastmem_size` into it when the config didn't already ask for Z3.
-    if !meta.contains_key("amiberry_z3mem_size")
-        && let Some(v) = meta.get("puae_fastmem_size").cloned()
-    {
-        meta.insert("amiberry_z3mem_size".into(), v);
     }
 
     // p-uae runs the CPU unthrottled by default; Amiberry throttles it to the
@@ -373,6 +369,8 @@ impl From<Cpu> for String {
 enum Machine {
     A500OLD,
     A500,
+    A500PLUS,
+    A600,
     A1200,
     A4000,
 }
@@ -382,6 +380,8 @@ impl From<Machine> for String {
         (match value {
             Machine::A500OLD => "A500OG",
             Machine::A500 => "A500",
+            Machine::A500PLUS => "A500+",
+            Machine::A600 => "A600",
             Machine::A1200 => "A1200",
             Machine::A4000 => "A4040",
         })
@@ -416,8 +416,13 @@ impl WorkFile {
     fn set_fast_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
         self.set_meta("puae_fastmem_size", &mbs);
-        self.set_meta("puae_z3mem_size", &mbs);
-        self.set_meta("amiberry_z3mem_size", &mbs);
+        self.set_meta("amiberry_fastmem_size", &mbs);
+    }
+
+    fn set_chip_mem(&mut self, mb: usize) {
+        let mbs = mb.to_string();
+        self.set_meta("puae_chipmem_size", &mbs);
+        self.set_meta("amiberry_chipmem_size", &mbs);
     }
 
     fn set_z3_mem(&mut self, mb: usize) {
@@ -430,6 +435,7 @@ impl WorkFile {
         self.set_meta("puae_cpu_model", cpu);
         self.set_meta("amiberry_cpu_model", cpu);
     }
+
     fn set_machine(&mut self, machine: Machine) {
         self.set_meta("puae_model", machine);
         self.set_meta("amiberry_model", machine);
@@ -441,8 +447,8 @@ impl WorkFile {
     }
 
     fn set_fast(&mut self) {
-        self.set_machine(Machine::A4000);
-        //self.set_cpu(Cpu::M68030);
+        self.set_machine(Machine::A1200);
+        self.set_cpu(Cpu::M68030);
         self.set_fast_mem(8);
         self.set_z3_mem(128);
         self.set_meta("amiberry_jit", "enabled");
@@ -453,7 +459,7 @@ impl WorkFile {
 
     fn is_aga(&self) -> bool {
         let model = self.get_meta("puae_model", "");
-        model == "A1200" || model == "A4000"
+        model == "A1200" || model == "A4000" || model == "A4040"
     }
 }
 
@@ -477,14 +483,17 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     // keyboard and joypad, which nearly every AGA demo reads) isn't there,
     // which looks from the outside like it never ran. The release's own copies
     // win: they are copied over these below.
-    copy_dir_all(system_dir().join("amihdd"), &target_dir)?;
-    let s_dir = target_dir.join("s");
-    fs::create_dir_all(&s_dir)?;
-
     let mut text: String = "".into();
     if wf.is_aga() {
-        text += "SetPatch QUIET\n";
+        copy_dir_all(system_dir().join("amihdd"), &target_dir)?;
+        text += "C:SetPatch QUIET\n";
+        text += "C:MakeDir RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys\nC:Copy >NIL: ENVARC: RAM:ENV ALL NOREQ\n";
+        text += "C:Assign >NIL: ENV: RAM:ENV\n";
+    } else {
+        copy_dir_all(system_dir().join("ami13"), &target_dir)?;
     }
+    let s_dir = target_dir.join("s");
+    fs::create_dir_all(&s_dir)?;
     if copy_all {
         let name = wf.file_name().unwrap().to_str().unwrap();
         text += &format!("echo \"Loading...\"\n{name}\n");
@@ -523,6 +532,8 @@ impl System for AmigaSystem {
             ("amiberry_crop_overscan", "disabled"),
             ("puae_horizontal_pos", "-5"),
             ("amiberry_video_vresolution", "auto"),
+            //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
+            ("amiberry_overscan", "overscan"),
             ("puae_mapper_mouse_toggle", "---"),
         ]
         .into()
@@ -555,14 +566,14 @@ impl System for AmigaSystem {
                     file.set_kickstart(Kickstart::V12);
                     //file.set_meta("puae_kickstart", "kick33180.A500");
                 } else if aga || self.aga {
-                    file.set_machine(Machine::A4000);
+                    file.set_machine(Machine::A1200);
                     // file.set_meta("puae_model", "A1200");
                     // file.set_meta("amiberry_model", "A1200");
                     // if year >= 1993 {
                     //     file.set_meta("puae_model", "A1200");
                     // }
                     if year >= 1995 {
-                        file.set_cpu(Cpu::M68040);
+                        file.set_cpu(Cpu::M68030);
                         //file.set_meta("puae_cpu_model", "68030");
                     }
                     if year >= 1997 {
@@ -656,6 +667,14 @@ impl System for AmigaSystem {
                 .then_with(|| a.cmp(b))
         });
 
+        if file.has_tag("requires-1mb-chipmem") {
+            file.set_chip_mem(2);
+        }
+        if file.has_tag("requires-68040") || file.has_tag("requires-68060") {
+            file.set_cpu(Cpu::M68040);
+        }
+
+        //file.set_machine(Machine::A1200);
         if self.xmem {
             file.set_fast_mem(8);
             file.set_meta("puae_chipmem_size", "4");
@@ -700,11 +719,10 @@ impl System for AmigaSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let meta = path.get_all_meta();
-        let core_name = if use_amiberry(path) {
-            //puae_to_amiberry(&mut meta);
-            CORE_NAME_AMIBERRY
-        } else {
+        let core_name = if path.get_meta("amiga_core", "").contains("puae") {
             CORE_NAME_UAE
+        } else {
+            CORE_NAME_AMIBERRY
         };
         debug!("Starting {core_name} with meta {meta:?}");
         let core = libloader::get_libretro(core_name).context("Could not load core")?;
@@ -905,24 +923,33 @@ mod tests {
 
     #[test]
     fn drops_options_without_an_amiberry_equivalent() {
-        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_chipmem_size", "4")]);
+        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_floppy_speed", "100")]);
         assert!(!meta.keys().any(|k| k.starts_with("amiberry_")));
     }
 
     #[test]
-    fn folds_fastmem_into_z3mem_only_when_z3_is_unset() {
-        assert_eq!(
-            amiberry(&[("puae_fastmem_size", "8")])
-                .get("amiberry_z3mem_size")
-                .unwrap(),
-            "8"
-        );
-        assert_eq!(
-            amiberry(&[("puae_fastmem_size", "8"), ("puae_z3mem_size", "128")])
-                .get("amiberry_z3mem_size")
-                .unwrap(),
-            "128"
-        );
+    fn renames_memory_options() {
+        let meta = amiberry(&[
+            ("puae_chipmem_size", "4"),
+            ("puae_bogomem_size", "2"),
+            ("puae_fastmem_size", "8"),
+        ]);
+        assert_eq!(meta.get("amiberry_chipmem_size").unwrap(), "4");
+        assert_eq!(meta.get("amiberry_bogomem_size").unwrap(), "2");
+        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
+    }
+
+    #[test]
+    fn keeps_fastmem_and_z3mem_apart() {
+        // Zorro II fast RAM is its own option now, so a config asking for both
+        // gets both rather than one folded into the other.
+        let meta = amiberry(&[("puae_fastmem_size", "8"), ("puae_z3mem_size", "128")]);
+        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
+        assert_eq!(meta.get("amiberry_z3mem_size").unwrap(), "128");
+
+        let meta = amiberry(&[("puae_fastmem_size", "8")]);
+        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
+        assert!(!meta.contains_key("amiberry_z3mem_size"));
     }
 
     #[test]
