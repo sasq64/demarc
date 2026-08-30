@@ -11,7 +11,7 @@ _Main goal_: Make it easy to watch oldschool (PAL) demos
 
 Supported systems:
 
-C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Playstation, Gameboy Color, Gameboy Advance, PC (DOS, and Windows through wine)
+C64, Amiga, Atari ST, Amstrad CPC, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy Color, Gameboy Advance, PC (DOS, and Windows through wine)
 
 * Runs multiple demos in order or shuffled
 * Shows demo meta data as overlay

@@ -11,6 +11,7 @@ use crate::newsys::music::MusicSystem;
 use crate::newsys::neo_geo::NeoGeoSystem;
 pub use crate::newsys::neo_geo::holds_boot_list;
 use crate::newsys::pc::PcSystem;
+use crate::newsys::pico8::Pico8System;
 use crate::newsys::playstation::PSXSystem;
 use crate::newsys::sinclair::SinclairSystem;
 use crate::newsys::snes::SNESSystem;
@@ -47,6 +48,7 @@ mod megadrive;
 mod music;
 mod neo_geo;
 mod pc;
+mod pico8;
 mod playstation;
 mod sinclair;
 mod snes;
@@ -390,6 +392,7 @@ impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
             Box::new(Tic80System {}),
+            Box::new(Pico8System {}),
             Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new()),
             Box::new(AtariXlSystem::new(args)),

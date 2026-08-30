@@ -50,10 +50,16 @@ fn buildbot_url(name: &str) -> String {
 /// release that does. Each holds one zip per platform, named
 /// `<name>_libretro-<system>.zip` and containing the library under the same
 /// name the buildbot uses, so nothing downstream has to know the difference.
-const ALT_SOURCES: &[(&str, &str)] = &[(
-    "amiberry",
-    "https://github.com/sasq64/amiberry/releases/download/latest",
-)];
+const ALT_SOURCES: &[(&str, &str)] = &[
+    (
+        "amiberry",
+        "https://github.com/sasq64/amiberry/releases/download/latest",
+    ),
+    (
+        "fake08",
+        "https://github.com/sasq64/fake-08/releases/download/latest",
+    ),
+];
 
 /// The platform segment used by the [`ALT_SOURCES`] archives, which name
 /// platforms their own way rather than the buildbot's. `None` on a platform
@@ -244,6 +250,10 @@ mod tests {
         assert_eq!(core_url("amiberry"), url);
         assert!(url.starts_with("https://github.com/sasq64/amiberry/releases/"));
         assert!(url.ends_with(&format!("amiberry_libretro-{}.zip", alt_system().unwrap())));
+        let fake08 = alt_url("fake08").expect("same platforms as amiberry");
+        assert_eq!(core_url("fake08"), fake08);
+        assert!(fake08.starts_with("https://github.com/sasq64/fake-08/releases/"));
+        assert!(fake08.ends_with(&format!("fake08_libretro-{}.zip", alt_system().unwrap())));
         // A core with no alternative source still goes to the buildbot.
         assert_eq!(alt_url("snes9x"), None);
         assert_eq!(core_url("snes9x"), buildbot_url("snes9x"));
@@ -294,6 +304,19 @@ mod tests {
         let path = get_libretro_from(&cache, "amiberry").expect("amiberry core");
         assert_eq!(path.file_name().unwrap(), &*dylib_name("amiberry"));
         assert!(std::fs::metadata(&path).unwrap().len() > 1024 * 1024);
+    }
+
+    /// Fetches the real release, so it is not part of the normal run:
+    /// `cargo test downloads_fake08 -- --ignored`.
+    #[test]
+    #[ignore = "downloads the fake-08 release"]
+    fn downloads_fake08_from_its_own_release() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = FileCache::at(tmp.path().join("cores"), 200 * 1024 * 1024);
+        let path = get_libretro_from(&cache, "fake08").expect("fake08 core");
+        assert_eq!(path.file_name().unwrap(), &*dylib_name("fake08"));
+        // Smaller than the other cores — a few hundred KB is a real build.
+        assert!(std::fs::metadata(&path).unwrap().len() > 256 * 1024);
     }
 
     #[test]
