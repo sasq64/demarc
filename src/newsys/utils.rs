@@ -70,6 +70,26 @@ fn is_single_file_compressor(format: ArchiveFormat) -> bool {
         ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
     )
 }
+
+/// Strip a file comment embedded in an LHA entry's name.
+///
+/// Amiga LHA archivers store a file's comment in the header's filename field,
+/// after a `nul` byte. The reader only honours that convention when the header
+/// names Amiga as its OS, which a level 0 header has no room to do, so the
+/// comment arrives glued onto the name with the `nul` escaped as `%00`
+/// (`dcs-nons.exe%00from _Shape (@b112b.mtalo.ton.tut.fi)`). Cut the name back
+/// at the `nul`, escaped or literal, the way `lha` itself does.
+fn strip_lha_comment(name: &str) -> &str {
+    let cut = [name.find('\0'), name.find("%00")]
+        .into_iter()
+        .flatten()
+        .min();
+    match cut {
+        Some(i) => &name[..i],
+        None => name,
+    }
+}
+
 pub fn is_archive(path: &Path) -> Result<bool> {
     let mut file = BufReader::new(fs::File::open(path)?);
     let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
@@ -111,6 +131,11 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
 
     while let Some(entry) = archive.next_entry()? {
         let name = entry.name();
+        let name = if format == ArchiveFormat::Lha {
+            strip_lha_comment(name)
+        } else {
+            name
+        };
         // Keep only normal path components so an absolute path or `..` in the
         // archive can't write outside the target directory.
         let rel: PathBuf = Path::new(name)
@@ -391,6 +416,20 @@ mod tests {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn strips_lha_filename_comments() {
+        assert_eq!(
+            strip_lha_comment("dcs-nons.exe%00from _Shape (@b112b.mtalo.ton.tut.fi)"),
+            "dcs-nons.exe"
+        );
+        assert_eq!(
+            strip_lha_comment("eld-sotd/eld-sotd.exe\0mail@host"),
+            "eld-sotd/eld-sotd.exe"
+        );
+        assert_eq!(strip_lha_comment("plain.exe"), "plain.exe");
+        assert_eq!(strip_lha_comment("%00only a comment"), "");
     }
 
     #[test]
