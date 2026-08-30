@@ -246,12 +246,18 @@ fn parse_exe<R: Read + Seek>(reader: &mut HunkReader<R>) -> Option<()> {
         sizes.push(u64::from(size & MEM_MASK));
     }
 
+    // The block that ended the previous hunk, when that hunk ran into this
+    // one's contents instead of a HUNK_END.
+    let mut pending = None;
     for size in sizes {
         // LoadSeg() reads one block at a time and skips the ones that carry no
         // memory, wherever they turn up, so a hunk may open with debugger or
         // name blocks before the block holding its contents — `eph-fels.exe`
         // leads with a HUNK_DEBUG.
-        let mut block = reader.long()? & MEM_MASK;
+        let mut block = match pending.take() {
+            Some(block) => block,
+            None => reader.long()? & MEM_MASK,
+        };
         while block == HUNK_NAME || block == HUNK_DEBUG {
             let count = reader.long()?;
             reader.skip(u64::from(count) * 4)?;
@@ -283,6 +289,14 @@ fn parse_exe<R: Read + Seek>(reader: &mut HunkReader<R>) -> Option<()> {
         loop {
             match reader.long()? & MEM_MASK {
                 HUNK_END => break,
+                // HUNK_END is what LoadSeg() waits for, not what it needs: a
+                // hunk is just as finished once the next one's contents turn
+                // up, and linkers do leave the terminator out — `dcs-klone.exe`
+                // runs its hunks straight into each other.
+                block @ (HUNK_CODE | HUNK_DATA | HUNK_BSS) => {
+                    pending = Some(block);
+                    break;
+                }
                 HUNK_RELOC32 | HUNK_RELOC16 | HUNK_RELOC8 | HUNK_RELRELOC32 | HUNK_ABSRELOC16 => {
                     skip_relocs(reader, hunk_count, false)?;
                 }
@@ -791,6 +805,29 @@ mod tests {
             0,
             0,
             HUNK_END,
+            HUNK_BSS,
+            1,
+            HUNK_END,
+        ]));
+    }
+
+    /// HUNK_END is a terminator LoadSeg() waits for rather than one it needs,
+    /// and linkers do leave it out — `dcs-klone.exe` runs its first hunk
+    /// straight into the second, and is a whole demo to lose over a marker.
+    #[test]
+    fn accepts_hunk_running_into_the_next_without_an_end() {
+        assert!(parses(&[
+            HUNK_HEADER,
+            0,
+            2,
+            0,
+            1,
+            2,
+            1,
+            HUNK_CODE,
+            2,
+            0x4E71_4E71,
+            0x4E75_0000,
             HUNK_BSS,
             1,
             HUNK_END,
