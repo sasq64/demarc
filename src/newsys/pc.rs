@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use crate::utils::read_at;
 use super::{System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
+use crate::utils::read_at;
 #[cfg(target_os = "linux")]
 use crate::wine_emu::WineEmu;
 use crate::workfile::WorkFile;

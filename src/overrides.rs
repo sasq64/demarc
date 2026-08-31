@@ -327,9 +327,11 @@ mod tests {
         assert_eq!(overrides[&119665].meta["assign"], "Love=SYS:");
         assert_eq!(overrides[&2].meta["assign"], "Data=DH0:data;Music=DH0:mod");
         // Nothing written, nothing set — the Amiga side never sees the key.
-        assert!(!parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&3]
-            .meta
-            .contains_key("assign"));
+        assert!(
+            !parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&3]
+                .meta
+                .contains_key("assign")
+        );
     }
 
     /// A release needing more than one file written gets an array of patches,

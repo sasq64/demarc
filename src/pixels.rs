@@ -1,4 +1,3 @@
-
 const fn expand5(c: u8) -> u8 {
     (c << 3) | (c >> 2)
 }
@@ -89,4 +88,3 @@ pub fn scan_frame(frame: &[u32]) -> u64 {
     }
     hash
 }
-
