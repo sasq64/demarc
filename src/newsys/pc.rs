@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::utils::read_at;
+use crate::utils::read_at;
 use super::{System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;

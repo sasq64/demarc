@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::newsys::get_ext;
 
 use super::System;
-use super::utils::read_at;
+use crate::utils::read_at;
 
 const CORE_NAME_FAKE08: &str = "fake08";
 

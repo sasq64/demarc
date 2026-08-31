@@ -36,12 +36,13 @@ mod music_emu;
 mod music_vis;
 mod newsys;
 mod overrides;
+mod pixels;
 mod post_process;
 mod retro_emu;
 mod screensaver;
 mod speed_test;
 mod system_dir;
-//mod utils;
+mod utils;
 mod workfile;
 mod zx_scr;
 

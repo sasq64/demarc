@@ -7,7 +7,7 @@ use std::{
 
 use tempfile::TempDir;
 
-use crate::newsys::utils::copy_dir_all;
+use crate::utils::copy_dir_all;
 
 #[derive(Default)]
 /// Used to pass around files or dirs that can be temporary.

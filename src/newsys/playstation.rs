@@ -7,7 +7,7 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-use super::utils::read_header;
+use crate::utils::read_header;
 
 use crate::{
     backend::Backend,

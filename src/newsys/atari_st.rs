@@ -7,15 +7,9 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-use super::utils::{build_m3u, copy_dir_all, has_extension, read_header};
+use crate::utils::{build_m3u, copy_dir_all, find_child, has_extension, read_header, sort_disks};
 
-use crate::{
-    newsys::{
-        utils::{find_child, sort_disks},
-        walk_dir,
-    },
-    workfile::WorkFile,
-};
+use crate::{newsys::walk_dir, workfile::WorkFile};
 
 use super::System;
 

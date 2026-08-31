@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use super::System;
-use super::utils::build_m3u;
+use crate::utils::{build_m3u, sort_disks};
 use crate::{
     Args,
-    newsys::{utils::sort_disks, walk_dir},
+    newsys::walk_dir,
     workfile::WorkFile,
 };
 use anyhow::Result;

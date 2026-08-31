@@ -4,15 +4,16 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
 
+use crate::backend::Backend;
 use crate::emu_file::{Override, Patch};
 use crate::m3u::M3u;
-use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::workfile::WorkFile;
 use crate::{Args, libloader};
 
-use utils::{get_ext, has_extension, read_at, sort_disks};
-use utils::{is_archive, unpack_into};
+use crate::utils::{get_ext, has_extension, read_at, sort_disks};
+use crate::utils::{is_archive, unpack_into};
 
 use amiga::AmigaSystem;
 use amstrad::AmstradSystem;
@@ -34,7 +35,6 @@ use snes::SNESSystem;
 use std::collections::HashMap;
 use tic80::Tic80System;
 
-pub(crate) mod utils;
 
 mod amiga;
 mod amstrad;

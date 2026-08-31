@@ -7,13 +7,13 @@ use std::{
 };
 use tracing::{debug, info};
 
-use super::utils::{copy_dir_all, has_any_extension, read_header};
+use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 
 use crate::{
     Args,
     backend::Backend,
     libloader,
-    newsys::{collect_disk_images, utils::has_extension, walk_dir},
+    newsys::{collect_disk_images, walk_dir},
     retro_emu::RetroCoreThreaded,
     system_dir,
     workfile::WorkFile,

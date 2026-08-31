@@ -12,8 +12,17 @@ use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
 use crate::backend::{Backend, ViewFocus};
+use crate::pixels::scan_frame;
 
-use super::{KEY_HOLD_FRAMES, RetroCoreDirect, WORKER_STACK_SIZE, scan_frame};
+use super::RetroCoreDirect;
+
+/// Stack for the thread a core runs on. See the `stack_size` call in
+/// [`RetroCoreThreaded::new`] for why the default is not enough.
+const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+/// How long a key scheduled by [`RetroCmd::SendKeys`] stays down before the
+/// matching release is sent. Long enough for any core to notice the press.
+const KEY_HOLD_FRAMES: u64 = 2;
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
 enum RetroCmd {

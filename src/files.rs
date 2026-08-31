@@ -12,7 +12,7 @@ use tracing::info;
 use crate::{
     emu_file::{EmuFile, FileSource, GameInfo, UrlList},
     m3u::M3u,
-    newsys::utils::{is_disk_image, unpack_if_packed},
+    utils::{is_disk_image, unpack_if_packed},
 };
 
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {

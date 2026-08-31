@@ -26,7 +26,7 @@ use anyhow::{Result, bail};
 use crate::backend::Backend;
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
-use crate::newsys::utils::get_ext;
+use crate::utils::get_ext;
 use crate::zx_scr;
 
 /// The CRNG `rate` value that corresponds to 60 cycle steps per second.

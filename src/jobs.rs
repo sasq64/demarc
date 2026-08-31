@@ -405,14 +405,14 @@ impl Jobs<PathBuf> {
     /// Unpacks `archive` into `target_dir`, reporting `target_dir` on success.
     ///
     /// Fails if the file isn't a recognised archive, where
-    /// [`crate::newsys::utils::unpack_into`] would return `Ok(false)` — a job that
+    /// [`crate::utils::unpack_into`] would return `Ok(false)` — a job that
     /// silently did nothing is harder to act on than an error.
     pub fn unpack(&mut self, archive: impl AsRef<Path>, target_dir: impl AsRef<Path>) -> JobId {
         let archive = archive.as_ref().to_path_buf();
         let target = target_dir.as_ref().to_path_buf();
         let name: Arc<str> = Arc::from(format!("unpack {}", archive.display()));
         self.spawn(name, move |_progress| {
-            if crate::newsys::utils::unpack_into(&archive, &target)? {
+            if crate::utils::unpack_into(&archive, &target)? {
                 Ok(target)
             } else {
                 anyhow::bail!("not a supported archive: {}", archive.display())
@@ -439,7 +439,7 @@ impl Jobs<PathBuf> {
             progress.set_done(0);
 
             let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-            if !crate::newsys::utils::unpack_into(&archive, &dir)? {
+            if !crate::utils::unpack_into(&archive, &dir)? {
                 let name = archive.file_name().unwrap_or(archive.as_os_str());
                 std::fs::copy(&archive, dir.join(name))?;
             }
