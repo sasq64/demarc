@@ -328,7 +328,7 @@ fn main() {
             },
             _ => file,
         };
-        if file.is_dir() {
+        if file.is_dir() && args.collect {
             let len = files.len();
             collect_files(&file, &mut files, args.many).unwrap();
             if len == files.len() {

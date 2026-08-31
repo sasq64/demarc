@@ -65,6 +65,10 @@ pub struct Args {
     #[arg(long)]
     pub many: bool,
 
+    /// Recursively look in directories for releases
+    #[arg(long)]
+    pub collect: bool,
+
     /// Start with the file-open selector showing and load nothing automatically.
     /// Any files/dirs given are still collected and become the selector's list.
     #[arg(short, long)]
