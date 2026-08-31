@@ -725,6 +725,10 @@ impl System for AmigaSystem {
             //file.set_machine(Machine::A1200);
             //file.set_meta("puae_model", "A1200");
         }
+        if file.is_aga() {
+            file.set_meta("amiberry_jit", "enabled");
+        }
+
         if file.has_tag("amos") {
             info!("AMOS DEMO");
             file.set_fast();
