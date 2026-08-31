@@ -19,7 +19,7 @@ use crate::{
     workfile::WorkFile,
 };
 
-use super::System;
+use super::{RELEASE_DIR, System};
 
 const CORE_NAME_UAE: &str = "puae";
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
@@ -428,6 +428,18 @@ impl WorkFile {
     }
 }
 
+/// Put the work file on the fast Amiga configuration: an accelerated A1200 with
+/// fast and Zorro III memory, an FPU and the JIT. This is what `fast = true` in
+/// `overrides.toml` asks for, for the releases where the year-and-tags guessing
+/// in [`AmigaSystem::load`] picks a machine too small to run them.
+///
+/// Applied before the rest of an override's meta (see
+/// [`apply_override`](crate::newsys::apply_override)), so an entry that writes
+/// `fast = true` can still name a single option of its own and have that win.
+pub fn apply_fast(file: &mut WorkFile) {
+    file.set_fast();
+}
+
 /// The `C:Assign` lines the `assign` meta (`NAME=path;NAME=path`) asks for.
 /// They have to run before the demo does, so they go at the top of whichever
 /// startup-sequence ends up booting it — the generated one in [`handle_exe`],
@@ -607,7 +619,7 @@ impl System for AmigaSystem {
                     // if year >= 1993 {
                     //     file.set_meta("puae_model", "A1200");
                     // }
-                    if year >= 1997 {
+                    if year >= 1995 {
                         file.set_fast();
                         // file.set_meta("puae_fastmem_size", "8");
                         // file.set_meta("puae_z3mem_size", "128");
@@ -618,9 +630,9 @@ impl System for AmigaSystem {
                         // file.set_meta("amiberry_jit", "enabled");
                         // file.set_meta("amiberry_cpu_speed", "max");
                         // file.set_meta("amiberry_kickstart", "kick40068.A4000");
-                    } else if year >= 1995 {
-                        file.set_machine(Machine::A1200);
-                        file.set_cpu(Cpu::M68030);
+                        //} //else if year >= 1995 {
+                        //file.set_machine(Machine::A1200);
+                        //file.set_cpu(Cpu::M68030);
                         //file.set_meta("puae_cpu_model", "68030");
                     } else {
                         file.set_machine(Machine::A1200);
@@ -658,7 +670,12 @@ impl System for AmigaSystem {
             file.set_meta("puae_floppy_sound", "100");
         }
 
-        let copy_all = !file.is_file();
+        // The whole release goes into the generated drive, since the program
+        // loads its parts and its music off it — unless we were handed one
+        // loose executable, which has no release around it to copy. An
+        // override's `boot_file` (or `--boot-file`) leaves the path pointing at
+        // one file inside a release it already unpacked, so it says so itself.
+        let copy_all = !file.is_file() || file.has_meta(RELEASE_DIR);
 
         let mut is_dir = false;
         // The release's own startup-sequence, when it has one, patched with the
@@ -725,7 +742,7 @@ impl System for AmigaSystem {
             //file.set_machine(Machine::A1200);
             //file.set_meta("puae_model", "A1200");
         }
-        if file.is_aga() {
+        if file.is_aga() && file.get_meta_or("amiberry_jit", "").is_empty() {
             file.set_meta("amiberry_jit", "enabled");
         }
 
@@ -959,6 +976,45 @@ mod tests {
             0,
             HUNK_END,
         ]));
+    }
+
+    /// `--boot-file`, and an override's `boot`, leave the work file pointing at
+    /// one program inside a release that is already unpacked. The rest of the
+    /// release still has to go into the drive: the program loads its parts and
+    /// its music off it.
+    #[test]
+    fn a_named_boot_file_still_brings_the_release_along() {
+        let dir = tempfile::Builder::new().tempdir().unwrap();
+        let exe: Vec<u8> = MINIMAL.iter().flat_map(|l| l.to_be_bytes()).collect();
+        fs::write(dir.path().join("demo"), &exe).unwrap();
+        fs::write(dir.path().join("music.mod"), b"data").unwrap();
+
+        let mut file = WorkFile::new(dir.path().join("demo"));
+        file.set_meta(RELEASE_DIR, dir.path().to_string_lossy());
+        assert!(AmigaSystem::default().load(&mut file).unwrap());
+
+        assert!(file.path.join("music.mod").is_file(), "data files come too");
+        assert_eq!(
+            fs::read_to_string(file.path.join("s/startup-sequence")).unwrap(),
+            "echo \"Loading...\"\ndemo\n"
+        );
+    }
+
+    /// Without a release around it — a loose executable the user pointed at —
+    /// only the program itself goes in, under the name the generated
+    /// startup-sequence calls. Copying its directory could be anything at all.
+    #[test]
+    fn a_loose_executable_goes_in_on_its_own() {
+        let dir = tempfile::Builder::new().tempdir().unwrap();
+        let exe: Vec<u8> = MINIMAL.iter().flat_map(|l| l.to_be_bytes()).collect();
+        fs::write(dir.path().join("demo"), &exe).unwrap();
+        fs::write(dir.path().join("unrelated"), b"data").unwrap();
+
+        let mut file = WorkFile::new(dir.path().join("demo"));
+        assert!(AmigaSystem::default().load(&mut file).unwrap());
+
+        assert!(file.path.join("amiga_file").is_file());
+        assert!(!file.path.join("unrelated").exists());
     }
 
     /// A release that boots itself keeps its own startup-sequence, so the

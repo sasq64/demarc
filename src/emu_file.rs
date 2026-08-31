@@ -416,6 +416,9 @@ pub struct Override {
     pub meta: HashMap<&'static str, &'static str>,
     // Patch these files after unpacking
     pub patches: Vec<Patch>,
+    // Run the release on the fast Amiga configuration (`newsys::amiga::apply_fast`),
+    // for the ones that need more machine than their year or tags suggest.
+    pub fast: bool,
 }
 
 #[cfg(test)]

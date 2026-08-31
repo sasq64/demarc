@@ -23,6 +23,9 @@
 //!
 //! [zoo.119665]
 //! assign = { Love = "SYS:" }         # AmigaDOS assigns to make before booting
+//!
+//! [zoo.7236]
+//! fast = true                        # accelerated A1200 with FPU, Z3 mem and JIT
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -30,8 +33,8 @@
 //! is described on [`Override`]; the three are applied at the three stages of a
 //! load — `file` when it is downloaded
 //! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
-//! `patch` once it is unpacked and `boot`/`libretro` as it is handed to a
-//! system (both in [`NewSys::load_file`](crate::newsys::NewSys::load_file)).
+//! `patch` once it is unpacked and `boot`/`libretro`/`fast` as it is handed to
+//! a system (both in [`NewSys::load_file`](crate::newsys::NewSys::load_file)).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -115,6 +118,12 @@ struct RawOverride {
     /// Anything else that belongs on the entry, under its own name.
     #[serde(default)]
     meta: toml::Table,
+    /// `fast = true` to run the release on the fast Amiga configuration —
+    /// an accelerated A1200 with fast/Z3 memory, an FPU and the JIT. Shorthand
+    /// for the half-dozen core options that spells out, see
+    /// [`apply_fast`](crate::newsys::amiga::apply_fast).
+    #[serde(default)]
+    fast: bool,
     /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
     /// They are folded into the single `assign` meta value the Amiga system
     /// reads when it writes the startup-sequence — see
@@ -231,6 +240,7 @@ impl RawOverride {
             boot_file: self.boot.map(leak),
             meta,
             patches,
+            fast: self.fast,
         })
     }
 }
@@ -332,6 +342,24 @@ mod tests {
                 .meta
                 .contains_key("assign")
         );
+    }
+
+    /// `fast = true` is one word standing in for a whole Amiga configuration,
+    /// and is applied before the entry's own options so those still win.
+    #[test]
+    fn takes_the_fast_amiga_configuration() {
+        let overrides = parse(
+            r#"
+            [zoo.7236]
+            fast = true
+
+            [zoo.108]
+            file = "2nd_real.zip"
+            "#,
+        )
+        .unwrap();
+        assert!(overrides[&7236].fast);
+        assert!(!overrides[&108].fast);
     }
 
     /// A release needing more than one file written gets an array of patches,

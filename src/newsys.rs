@@ -143,14 +143,28 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
     Ok(())
 }
 
+/// Meta key holding the release directory a `boot_file` was picked out of, set
+/// by [`apply_override`] when it narrows the work file's path to one program.
+/// A system that copies a release into a drive of its own reads it to know that
+/// what it is holding is one file out of a release rather than a loose program.
+pub const RELEASE_DIR: &str = "release_dir";
+
 /// Apply what `overrides.toml` says about this release, once it is unpacked and
 /// before any system looks at it — see [`crate::overrides`].
 ///
-/// The three parts are independent and any of them may be absent: meta goes on
-/// the [`WorkFile`], patches are written into the release, and `boot_file`
+/// The parts are independent and any of them may be absent: `fast` and meta go
+/// on the [`WorkFile`], patches are written into the release, and `boot_file`
 /// points the path at the one program to start so that the systems' own file
 /// picking is skipped.
+///
+/// `fast` goes on first, because it is a whole Amiga configuration written as
+/// one word (see [`amiga::apply_fast`]) and an entry that also names an option
+/// of its own means that one to stand.
 fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
+    if over.fast {
+        debug!("Override asks for the fast Amiga configuration");
+        amiga::apply_fast(file);
+    }
     for (key, val) in &over.meta {
         debug!("Override sets {key}={val}");
         file.set_meta(key, *val);
@@ -162,6 +176,14 @@ fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
         match find_named(&release_dir(file), boot)? {
             Some(path) => {
                 info!("Override starts {path:?}");
+                // A system tells "one loose program the user pointed at" from
+                // "a whole release" by whether the work file is a file or a
+                // directory, and copies the data files along only in the
+                // second case (`copy_all` in `newsys::amiga`). Narrowing the
+                // path to the named program throws that away, so leave behind
+                // the release it came out of.
+                let dir = release_dir(file).to_string_lossy().into_owned();
+                file.set_meta(RELEASE_DIR, dir);
                 file.path = path;
             }
             // The archive it named is not the one that was downloaded, most
@@ -591,12 +613,43 @@ mod tests {
             "patching works on a copy, never the user's own files"
         );
         assert!(wf.path.ends_with("INSIDE.EXE"), "started {:?}", wf.path);
+        assert_eq!(
+            Path::new(&wf.get_meta_or(RELEASE_DIR, "")),
+            wf.path.parent().unwrap(),
+            "the release the program was picked out of is left behind"
+        );
         // Written next to the program, which is the directory DOSBox mounts.
         let cfg = wf.path.parent().unwrap().join("SOUND.CFG");
         assert_eq!(fs::read(cfg).unwrap(), [0, 1, 2]);
         assert!(
             release.join("INSIDE.EXE").exists() && !release.join("SOUND.CFG").exists(),
             "the release itself is untouched"
+        );
+    }
+
+    /// `fast = true` writes the accelerated Amiga configuration, and does it
+    /// first, so an entry that also names one of those options keeps it.
+    #[test]
+    fn fast_sets_the_amiga_configuration_the_entry_can_still_amend() {
+        let over = Override {
+            fast: true,
+            meta: HashMap::from([("amiberry_cpu_model", "68040")]),
+            ..Default::default()
+        };
+
+        let mut wf = WorkFile::new(PathBuf::from("demo.lha"));
+        apply_override(&mut wf, &over).unwrap();
+
+        assert_eq!(wf.get_meta_or("amiberry_model", ""), "A1200");
+        assert_eq!(wf.get_meta_or("amiberry_fastmem_size", ""), "8");
+        assert_eq!(wf.get_meta_or("amiberry_z3mem_size", ""), "128");
+        assert_eq!(wf.get_meta_or("amiberry_jit", ""), "enabled");
+        assert_eq!(wf.get_meta_or("amiberry_cpu_speed", ""), "max");
+        assert_eq!(wf.get_meta_or("puae_cpu_model", ""), "68030");
+        assert_eq!(
+            wf.get_meta_or("amiberry_cpu_model", ""),
+            "68040",
+            "the entry's own option is written after the fast configuration"
         );
     }
 
@@ -669,15 +722,17 @@ mod tests {
 
         // The generated drive carries a LIBS: of its own. Kickstart has only
         // some of the system libraries in ROM, and a demo that opens one of the
-        // others — `lowlevel.library` for the keyboard and joypad — exits with
-        // no message at all when OpenLibrary() comes back empty.
+        // others exits with no message at all when OpenLibrary() comes back
+        // empty. This one boots a 1.3 A500, whose skeleton is `system/ami13`;
+        // the AGA drive gets the larger `system/amihdd` with `lowlevel.library`
+        // (the keyboard and joypad) in it, which no 1.3 machine ever had.
         assert!(
             work_file
                 .path
-                .join("Libs")
-                .join("lowlevel.library")
+                .join("libs")
+                .join("mathtrans.library")
                 .exists(),
-            "generated drive has no LIBS:lowlevel.library"
+            "generated drive has no LIBS:"
         );
 
         // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
