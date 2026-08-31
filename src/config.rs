@@ -69,6 +69,10 @@ pub struct Args {
     #[arg(long)]
     pub collect: bool,
 
+    /// Skip first n demos. Mostly useful for grid testing
+    #[arg(long, default_value_t = 0)]
+    pub skip_count: usize,
+
     /// Start with the file-open selector showing and load nothing automatically.
     /// Any files/dirs given are still collected and become the selector's list.
     #[arg(short, long)]

@@ -312,6 +312,7 @@ fn main() {
         }
         collect_db(path, &filter, &mut files).unwrap();
     }
+
     // Anything piped in is a db too, so it can be filtered before loading.
     collect_db_stdin(&filter, &mut files).unwrap();
 
@@ -350,6 +351,10 @@ fn main() {
         // sort last, keeping the order they were collected in.
         Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.unwrap_or(u32::MAX)),
         None => {}
+    }
+
+    if args.skip_count > 0 {
+        files.drain(0..args.skip_count);
     }
 
     let multiple = files.len() > 1;
