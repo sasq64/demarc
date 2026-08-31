@@ -42,7 +42,7 @@ use tracing::{info, warn};
 
 use crate::emu_file::{Override, Patch};
 use crate::files::leak;
-use crate::frontend::system_dir;
+use crate::system_dir;
 
 /// What the file is called wherever it is looked for.
 pub const FILE_NAME: &str = "overrides.toml";

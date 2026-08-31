@@ -1,36 +1,39 @@
-use crate::emu_file::{Override, Patch};
-use crate::m3u::M3u;
-use crate::newsys::amstrad::AmstradSystem;
-use crate::newsys::atari_2600::Atari2600System;
-use crate::newsys::atari_st::AtariStSystem;
-use crate::newsys::atari_xl::AtariXlSystem;
-use crate::newsys::gba::GBASystem;
-use crate::newsys::images::ImageSystem;
-use crate::newsys::megadrive::MegadriveSystem;
-use crate::newsys::music::MusicSystem;
-use crate::newsys::neo_geo::NeoGeoSystem;
-pub use crate::newsys::neo_geo::holds_boot_list;
-use crate::newsys::pc::PcSystem;
-use crate::newsys::pico8::Pico8System;
-use crate::newsys::playstation::PSXSystem;
-use crate::newsys::sinclair::SinclairSystem;
-use crate::newsys::snes::SNESSystem;
-use crate::newsys::tic80::Tic80System;
-use crate::newsys::utils::{has_extension, read_at, sort_disks};
-use crate::retro_emu::{Backend, RetroCoreThreaded};
-use crate::system_dir;
-use crate::workfile::WorkFile;
-use crate::{Args, libloader};
-use amiga::AmigaSystem;
 use anyhow::{Context, Result, bail};
-use c64::C64System;
-use gameboy::GameboySystem;
-use std::collections::HashMap;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
+
+use crate::emu_file::{Override, Patch};
+use crate::m3u::M3u;
+use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::system_dir;
+use crate::workfile::WorkFile;
+use crate::{Args, libloader};
+
+use utils::{get_ext, has_extension, read_at, sort_disks};
 use utils::{is_archive, unpack_into};
+
+use amiga::AmigaSystem;
+use amstrad::AmstradSystem;
+use atari_2600::Atari2600System;
+use atari_st::AtariStSystem;
+use atari_xl::AtariXlSystem;
+use c64::C64System;
+use gameboy::GameboySystem;
+use gba::GBASystem;
+use images::ImageSystem;
+use megadrive::MegadriveSystem;
+use music::MusicSystem;
+use neo_geo::NeoGeoSystem;
+pub use neo_geo::holds_boot_list;
+use pc::PcSystem;
+use pico8::Pico8System;
+use playstation::PSXSystem;
+use sinclair::SinclairSystem;
+use snes::SNESSystem;
+use std::collections::HashMap;
+use tic80::Tic80System;
 
 pub(crate) mod utils;
 
@@ -152,13 +155,6 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
         }
     }
     Ok(())
-}
-
-pub fn get_ext(path: &Path) -> String {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
 }
 
 /// Apply what `overrides.toml` says about this release, once it is unpacked and

@@ -537,7 +537,7 @@ mod tests {
     use clap::Parser;
 
     use crate::Args;
-    use crate::frontend::system_dir;
+    use crate::system_dir;
     use crate::libretro::RETROK_RETURN;
     use crate::newsys::NewSys;
 

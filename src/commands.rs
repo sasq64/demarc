@@ -15,11 +15,8 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::{AppSettings, RenderSettings};
-use crate::{
-    EmuFile,
-    emu_file::{FileSource, UrlList},
-};
+use crate::config::{AppSettings, RenderSettings};
+use crate::emu_file::{EmuFile, FileSource, UrlList};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].

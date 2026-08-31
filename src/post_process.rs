@@ -36,7 +36,7 @@ use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use crate::{AppSettings, RenderSettings};
+use crate::config::{AppSettings, RenderSettings};
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
@@ -1067,7 +1067,7 @@ mod tests {
     #[test]
     fn bundled_downsample_preset_resolves() {
         use librashader::presets::ShaderPreset;
-        let path = crate::frontend::system_dir().join(DOWNSAMPLE_PRESET);
+        let path = crate::system_dir().join(DOWNSAMPLE_PRESET);
         let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
             .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
         let pass = preset.passes.first().expect("preset should have a pass");

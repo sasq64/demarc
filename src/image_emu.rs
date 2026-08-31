@@ -25,6 +25,7 @@ use anyhow::{Result, bail};
 
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
+use crate::newsys::utils::get_ext;
 use crate::retro_emu::Backend;
 use crate::zx_scr;
 
@@ -60,7 +61,7 @@ fn load_image(game: &Path) -> Result<(image::RgbaImage, String)> {
         .and_then(|f| f.extensions_str().first().copied())
         .map(str::to_uppercase)
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| match crate::newsys::get_ext(game).to_uppercase() {
+        .unwrap_or_else(|| match get_ext(game).to_uppercase() {
             ext if ext.is_empty() => "Image".into(),
             ext => ext,
         });
@@ -134,7 +135,7 @@ impl ImageEmu {
         // A ZX screen is identified by its size alone (see [`crate::zx_scr`]),
         // which a file of another format can hit by chance — so unlike the
         // formats below it, it is only decoded when the name says so too.
-        let zx = |bytes: &[u8]| match crate::newsys::get_ext(game).as_str() {
+        let zx = |bytes: &[u8]| match get_ext(game).as_str() {
             "scr" => zx_scr::load_indexed_from_memory(bytes),
             ext => bail!("not a ZX Spectrum screen: extension is {ext:?}"),
         };
@@ -154,7 +155,7 @@ impl ImageEmu {
             const EXTENSIONS: [&str; 11] = [
                 "pi1", "pi2", "pi3", "pc1", "pc2", "pc3", "ca1", "ca2", "ca3", "neo", "kid",
             ];
-            let named = EXTENSIONS.contains(&crate::newsys::get_ext(game).as_str());
+            let named = EXTENSIONS.contains(&get_ext(game).as_str());
             if !named && !degas::is_st_image(bytes, bytes.len()) {
                 bail!("not an Atari ST picture");
             }

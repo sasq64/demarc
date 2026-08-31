@@ -18,7 +18,7 @@ fn dylib_ext() -> &'static str {
 
 /// The buildbot path segment naming the current platform, as used in
 /// `https://buildbot.libretro.com/nightly/<system>/latest/`.
-fn buildbot_system() -> &'static str {
+const fn buildbot_system() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows/x86_64"
     } else if cfg!(target_os = "macos") {

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use std::{
     collections::BTreeMap,
     fs,
@@ -17,6 +17,13 @@ pub fn has_any_extension(path: &Path, ext: &[&str]) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| ext.contains(&e))
+}
+
+pub fn get_ext(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 fn is_same_file(a: &Path, b: &Path) -> bool {
@@ -69,6 +76,35 @@ fn is_single_file_compressor(format: ArchiveFormat) -> bool {
         format,
         ArchiveFormat::Z | ArchiveFormat::Gz | ArchiveFormat::Bz2
     )
+}
+
+/// Decompress `data` when it is a gzip, bzip2 or Unix-compress stream, and
+/// return it unchanged otherwise. For data files that are packed on their own
+/// instead of bundled in an archive — a gzipped db — where the point is the
+/// bytes, not files on disk as with [`unpack_into`].
+pub fn unpack_if_packed(data: Vec<u8>) -> Result<Vec<u8>> {
+    let Some(format) = ArchiveFormat::detect_from_bytes(&data) else {
+        return Ok(data);
+    };
+    if !is_single_file_compressor(format) {
+        return Ok(data);
+    }
+    let mut archive = format.open(std::io::Cursor::new(&data[..]))?;
+    let Some(entry) = archive.next_entry()? else {
+        bail!("{} stream holds nothing", format.name());
+    };
+    Ok(archive.read(&entry)?)
+}
+
+pub fn is_disk_image(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
+        let ext = ext.to_lowercase();
+        return [
+            "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
+        ]
+        .contains(&ext.as_str());
+    }
+    false
 }
 
 /// Strip a file comment embedded in an LHA entry's name.

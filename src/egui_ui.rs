@@ -5,7 +5,7 @@ use bevy_egui::{
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::EmuFile;
+use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
 
 /// What the pickers in this app are lists *of*. Every source handed to
@@ -25,7 +25,7 @@ const APP_FONT: &str = "app";
 pub struct EguiUiPlugin;
 
 /// Keeps `font.ttf` alive for [`setup_egui`]. Loading through the asset server
-/// rather than reading [`crate::frontend::system_dir`] directly means egui picks
+/// rather than reading [`crate::system_dir`] directly means egui picks
 /// up the very same face -- and the same hot-reloaded bytes -- as the Bevy UI in
 /// [`crate::hud`] and [`crate::text_input`].
 #[derive(Resource)]

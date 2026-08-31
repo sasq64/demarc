@@ -11,10 +11,10 @@ use super::utils::read_header;
 
 use crate::{
     cache::{FileCache, KeyHasher},
-    frontend::system_dir,
     libloader,
     newsys::walk_dir,
     retro_emu::{Backend, RetroCoreThreaded},
+    system_dir,
     workfile::WorkFile,
 };
 
