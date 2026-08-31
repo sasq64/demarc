@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-cargo run --profile release-fast -- "$@"
+RUST_LOG=demarc=debug cargo run --profile release-fast -- "$@"
