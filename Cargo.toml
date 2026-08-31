@@ -1,10 +1,10 @@
 [package]
 name = "demarc"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2024"
 description = "A command line emulator frontend for the demoscene"
-repository = "https://github.com/sasq64/demarc"
 readme = "README.md"
+repository = "https://github.com/sasq64/demarc"
 
 # Lets `cargo binstall --git https://github.com/sasq64/demarc demarc` find the
 # archives that `dist` uploads to the GitHub release. The default patterns
@@ -18,67 +18,107 @@ pkg-fmt = "txz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
 
-[build-dependencies]
-cc = "1"
-zip = { version = "8", default-features = false, features = ["deflate"] }
-sha2 = "0.11"
-
 [dependencies]
-bevy = { version = "0.19.0", default-features = false, features = [
+anyhow = "1.0.102"
+bevy = {
+  version = "0.19.0",
+  default-features = false,
+  features = [
     "2d",
-    "ui",
     "audio",
     "file_watcher",
-] }
-rand = "0.10.1"
-libloading = "0.9"
+    "ui",
+  ]
+}
+clap = { version = "4.6.1", features = ["color", "derive"] }
 cpal = "0.17.1"
-rubato = "0.16"
-tracing = "0.1.44"
-image = { version = "0.25.10", default-features = false, features = [
-    "png",
+dirs = "6.0.0"
+fatfs = "0.3.6"
+image = {
+  version = "0.25.10",
+  default-features = false,
+  features = [
     "bmp",
-    "jpeg",
     "gif",
-    "tiff",
+    "jpeg",
+    "png",
     "tga",
-] }
+    "tiff",
+  ]
+}
 # PCX, which `image` itself doesn't carry. From the image-rs org, and it plugs
 # into `image` through its decoding/sniffing hooks (see `image_emu::load_image`)
 # rather than being a decoder we drive ourselves. Only the `pcx` format is
 # enabled; the rest of the crate's formats would pull in dependencies of their own.
-image-extras = { version = "0.1.1", default-features = false, features = [
+image-extras = {
+  version = "0.1.1",
+  default-features = false,
+  features = [
     "pcx",
-] }
-tracing-subscriber = "0.3.23"
+  ]
+}
+libloading = "0.9"
+librashader = {
+  version = "0.11.3",
+  default-features = false,
+  features = [
+    "presets",
+    "reflect-naga",
+    "runtime-wgpu",
+  ]
+}
+# musix = { path = "../musicplayer" }
+musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
+percent-encoding = "2"
+rand = "0.10.1"
 ringbuf = "0.5.0"
-anyhow = "1.0.102"
-clap = { version = "4.6.1", features = ["derive", "color"] }
-zip = { version = "8", default-features = false, features = [
-    "deflate",
-    "deflate64",
-] }
+rubato = "0.16"
+sha2 = "0.11"
+suppaftp = "10"
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+tempfile = "3.27.0"
+thiserror = "2"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+ureq = "3"
+url = "2"
 # Matches the wgpu version Bevy 0.19 uses; only needed to name `SamplerBorderColor`,
 # which Bevy doesn't re-export.
 wgpu = "29"
-librashader = { version = "0.11.3", default-features = false, features = [
-    "runtime-wgpu",
-    "reflect-naga",
-    "presets",
-] }
-tempfile = "3.27.0"
-fatfs = "0.3.6"
-dirs = "6.0.0"
-ureq = "3"
-suppaftp = "10"
-url = "2"
-percent-encoding = "2"
-sha2 = "0.11"
-thiserror = "2"
-symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
-#musix = { path = "../musicplayer" }
-musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
+zip = {
+  version = "8",
+  default-features = false,
+  features = [
+    "deflate",
+    "deflate64",
+  ]
+}
 
+# egui, for the ongoing port of the frontend UI (src/egui_ui.rs). 0.42 is the
+# release built against Bevy 0.19 and wgpu-types 29, matching the versions above.
+# `picking` and `open_url` are off: the app does its own hit-testing and never
+# opens a browser. `manage_clipboard` stays on so egui text fields can paste.
+bevy_egui = {
+  version = "0.42",
+  default-features = false,
+  features = [
+    "default_fonts",
+    "bevy_ui",
+    "manage_clipboard",
+    "render",
+  ]
+}
+# Luau, for the music visualization script (src/music_vis.rs). Luau rather than
+# PUC-Lua for its native `buffer` type: the script draws into a byte-addressed
+# block with `buffer.writeu32` instead of crossing the FFI once per pixel.
+# `luau` builds the interpreter from C++ source via `luau0-src`; no `vendored`
+# feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
+# `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
+mlua = { version = "0.11", features = ["luau", "send"] }
+nucleo-matcher = "0.3"
+pollster = { version = "0.4", optional = true }
+# `--filter`: matched against each raw db line while collecting (see collect_db).
+regex = "1"
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
 #
 # That pulls wgpu-hal 27 into the lock file even with `flash` off, and wgpu-hal 27
@@ -89,80 +129,46 @@ musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-versio
 # therefore pins gpu-allocator 0.28 to `windows 0.62.2`; if `just win` ever dies
 # in wgpu-hal/src/dx12 with "multiple different versions of crate windows", check
 # that edge in Cargo.lock first.
-ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true, features = [
+ruffle_core = {
+  git = "https://github.com/ruffle-rs/ruffle",
+  rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9",
+  features = [
+    "default_compatibility_rules",
+    "default_font",
+    "aac",
     "audio",
+    "lzma",
     "mp3",
     "nellymoser",
-    "aac",
-    "lzma",
-    "default_font",
-    "default_compatibility_rules",
-] }
+  ],
+  optional = true
+}
 ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
-pollster = { version = "0.4", optional = true }
-nucleo-matcher = "0.3"
-# `--filter`: matched against each raw db line while collecting (see collect_db).
-regex = "1"
 unarc-rs = "0.6.1"
 walkdir = "2.5.0"
-# Luau, for the music visualization script (src/music_vis.rs). Luau rather than
-# PUC-Lua for its native `buffer` type: the script draws into a byte-addressed
-# block with `buffer.writeu32` instead of crossing the FFI once per pixel.
-# `luau` builds the interpreter from C++ source via `luau0-src`; no `vendored`
-# feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
-# `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
-mlua = { version = "0.11", features = ["luau", "send"] }
-# egui, for the ongoing port of the frontend UI (src/egui_ui.rs). 0.42 is the
-# release built against Bevy 0.19 and wgpu-types 29, matching the versions above.
-# `picking` and `open_url` are off: the app does its own hit-testing and never
-# opens a browser. `manage_clipboard` stays on so egui text fields can paste.
-bevy_egui = { version = "0.42", default-features = false, features = [
-    "render",
-    "bevy_ui",
-    "default_fonts",
-    "manage_clipboard",
-] }
 
+# The `contents` of a patch, which is binary and so is written base64 in the toml.
+base64 = "0.23.1"
 # Hot-reload for that script. Already in the tree via bevy's `file_watcher`.
 notify = "8"
 # `get_spectrum()` for the script. Already in the tree via `rubato`.
 realfft = "3.5"
 resvg = "0.48.1"
+serde = { version = "1.0.229", features = ["derive"] }
 # `overrides.toml`, the per-release fixups read at startup (src/overrides.rs).
 # 1.x follows the TOML 1.1 spec, which is what lets an entry's `patch = { ... }`
 # span several lines; a 0.9 parser would reject the file as written.
 toml = "1.1.4"
-serde = { version = "1.0.229", features = ["derive"] }
-# The `contents` of a patch, which is binary and so is written base64 in the toml.
-base64 = "0.23.1"
 
-[features]
-default = []
-# Profiling build (src/profiling.rs): Bevy's per-system tracing spans written to
-# a Chrome/Perfetto trace file, frame/CPU diagnostics, and a per-second audit of
-# which components are being marked changed. Costs a full Bevy rebuild, so keep
-# it out of the default set. Use with `--profile profiling` for symbols.
-profile = ["bevy/trace_chrome", "bevy/sysinfo_plugin"]
-# Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
-flash = [
-    "dep:ruffle_core",
-    "dep:ruffle_render",
-    "dep:ruffle_render_wgpu",
-    "dep:swf",
-    "dep:pollster",
-]
-
-[target.'cfg(unix)'.dependencies]
-# Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
-# keeping the original stdout for tracing (see `silence_stdout` in main.rs).
-libc = "0.2"
+[build-dependencies]
+cc = "1"
+sha2 = "0.11"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Inhibit the freedesktop screen saver over D-Bus while running fullscreen, and
-# expose an MPRIS media-player interface so media keys control the emulator.
-zbus = { version = "5", features = ["tokio"] }
+raw-window-handle = "0.6"
 # Runtime that drives the MPRIS D-Bus listener in src/media_keys.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # Preferred screen-saver inhibition path under Wayland: `zwp_idle_inhibit_v1`
@@ -170,13 +176,49 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # running (see src/screensaver.rs). All three are already in the tree via winit.
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
-raw-window-handle = "0.6"
+# Inhibit the freedesktop screen saver over D-Bus while running fullscreen, and
+# expose an MPRIS media-player interface so media keys control the emulator.
+zbus = { version = "5", features = ["tokio"] }
+
+[target."cfg(unix)".dependencies]
+# Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
+# keeping the original stdout for tracing (see `silence_stdout` in main.rs).
+libc = "0.2"
+
+[features]
+default = []
+# Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
+flash = [
+  "dep:pollster",
+  "dep:ruffle_core",
+  "dep:ruffle_render",
+  "dep:ruffle_render_wgpu",
+  "dep:swf",
+]
+# Profiling build (src/profiling.rs): Bevy's per-system tracing spans written to
+# a Chrome/Perfetto trace file, frame/CPU diagnostics, and a per-second audit of
+# which components are being marked changed. Costs a full Bevy rebuild, so keep
+# it out of the default set. Use with `--profile profiling` for symbols.
+profile = ["bevy/sysinfo_plugin", "bevy/trace_chrome"]
 
 [profile.release]
+opt-level = 2
+strip = true
 lto = "thin"
 codegen-units = 1
-strip = true
-opt-level = 2
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+# Profiling build: release-optimized but with debug symbols and no stripping so
+# `perf`/flamegraph can attribute samples to Ruffle internals. Used for
+# benchmarking the Flash backend (see src/flash_emu.rs `flash_bench`).
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
 
 # Fast-iteration build: keeps opt-level=2 so the emulator/shaders run at a usable
 # speed, but drops the ship-only settings that make rebuilds slow. Parallel codegen
@@ -184,23 +226,10 @@ opt-level = 2
 # a few. Use `cargo build --profile release-fast`.
 [profile.release-fast]
 inherits = "release"
+strip = false
 # Must be "off", not `false`: `false` means thin-*local* LTO, which combined with
 # many codegen units + incremental produces `undefined hidden symbol: anon.*.llvm.*`
 # link errors.
 lto = "off"
-codegen-units = 256
 incremental = true
-strip = false
-
-# Profiling build: release-optimized but with debug symbols and no stripping so
-# `perf`/flamegraph can attribute samples to Ruffle internals. Used for
-# benchmarking the Flash backend (see src/flash_emu.rs `flash_bench`).
-[profile.profiling]
-inherits = "release"
-strip = false
-debug = true
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"
+codegen-units = 256
