@@ -49,6 +49,9 @@ libretro = { dosbox_pure_cycles = 150000 }
 [zoo.119665]
 assign = { Love = "SYS:" }
 
+[zoo.211926]
+assign = { retro = "SYS:" }
+
 # Debris
 
 #
