@@ -21,6 +21,15 @@ file = "2nd_real.zip"
 [zoo.138]
 file = "variform_by_kewlers.zip"
 
+# Closer / CNCD
+[zoo.7613]
+assign = { CNCD = "SYS:" }
+
+# Killer / CNCD
+[zoo.19401]
+assign = { Killer = "SYS:" }
+libretro = { amiberry_cpu_model = 68030, amiberry_z3mem_size = 4, amiberry_fpu_model = 68881 }
+
 [zoo.18030]
 file = "inside.zip"
 patch = {
@@ -51,6 +60,9 @@ assign = { Love = "SYS:" }
 
 [zoo.211926]
 assign = { retro = "SYS:" }
+
+[zoo.376675]
+meta = { amiga_core = "puae" }
 
 # Debris
 
