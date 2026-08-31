@@ -336,11 +336,6 @@ fn apply_cmd(
 impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
-            // if update.frame.is_empty() && update.audio.is_empty() {
-            //     info!("GOT 0 UPDATE");
-            //     self.audio.clear();
-            //     return false;
-            // }
             self.frame = update.frame;
             self.last_hash = self.frame_hash;
             self.frame_hash = update.frame_hash;

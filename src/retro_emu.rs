@@ -40,10 +40,11 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, RETRO_ENVIRONMENT_GET_THROTTLE_STATE,
     RETRO_ENVIRONMENT_GET_VARIABLE, RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
-    RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE,
-    RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK,
-    RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
-    RETRO_ENVIRONMENT_SET_MESSAGE, RETRO_ENVIRONMENT_SET_MESSAGE_EXT,
+    RETRO_ENVIRONMENT_GET_VFS_INTERFACE, RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+    RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,
+    RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK, RETRO_ENVIRONMENT_SET_GEOMETRY,
+    RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, RETRO_ENVIRONMENT_SET_MESSAGE,
+    RETRO_ENVIRONMENT_SET_MESSAGE_EXT, RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,
     RETRO_ENVIRONMENT_SET_VARIABLES, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
     RETRO_PIXEL_FORMAT_XRGB8888, RETRO_THROTTLE_FAST_FORWARD, RETRO_THROTTLE_NONE,
@@ -51,7 +52,8 @@ use crate::libretro::{
     retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
     retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
     retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
-    retro_system_av_info, retro_throttle_state, retro_variable, retro_video_refresh_t,
+    retro_system_av_info, retro_throttle_state, retro_variable, retro_vfs_interface_info,
+    retro_video_refresh_t,
 };
 use crate::pixels::{RGB565_LUT, RGB1555_LUT, convert_16bpp};
 
@@ -454,6 +456,26 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_GET_LIBRETRO_PATH => {
                     *(data as *mut *const c_char) = self.core_path.as_ptr();
                 }
+                RETRO_ENVIRONMENT_GET_VFS_INTERFACE => {
+                    // Not a nicety: modern Stella refuses to load *any* ROM
+                    // without a VFS, because its FSNode only learns a path is a
+                    // file from the VFS stat(). See src/retro_emu/vfs.rs.
+                    let info = &mut *(data as *mut retro_vfs_interface_info);
+                    if info.required_interface_version > vfs::VERSION {
+                        info!(
+                            "Core wants VFS v{}, we provide v{}",
+                            info.required_interface_version,
+                            vfs::VERSION
+                        );
+                        handled = false;
+                    } else {
+                        info!("VFS v{} registered", vfs::VERSION);
+                        // The frontend reports back the version it actually
+                        // implements, which may be newer than what was asked.
+                        info.required_interface_version = vfs::VERSION;
+                        info.iface = vfs::interface();
+                    }
+                }
                 RETRO_ENVIRONMENT_SET_PIXEL_FORMAT => {
                     let fmt = *(data as *const c_int);
                     self.state.pixel_format = fmt;
@@ -522,9 +544,10 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => {
                     // TODO: Return unsafe pointer to frame?
                 }
+                RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL => {}
                 RETRO_ENVIRONMENT_GET_THROTTLE_STATE => {
-                    info!("THROTTLE");
                     let state = data as *mut retro_throttle_state;
+                    (*state).rate = 1.0;
                     (*state).mode = if self.skip_frames > 0 {
                         RETRO_THROTTLE_FAST_FORWARD
                     } else {
@@ -859,6 +882,8 @@ impl Backend for RetroCoreDirect {
 
 mod threaded;
 pub use threaded::RetroCoreThreaded;
+
+mod vfs;
 
 #[cfg(test)]
 mod tests;
