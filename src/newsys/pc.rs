@@ -473,6 +473,7 @@ impl System for PcSystem {
         #[allow(unused_mut)]
         let mut meta: HashMap<&str, &str> = [
             ("dosbox_pure_gus", "true"),
+            ("dosbox_pure_cycles", "150000"),
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
         ]
