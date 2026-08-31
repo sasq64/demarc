@@ -747,6 +747,16 @@ fn spawn_toast(
     for msg in reader.read() {
         info!("MSG: {}", msg.text);
         let now = time.elapsed_secs();
+        // An empty text retires whatever is showing in that corner. The entry
+        // is kept with its duration ended rather than dropped, because the
+        // fade-out in `update_ui` animates on the text's own id — remove the
+        // entry and the text blinks out instead of fading.
+        if msg.text.is_empty() {
+            if let Some(hud) = state.current_texts.get_mut(&msg.location) {
+                hud.duration.end = now;
+            }
+            continue;
+        }
         let start = now + msg.delay.as_secs_f32();
         let stop = start + msg.duration.as_secs_f32();
         state.current_texts.insert(

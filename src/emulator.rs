@@ -9,7 +9,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::backend::{Backend, ViewFocus, frame_bytes};
+use crate::backend::{Backend, STATE_SKIPPING, ViewFocus, frame_bytes};
 use crate::emu_file::{
     EmuFile, FileSource, GameInfo, Override, download_finished, download_started,
 };
@@ -120,6 +120,9 @@ pub struct Emulator {
     pub frame_hash: u64,
     pub paused: bool,
     pub skipping: bool,
+    /// Set while a warp indicator is on screen for this emulator, so
+    /// [`Self::skip_finished`] knows there is something to take down again.
+    warp_shown: bool,
     /// Routing of cursor keys + Enter: keyboard (default) or a joystick port.
     pub input_mode: InputMode,
     /// Benchmark mode: step the core once per update with no audio or pacing.
@@ -724,6 +727,10 @@ impl Emulator {
         Ok(())
     }
     pub fn skip(&mut self, frames: u32) {
+        // Latched even with no core to skip, so the indicator the caller puts up
+        // for it is taken down again on the next frame rather than sitting there
+        // until its timeout.
+        self.warp_shown = true;
         let Some(core) = self.core.as_mut() else {
             return;
         };
@@ -731,6 +738,30 @@ impl Emulator {
         info!("SKIPPING");
         self.skipping = true;
         self.paused = self.is_image;
+    }
+
+    /// True on the first frame after a [`Self::skip`] the warp indicator was
+    /// shown for has run out, i.e. exactly when that indicator should come down.
+    ///
+    /// The backend reports the skip as started synchronously (see
+    /// [`RetroCoreThreaded::skip_frames`](crate::retro_emu::RetroCoreThreaded)),
+    /// so no separate "not started yet" grace period is needed here. A backend
+    /// that never reports [`STATE_SKIPPING`] at all — every one but the threaded
+    /// libretro core — finishes its skip inside `skip()` anyway, and so reads as
+    /// done on the next frame, which is right.
+    pub fn skip_finished(&mut self) -> bool {
+        if !self.warp_shown {
+            return false;
+        }
+        let skipping = self
+            .core
+            .as_ref()
+            .is_some_and(|core| core.state() & STATE_SKIPPING != 0);
+        if skipping {
+            return false;
+        }
+        self.warp_shown = false;
+        true
     }
 
     pub fn run(&mut self, time: &Time) -> bool {

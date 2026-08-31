@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
-use crate::backend::{Backend, ViewFocus};
+use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
 use crate::pixels::scan_frame;
 
 use super::RetroCoreDirect;
@@ -100,6 +100,17 @@ pub struct RetroCoreThreaded {
     /// Emulated frames stepped by the worker so far (shared with the worker
     /// thread); read by `--speed-test`.
     frames: Arc<AtomicU64>,
+    /// Bitmask of what the core is doing, for the frontend — see the `STATE_*`
+    /// constants in [`crate::backend`]. Like `frames`, shared with the worker
+    /// and only ever read on the main thread.
+    ///
+    /// [`STATE_SKIPPING`] is *set* here on the main thread the moment a skip is
+    /// requested, rather than by the worker once it picks the command up: the
+    /// frontend polls this every displayed frame and would otherwise see the
+    /// skip as already finished during the frame or two the command spends in
+    /// the channel. The worker only ever clears it, on the frame the skip runs
+    /// out, so the two sides never fight over the bit.
+    state: Arc<AtomicU64>,
 }
 
 struct SetupResult {
@@ -142,6 +153,8 @@ impl RetroCoreThreaded {
 
         let frames = Arc::new(AtomicU64::new(0));
         let worker_frames = Arc::clone(&frames);
+        let state = Arc::new(AtomicU64::new(0));
+        let worker_state = Arc::clone(&state);
         let handle = thread::Builder::new()
             .name("retro-emu".into())
             // Well above the 2 MiB default. Cores recurse deeply on this thread —
@@ -165,7 +178,14 @@ impl RetroCoreThreaded {
                             return;
                         }
                     };
-                worker_loop(&mut core, &cmd_rx, &update_tx, &worker_frames, speed_test);
+                worker_loop(
+                    &mut core,
+                    &cmd_rx,
+                    &update_tx,
+                    &worker_frames,
+                    &worker_state,
+                    speed_test,
+                );
                 // `core` is dropped here, running retro_deinit on this thread.
             })?;
 
@@ -193,6 +213,7 @@ impl RetroCoreThreaded {
                 fps,
                 disk_count: disks,
                 frames,
+                state,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -212,6 +233,7 @@ fn worker_loop(
     cmd_rx: &mpsc::Receiver<RetroCmd>,
     update_tx: &mpsc::SyncSender<RetroUpdate>,
     frames: &AtomicU64,
+    state: &AtomicU64,
     speed_test: bool,
 ) {
     // Keys scheduled by `RetroCmd::SendKeys`, as (frame to fire on, keycode,
@@ -225,7 +247,7 @@ fn worker_loop(
         loop {
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
-                    if apply_cmd(core, cmd, &mut key_queue, frame) {
+                    if apply_cmd(core, cmd, &mut key_queue, frame, state) {
                         return; // Unload
                     }
                 }
@@ -251,6 +273,9 @@ fn worker_loop(
             frames.fetch_add(1, Ordering::Relaxed);
             if core.skip_frames > 0 {
                 core.skip_frames -= 1;
+                if core.skip_frames == 0 {
+                    set_state_bit(state, STATE_SKIPPING, false);
+                }
                 // Throw away the audio the core just produced.
                 core.with_audio(|_| {});
                 continue;
@@ -299,6 +324,7 @@ fn apply_cmd(
     cmd: RetroCmd,
     key_queue: &mut Vec<(u64, u32, bool)>,
     frame: u64,
+    state: &AtomicU64,
 ) -> bool {
     match cmd {
         RetroCmd::Reset => core.reset(),
@@ -320,7 +346,14 @@ fn apply_cmd(
             core.unload();
             return true;
         }
-        RetroCmd::Skip { frames } => core.skip_frames = frames,
+        RetroCmd::Skip { frames } => {
+            core.skip_frames = frames;
+            // A zero-frame skip is a no-op, so make sure it doesn't leave the
+            // bit the sender optimistically set standing forever.
+            if frames == 0 {
+                set_state_bit(state, STATE_SKIPPING, false);
+            }
+        }
         RetroCmd::SendKeys { time_code_list } => {
             for (at, code) in time_code_list {
                 // Relative to now, so a core's startup keys can't land in the past.
@@ -331,6 +364,15 @@ fn apply_cmd(
         }
     }
     false
+}
+
+/// Set or clear one bit of the shared state mask.
+fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
+    if on {
+        state.fetch_or(bit, Ordering::Relaxed);
+    } else {
+        state.fetch_and(!bit, Ordering::Relaxed);
+    }
 }
 
 impl Backend for RetroCoreThreaded {
@@ -417,7 +459,11 @@ impl Backend for RetroCoreThreaded {
     // }
 
     fn skip_frames(&mut self, frames: u32) {
+        set_state_bit(&self.state, STATE_SKIPPING, frames > 0);
         let _ = self.cmd_tx.send(RetroCmd::Skip { frames });
+    }
+    fn state(&self) -> u64 {
+        self.state.load(Ordering::Relaxed)
     }
     fn frames_stepped(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)

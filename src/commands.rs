@@ -8,15 +8,15 @@ use bevy::window::{PrimaryWindow, WindowMode};
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+use crate::config::{AppSettings, RenderSettings};
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
+use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
 use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::config::{AppSettings, RenderSettings};
-use crate::emu_file::{EmuFile, FileSource, UrlList};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -703,7 +703,8 @@ fn handle_cmd(
                         emu.skip(10 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1),
+                            // For safety, should be hidden automatically
+                            duration: Duration::from_secs(10),
                             text,
                             ..Default::default()
                         });
@@ -713,7 +714,8 @@ fn handle_cmd(
                         emu.skip(30 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1),
+                            // For safety, should be hidden automatically
+                            duration: Duration::from_secs(30),
                             text,
                             ..Default::default()
                         });

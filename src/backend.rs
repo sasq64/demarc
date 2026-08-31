@@ -19,6 +19,11 @@ pub enum ViewFocus {
     Focus,
 }
 
+/// Bit in the mask returned by [`Backend::state`]: the backend is fast-forwarding
+/// through the frames asked for by [`Backend::skip_frames`] and has not caught up
+/// yet. Cleared on the frame the skip runs out.
+pub const STATE_SKIPPING: u64 = 1 << 0;
+
 /// Abstract interface over a libretro emulator core.
 pub trait Backend {
     fn set_disk(&mut self, no: u32);
@@ -52,6 +57,15 @@ pub trait Backend {
     fn frames_stepped(&self) -> u64 {
         0
     }
+    /// Bitmask of what the backend is doing right now, for the frontend to
+    /// reflect in the UI — see the `STATE_*` constants. Read every displayed
+    /// frame, so it must be cheap (an atomic load for the threaded core, which
+    /// is the only backend that has anything to report). Backends that don't
+    /// track it report nothing.
+    fn state(&self) -> u64 {
+        0
+    }
+
     /// A value that changes whenever [`with_frame`](Self::with_frame) would hand
     /// back different pixels than it did last time.
     ///

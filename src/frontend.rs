@@ -535,6 +535,18 @@ fn run_retro(
         }
         emu.run(&time);
 
+        // Take the warp indicator down the moment the skip it announced is
+        // over, rather than after a fixed timeout that has nothing to do with
+        // how long the core takes to fast-forward. An empty text retires
+        // whatever is showing in that corner — see `spawn_toast`.
+        if emu.skip_finished() {
+            writer.write(SetHudText {
+                text: String::new(),
+                location: HudLocation::TopRight,
+                ..Default::default()
+            });
+        }
+
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
 
