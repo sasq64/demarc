@@ -10,10 +10,11 @@ use tracing::{debug, info, warn};
 use super::utils::read_header;
 
 use crate::{
+    backend::Backend,
     cache::{FileCache, KeyHasher},
     libloader,
     newsys::walk_dir,
-    retro_emu::{Backend, RetroCoreThreaded},
+    retro_emu::RetroCoreThreaded,
     system_dir,
     workfile::WorkFile,
 };

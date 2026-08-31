@@ -7,8 +7,8 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::Args;
+use crate::backend::Backend;
 use crate::music_emu::{self, MusicEmu};
-use crate::retro_emu::Backend;
 use crate::system_dir;
 use crate::workfile::WorkFile;
 

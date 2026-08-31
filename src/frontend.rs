@@ -10,13 +10,13 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
+use crate::backend::ViewFocus;
 use crate::commands::{CmdMessage, check_hotkey};
+use crate::config::{AppSettings, Args, RenderSettings};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
-use crate::retro_emu::ViewFocus;
 use crate::screensaver::ScreenSaverInhibitor;
-use crate::config::{AppSettings, Args, RenderSettings};
 
 pub struct RetroPlugin {}
 
@@ -553,7 +553,7 @@ fn run_retro(
                 emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
                     // The texture is a byte buffer; the frame is one packed RGBA
                     // `u32` per pixel, so copy it through a byte view.
-                    let frame = crate::retro_emu::frame_bytes(frame);
+                    let frame = crate::backend::frame_bytes(frame);
                     let copy_w = w.min(bg_w);
                     let copy_h = h.min(bg_h);
                     for y in 0..copy_h {

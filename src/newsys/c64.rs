@@ -3,11 +3,12 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use crate::{
-    Args, cbmconvert,
-    libloader,
+    Args,
+    backend::Backend,
+    cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
     newsys::{collect_disk_images, walk_dir},
-    retro_emu::{Backend, RetroCoreThreaded},
+    retro_emu::RetroCoreThreaded,
     system_dir,
     workfile::WorkFile,
 };

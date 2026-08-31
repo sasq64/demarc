@@ -256,7 +256,7 @@ impl Visualizer {
         // Luau's little-endian `buffer.writeu32` -- so the bytes in the buffer
         // are already `[r, g, b, a]`. Reading each group of four back as a
         // native-order `u32` is exactly the packing the frontend wants (see
-        // `retro_emu::frame_bytes`), on either endianness.
+        // `backend::frame_bytes`), on either endianness.
         for (dst, src) in out.iter_mut().zip(self.bytes.chunks_exact(4)) {
             *dst = u32::from_ne_bytes([src[0], src[1], src[2], src[3]]);
         }

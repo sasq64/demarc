@@ -23,10 +23,10 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use crate::backend::Backend;
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
 use crate::newsys::utils::get_ext;
-use crate::retro_emu::Backend;
 use crate::zx_scr;
 
 /// The CRNG `rate` value that corresponds to 60 cycle steps per second.
@@ -266,7 +266,7 @@ impl ImageEmu {
         for (i, &idx) in self.indices.iter().enumerate() {
             let c = palette.get(idx as usize).copied().unwrap_or([0, 0, 0]);
             // Packed so the pixel's bytes land in `[r, g, b, a]` memory order,
-            // matching what the frontend uploads (see `retro_emu::frame_bytes`).
+            // matching what the frontend uploads (see `backend::frame_bytes`).
             self.frame[i] = u32::from_ne_bytes([c[0], c[1], c[2], 255]);
         }
     }

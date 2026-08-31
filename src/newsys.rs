@@ -687,7 +687,7 @@ mod tests {
         assert!(
             work_file
                 .path
-                .join("libs")
+                .join("Libs")
                 .join("lowlevel.library")
                 .exists(),
             "generated drive has no LIBS:lowlevel.library"

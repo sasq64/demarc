@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use crate::{
-    degas, image_emu::ImageEmu, newsys::walk_dir, retro_emu::Backend, workfile::WorkFile, zx_scr,
+    backend::Backend, degas, image_emu::ImageEmu, newsys::walk_dir, workfile::WorkFile, zx_scr,
 };
 use anyhow::Result;
 

@@ -11,9 +11,10 @@ use super::utils::{copy_dir_all, has_any_extension, read_header};
 
 use crate::{
     Args,
+    backend::Backend,
     libloader,
     newsys::{collect_disk_images, utils::has_extension, walk_dir},
-    retro_emu::{Backend, RetroCoreThreaded},
+    retro_emu::RetroCoreThreaded,
     system_dir,
     workfile::WorkFile,
 };

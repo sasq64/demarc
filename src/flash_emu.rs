@@ -43,7 +43,7 @@ use ruffle_render_wgpu::wgpu;
 
 use std::sync::Arc;
 
-use crate::retro_emu::Backend;
+use crate::backend::Backend;
 
 /// Audio output rate handed to the frontend. Matches the other cores so the
 /// existing [`crate::audio::AudioResampler`] converts to the device rate.
@@ -1016,7 +1016,7 @@ mod tests {
                 let img = image::RgbaImage::from_raw(
                     fw as u32,
                     fh as u32,
-                    crate::retro_emu::frame_bytes(buf).to_vec(),
+                    crate::backend::frame_bytes(buf).to_vec(),
                 )
                 .expect("valid rgba buffer");
                 img.save(&png).expect("save png");

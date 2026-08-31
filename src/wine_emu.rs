@@ -69,7 +69,7 @@ use bevy::prelude::*;
 use bevy::window::{Monitor, PrimaryWindow, WindowMode};
 use tracing::{debug, info, warn};
 
-use crate::retro_emu::Backend;
+use crate::backend::Backend;
 use crate::screensaver::covers_a_monitor;
 use crate::system_dir;
 

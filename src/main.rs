@@ -12,6 +12,7 @@ use regex::Regex;
 mod libretro;
 
 mod audio;
+mod backend;
 mod cache;
 mod cbmconvert;
 mod commands;

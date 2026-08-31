@@ -7,8 +7,9 @@ use tracing::{debug, info, warn};
 
 use super::utils::read_at;
 use super::{System, get_ext, walk_dir};
+use crate::backend::Backend;
 use crate::libloader;
-use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 #[cfg(target_os = "linux")]
 use crate::wine_emu::WineEmu;
@@ -538,9 +539,9 @@ mod tests {
     use clap::Parser;
 
     use crate::Args;
-    use crate::system_dir;
     use crate::libretro::RETROK_RETURN;
     use crate::newsys::NewSys;
+    use crate::system_dir;
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
         write_bytes(dir, name, body.as_bytes())

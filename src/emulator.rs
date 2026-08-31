@@ -9,13 +9,13 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
+use crate::backend::{Backend, ViewFocus, frame_bytes};
 use crate::emu_file::{
     EmuFile, FileSource, GameInfo, Override, download_finished, download_started,
 };
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
 use crate::newsys::NewSys;
-use crate::retro_emu::{Backend, ViewFocus, frame_bytes};
 use crate::workfile::WorkFile;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
@@ -332,7 +332,7 @@ impl Emulator {
     }
 
     /// Pass the frontend's view state on to the backend. See
-    /// [`Backend::focus`](crate::retro_emu::Backend::focus).
+    /// [`Backend::focus`](crate::backend::Backend::focus).
     pub fn focus(&mut self, focus: ViewFocus) {
         if let Some(core) = self.core.as_mut() {
             core.focus(focus);

@@ -29,8 +29,8 @@ use anyhow::{Result, anyhow};
 use musix::MusixPlayer;
 use tracing::{debug, error, info, warn};
 
+use crate::backend::{Backend, ViewFocus};
 use crate::music_vis::Visualizer;
-use crate::retro_emu::{Backend, ViewFocus};
 
 /// Rate the frontend paces [`run`](Backend::run) at. Nothing in the music
 /// formats themselves is tied to it — it only sets how much audio is rendered
@@ -44,7 +44,7 @@ const WIDTH: usize = 320;
 const HEIGHT: usize = 240;
 
 /// Pack a colour the way the frontend expects it: one `u32` per pixel whose
-/// native bytes are `[r, g, b, a]` (see [`crate::retro_emu::frame_bytes`]).
+/// native bytes are `[r, g, b, a]` (see [`crate::backend::frame_bytes`]).
 const fn rgb(r: u8, g: u8, b: u8) -> u32 {
     u32::from_ne_bytes([r, g, b, 255])
 }
