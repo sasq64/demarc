@@ -171,9 +171,10 @@ values as their `puae_*` counterparts, so they are plain renames in
 and the one that matters — see Starstruck below) and 040/060 CPUs; the rest are
 still missing.
 
-**3. Startup ROM scan cost.** Amiberry recursively CRC32/SHA1-scans the whole
-demarc `system/` dir (fuse, vice, musix, pcem ROMs, win…) on every load — about
-2 s added per demo start.
+**3. Startup ROM scan.** *Fixed — see [Amiberry gets its own system
+directory](#amiberry-gets-its-own-system-directory).* Amiberry used to
+recursively CRC32/SHA1-scan the whole demarc `system/` dir (fuse, vice, musix,
+pcem ROMs, win…) on every load — about 2 s per demo start, and one abort.
 
 **4. Geometry differs.** Amiberry reports base 640x480 / max 1920x1280 and
 `GEOMETRY 720x568`; puae reports 360x287 / 720x574 and `GEOMETRY 696x264`. So
@@ -230,7 +231,7 @@ Error: 8: sysCreateStandardPool
 Error: 9: Out of memory
 ```
 
-50331648 = the 48 MB block. With `system/kick40068.A4000` in place the same
+50331648 = the 48 MB block. With `system/amiga/kick40068.A4000` in place the same
 A4040 config maps `RAMSEY memory (low) 8M` at `0x07800000` and `Zorro III Fast
 RAM 64M` at `0x40000000`, AmigaOS takes both, and the demo loads and runs.
 
@@ -360,14 +361,57 @@ and it applies to **any** JIT core, p-uae included.
 3. **Whether `cpu_speed=max` should be the default** for accelerated models.
    It is opt-in now because unthrottling is wrong for timing-sensitive OCS/ECS
    software, but a 68040/68060 config almost always wants it.
-4. Startup ROM scan cost, and geometry/crop defaults.
+4. Geometry/crop defaults.
+
+### Amiberry gets its own system directory
+
+The ROM scan is not just slow, it is a way to kill demarc outright. It walks the
+directory it is handed recursively, opens every file, and probes it for an Amiga
+ROM by content — and the probe treats anything with an archive signature as an
+archive, whatever the file is called. `system/` is shared by every core, so the
+scan reached PCem's BIOS images too. `system/pcem/roms/430vx/55xwuq0e.bin` is an
+AMI BIOS, and AMI packs its modules with LHA, so the file carries `-lh5-` at
+offset 2:
+
+```
+0000000  25 98 2d 6c 68 35 2d 4a  |%.-lh5-J|
+```
+
+Amiberry's LHA decoder then overruns a stack array unpacking it and the process
+dies in `__stack_chk_fail` inside `lha_make_table()`, from
+`zfile_fopen_x` → `zuncompress` → `archive_access_lha`, on the core's cothread
+inside `retro_load_game`. `abort()` in a core cannot be caught from our side —
+`demarc --fast <any Amiga release>` just went away with a *stack smashing
+detected*.
+
+So the Amiga assets moved into a `system/amiga/` subdirectory — the Kickstart
+ROMs, `WHDLoad.prefs`, `WHDBoot/`, `WHDLoad/`, `Kickstarts/`, `WHDSaves/` — and
+that is what `amiga.rs` hands both Amiga cores as their libretro system (and
+save) directory (`amiga_system_dir()`). The scan now sees Amiga data and nothing
+else. puae does not rummage — it resolves `kick34005.A500` and friends by name —
+but it reads the same ROMs, so it gets the same directory; demarc's own drive
+skeletons (`system/amihdd/`, `system/ami13/`, `system/libs/`) stay at the top
+level, because they are ours to copy into a work dir and not a core's to scan.
+
+Amiberry treats its system dir as its home, so it now scatters `amiberry.ini`,
+`Configurations/`, `Savegames/`, `Screenshots/` … into `system/amiga/` instead
+of into `system/`. That was worth tidying anyway: in a debug build `system_dir()`
+*is* the repo's `system/`, so `build.rs` was packing amiberry's runtime output
+back into `system.zip`. It now skips `amiga/WHDBoot/save-data`,
+`amiga/WHDBoot/tmp`, `amiga/WHDSaves` and `amiga/Visuals`, and treats
+`amiberry.ini` as a marker file. The first two matter beyond tidiness: amiberry
+fills them with *symlinks* pointing back up at the Kickstart ROMs, so a packed
+copy breaks the build the moment `system/amiga/` moves.
+
+File opens under `system/` during a `rebels.adf --fast` load went from 1067 to
+the Amiga ones.
 
 ### Done since the last pass
 
 - Directory-filesystem read throughput — was not a filesystem problem; see
   [Starstruck](#starstruck-tbl--the-definitive-test).
 - A4000 Z3 autoconfig — not an autoconfig bug at all; it needed an A4000
-  Kickstart. `system/kick40068.A4000` is now present and `tbl/demo.m3u` runs
+  Kickstart. `system/amiga/kick40068.A4000` is now present and `tbl/demo.m3u` runs
   the demo as an A4000/040.
 - Rendering speed — the JIT was running on an 8 KB translation cache; capping
   glibc's malloc arenas gets the full 16 MB.

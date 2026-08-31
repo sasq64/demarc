@@ -82,6 +82,8 @@ const MARKER_FILES: &[&str] = &[
     "vicerc-dump-C64SC",
     "vicerc-dump-PLUS4",
     "pcsx-card2.mcd",
+    // Amiberry's own settings file, written into `system/amiga/` as it runs.
+    "amiberry.ini",
 ];
 
 /// Directories under `system/` that are never packed, whatever they contain.
@@ -93,7 +95,20 @@ const MARKER_FILES: &[&str] = &[
 /// with names taken from whichever machine config was loaded. In a debug build
 /// `system_dir()` is this very directory, so without this the emulator would
 /// be filling up the archive as it ran.
-const SKIP_DIRS: &[&str] = &["system/pcem"];
+///
+/// The `amiga/` entries are the same story with amiberry, which treats its
+/// system dir as its home: it scratch-builds a boot drive under `WHDBoot/tmp/`
+/// and stores WHDLoad savegames under `WHDBoot/save-data/` and `WHDSaves/`.
+/// `WHDBoot/tmp/` and `save-data/Kickstarts/` are *symlink farms* pointing back
+/// up at the Kickstart ROMs, so packing them does not merely ship a developer's
+/// savegames — move `system/amiga/` and the build breaks on the dangling links.
+const SKIP_DIRS: &[&str] = &[
+    "system/pcem",
+    "system/amiga/WHDBoot/save-data",
+    "system/amiga/WHDBoot/tmp",
+    "system/amiga/WHDSaves",
+    "system/amiga/Visuals",
+];
 
 /// Pack the loose `system/` directory into `system.zip` (embedded into the
 /// binary via `include_bytes!`), then emit a SHA-256 of the resulting archive

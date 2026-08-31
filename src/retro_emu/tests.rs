@@ -48,7 +48,7 @@ fn run_until_frame(emu: &mut dyn Backend, timeout: Duration) {
 #[test]
 fn retro_amiga_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
-    let system_dir = &root("system");
+    let system_dir = &root("system/amiga");
     let game_path = root("demos/rebels.adf");
 
     let settings = HashMap::new();
@@ -68,7 +68,7 @@ fn retro_amiga_works() {
 #[test]
 fn retro_amiga_dir_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
-    let system_dir = &root("system");
+    let system_dir = &root("system/amiga");
     let game_path = root("demos/o2-intro");
 
     let mut settings = HashMap::new();
@@ -86,7 +86,7 @@ fn retro_amiga_dir_works() {
 #[test]
 fn retro_threaded_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
-    let system_dir = &root("system");
+    let system_dir = &root("system/amiga");
     let game_path = root("demos/rebels.adf");
 
     let mut settings = HashMap::new();
@@ -113,7 +113,10 @@ fn retro_threaded_works() {
 fn retro_threaded_multi_works() {
     let uae_core = libloader::get_libretro("puae").unwrap();
     let vice_core = libloader::get_libretro("vice_x64").unwrap();
-    let system_dir = &root("system");
+    // The two cores no longer share a system dir — the Amiga one is a subdir of
+    // it (see `amiga_system_dir()`).
+    let uae_system = root("system/amiga");
+    let vice_system = root("system");
     let uae_game = root("demos/rebels.adf");
     let vice_game = root("demos/quantum_icc2026_v1p.prg");
 
@@ -126,24 +129,28 @@ fn retro_threaded_multi_works() {
     let cores = [
         (
             &uae_core,
+            &uae_system,
             &uae_game,
             uae_settings(),
             "test_threaded_uae_0.png",
         ),
         (
             &uae_core,
+            &uae_system,
             &uae_game,
             uae_settings(),
             "test_threaded_uae_1.png",
         ),
         (
             &vice_core,
+            &vice_system,
             &vice_game,
             HashMap::new(),
             "test_threaded_vice_0.png",
         ),
         (
             &vice_core,
+            &vice_system,
             &vice_game,
             HashMap::new(),
             "test_threaded_vice_1.png",
@@ -152,9 +159,9 @@ fn retro_threaded_multi_works() {
 
     let mut emus: Vec<(&str, RetroCoreThreaded)> = cores
         .iter()
-        .map(|(core, game, settings, png)| {
-            let emu = RetroCoreThreaded::new(core, system_dir, Some(game), settings.clone(), false)
-                .unwrap();
+        .map(|(core, system, game, settings, png)| {
+            let emu =
+                RetroCoreThreaded::new(core, system, Some(game), settings.clone(), false).unwrap();
             (*png, emu)
         })
         .collect();
@@ -241,7 +248,7 @@ fn retro_vice_works() {
 #[test]
 fn settings_reach_the_core() {
     let core_path = libloader::get_libretro("puae").unwrap();
-    let system_dir = &root("system");
+    let system_dir = &root("system/amiga");
     let game_path = root("demos/rebels.adf");
 
     let mut settings = HashMap::new();

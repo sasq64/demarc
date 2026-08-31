@@ -27,6 +27,35 @@ const CORE_NAME_UAE: &str = "puae";
 /// `$DEMARC_CORE_DIR` when a local build is being tested (see AMIBERRY.md).
 const CORE_NAME_AMIBERRY: &str = "amiberry";
 
+/// The Amiga corner of `system_dir()`: the Kickstart ROMs and the WHDLoad
+/// assets, and the directory both Amiga cores are handed as their libretro
+/// system (and save) directory.
+///
+/// It is a subdirectory rather than `system/` itself because amiberry's startup
+/// ROM scan walks the directory it is given *recursively*, opens every file in
+/// it, and probes it for an Amiga ROM by content — and the probe treats anything
+/// carrying an archive signature as an archive, whatever the file is called.
+/// `system/` is shared by every core, so that scan used to reach vice's,
+/// musix's, PCem's and Ruffle's data as well. Two things went wrong:
+///
+/// * PCem's AMI BIOS images (`system/pcem/roms/430vx/55xwuq0e.bin`) carry
+///   `-lh5-` at offset 2, because that is how AMI packs its modules — and
+///   amiberry's LHA decoder then overruns a stack array unpacking one. The
+///   process died in `__stack_chk_fail` inside `lha_make_table()` before
+///   `retro_load_game` returned, taking demarc with it. Nothing on our side can
+///   catch an `abort()` in a core, so the fix has to be to not show it the file.
+/// * The scan CRC32s and SHA1s every one of those ~1000 files, which was the
+///   ~2 s per demo start recorded in docs/AMIBERRY.md.
+///
+/// puae does not rummage — it looks its files up by name — but it reads the
+/// same Kickstarts, so it gets the same directory. Amiberry also writes here
+/// (`amiberry.ini`, `Configurations/`, `Savegames/`, WHDLoad save-data …),
+/// which is why it is a real directory in `system/` and not something assembled
+/// per run.
+fn amiga_system_dir() -> PathBuf {
+    system_dir().join("amiga")
+}
+
 /// First longword of an AmigaDOS executable (`HUNK_HEADER`).
 const HUNK_MAGIC: [u8; 4] = [0x00, 0x00, 0x03, 0xF3];
 
@@ -751,7 +780,7 @@ impl System for AmigaSystem {
         let core = libloader::get_libretro(core_name).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
-            system_dir(),
+            &amiga_system_dir(),
             Some(path),
             meta,
             false,
