@@ -32,18 +32,6 @@ const COPYRIGHT_FILE: &str = "CPY.TXT";
 const ABSTRACT_FILE: &str = "ABS.TXT";
 const BIBLIO_FILE: &str = "BIB.TXT";
 
-/// Whether one of `files` is a [`IPL_NAME`] — which is to say, whether the
-/// directory they came from is a Neo Geo CD release rather than a directory of
-/// unrelated ones. [`crate::files::collect_files`] asks before it splits a
-/// directory into one playlist entry per file, since these files are a single
-/// disc and only mean anything together.
-pub fn holds_boot_list(files: &[PathBuf]) -> bool {
-    files.iter().any(|path| {
-        path.file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case(IPL_NAME))
-    })
-}
-
 /// Whether the disc image at `path` is a Neo Geo CD one, judged by [`IPL_NAME`]
 /// in its root directory. Works on a bare `.iso` and on the raw data track a
 /// cue names alike — see [`DiscImage`], which sorts the sector layout out.

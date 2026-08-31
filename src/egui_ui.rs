@@ -683,14 +683,14 @@ fn update_ui(
 
         let mut cdc = 0;
         let mut vt = false;
-        if let Some(emu_file) = source.get_data(id) {
-            if let Some(pouet) = emu_file.meta.get("pouet") {
-                for (i, s) in pouet.split(",").enumerate() {
-                    if i == 0 {
-                        cdc = s.parse::<u32>().unwrap_or(0);
-                    } else if i == 3 {
-                        vt = s.split(" ").any(|s| s == "15");
-                    }
+        if let Some(emu_file) = source.get_data(id)
+            && let Some(pouet) = emu_file.meta.get("pouet")
+        {
+            for (i, s) in pouet.split(",").enumerate() {
+                if i == 0 {
+                    cdc = s.parse::<u32>().unwrap_or(0);
+                } else if i == 3 {
+                    vt = s.split(" ").any(|s| s == "15");
                 }
             }
         }

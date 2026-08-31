@@ -35,7 +35,6 @@ use snes::SNESSystem;
 use std::collections::HashMap;
 use tic80::Tic80System;
 
-
 mod amiga;
 mod amstrad;
 mod atari_2600;
@@ -55,18 +54,6 @@ mod playstation;
 mod sinclair;
 mod snes;
 mod tic80;
-
-/// Whether `files` — the files directly inside one directory — are a single
-/// release that has to be loaded as a whole, rather than unrelated demos that
-/// happen to sit side by side. Amiga and Atari ST releases are mounted as a
-/// hard drive and started from it, so the executable's data files have to come
-/// with it; see the two systems' own predicates for what each recognises.
-///
-/// [`crate::files::collect_files`] asks before it splits a directory into one
-/// playlist entry per file, the same way it asks [`holds_boot_list`].
-pub fn holds_hard_drive_release(files: &[PathBuf]) -> bool {
-    amiga::holds_executable(files) || atari_st::holds_executable(files)
-}
 
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///

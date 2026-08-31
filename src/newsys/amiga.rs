@@ -27,82 +27,8 @@ const CORE_NAME_UAE: &str = "puae";
 /// `$DEMARC_CORE_DIR` when a local build is being tested (see AMIBERRY.md).
 const CORE_NAME_AMIBERRY: &str = "amiberry";
 
-/// Which core the `amiga_core` option asks for. Anything else, including the
-/// option being unset, is the default p-uae core.
-fn use_amiberry(file: &WorkFile) -> bool {
-    file.get_meta_or("amiga_core", "").contains("amiberry")
-}
-
-/// Rewrite the `puae_*` options demarc emits into the `amiberry_*` options the
-/// Amiberry libretro core understands, best effort.
-///
-/// Amiberry silently drops any option it doesn't recognise, so without this
-/// every demo boots as a default OCS A500 / 68000 / KS 1.3 regardless of the
-/// puae config — AGA included (see `docs/AMIBERRY.md`, "Integration gaps"). It
-/// can't be a pure rename: several puae options (`puae_fpu_model`, the display
-/// tweaks) have no Amiberry equivalent and are simply left behind.
-/// An already-present
-/// `amiberry_*` key (e.g. hand-written in an m3u) always wins over the
-/// translation.
-fn puae_to_amiberry(meta: &mut HashMap<String, String>) {
-    // Direct renames: the value space is the same in both cores.
-    for (puae, amiberry) in [
-        ("puae_model", "amiberry_model"),
-        ("puae_cpu_model", "amiberry_cpu_model"),
-        ("puae_z3mem_size", "amiberry_z3mem_size"),
-        // Chip and Slow RAM count in the same 512K / 256K units in both cores,
-        // because both hand the value straight to cfgfile.
-        ("puae_chipmem_size", "amiberry_chipmem_size"),
-        ("puae_bogomem_size", "amiberry_bogomem_size"),
-        ("puae_fastmem_size", "amiberry_fastmem_size"),
-        ("puae_kickstart", "amiberry_kickstart"),
-        ("puae_video_standard", "amiberry_video_standard"),
-        // Both spell drive speed as a percentage of 300 RPM with 0 meaning
-        // turbo, but the two cores disagree on the default: p-uae ships 100
-        // (accurate) and Amiberry ships 0 (turbo). Turbo loading breaks the
-        // custom trackloaders old A500 demos boot from — TEK's Hologon dies in
-        // an address error at the line-F vector — so `default_meta` pins
-        // `puae_floppy_speed` to 100 and this carries it across. `--fast-load`
-        // still wins, because it sets the puae key before the defaults are
-        // filled in.
-        ("puae_floppy_speed", "amiberry_floppy_speed"),
-    ] {
-        if let Some(v) = meta.get(puae).cloned() {
-            meta.entry(amiberry.to_string()).or_insert(v);
-        }
-    }
-
-    // p-uae runs the CPU unthrottled by default; Amiberry throttles it to the
-    // modelled machine's clock unless told otherwise, which crawls on an
-    // accelerated model (see `docs/AMIBERRY.md`, "Starstruck"). Match p-uae's
-    // behaviour for 68020+ configs via the `amiberry_cpu_speed` option we added.
-    let accelerated = meta
-        .get("amiberry_cpu_model")
-        .is_some_and(|m| m != "68000" && m != "68010");
-    if accelerated {
-        meta.entry("amiberry_cpu_speed".into())
-            .or_insert("max".into());
-    }
-}
-
 /// First longword of an AmigaDOS executable (`HUNK_HEADER`).
 const HUNK_MAGIC: [u8; 4] = [0x00, 0x00, 0x03, 0xF3];
-
-/// Whether one of `files` is an AmigaDOS executable — which is to say, whether
-/// the directory they came from is one release rather than a directory of
-/// unrelated ones. [`crate::files::collect_files`] asks before it splits a
-/// directory into one playlist entry per file, because the whole directory is
-/// mounted as the hard drive the program is started from: split up, the
-/// executable arrives on its own and every data file it opens by a relative
-/// path (`musikk/p61.dhreph2`) is missing, so the demo quits on the first read.
-pub fn holds_executable(files: &[PathBuf]) -> bool {
-    files.iter().any(|path| {
-        // Custom music (`.cus`, `.fp`) is a player plus its tune, and so looks
-        // exactly like an executable — `load()` skips it for the same reason.
-        !has_any_extension(path, &["cus", "fp"])
-            && read_header(path, 4).is_ok_and(|data| data.starts_with(&HUNK_MAGIC))
-    })
-}
 
 // Hunk block ids, as they appear on disk (see `dos/doshunks.h`).
 const HUNK_NAME: u32 = 0x3E8;
@@ -544,11 +470,8 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
 
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
-    if std::fs::metadata(&wf)?.len() > 850 * 1024 {
-        if !wf.is_aga() {
-            wf.set_machine(Machine::A1200);
-        }
-        //wf.set_meta("puae_model", "A1200");
+    if std::fs::metadata(&wf)?.len() > 850 * 1024 && !wf.is_aga() {
+        wf.set_machine(Machine::A1200);
     }
 
     let target_dir = WorkFile::new_dir()?;
@@ -791,7 +714,7 @@ impl System for AmigaSystem {
             // )?;
         }
 
-        if file.get_meta_or("amiga_core", "") == "" {
+        if file.get_meta_or("amiga_core", "").is_empty() {
             file.set_meta(
                 "amiga_core",
                 if file.is_aga() { "amiberry" } else { "puae" },
@@ -818,11 +741,10 @@ impl System for AmigaSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        let mut meta = path.get_all_meta();
+        let meta = path.get_all_meta();
         let core_name = if path.get_meta_or("amiga_core", "").contains("puae") {
             CORE_NAME_UAE
         } else {
-            puae_to_amiberry(&mut meta);
             CORE_NAME_AMIBERRY
         };
         debug!("Starting {core_name} with meta {meta:?}");
@@ -1026,89 +948,6 @@ mod tests {
             fs::read_to_string(file.path.join("s/startup-sequence")).unwrap(),
             "C:Assign data: dh0:stuff\nC:Assign musik: dh0:mod\ndemo\n"
         );
-    }
-
-    fn amiberry(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        let mut meta: HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        puae_to_amiberry(&mut meta);
-        meta
-    }
-
-    #[test]
-    fn renames_puae_options() {
-        let meta = amiberry(&[("puae_model", "A1200"), ("puae_cpu_model", "68030")]);
-        assert_eq!(meta.get("amiberry_model").unwrap(), "A1200");
-        assert_eq!(meta.get("amiberry_cpu_model").unwrap(), "68030");
-    }
-
-    #[test]
-    fn drops_options_without_an_amiberry_equivalent() {
-        let meta = amiberry(&[("puae_fpu_model", "68882"), ("puae_crop", "smaller")]);
-        assert!(!meta.keys().any(|k| k.starts_with("amiberry_")));
-    }
-
-    #[test]
-    fn renames_floppy_speed() {
-        // Amiberry's own default is turbo, which breaks old trackloaders, so
-        // the accurate speed `default_meta` pins has to reach it.
-        assert_eq!(
-            amiberry(&[("puae_floppy_speed", "100")])
-                .get("amiberry_floppy_speed")
-                .unwrap(),
-            "100"
-        );
-        // `--fast-load` still gets through.
-        assert_eq!(
-            amiberry(&[("puae_floppy_speed", "0")])
-                .get("amiberry_floppy_speed")
-                .unwrap(),
-            "0"
-        );
-    }
-
-    #[test]
-    fn renames_memory_options() {
-        let meta = amiberry(&[
-            ("puae_chipmem_size", "4"),
-            ("puae_bogomem_size", "2"),
-            ("puae_fastmem_size", "8"),
-        ]);
-        assert_eq!(meta.get("amiberry_chipmem_size").unwrap(), "4");
-        assert_eq!(meta.get("amiberry_bogomem_size").unwrap(), "2");
-        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
-    }
-
-    #[test]
-    fn keeps_fastmem_and_z3mem_apart() {
-        // Zorro II fast RAM is its own option now, so a config asking for both
-        // gets both rather than one folded into the other.
-        let meta = amiberry(&[("puae_fastmem_size", "8"), ("puae_z3mem_size", "128")]);
-        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
-        assert_eq!(meta.get("amiberry_z3mem_size").unwrap(), "128");
-
-        let meta = amiberry(&[("puae_fastmem_size", "8")]);
-        assert_eq!(meta.get("amiberry_fastmem_size").unwrap(), "8");
-        assert!(!meta.contains_key("amiberry_z3mem_size"));
-    }
-
-    #[test]
-    fn unthrottles_accelerated_cpus_only() {
-        assert_eq!(
-            amiberry(&[("puae_cpu_model", "68030")])
-                .get("amiberry_cpu_speed")
-                .unwrap(),
-            "max"
-        );
-        assert!(!amiberry(&[("puae_model", "A500")]).contains_key("amiberry_cpu_speed"));
-    }
-
-    #[test]
-    fn keeps_hand_written_amiberry_options() {
-        let meta = amiberry(&[("puae_model", "A1200"), ("amiberry_model", "A4040")]);
-        assert_eq!(meta.get("amiberry_model").unwrap(), "A4040");
     }
 
     #[test]
