@@ -345,25 +345,6 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
         }
     }
 
-    // A Neo Geo CD release ships as the loose files that were meant to be
-    // burned onto a disc — the boot list and everything it names. They are one
-    // release and mean nothing apart, so the directory becomes a single entry
-    // and the loader builds the disc out of it.
-    if crate::newsys::holds_boot_list(&files) {
-        out.push(collect_file(dir)?);
-        return Ok(());
-    }
-
-    // An Amiga or Atari ST release is loaded as a hard drive: the directory the
-    // executable sits in becomes the drive, so the data files beside it come
-    // along. Taken apart into one entry per file the executable would arrive on
-    // its own and quit on the first data file it couldn't open, so the
-    // directory is the entry and isn't recursed into. `--many` still splits it.
-    if !many && crate::newsys::holds_hard_drive_release(&files) {
-        out.push(collect_file(dir)?);
-        return Ok(());
-    }
-
     // Mixed types in directory, add every valid file one by one. A directory
     // holding nothing but disk images is left to the loader, which mounts the
     // whole set rather than each image on its own.

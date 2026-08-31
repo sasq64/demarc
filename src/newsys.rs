@@ -26,7 +26,6 @@ use images::ImageSystem;
 use megadrive::MegadriveSystem;
 use music::MusicSystem;
 use neo_geo::NeoGeoSystem;
-pub use neo_geo::holds_boot_list;
 use pc::PcSystem;
 use pico8::Pico8System;
 use playstation::PSXSystem;
