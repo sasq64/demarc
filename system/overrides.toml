@@ -42,21 +42,15 @@ assign = { Killer = "SYS:" }
 fast = true
 
 [zoo.18030]
+patch = { info = "GUS 0x240", target = "SOUND.CFG", contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+
 file = "inside.zip"
-patch = {
-  info = "GUS 0x240",
-  target = "SOUND.CFG",
-  contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-}
 
 # Ninja II by Melon Dezign
 [zoo.18032]
+patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==" }
+
 file = "ninja2.zip"
-patch = {
-  info = "GUS 0x240",
-  target = "NINJA2.CFG",
-  contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==",
-}
 
 [zoo.68604]
 file = "puls.zip"
@@ -72,6 +66,9 @@ fast = true
 
 [zoo.119665]
 assign = { Love = "SYS:" }
+
+[zoo.205735]
+file = "MOTUS.ZIP"
 
 [zoo.211926]
 assign = { retro = "SYS:" }
