@@ -307,6 +307,14 @@ pub fn find_child(dir: &Path, name: &str) -> Option<PathBuf> {
 //
 //  -> [ disk_1.adf, disk_2.adf]
 //
+// If every disk ends up in the same slot the numbering is meaningless, so
+// sort the names normally instead
+//
+//  intro3.adf
+//  credits3.adf
+//
+//  -> [ credits3.adf, intro3.adf ]
+//
 pub fn sort_disks(paths: &mut [PathBuf]) {
     if paths.len() < 2 {
         return;
@@ -328,11 +336,28 @@ pub fn sort_disks(paths: &mut [PathBuf]) {
     let mut order: Vec<usize> = (0..paths.len()).collect();
     order.sort_by_key(|&i| stems[i].to_lowercase());
 
+    let claims: Vec<Option<DiskSlot>> = stems.iter().map(|s| disk_slot(s)).collect();
+
+    // Every name landing in the same slot (`intro3`, `credits3`) means those
+    // numbers aren't disk numbers at all, so they say nothing about the order.
+    // Sort by name instead of letting one arbitrary disk win the slot and the
+    // rest be shuffled by the digit-beats-letter and gap filling rules.
+    let first_claim = claims[0].map(DiskSlot::number);
+    if first_claim.is_some()
+        && claims
+            .iter()
+            .all(|c| c.map(DiskSlot::number) == first_claim)
+    {
+        let sorted: Vec<PathBuf> = order.iter().map(|&i| paths[i].clone()).collect();
+        paths.clone_from_slice(&sorted);
+        return;
+    }
+
     // slot number -> (index into `paths`, claimed by a digit)
     let mut slots: BTreeMap<u32, (usize, bool)> = BTreeMap::new();
     let mut leftover: Vec<usize> = Vec::new();
     for &i in &order {
-        let Some(claim) = disk_slot(&stems[i]) else {
+        let Some(claim) = claims[i] else {
             leftover.push(i);
             continue;
         };
@@ -518,6 +543,20 @@ mod tests {
         assert_eq!(
             sorted(&["disk_A.adf", "disk_1.adf", "disk_B.adf", "disk_2.adf"]),
             ["disk_1.adf", "disk_2.adf", "disk_A.adf", "disk_B.adf"]
+        );
+    }
+
+    #[test]
+    fn sorts_plainly_when_every_disk_claims_the_same_slot() {
+        // Nothing here numbers a disk, so the slot rules would only shuffle the
+        // names: a digit outranking a letter, or a hole being filled.
+        assert_eq!(
+            sorted(&["red_A.adf", "blue_1.adf"]),
+            ["blue_1.adf", "red_A.adf"]
+        );
+        assert_eq!(
+            sorted(&["intro3.adf", "credits3.adf", "main3.adf"]),
+            ["credits3.adf", "intro3.adf", "main3.adf"]
         );
     }
 
