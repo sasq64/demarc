@@ -187,6 +187,7 @@ impl System for AtariStSystem {
             ("hatari_forcerefresh", "2"),
             ("hatari_start_in_mouse_mode", "false"),
             ("hatari_fastboot", "true"),
+            ("hatari_led_status_display", "false"),
             ("hatari_video_crop_overscan", "false"),
         ]
         .into()
