@@ -11,8 +11,6 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::utils::read_at;
-#[cfg(target_os = "linux")]
-use crate::wine_emu::WineEmu;
 use crate::workfile::WorkFile;
 
 const CORE_NAME_PCEM: &str = "pcem";
@@ -41,11 +39,10 @@ fn dos4gw_source() -> PathBuf {
 /// - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which
 ///   brings its own DOS and mounts the directory the program sits in as C:.
 ///   Nothing else is needed, which is what most DOS releases arrive as.
-/// - A Windows program — the same `.exe`, with a `PE` image behind the DOS stub
-///   — goes to wine, on Linux, where it runs on top of demarc rather than
-///   inside it. See [`crate::wine_emu`]; `wine_res` sets the size it runs at,
-///   and a release that names its own size — `demo_1920x1080.exe` — fills that
-///   in by itself, see [`res_from_name`].
+///
+/// A `.exe` with a `PE` image behind its DOS stub is a Windows program and
+/// none of this business — see [`super::windows`], which reads the same header
+/// from the other side.
 ///
 /// A DOS release is often missing the extender it was linked against, since
 /// that came with the compiler rather than the demo. `dos4gw=true` on an entry
@@ -57,7 +54,7 @@ fn dos4gw_source() -> PathBuf {
 /// `<system dir>/pcem/roms/<machine>/`; `docs/roms.txt` in the PCem tree lists
 /// what each machine needs. Everything the machine writes — NVR, logs — goes
 /// under `<save dir>/pcem/`.
-pub struct PcSystem {}
+pub struct DosSystem {}
 
 /// Does this look like a PCem machine config?
 ///
@@ -82,7 +79,7 @@ const MAX_COM_SIZE: u64 = 0xff00;
 
 /// What an `MZ` file turns out to be once the stub is looked past.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ExeKind {
+pub(super) enum ExeKind {
     /// Not an executable at all.
     None,
     /// DOS — a DOS extender (`LE`/`LX`) included, which is how half the demos
@@ -99,14 +96,16 @@ enum ExeKind {
 /// The check matters: the same extension and the same `MZ` header belong to
 /// every Windows program ever built, and DOSBox can run none of those. What
 /// sits at `e_lfanew` tells them apart — a second header there means the `MZ`
-/// is only the stub in front of the real image.
+/// is only the stub in front of the real image. It is read here, beside the
+/// DOS header it belongs to, and [`super::windows`] asks it the one question
+/// from the other side.
 ///
 /// The offset is not required to clear the DOS header. A size-optimised
 /// release — which is most of the 64K Windows intros — overlaps the two, so
 /// that the `PE` lands as early as 0x0c and the fields behind it double as the
 /// rest of the DOS header. Only an offset landing on the `MZ` magic itself is
 /// out of bounds.
-fn exe_kind(path: &Path) -> ExeKind {
+pub(super) fn exe_kind(path: &Path) -> ExeKind {
     let Ok(size) = fs::metadata(path).map(|m| m.len()) else {
         return ExeKind::None;
     };
@@ -148,22 +147,6 @@ fn is_dos_program(path: &Path) -> bool {
     }
 }
 
-/// Whether a Windows program can be started at all here.
-///
-/// wine and gamescope are Linux-only, so everywhere else a `.exe` with a `PE`
-/// image in it is something nothing can run — and claiming it would take the
-/// release away from the picture and music systems that can at least show what
-/// it shipped beside the program.
-const CAN_RUN_WINDOWS: bool = cfg!(target_os = "linux");
-
-/// Does this look like a Windows program?
-///
-/// The exact complement of the `.exe` half of [`is_dos_program`], read the
-/// same way — see [`exe_kind`].
-fn is_windows_program(path: &Path) -> bool {
-    get_ext(path) == "exe" && exe_kind(path) == ExeKind::Windows
-}
-
 /// How much we want to start a given program, biggest first.
 ///
 /// A release is usually a directory holding one program worth running and
@@ -183,10 +166,9 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
         .to_string_lossy()
         .to_ascii_lowercase();
 
-    let win = is_windows_program(path);
     let mut rank = match get_ext(path).as_str() {
         "bat" => 10,
-        "exe" => 20 + if win { 0 } else { 1 },
+        "exe" => 20,
         _ => 0,
     };
     if !release.is_empty() && stem == release {
@@ -209,85 +191,6 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
 const EXTENDERS: &[&str] = &[
     "dos4gw", "dos4g", "dos32a", "cwsdpmi", "cwsdpr0", "pmodew", "wdosx", "dpmiload", "dpmi16bi",
 ];
-
-/// The smallest and largest either side of a resolution in a file name is
-/// allowed to be.
-///
-/// Two numbers with something between them are not only ever a screen mode:
-/// `pack2x2`, a hex `0x1000` and a `demo_2_1` all read the same way to a scan,
-/// and none of them is a size to run a demo at. The bounds are what a display
-/// could actually be — 320x200 at the bottom, 8K at the top — which throws all
-/// three out without needing to understand the rest of the name.
-// Only consumed from the `wine_res` handling below, which is Linux-only; kept
-// available everywhere so `reads_a_resolution_only_where_a_name_holds_one`
-// exercises the same parsing on every platform.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const MIN_SIDE: u32 = 120;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const MAX_SIDE: u32 = 7680;
-
-/// What can sit between the two numbers, most telling first.
-///
-/// An `x` between two numbers is nearly always a size; an `_` is only a
-/// separator and could be holding apart anything, a year and a version
-/// included. So a name carrying both — `elevated_1920x1080` — is read by its
-/// `x`, and the `_` form is what is left for the names spelled
-/// `elevated_1920_1080`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
-
-/// Read the resolution a Windows release named itself after.
-///
-/// A demo built for one size often says so in the file name —
-/// `demo_1920x1080.exe`, `elevated_1440_900.exe` — and that is the only place
-/// it says it. It matters because the size has to be settled before the demo
-/// starts: the dialog driver picks the mode by matching what demarc asked for
-/// against the labels in the setup dialog, and gamescope is given a session
-/// that size (see [`crate::wine_emu`]).
-///
-/// The digits are taken as they lie, so `vga640x480` reads as well as
-/// `demo_640x480` does; only the numbers have to make sense, per [`MIN_SIDE`].
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn res_from_name(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_string_lossy().into_owned();
-    RES_SEPARATORS
-        .iter()
-        .find_map(|separators| scan_res(&stem, separators))
-}
-
-/// The first `<digits><separator><digits>` in `stem` that could be a screen
-/// mode, normalised to `WIDTHxHEIGHT`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn scan_res(stem: &str, separators: &[char]) -> Option<String> {
-    let bytes = stem.as_bytes();
-    for (i, sep) in stem.match_indices(separators) {
-        // Both runs stop at the first byte that isn't a digit, so the number
-        // is whatever lies against the separator: `vga640x480` reads as
-        // 640x480, and the name in front of it is no business of ours.
-        let start = bytes[..i]
-            .iter()
-            .rposition(|c| !c.is_ascii_digit())
-            .map_or(0, |p| p + 1);
-        let rest = i + sep.len();
-        let end = rest
-            + bytes[rest..]
-                .iter()
-                .position(|c| !c.is_ascii_digit())
-                .unwrap_or(bytes.len() - rest);
-        // Digits on both sides, or the separator is part of a word rather than
-        // between two numbers.
-        let (Ok(width), Ok(height)) = (
-            stem[start..i].parse::<u32>(),
-            stem[rest..end].parse::<u32>(),
-        ) else {
-            continue;
-        };
-        if (MIN_SIDE..=MAX_SIDE).contains(&width) && (MIN_SIDE..=MAX_SIDE).contains(&height) {
-            return Some(format!("{width}x{height}"));
-        }
-    }
-    None
-}
 
 /// Get the release into a directory we may write to, still pointing at
 /// `target`.
@@ -365,7 +268,7 @@ fn is_set(file: &WorkFile, key: &str) -> bool {
     ) || file.has_tag("dos4gw")
 }
 
-impl PcSystem {
+impl DosSystem {
     /// Which of the files in a release is the one to start.
     ///
     /// A machine config describes the whole machine, so it wins outright;
@@ -398,7 +301,7 @@ impl PcSystem {
     }
 }
 
-impl System for PcSystem {
+impl System for DosSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["cfg", "exe", "com", "bat"]
     }
@@ -410,7 +313,7 @@ impl System for PcSystem {
         if get_ext(path) == "cfg" {
             is_pcem_config(path)
         } else {
-            is_dos_program(path) || (CAN_RUN_WINDOWS && is_windows_program(path))
+            is_dos_program(path)
         }
     }
 
@@ -423,7 +326,7 @@ impl System for PcSystem {
     /// followed across the copy afterwards.
     /// The default walks for the first file it can load, in whatever order the
     /// filesystem hands them over — which for a release directory holding
-    /// several programs is not a choice at all. See [`PcSystem::pick_target`].
+    /// several programs is not a choice at all. See [`DosSystem::pick_target`].
     fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
         self.pick_target(dir)
     }
@@ -432,24 +335,6 @@ impl System for PcSystem {
         let Some(target) = self.pick_target(file)? else {
             return Ok(false);
         };
-
-        #[cfg(target_os = "linux")]
-        if file.has_tag("512x384") {
-            file.set_meta(crate::wine_emu::META_RES, "512x384");
-        }
-
-        // A Windows release that names its size in the file name is telling us
-        // the one thing that has to be known before it starts - see
-        // [`res_from_name`]. An entry that sets `wine_res` itself has said it
-        // more deliberately, so it wins.
-        #[cfg(target_os = "linux")]
-        if is_windows_program(&target)
-            && !file.has_meta(crate::wine_emu::META_RES)
-            && let Some(res) = res_from_name(&target)
-        {
-            info!("Running {target:?} at {res}, after its name");
-            file.set_meta(crate::wine_emu::META_RES, res);
-        }
 
         // A machine config brings its own DOS on its own disc images, so the
         // extender is only ever a question for a program run under DOSBox.
@@ -460,9 +345,6 @@ impl System for PcSystem {
         } else {
             file.path = target;
         }
-        if get_ext(&file.path) == "com" {
-            //file.set_meta("dosbox_pure_cycles", "150000");
-        }
         Ok(true)
     }
 
@@ -471,44 +353,20 @@ impl System for PcSystem {
     /// leaves the framebuffer alone and only reports the pixel-aspect-corrected
     /// display ratio, which is what a CRT showed and what our scaler wants.
     fn default_meta(&self) -> HashMap<&str, &str> {
-        #[allow(unused_mut)]
-        let mut meta: HashMap<&str, &str> = [
+        [
             ("dosbox_pure_gus", "true"),
             ("dosbox_pure_cycles", "150000"),
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
         ]
-        .into();
-        // The size a Windows demo is asked to run at, and the size demarc gives
-        // the gamescope it runs in, plus whether it gets a wine virtual desktop
-        // to run in. Spelled out here rather than left to the backend so they
-        // show up with the rest of an entry's settings.
-        #[cfg(target_os = "linux")]
-        {
-            meta.insert(crate::wine_emu::META_RES, crate::wine_emu::DEFAULT_RES);
-            meta.insert(
-                crate::wine_emu::META_DESKTOP,
-                if crate::wine_emu::DEFAULT_DESKTOP {
-                    "true"
-                } else {
-                    "false"
-                },
-            );
-        }
-        meta
+        .into()
     }
 
     fn name(&self) -> &'static str {
-        "PC"
+        "DOS"
     }
 
-    /// A Windows program is not emulated at all — it is run, on top of demarc,
-    /// by [`WineEmu`]. Everything else goes to one of the two cores.
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        #[cfg(target_os = "linux")]
-        if is_windows_program(&path.path) {
-            return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
-        }
         let core = libloader::get_libretro(core_for(&path.path)).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
@@ -558,7 +416,7 @@ mod tests {
     #[test]
     fn tells_a_machine_config_from_any_other_cfg() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
 
         let pcem = write(
             dir.path(),
@@ -589,7 +447,7 @@ mod tests {
     #[test]
     fn tells_a_dos_program_from_a_windows_one() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
 
         // A DOS executable: `MZ`, and e_lfanew left as it comes.
         let mut dos = vec![0u8; 0x80];
@@ -599,15 +457,15 @@ mod tests {
         assert_eq!(core_for(&dos), CORE_NAME_DOSBOX);
 
         // The same header in front of a PE image is a Windows program: never a
-        // DOS one, and ours to start only where wine can run it.
+        // DOS one, and never this system's to start - see `super::windows`.
         let mut win = vec![0u8; 0x100];
         win[..2].copy_from_slice(b"MZ");
         win[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
         win[0x80..0x84].copy_from_slice(b"PE\0\0");
         let win = write_bytes(dir.path(), "setup32.exe", &win);
+        assert_eq!(exe_kind(&win), ExeKind::Windows);
         assert!(!is_dos_program(&win));
-        assert!(is_windows_program(&win));
-        assert_eq!(sys.can_load(&win), CAN_RUN_WINDOWS);
+        assert!(!sys.can_load(&win));
 
         // A DOS extender (LE/LX behind the stub) is how the demos were built.
         let mut dos4gw = vec![0u8; 0x100];
@@ -616,7 +474,6 @@ mod tests {
         dos4gw[0x80..0x82].copy_from_slice(b"LE");
         let dos4gw = write_bytes(dir.path(), "dos4gw.exe", &dos4gw);
         assert!(sys.can_load(&dos4gw));
-        assert!(!is_windows_program(&dos4gw));
 
         // An offset pointing past the end of the file is a DOS program with a
         // field it never set, not a Windows one whose image we failed to find.
@@ -624,7 +481,6 @@ mod tests {
         stub[..2].copy_from_slice(b"MZ");
         stub[0x3c..0x40].copy_from_slice(&0x1000u32.to_le_bytes());
         let stub = write_bytes(dir.path(), "stub.exe", &stub);
-        assert!(!is_windows_program(&stub));
         assert!(is_dos_program(&stub));
 
         // A 64K intro packs the two headers into one: `e_lfanew` points at
@@ -635,8 +491,8 @@ mod tests {
         tiny[0x0c..0x10].copy_from_slice(b"PE\0\0");
         tiny[0x3c..0x40].copy_from_slice(&0x0cu32.to_le_bytes());
         let tiny = write_bytes(dir.path(), "intro64k.exe", &tiny);
+        assert_eq!(exe_kind(&tiny), ExeKind::Windows);
         assert!(!is_dos_program(&tiny));
-        assert!(is_windows_program(&tiny));
 
         // Not an executable at all.
         let text = write(dir.path(), "notes.exe", "just a text file\n");
@@ -657,36 +513,6 @@ mod tests {
         assert!(!sys.can_load(&blank));
     }
 
-    /// A release directory holding a Windows program is the release, and on
-    /// Linux it is ours to start.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn claims_a_windows_release_for_wine() {
-        let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
-
-        let release = dir.path().join("kotpg");
-        fs::create_dir_all(&release).unwrap();
-        let mut pe = vec![0u8; 0x100];
-        pe[..2].copy_from_slice(b"MZ");
-        pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
-        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
-        // The one thing in the release nobody wants to start, reached first.
-        write_bytes(&release, "install.exe", &pe);
-        write_bytes(&release, "kotpg.exe", &pe);
-
-        let mut wf = WorkFile::new(release.clone());
-        assert!(sys.load(&mut wf).unwrap());
-        assert!(wf.path.ends_with("kotpg.exe"), "picked {:?}", wf.path);
-
-        // The size the dialog driver is told to pick, unless an entry says
-        // otherwise - see `crate::wine_emu`.
-        assert_eq!(
-            sys.default_meta().get(crate::wine_emu::META_RES),
-            Some(&"800x600")
-        );
-    }
-
     /// The two cores split by content, not by system: a machine config drives
     /// PCem, everything else runs on DOSBox's own DOS.
     #[test]
@@ -704,7 +530,7 @@ mod tests {
     #[test]
     fn picks_what_the_release_means_to_start() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
 
         let release = dir.path().join("crystal");
         fs::create_dir_all(&release).unwrap();
@@ -734,7 +560,7 @@ mod tests {
     #[test]
     fn starts_the_program_rather_than_the_batch_file_beside_it() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
         let mut exe = vec![0u8; 0x80];
         exe[..2].copy_from_slice(b"MZ");
 
@@ -759,7 +585,7 @@ mod tests {
     #[test]
     fn passes_over_an_extender_shipped_beside_the_program() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
         let mut exe = vec![0u8; 0x80];
         exe[..2].copy_from_slice(b"MZ");
 
@@ -786,7 +612,7 @@ mod tests {
     #[test]
     fn puts_the_extender_beside_a_release_asking_for_one() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
+        let sys = DosSystem {};
         let mut exe = vec![0u8; 0x80];
         exe[..2].copy_from_slice(b"MZ");
 
@@ -854,82 +680,6 @@ mod tests {
         assert_eq!(fs::read_to_string(empty.join(DOS4GW_EXE)).unwrap(), "ours");
     }
 
-    /// A Windows release often names the size it was built for, and that name
-    /// is the only place the size is written down.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn takes_the_resolution_out_of_a_windows_program_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let sys = PcSystem {};
-        let mut pe = vec![0u8; 0x100];
-        pe[..2].copy_from_slice(b"MZ");
-        pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
-        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
-
-        let release = dir.path().join("fr08");
-        fs::create_dir_all(&release).unwrap();
-        write_bytes(&release, "fr08_1920x1080.exe", &pe);
-
-        let mut wf = WorkFile::new(release.clone());
-        assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1920x1080");
-
-        // What the entry says was decided by a person, and beats a file name.
-        let meta = HashMap::from([(crate::wine_emu::META_RES.to_string(), "800x600".to_string())]);
-        let mut wf = WorkFile::new_with_meta(release, meta);
-        assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "800x600");
-
-        // The same release, spelled the other way.
-        let elevated = dir.path().join("elevated");
-        fs::create_dir_all(&elevated).unwrap();
-        write_bytes(&elevated, "elevated_1440_900.exe", &pe);
-        let mut wf = WorkFile::new(elevated);
-        assert!(sys.load(&mut wf).unwrap());
-        assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1440x900");
-
-        // A DOS program runs under DOSBox, which has no such setting to fill.
-        let dos = dir.path().join("dos");
-        fs::create_dir_all(&dos).unwrap();
-        let mut mz = vec![0u8; 0x80];
-        mz[..2].copy_from_slice(b"MZ");
-        write_bytes(&dos, "demo_640x480.exe", &mz);
-        let mut wf = WorkFile::new(dos);
-        assert!(sys.load(&mut wf).unwrap());
-        assert!(!wf.has_meta(crate::wine_emu::META_RES));
-    }
-
-    /// The scan has to tell a screen mode from every other reason two numbers
-    /// end up next to each other in a name.
-    #[test]
-    fn reads_a_resolution_only_where_a_name_holds_one() {
-        let res = |name: &str| res_from_name(Path::new(name));
-
-        assert_eq!(res("bla_1920x1080.exe").as_deref(), Some("1920x1080"));
-        assert_eq!(res("demo-640X480.exe").as_deref(), Some("640x480"));
-        // Digits running straight into the rest of the name are still digits.
-        assert_eq!(res("vga320x200.exe").as_deref(), Some("320x200"));
-        assert_eq!(res("intro_512x384_final.exe").as_deref(), Some("512x384"));
-
-        // The same sizes spelled with an underscore between them.
-        assert_eq!(res("elevated_1920_1080.exe").as_deref(), Some("1920x1080"));
-        assert_eq!(res("elevated_1280_720.exe").as_deref(), Some("1280x720"));
-        assert_eq!(res("demo_800_600_final.exe").as_deref(), Some("800x600"));
-        // With both to go on, the `x` is the one that means a size.
-        assert_eq!(res("party_2009_640x480.exe").as_deref(), Some("640x480"));
-
-        // Not sizes: a pack count, a version, a hex address, a texture.
-        assert_eq!(res("pack2x2.exe"), None);
-        assert_eq!(res("demo_2_1.exe"), None);
-        assert_eq!(res("loader_0x1000.exe"), None);
-        assert_eq!(res("atlas_16384x16384.exe"), None);
-        // Digits on one side of the separator only.
-        assert_eq!(res("directx9.exe"), None);
-        assert_eq!(res("64x.exe"), None);
-        assert_eq!(res("demo_1024_final.exe"), None);
-        assert_eq!(res("demo.exe"), None);
-    }
-
     /// How long to give the machine. The XT counts all 640K before it looks
     /// for something to boot, which takes about 35 emulated seconds — it
     /// reaches BASIC around frame 2400.
@@ -977,7 +727,7 @@ mod tests {
         let mut loaded = systems
             .load_file(&cfg, &HashMap::new(), None)
             .expect("failed to load the XT config");
-        assert_eq!(loaded.system.name(), "PC");
+        assert_eq!(loaded.system.name(), "DOS");
 
         // Both milestones of a real boot: the BIOS sizing memory, then BASIC.
         let mut post_line: Option<String> = None;
@@ -1108,7 +858,7 @@ mod tests {
         let mut loaded = systems
             .load_file(&cfg, &HashMap::new(), None)
             .expect("failed to load the Second Reality config");
-        assert_eq!(loaded.system.name(), "PC");
+        assert_eq!(loaded.system.name(), "DOS");
 
         // Every video mode the machine passes through, in order. The POST and
         // the SETUP screen are 80x25 text; the demo proper is 320x200.

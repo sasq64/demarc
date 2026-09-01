@@ -21,19 +21,20 @@ use atari_2600::Atari2600System;
 use atari_st::AtariStSystem;
 use atari_xl::AtariXlSystem;
 use c64::C64System;
+use dos::DosSystem;
 use gameboy::GameboySystem;
 use gba::GBASystem;
 use images::ImageSystem;
 use megadrive::MegadriveSystem;
 use music::MusicSystem;
 use neo_geo::NeoGeoSystem;
-use pc::PcSystem;
 use pico8::Pico8System;
 use playstation::PSXSystem;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
 use std::collections::HashMap;
 use tic80::Tic80System;
+use windows::WindowsSystem;
 
 mod amiga;
 mod amstrad;
@@ -42,18 +43,19 @@ mod atari_st;
 mod atari_xl;
 mod c64;
 mod disc;
+mod dos;
 mod gameboy;
 mod gba;
 mod images;
 mod megadrive;
 mod music;
 mod neo_geo;
-mod pc;
 mod pico8;
 mod playstation;
 mod sinclair;
 mod snes;
 mod tic80;
+mod windows;
 
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
@@ -410,7 +412,8 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
-            Box::new(PcSystem {}),
+            Box::new(DosSystem {}),
+            Box::new(WindowsSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
         ]
