@@ -10,9 +10,13 @@ pub fn system_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let system = resolve_system_dir();
-        system
+        let system = system
             .canonicalize()
-            .unwrap_or_else(|e| panic!("Failed to canonicalize system dir {system:?}: {e}"))
+            .unwrap_or_else(|e| panic!("Failed to canonicalize system dir {system:?}: {e}"));
+        // Cores get this path (and everything derived from it) as their libretro
+        // system/save directory, so it has to be one a C library can open — not
+        // the `\\?\` form canonicalize() hands back on Windows.
+        crate::utils::strip_verbatim_prefix(&system)
     })
     .as_path()
 }

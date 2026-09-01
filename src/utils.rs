@@ -437,6 +437,32 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         .count()
 }
 
+/// Strip Windows' `\\?\` extended-length path prefix, which `fs::canonicalize`
+/// always adds there.
+///
+/// Nothing but Win32 itself understands those paths. A libretro core reaches
+/// the filesystem through the C runtime and its own path joining, and neither
+/// copes: amiberry's ROM scan `opendir()`s the directory it is handed, and on a
+/// `\\?\` path that call fails outright, so it finds no Kickstart, boots a
+/// romless machine and renders a black screen (its path joining also uses `/`,
+/// which a verbatim path does *not* accept as a separator — under `\\?\` the
+/// string goes to the object manager unparsed). Hand out plain `C:\...` paths.
+///
+/// A verbatim UNC path (`\\?\UNC\server\share`) becomes `\\server\share`.
+/// No-op on paths that don't carry the prefix, and on non-Windows.
+pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let Some(s) = path.to_str() else {
+        return path.to_owned();
+    };
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => match rest.strip_prefix(r"UNC\") {
+            Some(unc) => PathBuf::from(format!(r"\\{unc}")),
+            None => PathBuf::from(rest),
+        },
+        None => path.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +527,28 @@ mod tests {
             sorted(&["b.adf", "a.adf"]),
             ["a.adf", "b.adf"],
             "nothing to sort by, but no disk may be dropped"
+        );
+    }
+
+    #[test]
+    fn strips_windows_verbatim_prefix() {
+        // Cores can't open these; system_dir() must hand out the plain form.
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\C:\demarc\system\amiga")),
+            PathBuf::from(r"C:\demarc\system\amiga")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\roms")),
+            PathBuf::from(r"\\server\share\roms")
+        );
+        // Anything without the prefix, and every unix path, is left alone.
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"C:\demarc")),
+            PathBuf::from(r"C:\demarc")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new("/home/sasq/system/amiga")),
+            PathBuf::from("/home/sasq/system/amiga")
         );
     }
 }
