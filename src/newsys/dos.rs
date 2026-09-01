@@ -159,6 +159,13 @@ fn is_dos_program(path: &Path) -> bool {
 /// "start here", but a release that ships one is as often using it to print the
 /// .NFO or set a variable before handing over — whereas the `.exe` beside it is
 /// the demo itself, and starts the same either way.
+///
+/// Between two programs that are otherwise equal, the one with a plain 8.3 name
+/// wins — see [`is_simple_name`]. A DOS release could not have been built around
+/// a name DOS cannot type, so a long or non-ASCII one was given to the file
+/// afterwards, by whoever packed or re-packed it: an unpacker, a scene archive,
+/// or a "read me first ⭐.exe" wrapper. The program the release actually is
+/// still carries the name it was linked as.
 fn launch_rank(path: &Path, release: &str) -> i32 {
     let stem = path
         .file_stem()
@@ -184,8 +191,45 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
     if EXTENDERS.contains(&stem.as_str()) {
         rank -= 20;
     }
+    // Small enough to break a tie between two programs without reaching across
+    // the ranks above it: an INSTALL.EXE stays below a demo whatever the demo
+    // is called.
+    if is_simple_name(path) {
+        rank += 5;
+    }
     rank
 }
+
+/// Is this a name DOS itself could hold — 8.3, ASCII, no spaces?
+///
+/// Both halves have to be there and within length, and every character has to
+/// be one DOS accepts in a name: letters, digits, and the punctuation it left
+/// alone. Case is not part of it, since the same release arrives uppercased,
+/// lowercased or mixed depending on what unpacked it.
+fn is_simple_name(path: &Path) -> bool {
+    // Not `to_string_lossy`: a name that is not valid UTF-8 has bytes in it we
+    // would replace with U+FFFD and then have to reject anyway.
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some((stem, ext)) = name.rsplit_once('.') else {
+        return false;
+    };
+    // `rsplit_once` so that the last dot is the one that separates them, which
+    // also means a second dot lands in the stem and is rejected there: DOS has
+    // exactly one, and "readme.txt.exe" is not a name it could have held.
+    (1..=8).contains(&stem.len())
+        && (1..=3).contains(&ext.len())
+        && [stem, ext]
+            .iter()
+            .all(|part| part.chars().all(|c| DOS_NAME_CHARS.contains(c)))
+}
+
+/// What may appear in a DOS file name: the alphanumerics, and the punctuation
+/// left over once the characters DOS uses itself are taken out — the path
+/// separators, the wildcards, and the command-line delimiters.
+const DOS_NAME_CHARS: &str =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'()-@^_`{}~";
 
 /// The DOS extenders and DPMI hosts a release ships beside its program.
 const EXTENDERS: &[&str] = &[
@@ -578,6 +622,68 @@ mod tests {
         write(&bare, "go.bat", "@echo off\r\n");
         let found = sys.get_first_file(&bare).unwrap().unwrap();
         assert!(found.ends_with("go.bat"), "picked {found:?}");
+    }
+
+    /// A DOS program was linked under a name DOS could type. Anything longer
+    /// than 8.3, or with a character DOS never had, was named by whatever
+    /// handled the release afterwards.
+    #[test]
+    fn prefers_a_program_with_a_name_dos_could_have_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = DosSystem {};
+        let mut exe = vec![0u8; 0x80];
+        exe[..2].copy_from_slice(b"MZ");
+
+        // Named so that neither wins on the release name, and the long one
+        // written first so the walk reaches it before the program.
+        let release = dir.path().join("release");
+        fs::create_dir_all(&release).unwrap();
+        write_bytes(&release, "read me first.exe", &exe);
+        write_bytes(&release, "trip.exe", &exe);
+        let found = sys.get_first_file(&release).unwrap().unwrap();
+        assert!(found.ends_with("trip.exe"), "picked {found:?}");
+
+        // It only breaks a tie: a program named after the release is still
+        // what the release is, however that name looks.
+        let named = dir.path().join("crystal demo");
+        fs::create_dir_all(&named).unwrap();
+        write_bytes(&named, "crystal demo.exe", &exe);
+        write_bytes(&named, "trip.exe", &exe);
+        let found = sys.get_first_file(&named).unwrap().unwrap();
+        assert!(found.ends_with("crystal demo.exe"), "picked {found:?}");
+
+        // And an installer stays an installer whatever its name looks like.
+        let installer = dir.path().join("installer");
+        fs::create_dir_all(&installer).unwrap();
+        write_bytes(&installer, "install.exe", &exe);
+        write_bytes(&installer, "the whole demo.exe", &exe);
+        let found = sys.get_first_file(&installer).unwrap().unwrap();
+        assert!(found.ends_with("the whole demo.exe"), "picked {found:?}");
+    }
+
+    /// What counts as a name DOS itself could hold.
+    #[test]
+    fn knows_an_8_3_name_from_a_longer_one() {
+        for name in ["demo.exe", "GO.BAT", "a.c", "trip_95.exe", "cw$dpmi.exe"] {
+            assert!(is_simple_name(Path::new(name)), "{name} is an 8.3 name");
+        }
+        for name in [
+            // Nine characters in the stem, four in the extension.
+            "crystals1.exe",
+            "seconddemo.exe",
+            "demo.html",
+            // Characters DOS never had in a name.
+            "read me.exe",
+            "démo.exe",
+            "demo\u{2b50}.exe",
+            // One dot, and on the right side of the name.
+            "demo",
+            ".exe",
+            "readme.txt.exe",
+        ] {
+            assert!(!is_simple_name(Path::new(name)), "{name} is not 8.3");
+        }
+        assert!(is_simple_name(Path::new("crystal.exe")));
     }
 
     /// The extender is shipped beside the program that loads it, so it is the
