@@ -385,6 +385,61 @@ fn scroll_area<T>(
         .inner
 }
 
+/// The modifier keys held *right now*, read from Bevy rather than from egui.
+/// egui only learns about a modifier through the key events it is fed, so one
+/// pressed here and released while another window had focus stays "held" for
+/// good -- and every exact-match lookup against [`egui::Modifiers::NONE`] then
+/// quietly stops matching, which is what leaves the picker unable to see a
+/// plain arrow key again. Bevy clears its keyboard state outright on
+/// [`KeyboardFocusLost`](bevy::input::keyboard::KeyboardFocusLost), so this
+/// answer recovers by itself.
+fn live_modifiers(keys: &ButtonInput<KeyCode>) -> egui::Modifiers {
+    let held = |a, b| keys.pressed(a) || keys.pressed(b);
+    let alt = held(KeyCode::AltLeft, KeyCode::AltRight);
+    let ctrl = held(KeyCode::ControlLeft, KeyCode::ControlRight);
+    let shift = held(KeyCode::ShiftLeft, KeyCode::ShiftRight);
+    let mac_cmd = cfg!(target_os = "macos") && held(KeyCode::SuperLeft, KeyCode::SuperRight);
+    egui::Modifiers {
+        alt,
+        ctrl,
+        shift,
+        mac_cmd,
+        // What "the" modifier is: Cmd on macOS, Ctrl everywhere else.
+        command: if cfg!(target_os = "macos") {
+            mac_cmd
+        } else {
+            ctrl
+        },
+    }
+}
+
+/// Replaces what egui believes is held -- both the running state and the
+/// modifiers stamped on the key events still queued for this frame -- with
+/// `mods`, so the search box drawn afterwards resolves its own shortcuts
+/// against the live keyboard too instead of a stuck one.
+fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
+    i.modifiers = mods;
+    for event in &mut i.events {
+        if let egui::Event::Key { modifiers, .. } = event {
+            *modifiers = mods;
+        }
+    }
+}
+
+/// Counts and removes every press of `key` among this frame's events, whatever
+/// modifiers came with it, so nothing downstream acts on it.
+/// [`egui::InputState::count_and_consume_key`] insists on an exact modifier
+/// match instead, which is one stale modifier away from dropping the key.
+fn take_key(i: &mut egui::InputState, key: egui::Key) -> i64 {
+    let mut count = 0;
+    i.events.retain(|event| {
+        let hit = matches!(event, egui::Event::Key { key: k, pressed: true, .. } if *k == key);
+        count += hit as i64;
+        !hit
+    });
+    count
+}
+
 /// Draws the file picker: a search box above a scrollable, filtered view of
 /// [`HudState::list_source`], with a fixed-height info field
 /// ([`FuzzySource::get_info`]) below it, centred on screen. The search box takes
@@ -394,6 +449,7 @@ fn scroll_area<T>(
 /// closing the picker without one.
 fn render_list(
     ctx: &egui::Context,
+    keys: &ButtonInput<KeyCode>,
     state: &mut HudState,
     writer: &mut MessageWriter<FuzzyListSelect>,
     render: impl Fn(&mut Ui, egui::Rect, usize),
@@ -419,22 +475,24 @@ fn render_list(
     // the presses keeps a held-down arrow moving at the key repeat rate even
     // when several repeats land in one frame.
     let len = state.list_items.len();
-    let (row_steps, page_steps, pick, alt, close) = ctx.input_mut(|i| {
-        let none = egui::Modifiers::NONE;
-        let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
-            - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
-        let pages = i.count_and_consume_key(none, egui::Key::PageDown) as i64
-            - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
+    let mods = live_modifiers(keys);
+    let (row_steps, page_steps, pick, close) = ctx.input_mut(|i| {
+        // Before anything is read out of this frame: whatever egui had tracked
+        // is thrown away for the keyboard as it stands this instant.
+        sync_modifiers(i, mods);
+        let rows = take_key(i, egui::Key::ArrowDown) - take_key(i, egui::Key::ArrowUp);
+        let pages = take_key(i, egui::Key::PageDown) - take_key(i, egui::Key::PageUp);
         // Enter belongs to the list, not the search box, and Escape closes the
-        // whole picker; both are consumed so the `TextEdit` never acts on them.
-        // Shift+Enter picks the row as well, reported back as `alt` so a
-        // caller can offer a second action on the same item. Taken before the
-        // plain Enter, whose `NONE` modifiers would not match it anyway.
-        let alt = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
-        let pick = alt || i.consume_key(none, egui::Key::Enter);
-        let close = i.consume_key(none, egui::Key::Escape);
-        (rows, pages, pick, alt, close)
+        // whole picker; both are consumed so the `TextEdit` never acts on them,
+        // and both are taken whatever is held alongside them.
+        let pick = take_key(i, egui::Key::Enter) > 0;
+        let close = take_key(i, egui::Key::Escape) > 0;
+        (rows, pages, pick, close)
     });
+    // Shift+Enter picks the row too, reported back as `alt` so a caller can
+    // offer a second action on the same item -- on the shift of the moment,
+    // not on the one egui has stamped on the event.
+    let alt = pick && mods.shift;
     if close {
         state.show_list = false;
         return;
@@ -603,6 +661,7 @@ fn update_ui(
     images: Res<Images>,
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
+    keys: Res<ButtonInput<KeyCode>>,
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -675,7 +734,7 @@ fn update_ui(
     // looks each visible row's text up through it. `render_list` bails out
     // itself when there is no source, so the painter never runs without one.
     let source = state.list_source.clone();
-    render_list(ctx, &mut state, &mut selected, |ui, rect, id| {
+    render_list(ctx, &keys, &mut state, &mut selected, |ui, rect, id| {
         let Some(source) = source.as_ref() else {
             return;
         };
