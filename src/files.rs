@@ -268,6 +268,7 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
 
         let title = meta.get("title").copied().unwrap_or("");
         let author = meta.get("author").copied().unwrap_or("");
+        let category = meta.get("category").copied().unwrap_or("");
         let year_s = meta
             .get("date")
             .copied()
@@ -286,6 +287,7 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
                 group: author,
                 year,
                 rank,
+                category,
                 ..Default::default()
             },
         });

@@ -111,6 +111,7 @@ pub struct RetroCoreThreaded {
     /// the channel. The worker only ever clears it, on the frame the skip runs
     /// out, so the two sides never fight over the bit.
     state: Arc<AtomicU64>,
+    info: Option<String>,
 }
 
 struct SetupResult {
@@ -151,6 +152,7 @@ impl RetroCoreThreaded {
         let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(latency);
         let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
 
+        let info = meta.get("info").cloned();
         let frames = Arc::new(AtomicU64::new(0));
         let worker_frames = Arc::clone(&frames);
         let state = Arc::new(AtomicU64::new(0));
@@ -214,6 +216,7 @@ impl RetroCoreThreaded {
                 disk_count: disks,
                 frames,
                 state,
+                info,
             }),
             Ok(Err(e)) => {
                 let _ = handle.join();
@@ -394,6 +397,9 @@ impl Backend for RetroCoreThreaded {
             trace!("Starving");
             false
         }
+    }
+    fn get_info(&self) -> Option<String> {
+        self.info.clone()
     }
 
     fn focus(&mut self, focus: ViewFocus) {

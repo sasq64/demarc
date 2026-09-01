@@ -363,7 +363,7 @@ impl System for DosSystem {
     }
 
     fn name(&self) -> &'static str {
-        "DOS"
+        "MS/DOS"
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {

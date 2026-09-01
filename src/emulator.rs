@@ -501,7 +501,7 @@ impl Emulator {
             title,
             group,
             year,
-            category: typ,
+            category,
             ..
         } = self.title_info;
         let year = if year == 0 {
@@ -512,10 +512,10 @@ impl Emulator {
         let desc = if let Some(info) = self.core.as_ref().and_then(|c| c.get_info()) {
             info
         } else {
-            if typ.is_empty() {
+            if category.is_empty() {
                 system
             } else {
-                typ.to_string()
+                system + " " + category
             }
         };
 

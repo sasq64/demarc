@@ -86,8 +86,7 @@ pub trait Backend {
     /// Schedule key presses to be played back into the core, as
     /// `(frame, keycode)` pairs. The frame is relative to now — `0` means the
     /// next stepped frame — and each key is released two frames after it is
-    /// pressed. Used to feed a core its "startup keys". Backends that can't
-    /// schedule ahead ignore it.
+    /// pressed. Used to feed a core its "startup keys".
     fn send_keys(&mut self, _keys: &[(u32, u32)]) {}
 
     fn get_info(&self) -> Option<String> {

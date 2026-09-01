@@ -608,32 +608,14 @@ impl System for AmigaSystem {
         let aga = file.get_meta_or("platform", "").contains("AGA");
 
         if file.get_meta_or("puae_model", "") == "date" {
-            file.set_meta("puae_model", "A500");
+            file.set_machine(Machine::A500);
             if let Ok(year) = file.get_meta_or("year", "").parse::<u32>() {
                 if year < 1990 {
                     file.set_kickstart(Kickstart::V12);
                     //file.set_meta("puae_kickstart", "kick33180.A500");
                 } else if aga || self.aga {
-                    // file.set_meta("puae_model", "A1200");
-                    // file.set_meta("amiberry_model", "A1200");
-                    // if year >= 1993 {
-                    //     file.set_meta("puae_model", "A1200");
-                    // }
                     if year >= 1995 {
                         file.set_fast();
-                        // file.set_meta("puae_fastmem_size", "8");
-                        // file.set_meta("puae_z3mem_size", "128");
-                        // file.set_meta("puae_fpu_model", "68882");
-                        // file.set_meta("amiberry_model", "A4040");
-                        // file.set_meta("amiberry_cpu_model", "68040");
-                        // file.set_meta("amiberry_z3mem_size", "128");
-                        // file.set_meta("amiberry_jit", "enabled");
-                        // file.set_meta("amiberry_cpu_speed", "max");
-                        // file.set_meta("amiberry_kickstart", "kick40068.A4000");
-                        //} //else if year >= 1995 {
-                        //file.set_machine(Machine::A1200);
-                        //file.set_cpu(Cpu::M68030);
-                        //file.set_meta("puae_cpu_model", "68030");
                     } else {
                         file.set_machine(Machine::A1200);
                     }
@@ -642,8 +624,8 @@ impl System for AmigaSystem {
         } else {
             if aga || self.aga {
                 file.set_machine(Machine::A1200);
-                //file.set_meta("puae_model", "A1200");
-                //file.set_meta("amiberry_model", "A1200");
+            } else {
+                file.set_machine(Machine::A500);
             }
         }
         if self.fast_load {
@@ -652,19 +634,9 @@ impl System for AmigaSystem {
         if self.xmem {
             file.set_fast_mem(8);
             file.set_z3_mem(128);
-            // file.set_meta("puae_fastmem_size", "8");
-            // file.set_meta("puae_z3mem_size", "128");
-            // file.set_meta("amiberry_z3mem_size", "128");
         }
         if self.fast {
             file.set_fast();
-            // file.set_meta("amiberry_cpu_model", "68040");
-            // file.set_meta("amiberry_z3mem_size", "128");
-            // file.set_meta("amiberry_jit", "enabled");
-            // file.set_meta("amiberry_cpu_speed", "max");
-            // file.set_meta("amiberry_kickstart", "kick40068.A4000");
-            // file.set_meta("puae_model", "A1200");
-            // file.set_meta("puae_fpu_model", "68882");
         }
         if self.silent_drive {
             file.set_meta("puae_floppy_sound", "100");
@@ -749,19 +721,7 @@ impl System for AmigaSystem {
         if file.has_tag("amos") {
             info!("AMOS DEMO");
             file.set_fast();
-            file.set_fast_mem(8);
-            file.set_z3_mem(8);
-            // file.set_meta("puae_cpu_model", "68030");
-            // file.set_meta("puae_z3mem_size", "128");
-            // file.set_meta("puae_fastmem_size", "8");
-            file.set_meta("puae_chipmem_size", "4");
-            // file.make_temp()?;
-            // let l_dir = file.temp_dir().unwrap().join("libs");
-            // fs::create_dir(&l_dir)?;
-            // fs::copy(
-            //     system_dir().join("libs").join("mathtrans.library"),
-            //     l_dir.join("mathtrans.library"),
-            // )?;
+            file.set_chip_mem(4);
         }
 
         if file.get_meta_or("amiga_core", "").is_empty() {
@@ -775,18 +735,21 @@ impl System for AmigaSystem {
             patch_startup_sequence(file, &startup)?;
         }
 
-        if is_dir {
-            return Ok(true);
+        if !is_dir {
+            if !images.is_empty() {
+                collect_disk_images(file, &mut images)?;
+            } else if let Some(exe) = exes.first().or_else(|| broken.first()) {
+                file.path = exe.clone();
+                handle_exe(file, copy_all)?;
+            } else {
+                return Ok(false);
+            }
         }
+        let platform = file.get_meta_or("platform", "Amiga");
+        let category = file.get_meta_or("category", "");
+        let model = file.get_meta_or("amiberry_model", "");
+        file.set_meta("info", format!("{platform} ({model}) {category}"));
 
-        if !images.is_empty() {
-            collect_disk_images(file, &mut images)?;
-        } else if let Some(exe) = exes.first().or_else(|| broken.first()) {
-            file.path = exe.clone();
-            handle_exe(file, copy_all)?;
-        } else {
-            return Ok(false);
-        }
         Ok(true)
     }
 
