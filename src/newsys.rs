@@ -30,6 +30,7 @@ use music::MusicSystem;
 use neo_geo::NeoGeoSystem;
 use pico8::Pico8System;
 use playstation::PSXSystem;
+use plus4::Plus4System;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
 use std::collections::HashMap;
@@ -52,6 +53,7 @@ mod music;
 mod neo_geo;
 mod pico8;
 mod playstation;
+mod plus4;
 mod sinclair;
 mod snes;
 mod tic80;
@@ -402,6 +404,9 @@ impl NewSys {
             Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new()),
             Box::new(AtariXlSystem::new(args)),
+            // Before the C64, which would otherwise claim the same disks and
+            // programs; it stands aside unless --cbm-variant asked for it.
+            Box::new(Plus4System::new(args)),
             Box::new(C64System::new(args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
