@@ -341,9 +341,7 @@ fn main() {
         }
     }
 
-    // `--shuffle` is the older spelling of `--sort random`; an explicit
-    // `--sort` wins over it.
-    match args.sort.or(args.shuffle.then_some(SortArg::Random)) {
+    match args.sort {
         Some(SortArg::Random) => {
             use rand::seq::SliceRandom;
             files.shuffle(&mut rand::rng());
@@ -354,8 +352,17 @@ fn main() {
         None => {}
     }
 
+    if args.limit > 0 {
+        files.truncate(args.limit);
+    }
+
     if args.skip_count > 0 {
         files.drain(0..args.skip_count);
+    }
+
+    if args.shuffle {
+        use rand::seq::SliceRandom;
+        files.shuffle(&mut rand::rng());
     }
 
     let multiple = files.len() > 1;
