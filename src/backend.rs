@@ -78,6 +78,19 @@ pub trait Backend {
         false
     }
 
+    /// Whether the backend is producing no sound right now: the audio half of
+    /// [`is_idle`](Self::is_idle), on its own. `--cross-wait-sound` holds a
+    /// cross-fade back until the release coming in is actually audible, which
+    /// is a question about the sound alone — a demo on its loading screen is
+    /// silent but far from idle, and a still image is the other way round.
+    ///
+    /// The default is `false`, i.e. "assume it is making sound". A backend that
+    /// doesn't track its audio cannot answer, and a caller waiting for sound
+    /// must not end up waiting on it forever.
+    fn is_silent(&self) -> bool {
+        false
+    }
+
     /// Tell the backend how much the user is looking at it — see [`ViewFocus`].
     /// A backend that runs just as well unwatched ignores it; the music backend
     /// uses it to stop rendering audio nobody is listening to.

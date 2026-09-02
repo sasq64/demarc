@@ -764,6 +764,26 @@ impl Emulator {
         true
     }
 
+    /// Whether the backend is making no sound at all right now — see
+    /// [`Backend::is_silent`]. An emulator between loads has no backend to ask
+    /// and counts as silent, which is what `--cross-wait-sound` wants: nothing
+    /// is running yet, so nothing is audible yet.
+    pub fn is_silent(&self) -> bool {
+        self.core.as_ref().is_none_or(|core| core.is_silent())
+    }
+
+    /// Restart the idle timer, as if the core had just produced something new.
+    ///
+    /// Wanted whenever an idle timeout has actually been acted on: the core
+    /// goes on being idle while the next release loads, so the timer has to be
+    /// re-armed by hand or the timeout fires again on the very next frame.
+    /// `idle_time` is set here too — [`Self::run`] only recomputes it when
+    /// there is a core, and there is none in the middle of a load.
+    pub fn reset_idle(&mut self, time: &Time) {
+        self.last_active_time = time.elapsed_secs();
+        self.idle_time = 0.0;
+    }
+
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
         if delta > 0.0 {

@@ -76,6 +76,13 @@ struct RetroUpdate {
     frame_hash: u64,
 }
 
+/// Below this, the last frame of audio counts as silence. `audio_sum` adds up
+/// the absolute value of every sample in the frame, so over the ~1700 samples a
+/// frame carries (44.1kHz at 50Hz) this is an average magnitude below one unit
+/// out of 32767: digital silence, with room for a core that idles on a small DC
+/// offset rather than on exact zeroes.
+const SILENCE_SUM: i32 = 1000;
+
 pub struct RetroCoreThreaded {
     cmd_tx: mpsc::Sender<RetroCmd>,
     // Wrapped in a `Mutex` purely so the type is `Sync`: `mpsc::Receiver` is
@@ -413,7 +420,11 @@ impl Backend for RetroCoreThreaded {
     }
 
     fn is_idle(&self) -> bool {
-        self.last_hash == self.frame_hash && self.audio_sum.abs() < 1000
+        self.last_hash == self.frame_hash && self.is_silent()
+    }
+
+    fn is_silent(&self) -> bool {
+        self.audio_sum < SILENCE_SUM
     }
 
     fn get_number_of_disks(&mut self) -> u32 {

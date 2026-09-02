@@ -261,12 +261,29 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
     Ok((config.sample_rate as f32, stream))
 }
 
-#[derive(Default)]
 pub struct AudioSink {
     pub producer: Option<Mutex<HeapProd<f32>>>,
     pub sample_rate: f32,
     pub stream: Option<SendStream>,
     pub resampler: Option<AudioResampler>,
+    /// Linear gain applied to every sample on its way into the ring buffer,
+    /// `0..=1`. Only `--cross-fade` moves it off `1`, to mix the outgoing and
+    /// incoming releases together (see `AppSettings::audio_gain`). The change
+    /// lands as soon as the buffer this side of it drains, a few tens of
+    /// milliseconds — inaudible against a fade measured in seconds.
+    pub volume: f32,
+}
+
+impl Default for AudioSink {
+    fn default() -> Self {
+        Self {
+            producer: None,
+            sample_rate: 0.0,
+            stream: None,
+            resampler: None,
+            volume: 1.0,
+        }
+    }
 }
 
 impl AudioSink {
@@ -293,12 +310,13 @@ impl AudioSink {
     }
 
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
+        let volume = self.volume;
         if let Some(resampler) = &mut self.resampler
             && let Some(producer) = &self.producer
         {
             let mut p = producer.lock().unwrap();
             let res = resampler.process(from as u32, samples, |l, r| {
-                p.push_iter([l, r].into_iter());
+                p.push_iter([l * volume, r * volume].into_iter());
             });
             if let Err(e) = res {
                 warn!("audio resample error: {e}");

@@ -17,6 +17,7 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{
             AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
+            BlendState,
             BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites,
             Extent3d, FragmentState, PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor,
             Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType,
@@ -153,6 +154,11 @@ pub struct PostProcess {
     pub aspect: f32,
     /// Manual multiplier applied on top of `aspect` for fine correction (1.0 = none).
     pub aspect_tweak: f32,
+    /// How opaque this view is drawn, `0..=1`. `1` for everything but a
+    /// `--cross-fade` transition, where the incoming emulator is blended over
+    /// the outgoing one (see [`AppSettings::view_alpha`]). At `0` the view is
+    /// skipped entirely, filter chain and all.
+    pub alpha: f32,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -168,6 +174,9 @@ pub struct PostProcessUniform {
     /// backend reads it back off the extracted component to decide whether to
     /// run a filter chain at all, so both backends agree on a single decision.
     crt_enabled: u32,
+    /// [`PostProcess::alpha`], written into the fragment's alpha channel and
+    /// blended against what is already in the view target.
+    alpha: f32,
 }
 
 /// Pixel rectangle (in physical framebuffer coords) that the post-process blit
@@ -335,6 +344,7 @@ fn compute_uniform(
         uv_scale,
         uv_offset,
         crt_enabled: crt_enabled as u32,
+        alpha: pp.alpha,
     }
 }
 
@@ -525,6 +535,12 @@ fn post_process_pass(
         let Some(mut rect) = view_rect.rect() else {
             continue;
         };
+        // Fully transparent: the emulator parked in the background between
+        // cross-fades. Skipped before any chain work — it would render a frame
+        // nothing can see.
+        if uniform.alpha <= 0.0 {
+            continue;
+        }
         if let Some(framebuffer) = framebuffer {
             rect = rect.intersect(framebuffer);
         }
@@ -695,8 +711,15 @@ fn post_process_pass(
             uniform_index: uniform_index.index(),
             rect,
             scissor,
+            alpha: uniform.alpha,
         });
     }
+
+    // A cross-fade composites to `outgoing * (1 - a) + incoming * a` only if
+    // the translucent view is drawn *over* the opaque one, so order by
+    // descending alpha. The sort is stable, and every view is opaque outside a
+    // fade, so the normal case keeps its query order untouched.
+    quads.sort_by(|a, b| b.alpha.total_cmp(&a.alpha));
 
     if quads.is_empty() {
         return;
@@ -736,6 +759,8 @@ struct Quad {
     rect: URect,
     /// Sub-rect of `rect` the draw is clipped to (see [`BorderScissor`]).
     scissor: URect,
+    /// [`PostProcess::alpha`], kept to order the draws back-to-front.
+    alpha: f32,
 }
 
 #[derive(Resource)]
@@ -1002,7 +1027,11 @@ fn init_blit_pipeline(
                 // Matches the view target's main texture format (Bevy's former
                 // `TextureFormat::bevy_default()`, now deprecated).
                 format: TARGET_FORMAT,
-                blend: None,
+                // Only `--cross-fade` ever writes an alpha below 1, and it
+                // relies on this to blend the incoming release over the
+                // outgoing one; every other view is opaque, for which
+                // `SrcAlpha`/`OneMinusSrcAlpha` is the same as no blending.
+                blend: Some(BlendState::ALPHA_BLENDING),
                 write_mask: ColorWrites::ALL,
             })],
             ..default()

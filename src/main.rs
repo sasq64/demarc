@@ -233,6 +233,7 @@ fn main() {
     // Parse args before touching stdout/stderr so clap's help/errors are visible,
     // and so `--no-silence` can be honoured when setting up logging below.
     let mut args = Args::parse();
+    args.apply_implications();
     if cfg!(debug_assertions) {
         args.no_silence = true;
     }
@@ -423,6 +424,9 @@ fn main() {
         info_delay: args.info_delay,
         info_duration: args.info_duration,
         crt_limit: args.crt_limit,
+        cross_fade: args.cross_fade,
+        cross_fade_delay: args.cross_fade_delay as f64,
+        cross_wait_sound: args.cross_wait_sound,
         ..Default::default()
     };
 

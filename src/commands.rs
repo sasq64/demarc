@@ -502,7 +502,10 @@ fn handle_cmd(
 ) {
     let mut show_info = false;
     let count = emus.iter().count();
-    let multi = count > 1;
+    // The per-emulator hotkeys (cycle, maximize, select all) are about a grid.
+    // `--cross-fade` also runs two emulators, but they share one screen and
+    // swap between themselves, so it has none of that to offer.
+    let multi = count > 1 && settings.cross_fade.is_none();
     for cmd in cmds.read() {
         debug!("Received command: {:?}", cmd.0);
         match cmd.0 {

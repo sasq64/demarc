@@ -17,6 +17,9 @@ struct PostProcessUniform {
     // Unused now that the effect lives in the librashader chain; kept so the
     // uniform layout stays identical to `PostProcessUniform` in Rust.
     crt_enabled: u32,
+    // Opacity of this view, blended against the view target. Only
+    // `--cross-fade` sets it below 1, to fade one emulator over another.
+    alpha: f32,
 }
 @group(0) @binding(2) var<uniform> settings: PostProcessUniform;
 
@@ -38,5 +41,5 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let mapped_uv = (in.uv - settings.uv_offset) / settings.uv_scale;
     let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-    return vec4<f32>(srgb_to_linear(c), 1.0);
+    return vec4<f32>(srgb_to_linear(c), settings.alpha);
 }
