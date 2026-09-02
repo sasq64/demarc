@@ -59,6 +59,10 @@ const ALT_SOURCES: &[(&str, &str)] = &[
         "fake08",
         "https://github.com/sasq64/fake-08/releases/download/latest",
     ),
+    (
+        "dosbox_pure",
+        "https://github.com/sasq64/dosbox-pure/releases/download/latest",
+    ),
 ];
 
 /// The platform segment used by the [`ALT_SOURCES`] archives, which name

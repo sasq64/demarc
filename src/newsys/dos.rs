@@ -25,7 +25,7 @@ const DOS4GW_EXE: &str = "DOS4GW.EXE";
 
 /// Where a copy of it is kept, under the system dir.
 fn dos4gw_source() -> PathBuf {
-    system_dir().join("pcem").join("dos4gw.exe")
+    system_dir().join("dos").join("dos4gw.exe")
 }
 
 /// PC/DOS through PCem or DOSBox.
@@ -236,42 +236,6 @@ const EXTENDERS: &[&str] = &[
     "dos4gw", "dos4g", "dos32a", "cwsdpmi", "cwsdpr0", "pmodew", "wdosx", "dpmiload", "dpmi16bi",
 ];
 
-/// Get the release into a directory we may write to, still pointing at
-/// `target`.
-///
-/// What comes along is the whole of what we were given, not just the program:
-/// a release directory holds the data files it opens, and DOSBox mounts that
-/// directory as C:. Anything unpacked from an archive is in a temp dir
-/// already and only needs the path narrowed.
-fn make_writable(file: &mut WorkFile, target: &Path) -> Result<()> {
-    if file.is_temporary() {
-        file.path = target.to_owned();
-        return Ok(());
-    }
-    let rel = if file.path.is_dir() {
-        target
-            .strip_prefix(&file.path)
-            .context("Program is not inside the release")?
-            .to_owned()
-    } else {
-        // A program pointed at directly. `make_temp` would copy that one file
-        // and nothing else, so aim it at the directory the program sits in —
-        // which is the release, as far as anything here can tell — and walk
-        // back down to the program afterwards.
-        let name = target.file_name().context("Program has no file name")?;
-        let dir = target.parent().unwrap_or(Path::new(""));
-        file.path = if dir.as_os_str().is_empty() {
-            PathBuf::from(".")
-        } else {
-            dir.to_owned()
-        };
-        PathBuf::from(name)
-    };
-    file.make_temp()?;
-    file.path = file.path.join(rel);
-    Ok(())
-}
-
 /// Put the Watcom extender beside the program we are about to start.
 ///
 /// A program linked against DOS/4GW loads `DOS4GW.EXE` at startup, from the
@@ -302,14 +266,6 @@ fn place_extender(file: &WorkFile, source: &Path) -> Result<()> {
         .with_context(|| format!("Could not copy {source:?} to {target:?}"))?;
     info!("Placed {target:?}");
     Ok(())
-}
-
-/// Is a meta value one of the ways of saying yes?
-fn is_set(file: &WorkFile, key: &str) -> bool {
-    matches!(
-        file.get_meta_or(key, "").to_ascii_lowercase().as_str(),
-        "true" | "1" | "yes"
-    ) || file.has_tag("dos4gw")
 }
 
 impl DosSystem {
@@ -380,14 +336,27 @@ impl System for DosSystem {
             return Ok(false);
         };
 
+        debug!("FILE: {file:?}");
+
+        if file.has_tag("needs-mmx") {
+            file.set_meta("dosbox_pure_cpu_type", "pentium_mmx");
+        }
+
         // A machine config brings its own DOS on its own disc images, so the
         // extender is only ever a question for a program run under DOSBox.
-        if get_ext(&target) != "cfg" && is_set(file, META_DOS4GW) {
+        let use_4gw = get_ext(&target) != "cfg"
+            && (file.has_tag(META_DOS4GW) || !file.get_meta_or(META_DOS4GW, "").is_empty());
+
+        if use_4gw {
             debug!("Needs DOS4GW");
-            make_writable(file, &target)?;
+            file.make_temp();
+        }
+        let Some(target) = self.pick_target(file)? else {
+            return Ok(false);
+        };
+        file.path = target.clone();
+        if use_4gw {
             place_extender(file, &dos4gw_source())?;
-        } else {
-            file.path = target;
         }
         Ok(true)
     }
@@ -399,7 +368,7 @@ impl System for DosSystem {
     fn default_meta(&self) -> HashMap<&str, &str> {
         [
             ("dosbox_pure_gus", "true"),
-            ("dosbox_pure_cycles", "150000"),
+            ("dosbox_pure_cycles", "200000"),
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
         ]
