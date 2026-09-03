@@ -349,7 +349,7 @@ impl System for DosSystem {
 
         if use_4gw {
             debug!("Needs DOS4GW");
-            file.make_temp();
+            file.make_temp()?;
         }
         let Some(target) = self.pick_target(file)? else {
             return Ok(false);
