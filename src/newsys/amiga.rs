@@ -762,6 +762,9 @@ impl System for AmigaSystem {
         if file.has_tag("requires-1mb-chipmem") {
             file.set_chip_mem(2);
         }
+        if file.has_tag("requires-1mb-fastmem") {
+            file.set_fast_mem(1);
+        }
         if file.has_tag("requires-68040") || file.has_tag("requires-68060") {
             file.set_cpu(Cpu::M68040);
         }
