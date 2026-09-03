@@ -206,7 +206,7 @@ impl System for AtariStSystem {
             let machine = file.get_meta_or("hatari_machinetype", "");
             !machine.is_empty() && machine != "date"
         } || file.has_tag("ste");
-        let ram_given = file.has_meta("hatari_ramsize")
+        let ram_given = file.has_meta("hatari_memory_size")
             || ["requires-4mb", "requires-2mb", "requires-1mb"]
                 .iter()
                 .any(|tag| file.has_tag(tag));
@@ -220,7 +220,7 @@ impl System for AtariStSystem {
             info!("FMT: picking the machine from year {year}");
             if year > 1994 {
                 file.set_meta("hatari_machinetype", "ste");
-                file.set_meta("hatari_ramsize", "4");
+                file.set_meta("hatari_memory_size", "4096");
             } else {
                 // Undated too: an STE release usually says so, while plenty of
                 // ST ones break on an STE.
@@ -253,11 +253,11 @@ impl System for AtariStSystem {
             file.set_meta("hatari_video_hires", "true");
         }
         if file.has_tag("requires-4mb") {
-            file.set_meta("hatari_ramsize", "4");
+            file.set_meta("hatari_memory_size", "4096");
         } else if file.has_tag("requires-2mb") {
-            file.set_meta("hatari_ramsize", "2");
+            file.set_meta("hatari_memory_size", "2048");
         } else if file.has_tag("requires-1mb") {
-            file.set_meta("hatari_ramsize", "1");
+            file.set_meta("hatari_memory_size", "1024");
         }
 
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
@@ -290,7 +290,7 @@ impl System for AtariStSystem {
                 file.set_meta("hatari_machinetype", "ste");
             }
             if !ram_given {
-                file.set_meta("hatari_ramsize", "4");
+                file.set_meta("hatari_memory_size", "4096");
             }
 
             let wf = build_gemdos_drive(prg, &file.path)?;
