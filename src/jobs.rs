@@ -423,8 +423,8 @@ impl Jobs<PathBuf> {
     /// Downloads `url` and unpacks it into a fresh temp directory, reporting
     /// that directory.
     ///
-    /// The temp dir outlives the job (as [`crate::fetch::fetch_urls`] does with
-    /// its own), so the caller owns it and is responsible for removing it.
+    /// The temp dir outlives the job (as [`crate::fetch::gather_files`] does
+    /// with its own), so the caller owns it and is responsible for removing it.
     /// Non-archive downloads are left alone and the file is simply copied in.
     pub fn download_and_unpack(&mut self, url: impl Into<String>) -> JobId {
         let url = url.into();

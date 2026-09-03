@@ -386,7 +386,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use crate::emu_file::filter_release_urls;
+    use crate::emu_file::{Download, release_downloads};
 
     use super::*;
 
@@ -702,49 +702,85 @@ mod tests {
         assert_eq!(out[1].get_meta("platform"), "Amiga");
     }
 
-    /// A disk image among the URLs makes the release disk based: everything
-    /// that isn't a disk image goes away and the whole set stays, whatever
-    /// format its disks are in.
+    /// A disk image among the URLs makes the release disk based: the disk set
+    /// is the first thing to try, whatever format its disks are in, and the
+    /// extras are gone. Anything else that could be the release stays on as a
+    /// fallback for when the disk links are dead.
     #[test]
     fn disk_images_win() {
         assert_eq!(
-            filter_release_urls(&[
+            release_downloads(&[
                 "https://x.com/a.pdf",
                 "https://x.com/a1.d64",
                 "https://x.com/a2.D64",
                 "https://x.com/a.adf",
+                "https://x.com/a.zip",
                 "https://x.com/readme.txt",
             ]),
             vec![
-                "https://x.com/a1.d64",
-                "https://x.com/a2.D64",
-                "https://x.com/a.adf"
+                Download::Disks(vec![
+                    vec!["https://x.com/a1.d64"],
+                    vec!["https://x.com/a2.D64"],
+                    vec!["https://x.com/a.adf"],
+                ]),
+                Download::File("https://x.com/a.zip"),
+                Download::File("https://x.com/readme.txt"),
             ]
         );
     }
 
-    /// Without a disk image only the known extras are dropped; everything else,
-    /// including extension-less URLs, is left for the caller to sort out.
+    /// Two disk images of the same name are one disk in two formats, not two
+    /// disks — demozoo lists D.O.S. by Andromeda exactly like this — so they
+    /// become each other's fallback instead of a set that only half exists.
+    #[test]
+    fn same_named_images_are_one_disk() {
+        assert_eq!(
+            release_downloads(&[
+                "AmigascneFile:/Groups/A/Andromeda/Andromeda-dos.adf",
+                "AmigascneFile:/Groups/A/Andromeda/ANDROMEDA-DOS.dms",
+                "SceneOrgFile:/parties/1992/thegathering92/amiga_demo/andromeda-d_o_s.zip",
+            ]),
+            vec![
+                Download::Disks(vec![vec![
+                    "AmigascneFile:/Groups/A/Andromeda/Andromeda-dos.adf",
+                    "AmigascneFile:/Groups/A/Andromeda/ANDROMEDA-DOS.dms",
+                ]]),
+                Download::File(
+                    "SceneOrgFile:/parties/1992/thegathering92/amiga_demo/andromeda-d_o_s.zip"
+                ),
+            ]
+        );
+    }
+
+    /// Without a disk image every URL is an attempt of its own, in the order
+    /// the release lists them; only the known extras are dropped, and
+    /// extension-less URLs are left for the loader to sort out.
     #[test]
     fn extras_dropped() {
         assert_eq!(
-            filter_release_urls(&[
+            release_downloads(&[
                 "https://x.com/demo.sid",
                 "https://x.com/demo.zip",
                 "https://x.com/scan.PDF",
                 "https://x.com/download.php?id=1",
             ]),
-            vec!["https://x.com/demo.zip", "https://x.com/download.php?id=1"]
+            vec![
+                Download::File("https://x.com/demo.zip"),
+                Download::File("https://x.com/download.php?id=1"),
+            ]
         );
     }
 
     /// Filtering everything away would leave nothing to fetch, so the input
-    /// survives untouched instead.
+    /// survives as attempts instead.
     #[test]
     fn all_filtered_keeps_input() {
         assert_eq!(
-            filter_release_urls(&["https://x.com/a.sid", "https://x.com/b.pdf"]),
-            vec!["https://x.com/a.sid", "https://x.com/b.pdf"]
+            release_downloads(&["https://x.com/a.sid", "https://x.com/b.pdf"]),
+            vec![
+                Download::File("https://x.com/a.sid"),
+                Download::File("https://x.com/b.pdf"),
+            ]
         );
     }
 }

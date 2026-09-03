@@ -8,7 +8,7 @@ use std::{
 use tracing::warn;
 use url::Url;
 
-use crate::fetch::{OnProgress, fetch_url_with_progress, fetch_urls};
+use crate::fetch::{OnProgress, fetch_url_with_progress};
 
 /// How many downloads are in flight right now, across every emulator.
 ///
@@ -173,58 +173,119 @@ fn is_disk_image_url(url: &str) -> bool {
     url_extension(url).is_some_and(|e| DISK_IMAGE_EXTENSIONS.contains(&e.as_str()))
 }
 
-/// Narrow the URLs of one release down to the ones worth downloading.
+/// The file name of a disk image URL without its extension, lowercased — what
+/// tells two copies of one disk apart from two disks of one set.
 ///
-/// A release listing often mixes the actual program with extras (music rips,
-/// scans, ...). If any URL is a disk image, the release is disk based and only
-/// the disk images are kept, so a multi-disk set stays together. Otherwise only
-/// the obviously non-loadable extras are dropped.
+/// Demozoo lists both `Andromeda-dos.adf` and `ANDROMEDA-DOS.dms` for D.O.S. by
+/// Andromeda: one disk, twice, in two archive formats. A real multi-disk set
+/// numbers or names its disks apart instead, so their stems differ. A URL with
+/// no file name at all keeps the whole URL, which groups with nothing.
+fn disk_stem(url: &str) -> String {
+    let name = url_file_name(url).unwrap_or_else(|| url.to_owned());
+    let stem = Path::new(&name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&name);
+    stem.to_ascii_lowercase()
+}
+
+/// One way of getting at a release's data, as [`release_downloads`] reads the
+/// `download` field: a whole disk set, or a single file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Download<'a> {
+    /// A disk set: one entry per disk, each holding that disk's alternatives
+    /// best first. Every disk has to land — half a set won't boot — so the
+    /// alternatives are what a dead link falls back on, and they are fetched
+    /// side by side into one directory.
+    Disks(Vec<Vec<&'a str>>),
+    /// A single file: an archive, an executable, whatever the release ships as.
+    File(&'a str),
+}
+
+impl Download<'_> {
+    /// What to call this download in a log line.
+    fn label(&self) -> String {
+        match self {
+            Download::File(url) => (*url).to_owned(),
+            Download::Disks(disks) => match disks.split_first() {
+                Some((first, [])) => first[0].to_owned(),
+                Some((first, rest)) => format!("{} (+{} disks)", first[0], rest.len()),
+                None => String::new(),
+            },
+        }
+    }
+}
+
+/// The downloads of one release, in the order they are worth trying.
+///
+/// A `download` field mixes three things: the release itself, extras (music
+/// rips, scans, ...), and alternative copies of the release — a mirror, a
+/// reupload, the same demo packed as `.adf` and as `.dms`. Alternatives and the
+/// disks of a set look alike and want opposite handling, so they are told apart
+/// by [`disk_stem`]: same stem, same disk.
+///
+/// If any URL is a disk image the release is disk based, and those images make
+/// up the first attempt, one disk per distinct stem. Everything that isn't a
+/// disk image then follows as an attempt of its own, so a release whose disk
+/// links have all died still loads from the `.zip` beside them.
 ///
 /// Disk images are kept whatever their format, since the disks of one set may
 /// well be archived differently: Hardwired by The Silents & Crionics has side A
 /// as a `.dms` and side B as an `.adf`, and keying on the extension alone would
 /// silently fetch only one of the two.
 ///
-/// Filtering everything away would leave nothing to fetch, so a filter that
-/// empties the list is dropped and the URLs are returned as they came in.
-pub fn filter_release_urls<'a>(urls: &[&'a str]) -> Vec<&'a str> {
+/// Known extras are left out: they are never the release, and loading the
+/// soundtrack because the demo 404'd is worse than failing. Dropping everything
+/// would leave nothing to fetch at all, so a filter that empties the list is
+/// itself dropped and every URL becomes an attempt.
+pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 3] = ["sid", "pdf", "rtf"];
 
-    let mut images: Vec<&'a str> = urls
-        .iter()
-        .copied()
-        .filter(|u| is_disk_image_url(u))
-        .collect();
-
-    if images.is_empty() {
-        images = urls
-            .iter()
-            .copied()
-            .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
-            .collect();
-    };
-    if images.is_empty() {
-        urls.to_vec()
-    } else {
-        images
+    let mut disks: Vec<(String, Vec<&'a str>)> = Vec::new();
+    for url in urls.iter().copied().filter(|u| is_disk_image_url(u)) {
+        let stem = disk_stem(url);
+        match disks.iter_mut().find(|(s, _)| *s == stem) {
+            Some((_, alternatives)) => alternatives.push(url),
+            None => disks.push((stem, vec![url])),
+        }
     }
+
+    let mut downloads = Vec::new();
+    if !disks.is_empty() {
+        downloads.push(Download::Disks(
+            disks.into_iter().map(|(_, disk)| disk).collect(),
+        ));
+    }
+    downloads.extend(
+        urls.iter()
+            .copied()
+            .filter(|u| !is_disk_image_url(u))
+            .filter(|u| !url_extension(u).is_some_and(|e| IGNORED_EXTENSIONS.contains(&e.as_str())))
+            .map(Download::File),
+    );
+    if downloads.is_empty() {
+        downloads = urls.iter().copied().map(Download::File).collect();
+    }
+    downloads
 }
 
 /// Download the first of `urls` that succeeds, using `fetch` for each attempt.
 ///
-/// The URLs a release survives [`filter_release_urls`] with are alternatives —
-/// a mirror, a reupload, the same file under a second link class — so a link
-/// that is dead, 404s or times out only rules out that one URL, not the whole
-/// release. Every failure is logged and the last one is returned if none of
-/// them work; with nothing downloaded the caller has only one failure to
-/// report, and the last is the one that ran out of alternatives.
+/// The URLs grouped together here are alternatives — a mirror, a reupload, the
+/// same file under a second link class — so a link that is dead, 404s or times
+/// out only rules out that one URL. Every failure is logged and the last one is
+/// returned if none of them work; with nothing downloaded the caller has only
+/// one failure to report, and the last is the one that ran out of alternatives.
+///
+/// Note that each URL is itself tried against every mirror its link class has
+/// (see [`crate::fetch`]); reaching the next URL here means all of those failed.
 ///
 /// `fetch` is a parameter so the walk can be tested without a network.
 fn fetch_first_available(
     urls: &[impl AsRef<str>],
     on_progress: OnProgress<'_>,
-    mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+    fetch: &mut impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
     let mut last_error = None;
     for url in urls {
@@ -233,6 +294,63 @@ fn fetch_first_available(
             Ok(path) => return Ok(path),
             Err(e) => {
                 warn!("download failed for {url}: {e:#}");
+                last_error = Some(e);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("no download url")))
+}
+
+/// Fetch everything one [`Download`] needs, and report where it landed: the
+/// file itself for a [`Download::File`], or a directory holding one file per
+/// disk for a [`Download::Disks`].
+///
+/// A disk falls back through its own alternatives, but a disk that can't be
+/// fetched at all fails the whole set: half a set won't boot, and the caller
+/// has other downloads to fall back on.
+fn fetch_download(
+    download: &Download<'_>,
+    on_progress: OnProgress<'_>,
+    fetch: &mut impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    // Normalized rather than passed on as they are stored — see `cache_keys`
+    // for why the cache wants that form.
+    match download {
+        Download::File(url) => fetch(&cache_key(url), on_progress),
+        Download::Disks(disks) => {
+            let mut files = Vec::with_capacity(disks.len());
+            for alternatives in disks {
+                // A disk set is several downloads in a row, so nothing is
+                // reported: forwarding each one's byte count would restart the
+                // progress bar on every disk.
+                files.push(fetch_first_available(
+                    &cache_keys(alternatives),
+                    &|_, _| {},
+                    fetch,
+                )?);
+            }
+            crate::fetch::gather_files(&files)
+        }
+    }
+}
+
+/// Download the first of `downloads` that succeeds, using `fetch` for each URL.
+///
+/// The attempts [`release_downloads`] builds are alternative ways of getting
+/// the same release, so a whole attempt failing — every disk alternative and
+/// every mirror under it — only rules out that attempt. As in
+/// [`fetch_first_available`], the last failure is the one reported.
+fn fetch_release(
+    downloads: &[Download<'_>],
+    on_progress: OnProgress<'_>,
+    mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    let mut last_error = None;
+    for download in downloads {
+        match fetch_download(download, on_progress, &mut fetch) {
+            Ok(path) => return Ok(path),
+            Err(e) => {
+                warn!("download failed for {}: {e:#}", download.label());
                 last_error = Some(e);
             }
         }
@@ -256,9 +374,12 @@ fn fetch_first_available(
 /// A URL that doesn't parse is passed through untouched. [`UrlList`] drops
 /// those on the way in, so this only stands in for the lists built by hand.
 fn cache_keys(urls: &[&str]) -> Vec<String> {
-    urls.iter()
-        .map(|u| Url::parse(u).map_or_else(|_| (*u).to_owned(), |parsed| parsed.to_string()))
-        .collect()
+    urls.iter().copied().map(cache_key).collect()
+}
+
+/// One URL in that form; see [`cache_keys`].
+fn cache_key(url: &str) -> String {
+    Url::parse(url).map_or_else(|_| url.to_owned(), |parsed| parsed.to_string())
 }
 
 impl FileSource {
@@ -267,7 +388,7 @@ impl FileSource {
     /// the demo.
     ///
     /// A demozoo release often lists the demo, its soundtrack and a scan of the
-    /// disk label side by side, and [`filter_release_urls`] can only guess
+    /// disk label side by side, and [`release_downloads`] can only guess
     /// between them from the extensions. Naming the file settles it.
     ///
     /// A name that matches nothing leaves the list alone and warns: the entry
@@ -309,19 +430,11 @@ impl FileSource {
     /// over somewhere else.
     pub fn resolve_with_progress(&mut self, on_progress: OnProgress<'_>) -> Result<&PathBuf> {
         if let FileSource::Url(urls) = self {
-            // If any URL is a disk image, this is a (possibly multi-) disk set:
-            // download every disk image so they sit together in one directory
-            // (built into an m3u later). Otherwise take the first entry that
-            // downloads, treating the rest as fallbacks.
-            let picked = filter_release_urls(urls.as_slice());
-            // Normalized rather than passed on as they are stored — see
-            // `cache_keys` for why the cache wants that form.
-            let urls = cache_keys(&picked);
-            let p = if urls.iter().any(|u| is_disk_image_url(u)) {
-                fetch_urls(&urls)?
-            } else {
-                fetch_first_available(&urls, on_progress, fetch_url_with_progress)?
-            };
+            // The release's downloads as ways of getting at it, best first: a
+            // disk set that sits together in one directory (built into an m3u
+            // later), an archive, a reupload. The first that lands wins.
+            let downloads = release_downloads(urls.as_slice());
+            let p = fetch_release(&downloads, on_progress, fetch_url_with_progress)?;
             *self = FileSource::Path(p);
         }
         match self {
@@ -467,7 +580,7 @@ mod tests {
     /// isn't `works`, and report which URLs were tried alongside the result.
     fn walk(urls: &[&str], works: &str) -> (Vec<String>, Result<PathBuf>) {
         let tried = RefCell::new(Vec::new());
-        let result = fetch_first_available(urls, &|_, _| {}, |url, _| {
+        let result = fetch_first_available(urls, &|_, _| {}, &mut |url: &str, _| {
             tried.borrow_mut().push(url.to_string());
             if url.ends_with(works) {
                 Ok(PathBuf::from(works))
@@ -476,6 +589,39 @@ mod tests {
             }
         });
         (tried.into_inner(), result)
+    }
+
+    /// Run `fetch_release` over the downloads of a release, with `dead` naming
+    /// the URLs that fail; a URL that works downloads a file named after its
+    /// last path segment. Reports the URLs tried alongside the result.
+    fn load(urls: &[&str], dead: &[&str]) -> (Vec<String>, Result<PathBuf>) {
+        let cache = tempfile::tempdir().expect("temp dir");
+        let tried = RefCell::new(Vec::new());
+        let result = fetch_release(&release_downloads(urls), &|_, _| {}, |url: &str, _| {
+            tried.borrow_mut().push(url.to_string());
+            if dead.iter().any(|d| url.ends_with(d)) {
+                return Err(anyhow!("{url} is dead"));
+            }
+            let path = cache.path().join(url_file_name(url).expect("a file name"));
+            std::fs::write(&path, url.as_bytes())?;
+            Ok(path)
+        });
+        (tried.into_inner(), result)
+    }
+
+    /// The names of the files in `dir`, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("a directory")
+            .map(|e| {
+                e.expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
     }
 
     /// A dead first link only rules out that URL: the next one is tried, and
@@ -513,6 +659,70 @@ mod tests {
             result.unwrap_err().to_string(),
             "https://b.example/demo.zip is dead"
         );
+    }
+
+    /// A disk set that can't be had at all falls through to the release's
+    /// other downloads: D.O.S. by Andromeda is listed as one disk in two
+    /// formats plus a `.zip`, and with amigascne down the `.zip` still loads.
+    #[test]
+    fn a_dead_disk_set_falls_back_to_the_next_download() {
+        let (tried, result) = load(
+            &[
+                "AmigascneFile:/Groups/A/Andromeda/Andromeda-dos.adf",
+                "AmigascneFile:/Groups/A/Andromeda/ANDROMEDA-DOS.dms",
+                "SceneOrgFile:/parties/1992/thegathering92/amiga_demo/andromeda-d_o_s.zip",
+            ],
+            &["Andromeda-dos.adf", "ANDROMEDA-DOS.dms"],
+        );
+        assert_eq!(tried.len(), 3, "every download tried: {tried:?}");
+        assert_eq!(result.unwrap().file_name().unwrap(), "andromeda-d_o_s.zip");
+    }
+
+    /// One disk in two formats is one disk: the second format is tried when the
+    /// first is dead, and the set is complete with just the one that worked.
+    #[test]
+    fn a_dead_disk_falls_back_to_its_other_format() {
+        let (tried, result) = load(
+            &[
+                "https://a.example/Andromeda-dos.adf",
+                "https://b.example/ANDROMEDA-DOS.dms",
+            ],
+            &["Andromeda-dos.adf"],
+        );
+        assert_eq!(tried.len(), 2);
+        assert_eq!(names(&result.unwrap()), vec!["ANDROMEDA-DOS.dms"]);
+    }
+
+    /// Differently named images are the disks of one set, so all of them are
+    /// fetched — into one directory, whatever format each disk is in.
+    #[test]
+    fn a_disk_set_fetches_every_disk() {
+        let (_, result) = load(
+            &[
+                "https://a.example/hardwired-1.dms",
+                "https://a.example/hardwired-2.adf",
+            ],
+            &[],
+        );
+        assert_eq!(
+            names(&result.unwrap()),
+            vec!["hardwired-1.dms", "hardwired-2.adf"]
+        );
+    }
+
+    /// A disk with no working copy anywhere fails the whole set rather than
+    /// booting half of it — and then the release's other downloads get a go.
+    #[test]
+    fn a_missing_disk_fails_the_whole_set() {
+        let (_, result) = load(
+            &[
+                "https://a.example/hardwired-1.dms",
+                "https://a.example/hardwired-2.adf",
+                "https://a.example/hardwired.zip",
+            ],
+            &["hardwired-2.adf"],
+        );
+        assert_eq!(result.unwrap().file_name().unwrap(), "hardwired.zip");
     }
 
     /// An override naming one of a release's downloads narrows the list to it,

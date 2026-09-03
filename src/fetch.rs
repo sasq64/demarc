@@ -267,23 +267,22 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
     DOWNLOADS.get_file(url, &name, |dest| download_to(url, dest, on_progress))
 }
 
-/// Gather several URLs into a single fresh temp directory and return that
-/// directory's path, so multi-disk sets end up side by side in one directory.
+/// Copy `files` into a single fresh temp directory and return that directory's
+/// path, so the disks of a set end up side by side in one directory.
 ///
-/// Each URL is fetched through [`fetch_url`], so it is cached individually; when
-/// they are all already cached this just copies the cached files across without
-/// re-downloading. Each file keeps its URL-derived name (see [`url_filename`]),
-/// which is what ends up in the generated m3u, so two disks of one set whose
-/// URLs differ only in a directory would land on the same name here — they stay
-/// apart in the cache, but the copy below still flattens them.
-pub fn fetch_urls(urls: &[impl AsRef<str>]) -> anyhow::Result<PathBuf> {
+/// The originals stay where they are — these are copies of cache entries, made
+/// because a disk set has to be one directory and the cache stores one entry
+/// per URL. Each copy keeps the cached file's URL-derived name (see
+/// [`url_filename`]), which is what ends up in the generated m3u, so two disks
+/// of one set whose URLs differ only in a directory would land on the same name
+/// here — they stay apart in the cache, but the copy below still flattens them.
+pub fn gather_files(files: &[PathBuf]) -> anyhow::Result<PathBuf> {
     let dir = tempfile::Builder::new().prefix("demarc-").tempdir()?.keep();
-    for url in urls {
-        let cached = fetch_url(url.as_ref())?;
-        let name = cached
+    for file in files {
+        let name = file
             .file_name()
-            .with_context(|| format!("cached download has no filename: {}", cached.display()))?;
-        std::fs::copy(&cached, dir.join(name))?;
+            .with_context(|| format!("cached download has no filename: {}", file.display()))?;
+        std::fs::copy(file, dir.join(name))?;
     }
     Ok(dir)
 }
