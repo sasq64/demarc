@@ -148,7 +148,7 @@ impl RetroCoreThreaded {
             .contains("hatari");
 
         // TODO: Why is this necessary
-        let aspect_tweak = if is_atari { 1.13 } else { 1.0 };
+        let aspect_tweak = 1.0; //if is_atari { 1.13 } else { 1.0 };
 
         let mut latency = 3;
         if let Some(l) = meta.get("latency") {
