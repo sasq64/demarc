@@ -69,6 +69,9 @@ fast = true
 [zoo.119665]
 assign = { Love = "SYS:" }
 
+[zoo.122582]
+libretro = { aga = "true" }
+
 [zoo.205735]
 file = "MOTUS.ZIP"
 

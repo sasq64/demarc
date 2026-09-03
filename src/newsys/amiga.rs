@@ -667,7 +667,8 @@ impl System for AmigaSystem {
         // resort so a release that only ships a mangled exe behaves as before.
         let mut broken = vec![];
 
-        let aga = file.get_meta_or("platform", "").contains("AGA");
+        let aga = file.get_meta_or("platform", "").contains("AGA")
+            || file.get_meta_or("aga", "") == "true";
 
         if file.get_meta_or("puae_model", "") == "date" {
             file.set_machine(Machine::A500);
@@ -772,13 +773,9 @@ impl System for AmigaSystem {
         //file.set_machine(Machine::A1200);
         if self.xmem {
             file.set_fast_mem(8);
-            file.set_meta("puae_chipmem_size", "4");
+            file.set_chip_mem(4);
         }
 
-        if file.get_meta_or("platform", "").contains("AGA") {
-            //file.set_machine(Machine::A1200);
-            //file.set_meta("puae_model", "A1200");
-        }
         if file.is_aga() && file.get_meta_or("amiberry_jit", "").is_empty() {
             file.set_meta("amiberry_jit", "enabled");
         }
