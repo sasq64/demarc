@@ -127,13 +127,11 @@ pub struct Args {
     #[arg(short = 'X', long, value_parser = Regex::new)]
     pub exclude: Vec<Regex>,
 
-    /// Shuffle the list of files into a random order. Same as `--sort random`.
+    /// Shuffle the list of files into a random order. Applied after limiting.
     #[arg(long)]
     pub shuffle: bool,
 
-    /// How to order the list of files: `random` to shuffle, or `rank` to put
-    /// the best-ranked demos first (db entries with a pouet rank; anything
-    /// unranked keeps its order at the end).
+    /// How to order the list of files. Applied before limiting.
     #[arg(long, value_enum)]
     pub sort: Option<SortArg>,
 
@@ -157,11 +155,7 @@ pub struct Args {
     #[arg(long)]
     pub xmem: bool,
 
-    /// DOS: Enable Gravis Ultrasound
-    #[arg(long)]
-    pub gus: bool,
-
-    /// C64: Always use JiffyDOS to load
+    /// C64: Always use Retro-replay to load
     /// Amiga: Turn off disk rotation emulation
     #[arg(long, verbatim_doc_comment)]
     pub fast_load: bool,
@@ -200,11 +194,9 @@ pub struct Args {
     #[arg(long)]
     pub focus_first: bool,
 
-    /// Cross-fade between releases instead of cutting: two emulators run in the
-    /// same place, the next release is loaded into whichever one is off screen
-    /// and then faded in over the one playing. Optionally takes the length of
-    /// the fade in seconds, e.g. `--cross-fade=4`. Not usable with `--grid`,
-    /// which needs every emulator to have a cell of its own.
+    /// Cross-fade between demos.
+    /// Optionally takes the length of the fade in seconds, e.g. `--cross-fade=4`.
+    /// Not usable with `--grid`
     #[arg(
         long,
         value_name = "SECS",
@@ -227,11 +219,9 @@ pub struct Args {
     )]
     pub cross_fade_delay: f32,
 
-    /// Hold each cross-fade until the release coming in is actually making a
+    /// Hold each cross-fade until the release coming in is making
     /// sound, instead of fading it in a fixed time after it booted.
-    /// `--cross-fade-delay` still applies, counted from the first sound rather
-    /// than from the boot. Gives up and fades anyway after 30s, for a release
-    /// that is simply silent. Implies `--silent-drive`, so a clicking disk
+    /// Implies `--silent-drive`, so a clicking disk
     /// drive can't pass for the release having started.
     #[arg(long, requires = "cross_fade")]
     pub cross_wait_sound: bool,
@@ -248,7 +238,7 @@ pub struct Args {
     #[arg(short = 'C', long)]
     pub color_cycle: bool,
 
-    /// Commodore variant (Only C64 well supported)
+    /// Commodore variant (C64 and C16 well supported)
     #[arg(long, value_enum, default_value_t = CbmSystem::C64)]
     pub cbm_variant: CbmSystem,
 
@@ -356,6 +346,8 @@ pub enum SortArg {
     Random,
     /// Best pouet.net rank first; unranked entries last.
     Rank,
+    // Newest first
+    Date,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]

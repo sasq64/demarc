@@ -1,6 +1,7 @@
 // Needed for bevy systems
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+use std::cmp::Reverse;
 use std::path::Path;
 
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -331,11 +332,7 @@ fn main() {
             _ => file,
         };
         if file.is_dir() && args.collect {
-            let len = files.len();
             collect_files(&file, &mut files, args.many).unwrap();
-            if len == files.len() {
-                files.push(collect_file(&file).unwrap());
-            }
         } else {
             files.push(collect_file(&file).unwrap());
         }
@@ -348,7 +345,8 @@ fn main() {
         }
         // Ranks are positions, so the best comes first. Entries without a rank
         // sort last, keeping the order they were collected in.
-        Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.unwrap_or(u32::MAX)),
+        Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
+        Some(SortArg::Date) => files.sort_by_key(|f| Reverse(f.game_info.date)),
         None => {}
     }
 

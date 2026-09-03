@@ -497,10 +497,10 @@ impl Emulator {
 
     pub fn get_info(&self) -> String {
         let system = self.work_file.get_meta_or("system", "???");
+        let year = self.title_info.year();
         let GameInfo {
             title,
             group,
-            year,
             category,
             ..
         } = self.title_info;

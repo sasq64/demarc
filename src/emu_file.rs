@@ -331,6 +331,35 @@ impl FileSource {
     }
 }
 
+// enum Rank {
+//     Pouet,
+//     SceneAwards,
+//     Party,
+//     Cdc,
+//     Thumbs,
+// }
+
+#[derive(Debug, Copy, Clone, Default, PartialOrd, Ord, PartialEq, Eq)]
+pub struct CompactDate(u32);
+impl CompactDate {
+    pub fn new(year: u32, month: u32, day: u32) -> Self {
+        Self((year << 9) | (month << 5) | day)
+    }
+    pub fn parse(date: &str) -> Self {
+        let date_s: Vec<&str> = date.split(['-', '/', '.']).collect();
+        let year_s = date_s[0];
+        let year = year_s.parse::<u32>().unwrap_or(0);
+        let month = date_s.get(1).unwrap_or(&"0").parse::<u32>().unwrap_or(0);
+        let day = date_s.get(2).unwrap_or(&"0").parse::<u32>().unwrap_or(0);
+        Self::new(year, month, day)
+    }
+    pub fn year(&self) -> u32 {
+        self.0 >> 9
+    }
+}
+
+// CDC, Starred, Winner x ( Scene, Party) RunnerUp x (Scene Party)
+
 /// The whole file list lives for the run (see [`EmuFile`]), so the strings here
 /// are `&'static str` — either literals, slices of the leaked db text, or
 /// individually leaked (see [`crate::files`]).
@@ -338,12 +367,20 @@ impl FileSource {
 pub struct GameInfo {
     pub title: &'static str,
     pub group: &'static str,
-    pub year: u32,
+    pub date: CompactDate,
     pub category: &'static str,
     /// Where the release sits in pouet.net's ranking, if it is on pouet at all:
     /// a position, so 1 is the best-rated release and a bigger number a worse
     /// one. Filled in from the third item of a db line's `pouet` field.
-    pub rank: Option<u32>,
+    pub rank: u32,
+    // ..|Pp|Ss|*|cccccccc
+    // awards: u32,
+}
+
+impl GameInfo {
+    pub fn year(&self) -> u32 {
+        self.date.year()
+    }
 }
 
 // EmuFile can be:

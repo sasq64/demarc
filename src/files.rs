@@ -5,12 +5,12 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use regex::Regex;
 use tracing::info;
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo, UrlList},
+    emu_file::{CompactDate, EmuFile, FileSource, GameInfo, UrlList},
     m3u::M3u,
     utils::{is_disk_image, unpack_if_packed},
 };
@@ -18,7 +18,7 @@ use crate::{
 fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut title: &'static str = "";
     let mut group: &'static str = "";
-    let mut year: u32 = 0;
+    let mut date = CompactDate::default();
     let mut meta = HashMap::new();
 
     let m3u = M3u::from_file(in_path)?;
@@ -37,7 +37,8 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         } else if key == "group" {
             group = leak(val);
         } else if key == "year" {
-            year = val.parse::<u32>().unwrap_or(0);
+            let year = val.parse::<u32>().unwrap_or(0);
+            date = CompactDate::new(year, 0, 0);
         } else {
             meta.insert(leak(key), leak(val));
         }
@@ -48,8 +49,8 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         game_info: GameInfo {
             title,
             group,
-            year,
-            category: "",
+            date,
+            category: "???",
             ..Default::default()
         },
     })
@@ -269,23 +270,30 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
         let title = meta.get("title").copied().unwrap_or("");
         let author = meta.get("author").copied().unwrap_or("");
         let category = meta.get("category").copied().unwrap_or("");
+
+        let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
+
         let year_s = meta
             .get("date")
             .copied()
             .unwrap_or("")
             .split(['-', '/', '.'])
             .next()
-            .unwrap_or_default();
-        meta.insert("year", year_s);
-        let year = year_s.parse::<u32>().unwrap_or(0);
-        let rank = meta.get("pouet").copied().and_then(parse_pouet_rank);
+            .unwrap_or("");
+        meta.insert("year", &year_s);
+
+        let rank = meta
+            .get("pouet")
+            .copied()
+            .and_then(parse_pouet_rank)
+            .unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
             meta,
             game_info: GameInfo {
                 title,
                 group: author,
-                year,
+                date,
                 rank,
                 category,
                 ..Default::default()
@@ -301,10 +309,15 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
     {
         handle_m3u(in_path)
     } else {
-        let title = leak(in_path.file_stem().unwrap().to_string_lossy().into_owned());
+        let title = leak(
+            in_path
+                .file_stem()
+                .context("No file stem")?
+                .to_string_lossy()
+                .into_owned(),
+        );
         Ok(EmuFile {
             path: in_path.into(),
-            //system_type: get_system_type(in_path),
             game_info: GameInfo {
                 title,
                 ..Default::default()
@@ -317,7 +330,7 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
 /// Recursively collect all detected emulator files under `dir` into `out`.
 /// Does not unpack archives, but collects metadata from m3u files
 /// Rule-of-thumb: Collect only cheap information, since there can be a lot of files
-pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<()> {
+fn collect_files_(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -356,9 +369,19 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
         }
     }
     for dir in dirs {
-        collect_files(&dir, out, many)?;
+        collect_files_(&dir, out, many)?;
     }
     Ok(())
+}
+
+pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<()> {
+    let len = out.len();
+    collect_files_(dir, out, many).and_then(|_| {
+        if len == out.len() {
+            out.push(collect_file(&dir).unwrap());
+        };
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -389,8 +412,8 @@ mod tests {
             &DbFilter::default(),
             &mut out,
         );
-        assert_eq!(out[0].game_info.rank, Some(382));
-        assert_eq!(out[1].game_info.rank, None);
+        assert_eq!(out[0].game_info.rank, 382);
+        assert_eq!(out[1].game_info.rank, 0);
     }
 
     /// An Amiga release is one entry, not one per file: the directory is
@@ -458,7 +481,7 @@ mod tests {
         );
         assert_eq!(zentro.game_info.title, "Zentro 4");
         assert_eq!(zentro.game_info.group, "Zenith");
-        assert_eq!(zentro.game_info.year, 1992);
+        assert_eq!(zentro.game_info.year(), 1992);
         assert_eq!(zentro.get_meta("category"), "Demo");
         assert_eq!(zentro.get_meta("party"), "The Party 1992");
         assert_eq!(zentro.get_meta("tags"), "has effects");
@@ -467,7 +490,7 @@ mod tests {
         let nexus = &out[1];
         assert_eq!(nexus.game_info.title, "Nexus 7");
         assert_eq!(nexus.game_info.group, "Andromeda");
-        assert_eq!(nexus.game_info.year, 1994);
+        assert_eq!(nexus.game_info.year(), 1994);
         assert!(!nexus.meta.contains_key("party"));
     }
 
@@ -485,7 +508,7 @@ mod tests {
             let eod = &out[0];
             assert_eq!(eod.game_info.title, "Edge of Disgrace", "{packed}");
             assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
-            assert_eq!(eod.game_info.year, 2008, "{packed}");
+            assert_eq!(eod.game_info.year(), 2008, "{packed}");
             // The `# Platform:C64` header applies just as it does unpacked.
             assert_eq!(eod.get_meta("platform"), "C64", "{packed}");
             assert_eq!(eod.get_meta("category"), "demo", "{packed}");

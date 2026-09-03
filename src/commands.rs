@@ -456,7 +456,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     let mut lines = Vec::new();
     let platform = file.get_meta("platform");
     let category = file.get_meta("category");
-    let year = file.game_info.year;
+    let year = file.game_info.year();
     let year = if year == 0 {
         "".to_string()
     } else {
