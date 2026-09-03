@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
@@ -84,6 +85,12 @@ const MARKER_FILES: &[&str] = &[
     "pcsx-card2.mcd",
     // Amiberry's own settings file, written into `system/amiga/` as it runs.
     "amiberry.ini",
+    // libsc68 rewrites this on every exit to bump its `total_time` play
+    // counter, so packing it made the archive -- and with it the whole crate --
+    // dirty after every single run. Every setting the checked-in copy carried
+    // was already libsc68's own default, and it regenerates the file with
+    // those defaults when it isn't there, so there is nothing to ship.
+    "sc68.cfg",
 ];
 
 /// Directories under `system/` that are never packed, whatever they contain.
@@ -116,18 +123,39 @@ const SKIP_DIRS: &[&str] = &[
 /// to the extracted files and re-extracts whenever it no longer matches, which
 /// replaces the old hand-maintained `.v4` marker.
 fn build_system_zip() {
-    println!("cargo:rerun-if-changed=system");
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    let zip_path = Path::new(&out_dir).join("system.zip");
-    let file = File::create(&zip_path).expect("Failed to create system.zip");
-    let mut writer = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set"));
+    let zip_path = out_dir.join("system.zip");
+    let stamp_path = out_dir.join("system.zip.stamp");
 
     // Collect entries first and sort them so the archive layout is stable
     // across builds.
     let mut entries = Vec::new();
-    collect_entries(Path::new("system"), &mut entries);
+    if collect_entries(Path::new("system"), &mut entries) {
+        // Nothing under `system/` is written at runtime, so the whole tree can
+        // be watched with one line. (It never is in practice -- see the note in
+        // `collect_entries` -- but then the walk has emitted the lines itself.)
+        println!("cargo:rerun-if-changed=system");
+    }
     entries.sort();
+
+    // Re-running this script is not the same as the archive needing to change:
+    // a touched `cbmconvert/*.c`, an edit to this file, or a `cargo clean`d
+    // OUT_DIR bring us here too, and deflating 19 MB of `system/` costs ~3s.
+    // Skip that when the inputs fingerprint the same as the archive we left in
+    // OUT_DIR last time.
+    let fingerprint = input_fingerprint(&entries);
+    if let Ok(stamp) = std::fs::read_to_string(&stamp_path)
+        && let Some((cached, checksum)) = stamp.split_once(' ')
+        && cached == fingerprint
+        && zip_path.is_file()
+    {
+        println!("cargo:rustc-env=SYSTEM_ZIP_CHECKSUM={checksum}");
+        return;
+    }
+
+    let file = File::create(&zip_path).expect("Failed to create system.zip");
+    let mut writer = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for path in &entries {
         let name = path.to_string_lossy().replace('\\', "/");
@@ -151,28 +179,93 @@ fn build_system_zip() {
     writer.finish().expect("Failed to finalize system.zip");
 
     let bytes = std::fs::read(&zip_path).expect("Failed to read back system.zip");
-    let digest = Sha256::digest(&bytes);
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hex(&Sha256::digest(&bytes));
+    std::fs::write(&stamp_path, format!("{fingerprint} {hex}")).expect("Failed to write zip stamp");
     println!("cargo:rustc-env=SYSTEM_ZIP_CHECKSUM={hex}");
 }
 
+/// A cheap fingerprint of the archive's inputs: every packed path with its
+/// length and mtime, in the order they are packed. Deliberately does not read
+/// the files -- this runs on every build script invocation, and a stale mtime
+/// only costs a needless repack.
+fn input_fingerprint(entries: &[PathBuf]) -> String {
+    let mut hasher = Sha256::new();
+    for path in entries {
+        hasher.update(path.to_string_lossy().replace('\\', "/").as_bytes());
+        if let Ok(meta) = path.metadata() {
+            hasher.update(meta.len().to_le_bytes());
+            if let Ok(mtime) = meta.modified()
+                && let Ok(since_epoch) = mtime.duration_since(UNIX_EPOCH)
+            {
+                hasher.update(since_epoch.as_nanos().to_le_bytes());
+            }
+        }
+        hasher.update(b"\n");
+    }
+    hex(&hasher.finalize())
+}
+
+fn hex(digest: &[u8]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Recursively gather every directory and (non-marker) file under `dir`,
-/// skipping the subtrees named by [`SKIP_DIRS`].
-fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) {
+/// skipping the subtrees named by [`SKIP_DIRS`], and emit the
+/// `rerun-if-changed` lines that watch what was gathered.
+///
+/// Returns whether the subtree is *pristine*: free of both [`MARKER_FILES`] and
+/// [`SKIP_DIRS`], i.e. nothing under it is written while the emulator runs.
+///
+/// The distinction is what keeps no-op builds fast. Cargo watches a directory
+/// by taking the newest mtime found anywhere beneath it, so the single
+/// `rerun-if-changed=system` this used to emit fired on every scribble into
+/// `system/amiga/` or `system/pcem/` -- exactly the paths the archive is
+/// careful *not* to contain. Re-running a build script dirties the crate that
+/// owns it, so one Amiga demo made the next `cargo build` a ~10s rebuild of
+/// demarc with nothing to show for it.
+///
+/// A pristine subtree can still be watched with one directory line, which has
+/// the nice property of also catching files being added and removed. A subtree
+/// that is not gets watched entry by entry instead. The gap that leaves: a file
+/// added directly to one of the handful of non-pristine directories (`system/`
+/// itself, `system/vice/`, `system/amiga/`, `system/amiga/WHDBoot/`) is not
+/// noticed until something else triggers a repack -- `touch build.rs`.
+fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) -> bool {
     let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
+        return true;
     };
+    let mut pristine = true;
+    // Paths to watch individually, but only if this directory turns out not to
+    // be pristine; if it is, our caller's single line for `dir` covers them all.
+    let mut watch_if_dirty = Vec::new();
+
     for entry in read_dir.flatten() {
         let path = entry.path();
         if path.is_dir() {
             let rel = path.to_string_lossy().replace('\\', "/");
             if SKIP_DIRS.contains(&rel.as_ref()) {
+                pristine = false;
                 continue;
             }
             out.push(path.clone());
-            collect_entries(&path, out);
-        } else if !MARKER_FILES.contains(&entry.file_name().to_string_lossy().as_ref()) {
-            out.push(path);
+            if collect_entries(&path, out) {
+                watch_if_dirty.push(path);
+            } else {
+                // Not pristine, so it has already emitted its own lines.
+                pristine = false;
+            }
+        } else if MARKER_FILES.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            pristine = false;
+        } else {
+            out.push(path.clone());
+            watch_if_dirty.push(path);
         }
     }
+
+    if !pristine {
+        for path in &watch_if_dirty {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+    pristine
 }
