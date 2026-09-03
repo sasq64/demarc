@@ -19,7 +19,7 @@ use crate::{
     workfile::WorkFile,
 };
 
-use super::{RELEASE_DIR, System};
+use super::{RELEASE_DIR, System, adf};
 
 const CORE_NAME_UAE: &str = "puae";
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
@@ -292,6 +292,7 @@ pub struct AmigaSystem {
     fast: bool,
     fast_load: bool,
     silent_drive: bool,
+    unadf: bool,
 }
 
 impl AmigaSystem {
@@ -302,6 +303,7 @@ impl AmigaSystem {
             fast: args.fast,
             fast_load: args.fast_load,
             silent_drive: args.silent_drive,
+            unadf: args.unadf,
         }
     }
 }
@@ -507,6 +509,66 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
     text.extend(fs::read(&startup)?);
     fs::write(&startup, text)?;
     Ok(())
+}
+
+/// Unpack the floppy image `image` into a temp directory, for `--unadf`, and
+/// hand back the directory together with the path of the startup-sequence
+/// inside it — relative, since the caller has to rebase it onto its own copy.
+///
+/// `None` unless what came out is a disk that boots *itself*. Booting a drive
+/// means running its `s/startup-sequence`, so a disk without one has nothing to
+/// start, and a trackloaded disk doesn't mount in the first place. Either way
+/// the answer is to leave the release alone and boot the floppy, so none of
+/// these are errors — they're logged at debug and nothing more.
+fn unpack_boot_disk(image: &Path) -> Option<(WorkFile, PathBuf)> {
+    let dir = match WorkFile::new_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            debug!("No temp dir to unpack {image:?} into: {e}");
+            return None;
+        }
+    };
+    match adf::unpack(image, &dir.path) {
+        Ok(0) => {
+            debug!("Nothing on {image:?} to unpack");
+            return None;
+        }
+        Ok(count) => debug!("Unpacked {count} entries from {image:?}"),
+        Err(e) => {
+            debug!("Not unpacking {image:?}: {e}");
+            return None;
+        }
+    }
+
+    let s_dir = find_ignoring_case(&dir.path, "s")?;
+    let startup = find_ignoring_case(&s_dir, "startup-sequence")?;
+    let relative = startup.strip_prefix(&dir.path).ok()?.to_owned();
+    Some((dir, relative))
+}
+
+/// The bytes puae will not have in an Amiga file name — `evilchars` in its
+/// `src/fsdb_unix.c`. `/` and `\` never reach here (the unpacker refuses them
+/// outright, see `safe_name` in `src/adf_unpack_shim.c`), and the rest are
+/// ASCII, so looking for them in the UTF-8 host name is the same as looking for
+/// them in the Amiga one.
+const UAE_ILLEGAL_CHARS: &[char] = &['%', '*', '?', '"', '<', '>', '|'];
+
+/// Does the unpacked disk hold a name that puae's file system would refuse?
+///
+/// puae's `get_nname` runs every name a program opens through
+/// `fsdb_name_invalid_dir` and answers "no such file" for any that carries one
+/// of [`UAE_ILLEGAL_CHARS`], *before* it ever looks at the drive — so no way of
+/// spelling the file on the host side can make it visible. `3d-demo.adf` boots
+/// into nothing that way: its demo loads `Har vi røget hash?`, and the question
+/// mark is enough. amiberry has no such check and opens the file, so a disk
+/// like that is handed to amiberry instead.
+fn has_uae_illegal_name(dir: &Path) -> bool {
+    walkdir::WalkDir::new(dir)
+        // The destination directory is ours, not the disk's.
+        .min_depth(1)
+        .into_iter()
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().contains(UAE_ILLEGAL_CHARS))
 }
 
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
@@ -724,10 +786,37 @@ impl System for AmigaSystem {
             file.set_chip_mem(4);
         }
 
+        // `--unadf`: an AmigaDOS demo disk boots a good deal faster as a hard
+        // drive than as a floppy the core has to seek around. Only for a single
+        // disk — a multi-disk release swaps disks by name, which a drive built
+        // out of one of them cannot answer. Anything that isn't a mountable,
+        // self-booting AmigaDOS disk falls through to the floppy path below.
+        let mut puae_cannot_read_the_names = false;
+        if self.unadf
+            && !is_dir
+            && images.len() == 1
+            && has_extension(&images[0], "adf")
+            && let Some((dir, relative)) = unpack_boot_disk(&images[0])
+        {
+            info!("Booting {:?} as a hard drive", images[0]);
+            file.set_meta("puae_use_whdload", "disabled");
+            puae_cannot_read_the_names = has_uae_illegal_name(&dir.path);
+            file.path = dir.path;
+            file.temp_dir = dir.temp_dir;
+            startup_sequence = Some(file.path.join(relative));
+            is_dir = true;
+        }
+
+        // Chosen after the unpack, so a disk whose file names puae's file
+        // system refuses can ask for the core that does read them.
         if file.get_meta_or("amiga_core", "").is_empty() {
             file.set_meta(
                 "amiga_core",
-                if file.is_aga() { "amiberry" } else { "puae" },
+                if file.is_aga() || puae_cannot_read_the_names {
+                    "amiberry"
+                } else {
+                    "puae"
+                },
             );
         }
 
@@ -1000,6 +1089,23 @@ mod tests {
             fs::read_to_string(file.path.join("s/startup-sequence")).unwrap(),
             "C:Assign data: dh0:stuff\nC:Assign musik: dh0:mod\ndemo\n"
         );
+    }
+
+    /// A disk whose file names puae's file system refuses has to be handed to
+    /// amiberry, which reads them — the check is what keeps `3d-demo.adf` from
+    /// booting into nothing.
+    #[test]
+    fn a_name_puae_refuses_picks_amiberry() {
+        let dir = tempfile::Builder::new().tempdir().unwrap();
+        fs::write(dir.path().join("Har vi røget hash?"), b"data").unwrap();
+        assert!(has_uae_illegal_name(dir.path()));
+
+        let plain = tempfile::Builder::new().tempdir().unwrap();
+        fs::create_dir(plain.path().join("s")).unwrap();
+        fs::write(plain.path().join("s/startup-sequence"), b"demo\n").unwrap();
+        // Non-ASCII on its own is fine: puae only refuses its `evilchars`.
+        fs::write(plain.path().join("Bjørn"), b"data").unwrap();
+        assert!(!has_uae_illegal_name(plain.path()));
     }
 
     #[test]

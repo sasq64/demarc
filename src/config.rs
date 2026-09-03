@@ -155,6 +155,12 @@ pub struct Args {
     #[arg(long)]
     pub xmem: bool,
 
+    /// Amiga: Unpack a single-disk AmigaDOS demo out of its ADF and boot it as
+    /// a hard drive instead of as a floppy, which skips the drive seeks. Disks
+    /// with no file system (trackloaded demos) are booted as floppies as usual.
+    #[arg(long)]
+    pub unadf: bool,
+
     /// C64: Always use Retro-replay to load
     /// Amiga: Turn off disk rotation emulation
     #[arg(long, verbatim_doc_comment)]

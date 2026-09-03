@@ -37,6 +37,7 @@ use std::collections::HashMap;
 use tic80::Tic80System;
 use windows::WindowsSystem;
 
+mod adf;
 mod amiga;
 mod amstrad;
 mod atari_2600;

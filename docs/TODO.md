@@ -18,5 +18,4 @@ Kick1.3 dir,avail,type in C:
 Headless mode
 Override keys
 Override fast-load
-unadf for hdd load
 
