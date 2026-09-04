@@ -73,6 +73,12 @@ Iterate dir -> supported files.
 Disk images -> m3u, else first supported
   new
 
+## RULES
+
+Normal: Directory -> load()
+Usually tranforms to temp dir. All files copied
+
+File -> load(): Only that file loaded. If temp-dir required can mess up.
 
  
 FLASH SPEED

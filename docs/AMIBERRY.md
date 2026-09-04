@@ -61,8 +61,9 @@ Confirm which library actually got loaded with
 ## Our changes
 
 `libretro/Makefile` (+3), `libretro/libretro.cpp` (+140). Every new option
-defaults to the old behaviour, so upstream defaults are untouched. Nothing
-under `src/` is patched — the fixes all live in the libretro port.
+defaults to the old behaviour, so upstream defaults are untouched. Nearly all
+of it lives in the libretro port; the one exception is the unload-time teardown
+below, which has to reach the emulator's own allocators under `src/`.
 
 | Change | Where |
 | --- | --- |
@@ -75,6 +76,42 @@ under `src/` is patched — the fixes all live in the libretro port.
 | Directory-as-harddrive mount | `libretro.cpp:4281` |
 | A4000 kickstart fallback to `kick40068.A1200`, now with a warning | `libretro.cpp:1826`, `:1890` |
 | Floppy images pushed as `-s floppy0=` instead of a positional arg | `libretro.cpp:1868`, `:5089` |
+| `retro_deinit` releases natmem and the JIT cache (see below) | `libretro.cpp` `release_host_address_space()`, `amiberry_mem.cpp` `release_shm()`, `compemu_support_*.cpp` `compiler_exit()` |
+
+### Why unloading has to give the address space back
+
+Every third demo in a playlist used to drop to a crawl — a loading bar that
+never filled, looking for all the world like a freeze. The core log gives it
+away:
+
+```
+JIT: WARNING: could not allocate within 2GB of globals (anchor=0x7ff7e14a0000)
+JIT: <JIT compiler> : actual translation cache size : 1024 KB
+JIT: WARNING: Could not allocate block pool!
+JIT: WARNING: Disabling JIT and falling back to the interpreter.
+```
+
+Amiberry reserves 4GB of "natmem" for the emulated address space and never
+unmaps it: standalone, the process is on its way out anyway and the OS reclaims
+it. The libretro core gets no such exit. demarc `dlopen`s a private copy of the
+core per emulator instance (so two can overlap for a cross-fade, see
+`retro_emu.rs`) and `dlclose`s it on unload — and the fresh copy that starts the
+next demo has its own `natmem_reserved`, null, knowing nothing of the 4GB the
+last one left mapped.
+
+Three runs in, those leaked reservations bracket the newly loaded library, and
+the JIT can no longer find 16MB within the ±2GB that RIP-relative addressing of
+the emulator's globals demands. It halves its request until it gives up, and
+the demo runs on the interpreter. Total address space across five runs: 21.7GB
+before, 5.8GB after.
+
+Two smaller details fell out of it. `preinit_shm()` did try to release a
+previous reservation, but passed a zero size — right for Win32's `VirtualFree`,
+which reads it as "the whole reservation", and rejected by the `munmap()` that
+the POSIX shim turns the call into. And `compiler_exit()` had its deallocation
+of the translation cache and popallspace compiled out under `#ifdef UAE`, for
+the same "the process is exiting" reason; it now runs, which `build_comp()`
+re-does on the next CPU rebuild anyway.
 
 ### Why the floppy path can't be a positional argument
 

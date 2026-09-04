@@ -482,9 +482,6 @@ pub struct GameInfo {
     pub group: &'static str,
     pub date: CompactDate,
     pub category: &'static str,
-    /// Where the release sits in pouet.net's ranking, if it is on pouet at all:
-    /// a position, so 1 is the best-rated release and a bigger number a worse
-    /// one. Filled in from the third item of a db line's `pouet` field.
     pub rank: u32,
     // ..|Pp|Ss|*|cccccccc
     // awards: u32,
