@@ -55,7 +55,7 @@ use crate::libretro::{
     retro_system_av_info, retro_throttle_state, retro_variable, retro_vfs_interface_info,
     retro_video_refresh_t,
 };
-use crate::pixels::{RGB565_LUT, RGB1555_LUT, convert_16bpp};
+use crate::pixels::{RGB565_LUT, RGB1555_LUT, convert_16bpp, convert_xrgb8888};
 
 /// Relative mouse movement accumulated since the last frame, plus button state.
 /// `dx`/`dy` accumulate as i32 to avoid overflow, then clamp to i16 when the core
@@ -344,14 +344,7 @@ impl RetroCoreDirect {
         let pixel_format = state.pixel_format as retro_pixel_format;
         match pixel_format {
             RETRO_PIXEL_FORMAT_XRGB8888 => {
-                for y in 0..height {
-                    let src_row = &data[y * pitch..y * pitch + width * 4];
-                    let dst_row = &mut state.frame[y * width..(y + 1) * width];
-                    for (out, px) in dst_row.iter_mut().zip(src_row.chunks_exact(4)) {
-                        // Source is BGRA (little-endian XRGB8888); repack to RGBA.
-                        *out = u32::from_ne_bytes([px[2], px[1], px[0], 255]);
-                    }
-                }
+                convert_xrgb8888(data, &mut state.frame, width, height, pitch)
             }
             RETRO_PIXEL_FORMAT_RGB565 => {
                 convert_16bpp(data, &mut state.frame, width, height, pitch, &RGB565_LUT)
