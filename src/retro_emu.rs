@@ -886,4 +886,5 @@ pub use threaded::RetroCoreThreaded;
 mod vfs;
 
 #[cfg(test)]
+#[path = "tests/retro_emu_tests.rs"]
 mod tests;
