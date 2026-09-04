@@ -252,3 +252,20 @@ fn rejects_missing_hunk_block() {
     file.insert(6, 1);
     assert!(!parses(&file));
 }
+
+/// `--unadf` on a DMS release: the archive holds a whole AmigaDOS floppy, so
+/// unpacking it twice — out of the archive, then off the disk — has to land the
+/// same self-booting directory an `.adf` would have.
+///
+/// `ANARCHY-3dDemo2.dms` is the disk `has_uae_illegal_name` was written for,
+/// which makes it the same one the case above describes.
+#[test]
+fn unpacks_a_boot_disk_out_of_a_dms_archive() {
+    let archive = Path::new("testdata/ANARCHY-3dDemo2.dms");
+    if !archive.is_file() {
+        return;
+    }
+    let (dir, startup) = unpack_boot_disk(archive).expect("no boot disk in the archive");
+    assert!(dir.path.join(&startup).is_file());
+    assert!(has_uae_illegal_name(&dir.path));
+}

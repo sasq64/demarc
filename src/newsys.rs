@@ -45,6 +45,7 @@ mod atari_st;
 mod atari_xl;
 mod c64;
 mod disc;
+mod dms;
 mod dos;
 mod gameboy;
 mod gba;

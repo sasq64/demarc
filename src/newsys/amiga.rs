@@ -5,6 +5,7 @@ use std::{
     io::{BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
+use tempfile::TempDir;
 use tracing::{debug, info};
 
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
@@ -19,7 +20,7 @@ use crate::{
     workfile::WorkFile,
 };
 
-use super::{RELEASE_DIR, System, adf};
+use super::{RELEASE_DIR, System, adf, dms};
 
 const CORE_NAME_UAE: &str = "puae";
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
@@ -511,9 +512,38 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Unpack the DMS archive `archive` into a floppy image inside a fresh temp
+/// directory, and hand back both — the directory owns the image, so it has to
+/// outlive it.
+///
+/// `None` for an archive that would not come apart, which is not an error here
+/// any more than an unmountable disk is: the cores read `.dms` themselves, so
+/// the release still boots, just as a floppy.
+fn dms_to_adf(archive: &Path) -> Option<(TempDir, PathBuf)> {
+    let dir = match tempfile::Builder::new().prefix("demarc-dms-").tempdir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            debug!("No temp dir to unpack {archive:?} into: {e}");
+            return None;
+        }
+    };
+    let image = dir.path().join("disk.adf");
+    match dms::unpack(archive, &image) {
+        Ok(size) => debug!("Unpacked {archive:?} into a {size} byte disk image"),
+        Err(e) => {
+            debug!("Not unpacking {archive:?}: {e}");
+            return None;
+        }
+    }
+    Some((dir, image))
+}
+
 /// Unpack the floppy image `image` into a temp directory, for `--unadf`, and
 /// hand back the directory together with the path of the startup-sequence
 /// inside it — relative, since the caller has to rebase it onto its own copy.
+///
+/// `image` may be a `.dms` archive rather than an `.adf`, in which case the
+/// disk inside it is unpacked first.
 ///
 /// `None` unless what came out is a disk that boots *itself*. Booting a drive
 /// means running its `s/startup-sequence`, so a disk without one has nothing to
@@ -521,6 +551,19 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
 /// the answer is to leave the release alone and boot the floppy, so none of
 /// these are errors — they're logged at debug and nothing more.
 fn unpack_boot_disk(image: &Path) -> Option<(WorkFile, PathBuf)> {
+    // ADFlib reads sector images and nothing else, so a DMS release has to be
+    // turned back into one first. `_dms_dir` keeps that image on disk for as
+    // long as the walk below is reading it.
+    let mut image = image.to_owned();
+    let _dms_dir = if dms::is_dms(&image) {
+        let (dir, adf) = dms_to_adf(&image)?;
+        image = adf;
+        Some(dir)
+    } else {
+        None
+    };
+    let image = image.as_path();
+
     let dir = match WorkFile::new_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -770,6 +813,10 @@ impl System for AmigaSystem {
             file.set_cpu(Cpu::M68040);
         }
 
+        if !file.is_aga() && self.unadf {
+            file.set_chip_mem(4);
+        }
+
         //file.set_machine(Machine::A1200);
         if self.xmem {
             file.set_fast_mem(8);
@@ -795,7 +842,7 @@ impl System for AmigaSystem {
         if self.unadf
             && !is_dir
             && images.len() == 1
-            && has_extension(&images[0], "adf")
+            && has_any_extension(&images[0], &["adf", "dms"])
             && let Some((dir, relative)) = unpack_boot_disk(&images[0])
         {
             info!("Booting {:?} as a hard drive", images[0]);
@@ -803,6 +850,7 @@ impl System for AmigaSystem {
             puae_cannot_read_the_names = has_uae_illegal_name(&dir.path);
             file.path = dir.path;
             file.temp_dir = dir.temp_dir;
+            copy_dir_all(system_dir().join("ami13"), &file)?;
             startup_sequence = Some(file.path.join(relative));
             is_dir = true;
         }

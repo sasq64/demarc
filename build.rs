@@ -15,6 +15,7 @@ fn main() {
     build_unrar_isnt_shim();
     build_cbmconvert();
     build_adflib();
+    build_dms();
     build_system_zip();
 }
 
@@ -132,6 +133,43 @@ fn build_adflib() {
     println!("cargo:rerun-if-changed={SHIM}");
     build.file(SHIM);
     build.compile("adflib");
+}
+
+/// Compile the DMS unpacker (external/dms) plus our own
+/// `src/dms_unpack_shim.c` into a static library, for src/newsys/dms.rs.
+///
+/// The sources are xDMS 1.3 (public domain) as amiberry carries them, with the
+/// `.cpp` extension dropped -- they are plain C, and building them as C keeps
+/// the binary off libstdc++. Only `pfile.c` needed editing, to read and write
+/// stdio streams instead of amiberry's `struct zfile`; the header of that file
+/// says what else changed.
+fn build_dms() {
+    const DIR: &str = "external/dms";
+    const SHIM: &str = "src/dms_unpack_shim.c";
+
+    let mut build = cc::Build::new();
+    build.include(DIR);
+    // Twenty-five year old C: `Unpack_Track` and friends trip -Wall constantly
+    // and there is nothing to be done about it in code we want to keep diffable
+    // against upstream.
+    build.warnings(false);
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(DIR)
+        .expect("external/dms not found")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "c"))
+        .collect();
+    // read_dir order is the file system's; sort so the build is reproducible.
+    files.sort();
+
+    for file in &files {
+        println!("cargo:rerun-if-changed={}", file.display());
+        build.file(file);
+    }
+    println!("cargo:rerun-if-changed={SHIM}");
+    build.file(SHIM);
+    build.compile("dms");
 }
 
 const MARKER_FILES: &[&str] = &[
