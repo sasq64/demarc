@@ -30,7 +30,7 @@ cachegrind_debug:
   CARGO_MANIFEST_DIR=. LD_LIBRARY_PATH=target/debug/deps:{{RUST_SYSROOT}}/lib/rustlib/x86_64-unknown-linux-gnu/lib valgrind --tool=cachegrind target/debug/client
 
 cachegrind:
-  CARGO_MANIFEST_DIR=. valgrind --tool=cachegrind target/release/client
+  CARGO_MANIFEST_DIR=. valgrind --tool=cachegrind target/release-fast/demarc
 
 run file="demos/rebels.adf":
     cargo run --profile release-fast -- --shuffle {{file}}
