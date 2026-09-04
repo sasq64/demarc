@@ -65,14 +65,25 @@ fn reports_a_failure() {
 /// waiting on it always gets an answer.
 ///
 /// Whether the body runs at all is a race — the pool may enter it before
-/// `cancel` lands — so only the outcome is asserted here.
+/// `cancel` lands — so only the outcome is asserted here. The body blocks
+/// until the cancel has been issued so that it cannot *finish* first, which
+/// would be a genuine `Ok` and made this test flaky; both the pre-start and
+/// the post-body cancel check must report `Cancelled`.
 #[test]
 fn cancelling_reports_cancelled() {
     let mut app = test_app::<u32>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+
     let mut jobs = app.world_mut().resource_mut::<Jobs<u32>>();
-    let id = jobs.spawn("slow", |_| Ok(1));
+    let id = jobs.spawn("slow", move |_| {
+        // Ignores the flag deliberately: the value is what gets discarded.
+        let _ = release_rx.recv();
+        Ok(1)
+    });
     // Same frame, before `poll_jobs` has ever run.
     jobs.cancel(id);
+    // Errors when the pre-start check already returned and dropped the body.
+    let _ = release_tx.send(());
 
     let msg = run_until_finished::<u32>(&mut app);
     assert_eq!(msg.id, id);
