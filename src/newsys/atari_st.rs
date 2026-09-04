@@ -173,6 +173,7 @@ fn build_gemdos_drive(prg: &Path, base: &Path) -> Result<WorkFile> {
     Ok(temp)
 }
 
+// TODO: args.fast_load => hatari_fast_floppy=enabled
 impl System for AtariStSystem {
     fn core_name(&self) -> &'static str {
         CORE_NAME_HATARI
@@ -184,11 +185,12 @@ impl System for AtariStSystem {
 
     fn default_meta(&self) -> HashMap<&str, &str> {
         [
-            ("hatari_forcerefresh", "2"),
-            ("hatari_start_in_mouse_mode", "false"),
-            ("hatari_fastboot", "true"),
-            ("hatari_led_status_display", "false"),
-            ("hatari_video_crop_overscan", "false"),
+            //("hatari_forcerefresh", "2"),
+            //("hatari_start_in_mouse_mode", "false"),
+            ("hatari_fastboot", "enabled"),
+            ("hatari_borders", "enabled"),
+            //("hatari_led_status_display", "false"),
+            //("hatari_video_crop_overscan", "false"),
         ]
         .into()
     }

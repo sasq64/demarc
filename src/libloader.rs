@@ -67,6 +67,10 @@ const ALT_SOURCES: &[(&str, &str)] = &[
         "yape",
         "https://github.com/sasq64/yape/releases/download/latest",
     ),
+    (
+        "hatari",
+        "https://github.com/sasq64/hatari/releases/download/latest",
+    ),
 ];
 
 /// The platform segment used by the [`ALT_SOURCES`] archives, which name
