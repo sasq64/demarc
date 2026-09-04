@@ -6,9 +6,10 @@
 //! one RGBA frame via [`with_frame`](RetroEmu::with_frame) and reports its
 //! geometry, while every interactive method (input, disks, audio, reset) is a
 //! no-op. It decodes the Amiga ILBM/IFF format (see [`crate::ilbm`]), the Atari
-//! ST DEGAS format (see [`crate::degas`]) and ZX Spectrum screen dumps (see
-//! [`crate::zx_scr`]), as well as the common still formats handled by the
-//! `image` crate (PNG, BMP, JPEG, TGA, PCX).
+//! ST DEGAS format (see [`crate::degas`]), ZX Spectrum screen dumps (see
+//! [`crate::zx_scr`]) and palette-colour TIFF (see [`crate::tiff_pal`]), as
+//! well as the common still formats handled by the `image` crate (PNG, BMP,
+//! JPEG, TGA, PCX).
 //!
 //! Paletted images can define colour-cycling ranges (ILBM CRNG chunks, DEGAS
 //! Elite colour animation, ZX Spectrum FLASH attributes). When cycling is
@@ -26,6 +27,7 @@ use anyhow::{Result, bail};
 use crate::backend::Backend;
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
+use crate::tiff_pal;
 use crate::utils::get_ext;
 use crate::zx_scr;
 
@@ -170,7 +172,14 @@ impl ImageEmu {
             .map(|img| (img, ilbm::describe(&bytes)))
             .or_else(|_| atari(&bytes).map(|img| (img, degas::describe(&bytes))))
             .or_else(|_| zx(&bytes).map(|img| (img, zx_scr::describe())))
-        {
+            // A palette TIFF is here for a different reason: the `image` crate
+            // refuses it outright, so this is the only decoder for it. Its
+            // signature is a real one, so unlike the two above it needs no
+            // help from the file's name.
+            .or_else(|_| {
+                tiff_pal::load_indexed_from_memory(&bytes)
+                    .map(|img| (img, tiff_pal::describe(&bytes)))
+            }) {
             Ok((img, info)) => {
                 let width = img.width as usize;
                 let height = img.height as usize;

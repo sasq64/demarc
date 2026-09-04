@@ -43,6 +43,7 @@ mod retro_emu;
 mod screensaver;
 mod speed_test;
 mod system_dir;
+mod tiff_pal;
 mod utils;
 mod workfile;
 mod zx_scr;

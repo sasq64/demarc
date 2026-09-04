@@ -52,7 +52,7 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins; stdout muzz
 | impl | file | notes |
 |---|---|---|
 | libretro core | `retro_emu.rs` + `retro_emu/threaded.rs` | `RetroCoreDirect` is the raw FFI/environment-callback side; `RetroCoreThreaded` runs it on a worker thread and ships frames back over a channel. This is what almost everything uses. |
-| still image | `image_emu.rs` | IFF/ILBM (`ilbm.rs`), DEGAS (`degas.rs`), ZX SCR (`zx_scr.rs`), plus `image` crate formats; optional palette colour-cycling |
+| still image | `image_emu.rs` | IFF/ILBM (`ilbm.rs`), DEGAS (`degas.rs`), ZX SCR (`zx_scr.rs`), palette TIFF (`tiff_pal.rs`, which the `image` crate refuses), plus `image` crate formats; optional palette colour-cycling |
 | music | `music_emu.rs` | `musix` chiptune/tracker player, renders audio inline (no worker thread) and draws a Luau visualizer (`music_vis.rs`) |
 | Flash | `flash_emu.rs` | behind the `flash` feature; Ruffle with its own wgpu device |
 | Windows demos | `wine_emu.rs` | Linux only, and *not* a picture source: it launches wine inside gamescope on top of demarc, so shaders/grid/screenshots don't apply |
