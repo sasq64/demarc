@@ -1,6 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 /// A player standing in for the awkward end of `musix`: it answers the
 /// first `empty_reads` requests with nothing (as UADE does while it boots
@@ -279,12 +280,29 @@ fn data_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("system/musix")
 }
 
-fn test_song() -> std::path::PathBuf {
-    // Not `tempfile`: the plugin match and the secondary-file lookup both
-    // key off the extension, which must stay `.mod`.
-    let path = std::env::temp_dir().join("music_emu_test.mod");
+/// A module of this test's own, in a directory that goes away with the
+/// returned handle. Every test needs its own: these run in parallel, and a
+/// shared path made them race — `fs::write` truncates, so one test writing
+/// the module handed another an empty file to play, and the cleanup at the
+/// end of one deleted the song another was still loading.
+///
+/// A directory rather than a `NamedTempFile` because the plugin match and
+/// the secondary-file lookup both key off the extension, which must stay
+/// `.mod`.
+fn test_song() -> (TempDir, PathBuf) {
+    let dir = tempdir();
+    let path = dir.path().join("song.mod");
     write_test_mod(&path);
-    path
+    (dir, path)
+}
+
+/// The temp directory the tests build their files in. Named for what it is
+/// so a leftover is recognisable, and removed when the test ends.
+fn tempdir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("music_emu_test-")
+        .tempdir()
+        .expect("temp dir")
 }
 
 /// An unpacked archive arrives as a directory. The song played is the first
@@ -292,8 +310,8 @@ fn test_song() -> std::path::PathBuf {
 /// `.nfo`, the scroll text, the unrelated subdirectory — are passed over.
 #[test]
 fn a_directory_plays_its_first_song() {
-    let dir = std::env::temp_dir().join("music_emu_dir_test");
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempdir();
+    let dir = tmp.path();
     std::fs::create_dir_all(dir.join("extras")).unwrap();
     // Named so the junk sorts first: the pick must be about what plays, not
     // about what comes first in the directory.
@@ -302,50 +320,43 @@ fn a_directory_plays_its_first_song() {
     write_test_mod(&dir.join("b_first.mod"));
     write_test_mod(&dir.join("extras/nested.mod"));
 
-    assert!(can_handle(&dir, &data_dir()));
-    assert_eq!(playable_file(&dir), Some(dir.join("b_first.mod")));
+    assert!(can_handle(dir, &data_dir()));
+    assert_eq!(playable_file(dir), Some(dir.join("b_first.mod")));
 
     // And it really loads through the directory path.
-    let mut emu = MusicEmu::new(&dir, &data_dir(), None).unwrap();
+    let mut emu = MusicEmu::new(dir, &data_dir(), None).unwrap();
     assert!(emu.run());
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
     assert!(samples.iter().any(|&s| s != 0), "directory load is silent");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Nothing playable at the top level: the subdirectories are searched too,
 /// which is what a release packed as `Group-Demo/music/*.mod` needs.
 #[test]
 fn a_song_in_a_subdirectory_is_found() {
-    let dir = std::env::temp_dir().join("music_emu_nested_test");
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempdir();
+    let dir = tmp.path();
     std::fs::create_dir_all(dir.join("music")).unwrap();
     std::fs::write(dir.join("readme.txt"), b"nothing to play here").unwrap();
     write_test_mod(&dir.join("music/tune.mod"));
 
     // Through `can_handle` so the plugins are registered: `playable_file`
     // sees nothing playable until `init_musix` has run.
-    assert!(can_handle(&dir, &data_dir()));
-    assert_eq!(playable_file(&dir), Some(dir.join("music/tune.mod")));
-
-    let _ = std::fs::remove_dir_all(&dir);
+    assert!(can_handle(dir, &data_dir()));
+    assert_eq!(playable_file(dir), Some(dir.join("music/tune.mod")));
 }
 
 /// A directory with nothing playable in it is not this backend's business,
 /// so `create_core` must not be told otherwise.
 #[test]
 fn a_directory_without_music_is_rejected() {
-    let dir = std::env::temp_dir().join("music_emu_empty_test");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempdir();
+    let dir = tmp.path();
     std::fs::write(dir.join("readme.txt"), b"nothing to play here").unwrap();
 
-    assert!(!can_handle(&dir, &data_dir()));
-    assert!(MusicEmu::new(&dir, &data_dir(), None).is_err());
-
-    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!can_handle(dir, &data_dir()));
+    assert!(MusicEmu::new(dir, &data_dir(), None).is_err());
 }
 
 /// Two songs may be alive at once — the frontend builds the next one before
@@ -377,7 +388,7 @@ fn a_second_sndh_loads_while_the_first_is_playing() {
 
 #[test]
 fn renders_audio_and_a_scope() {
-    let song = test_song();
+    let (_tmp, song) = test_song();
     assert!(can_handle(&song, &data_dir()), "musix rejected the module");
 
     let mut emu = MusicEmu::new(&song, &data_dir(), Some(&script())).unwrap();
@@ -409,15 +420,13 @@ fn renders_audio_and_a_scope() {
     let hash = emu.frame_hash();
     assert!(emu.run());
     assert_ne!(emu.frame_hash(), hash, "frame hash did not move");
-
-    let _ = std::fs::remove_file(&song);
 }
 
 /// A song with no script still plays. The picture is blank rather than
 /// stale or garbage, and nothing about the audio path notices.
 #[test]
 fn a_song_without_a_script_still_plays() {
-    let song = test_song();
+    let (_tmp, song) = test_song();
     let mut emu = MusicEmu::new(&song, &data_dir(), None).unwrap();
 
     assert!(emu.run());
@@ -431,17 +440,16 @@ fn a_song_without_a_script_still_plays() {
             "something was drawn without a script"
         );
     });
-
-    let _ = std::fs::remove_file(&song);
 }
 
 /// A script that cannot be loaded is not a load failure for the song — the
 /// same call `init_musix` makes about a missing data directory.
 #[test]
 fn a_broken_script_does_not_stop_the_song() {
-    let song = test_song();
-    let missing = std::env::temp_dir().join("music_emu_no_such_script.lua");
-    let _ = std::fs::remove_file(&missing);
+    let (tmp, song) = test_song();
+    // Inside this test's own directory, so it is missing because nothing
+    // ever wrote it rather than because another test cleaned it up.
+    let missing = tmp.path().join("no_such_script.lua");
 
     let mut emu = MusicEmu::new(&song, &data_dir(), Some(&missing))
         .expect("a missing script must not fail the load");
@@ -452,15 +460,13 @@ fn a_broken_script_does_not_stop_the_song() {
         samples.iter().any(|&s| s != 0),
         "a bad script muted the song"
     );
-
-    let _ = std::fs::remove_file(&song);
 }
 
 /// The frame length must average out to the sample rate over time, however
 /// the per-frame count rounds.
 #[test]
 fn frame_lengths_track_the_sample_rate() {
-    let song = test_song();
+    let (_tmp, song) = test_song();
     let mut emu = MusicEmu::new(&song, &data_dir(), None).unwrap();
 
     for _ in 0..FRAME_RATE as usize {
@@ -474,6 +480,4 @@ fn frame_lengths_track_the_sample_rate() {
         total.abs_diff(expected) <= 2,
         "a second of audio was {total} samples, expected ~{expected}"
     );
-
-    let _ = std::fs::remove_file(&song);
 }
