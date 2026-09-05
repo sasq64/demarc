@@ -9,8 +9,33 @@ use super::dos::{ExeKind, exe_kind};
 use super::{System, get_ext, walk_dir};
 use crate::backend::Backend;
 #[cfg(target_os = "linux")]
+use anyhow::Context;
+#[cfg(target_os = "linux")]
+use crate::libloader;
+#[cfg(target_os = "linux")]
+use crate::retro_emu::RetroCoreThreaded;
+#[cfg(target_os = "linux")]
+use crate::system_dir;
+#[cfg(target_os = "linux")]
 use crate::wine_emu::WineEmu;
 use crate::workfile::WorkFile;
+
+/// Meta key: show the demo *inside* demarc rather than on top of it.
+///
+/// Off by default. [`WineEmu`] draws wine straight to the screen, which costs
+/// nothing and looks right but leaves the release outside everything demarc
+/// does to a picture — no shaders, no grid, no screenshots, no audio. Setting
+/// this routes the same wine command through the gamescope libretro core
+/// instead, which composites the session headlessly and hands the frames back
+/// like any other core. That picture is demarc's to do as it likes with; the
+/// price is a readback per frame. See `docs/GAMESCOPE.md`.
+#[cfg(target_os = "linux")]
+pub const META_CAPTURE: &str = "wine_capture";
+
+/// The core that runs the gamescope session. Not on the libretro buildbot, so
+/// it only ever resolves through `DEMARC_CORE_DIR` — see [`libloader`].
+#[cfg(target_os = "linux")]
+const CORE_NAME_GAMESCOPE: &str = "gamescope";
 
 /// Win32 programs, run rather than emulated.
 ///
@@ -239,16 +264,69 @@ impl System for WindowsSystem {
         "Windows"
     }
 
-    /// Nothing is emulated here: the program is run, on top of demarc, by
-    /// [`WineEmu`].
+    /// Nothing is emulated here either way: the program is run by wine. What
+    /// differs is where it lands — on top of demarc through [`WineEmu`], or
+    /// inside it through the gamescope core. See [`META_CAPTURE`].
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         #[cfg(target_os = "linux")]
-        return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
+        {
+            if crate::wine_emu::is_yes(&path.get_meta_or(META_CAPTURE, "false")) {
+                let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
+                    .context("Could not load the gamescope core")?;
+                return Ok(Box::new(RetroCoreThreaded::new(
+                    &core,
+                    system_dir(),
+                    Some(path),
+                    capture_meta(path),
+                    false,
+                )?));
+            }
+            Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?))
+        }
         // `can_load` said no everywhere else, so this is only reachable by
         // asking for a Windows program by hand.
         #[cfg(not(target_os = "linux"))]
         anyhow::bail!("{:?} needs wine, which demarc only has on Linux", path.path);
     }
+}
+
+/// Restate a Windows entry's settings as the gamescope core's options.
+///
+/// The two name the same things differently: an entry has always said `wine_res`
+/// and `wine_desktop`, and the core — which also runs Chrome, and whatever else
+/// a session can hold — says `gamescope_resolution` and `gamescope_command`.
+/// Translating here keeps the entry vocabulary the one people already write, and
+/// keeps `overrides.toml` working unchanged whichever backend runs the release.
+///
+/// Anything already set explicitly wins, so `-x gamescope_command=...` still
+/// overrides the whole thing, which is how the core gets tested against a client
+/// that is not wine at all.
+#[cfg(target_os = "linux")]
+fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
+    let mut meta = path.get_all_meta();
+
+    if !meta.contains_key("gamescope_resolution")
+        && let Some(res) = meta.get(crate::wine_emu::META_RES)
+        && res != crate::wine_emu::PICK
+    {
+        meta.insert("gamescope_resolution".into(), res.clone());
+    }
+
+    meta.entry("gamescope_command".into())
+        .or_insert_with(|| "wine".into());
+
+    // The same prefix [`WineEmu`] uses, so a release prepared under one backend is
+    // still prepared under the other and neither goes near the user's own `~/.wine`.
+    if !meta.contains_key("gamescope_wineprefix")
+        && let Ok(prefix) = crate::wine_emu::wine_prefix()
+    {
+        meta.insert(
+            "gamescope_wineprefix".into(),
+            prefix.to_string_lossy().into_owned(),
+        );
+    }
+
+    meta
 }
 
 #[cfg(test)]

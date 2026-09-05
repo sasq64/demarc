@@ -166,7 +166,7 @@ fn parse_res(text: &str) -> Option<(u32, u32)> {
 }
 
 /// Is a meta value one of the ways of saying yes?
-fn is_yes(value: &str) -> bool {
+pub(crate) fn is_yes(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "true" | "1" | "yes" | "on"
@@ -179,7 +179,7 @@ fn has_tool(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn wine_prefix() -> Result<PathBuf> {
+pub(crate) fn wine_prefix() -> Result<PathBuf> {
     let home = dirs::home_dir().context("No home directory to put a wine prefix in")?;
     Ok(home.join(PREFIX_DIR))
 }

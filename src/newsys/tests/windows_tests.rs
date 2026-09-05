@@ -174,3 +174,61 @@ fn reads_a_resolution_only_where_a_name_holds_one() {
     assert_eq!(res("demo_1024_final.exe"), None);
     assert_eq!(res("demo.exe"), None);
 }
+
+/// An entry says `wine_res`; the core says `gamescope_resolution`. The
+/// translation happens in one place so an `overrides.toml` written for the
+/// on-top backend still means the same thing to the captured one.
+#[cfg(target_os = "linux")]
+#[test]
+fn restates_wine_settings_as_core_options() {
+    let file = WorkFile::new_with_meta(
+        PathBuf::from("/demo/thing.exe"),
+        HashMap::from([(crate::wine_emu::META_RES.to_string(), "640x480".to_string())]),
+    );
+
+    let meta = capture_meta(&file);
+
+    assert_eq!(meta.get("gamescope_resolution").map(String::as_str), Some("640x480"));
+    assert_eq!(meta.get("gamescope_command").map(String::as_str), Some("wine"));
+    // Both backends share a prefix, so a release prepared under one is prepared
+    // under the other.
+    assert!(meta.contains_key("gamescope_wineprefix"));
+    // The original key survives: it is still what the entry said.
+    assert_eq!(meta.get(crate::wine_emu::META_RES).map(String::as_str), Some("640x480"));
+}
+
+/// `wine_res=pick` is not a size at all — it means "let the demo's own dialog
+/// choose", and handing it to the core as a resolution would be nonsense.
+#[cfg(target_os = "linux")]
+#[test]
+fn does_not_pass_pick_through_as_a_resolution() {
+    let file = WorkFile::new_with_meta(
+        PathBuf::from("/demo/thing.exe"),
+        HashMap::from([(
+            crate::wine_emu::META_RES.to_string(),
+            crate::wine_emu::PICK.to_string(),
+        )]),
+    );
+
+    assert!(!capture_meta(&file).contains_key("gamescope_resolution"));
+}
+
+/// A value set by hand — `-x gamescope_command=...`, which is how the core gets
+/// pointed at a client that is not wine — must survive the translation.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_explicit_option_beats_the_translation() {
+    let file = WorkFile::new_with_meta(
+        PathBuf::from("/demo/thing.exe"),
+        HashMap::from([
+            (crate::wine_emu::META_RES.to_string(), "800x600".to_string()),
+            ("gamescope_resolution".to_string(), "1280x720".to_string()),
+            ("gamescope_command".to_string(), "glxgears".to_string()),
+        ]),
+    );
+
+    let meta = capture_meta(&file);
+
+    assert_eq!(meta.get("gamescope_resolution").map(String::as_str), Some("1280x720"));
+    assert_eq!(meta.get("gamescope_command").map(String::as_str), Some("glxgears"));
+}

@@ -56,6 +56,7 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins; stdout muzz
 | music | `music_emu.rs` | `musix` chiptune/tracker player, renders audio inline (no worker thread) and draws a Luau visualizer (`music_vis.rs`) |
 | Flash | `flash_emu.rs` | behind the `flash` feature; Ruffle with its own wgpu device |
 | Windows demos | `wine_emu.rs` | Linux only, and *not* a picture source: it launches wine inside gamescope on top of demarc, so shaders/grid/screenshots don't apply |
+| gamescope session | `external/gamescope/src/libretro/` (C++) | Linux only. A patched gamescope composites a headless Wayland/Xwayland session into a shared dmabuf and a thin `gamescope_libretro.so` hands the frames back, so wine — or an HTML/JS release in an undecorated Chrome — *is* a picture source. Opt-in with `wine_capture=true`; see `docs/GAMESCOPE.md`. |
 
 ### System detection — `newsys.rs` + `src/newsys/*`
 
@@ -138,8 +139,8 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 ## Docs worth reading before touching those areas
 
-`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/PCEM.md` and `PICO8.md` (the two
-non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
+`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/PCEM.md`, `PICO8.md` and
+`GAMESCOPE.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
 (`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/NOTES.md` (design
 scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.
 

@@ -35,6 +35,7 @@ use sinclair::SinclairSystem;
 use snes::SNESSystem;
 use std::collections::HashMap;
 use tic80::Tic80System;
+use web::WebSystem;
 use windows::WindowsSystem;
 
 mod adf;
@@ -59,6 +60,7 @@ mod plus4;
 mod sinclair;
 mod snes;
 mod tic80;
+mod web;
 mod windows;
 
 /// Trim the caches of built and rewritten discs back under their budgets.
@@ -464,6 +466,7 @@ impl NewSys {
             Box::new(NeoGeoSystem {}),
             Box::new(DosSystem {}),
             Box::new(WindowsSystem {}),
+            Box::new(WebSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
         ]

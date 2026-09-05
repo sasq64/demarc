@@ -68,6 +68,34 @@ pc file:
     DEMARC_CORE_DIR={{justfile_directory()}}/external/pcem/build-lr/src \
         cargo run --profile release-fast -- {{file}}
 
+# Needs meson, vulkan-headers, glslang and the wlroots build deps, plus the
+# submodules: git -C external/gamescope submodule update --init --recursive.
+# Point demarc at the result with DEMARC_CORE_DIR; the core finds the compositor
+# beside itself in the build directory. See docs/GAMESCOPE.md.
+#
+# Build the gamescope libretro core: the patched compositor and the core that drives it.
+gamescope-core:
+    meson setup --reconfigure external/gamescope/build-lr external/gamescope \
+        -Dbuildtype=release -Denable_openvr_support=false -Denable_tests=false \
+        -Denable_gamescope_wsi_layer=false -Dpipewire=disabled \
+        -Davif_screenshots=disabled -Dforce_fallback_for=libliftoff,vkroots
+    ninja -C external/gamescope/build-lr src/gamescope src/gamescope_libretro.so
+    @echo "core at external/gamescope/build-lr/src/gamescope_libretro.so"
+
+# `--no-silence` matters: without it gamescope's and wine's diagnostics go to
+# /dev/null along with the cores'.
+#
+# Run a Windows demo captured *into* demarc, rather than drawn on top of it.
+gs file:
+    DEMARC_CORE_DIR={{justfile_directory()}}/external/gamescope/build-lr/src \
+        cargo run --profile release-fast -- --no-silence -x wine_capture=true {{file}}
+
+# Same, for an HTML/JS release through an undecorated Chrome. WebSystem claims
+# the page, so nothing extra has to be said on the command line.
+gs-web page:
+    DEMARC_CORE_DIR={{justfile_directory()}}/external/gamescope/build-lr/src \
+        cargo run --profile release-fast -- --no-silence {{page}}
+
 install:
     cargo build --release
     sudo cp target/release/demarc /usr/local/bin
