@@ -5034,8 +5034,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "librashader"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a73df073c8a4fe19db6c3ce300008ed48ef9f2ebed149f9601f3c50fc10949"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "librashader-cache",
  "librashader-common",
@@ -5052,8 +5051,7 @@ dependencies = [
 [[package]]
 name = "librashader-cache"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760fa650e2bb5a46b2078b0ab244bea677872611c1b1e98ab9b407a2503f9888"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "bincode",
  "blake3",
@@ -5070,8 +5068,7 @@ dependencies = [
 [[package]]
 name = "librashader-common"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb7aef25664e2964398498b416cc38382ec5eb11a7a63dce7c4342cf59e65a3c"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "bitflags 2.13.1",
  "halfbrown",
@@ -5085,8 +5082,7 @@ dependencies = [
 [[package]]
 name = "librashader-pack"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cd8486819010a5f174e3c5e8b6570b202e9b0fcba75c9bf13ff4bee06667965"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "image",
  "librashader-common",
@@ -5098,8 +5094,7 @@ dependencies = [
 [[package]]
 name = "librashader-preprocess"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d863840584fd75f7d1b94d6e0c83e0e2c33399c1b481066cd5ca100746849ff"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "encoding_rs",
  "librashader-common",
@@ -5111,8 +5106,7 @@ dependencies = [
 [[package]]
 name = "librashader-presets"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a43e8b865025ebe61359a775f833795eaf3f80f9e5d60e4c04ffc497722c0d3"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "librashader-common",
  "librashader-preprocess",
@@ -5129,8 +5123,7 @@ dependencies = [
 [[package]]
 name = "librashader-reflect"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46ccf2a7f64836855d5f66bdcff5e62afeb3ed479e1b40789400d863c1c409b1"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -5151,8 +5144,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55ec18e76110f95212f1ea39052b5ba68d766741c575f787d7f483f332d7e92b"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "arc-swap",
  "array-concat",
@@ -5170,8 +5162,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime-wgpu"
 version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f29308f5720b05a05706d8877b77ba163c20b400c0088d943bd7cbda97c2a61f"
+source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
 dependencies = [
  "array-concat",
  "bytemuck",

@@ -58,8 +58,14 @@ image-extras = {
   ]
 }
 libloading = "0.9"
+# Fork of librashader 0.11.4, branch `demarc`: three preset-parser fixes demarc
+# needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
+# reference depth counted per chain instead of per file, and unresolvable
+# references skipped the way RetroArch skips them), plus the modf/frexp result
+# types naga's SPIR-V frontend forgets to register. See docs/SHADERS.md.
 librashader = {
-  version = "0.11.3",
+  git = "https://github.com/sasq64/librashader",
+  rev = "376d37386fe6d7793ed81359ff635d301d54f9c9",
   default-features = false,
   features = [
     "presets",

@@ -106,7 +106,9 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 - `src/libretro.rs` (223k, `#[allow(warnings)]`) is **bindgen output — never hand-edit**. Regenerate
   with `scripts/gen-libretro-bindings.sh`; it's committed so no build machine needs libclang.
-- `libretro/` and `slang-shaders/` are gitignored working checkouts, not part of the repo.
+- `libretro/`, `slang-shaders/` and `shaders/` are gitignored working checkouts, not part of
+  the repo. `shaders/` is the RetroArch-shaped layout the Mega Bezel preset packs need — see
+  `docs/SHADERS.md`, which also explains why `librashader` is pinned to a fork.
 - `external/ADFlib` and `external/dms` are vendored C, built by `build.rs` and reached through the
   shims in `src/adf_unpack_shim.c` / `src/dms_unpack_shim.c` (Rust side: `src/newsys/adf.rs` and
   `src/newsys/dms.rs`). Both serve `--unadf`: ADFlib walks a disk image's file system, xDMS turns a
@@ -137,7 +139,8 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 ## Docs worth reading before touching those areas
 
 `docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/PCEM.md` and `PICO8.md` (the two
-non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/NOTES.md` (design
+non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
+(`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/NOTES.md` (design
 scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.
 
 ## Releases

@@ -7,6 +7,7 @@
 /system/amiga/Visuals/
 /libretro/
 /slang-shaders/
+/shaders/
 __pycache__/
 /system/vice/*dump*
 /system/*.mcd

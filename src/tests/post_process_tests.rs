@@ -120,3 +120,87 @@ fn downsample_limit_thresholds_like_crt_limit() {
     ));
     assert!(!wants_downsample(UVec2::new(1, 1), src, 0.0));
 }
+
+/// The Mega Bezel preset packs lean on three things RetroArch's preset parser
+/// does and stock librashader 0.11 does not, so demarc builds against a fork
+/// that does them too (see `docs/SHADERS.md`): a `#reference` path ends at its
+/// closing quote rather than swallowing a trailing comment, reference depth
+/// counts chain levels rather than files visited, and a reference that does not
+/// resolve is skipped rather than failing the whole preset. Going back to a
+/// librashader without those fixes breaks every preset in those packs, so pin
+/// the behaviour here rather than finding out at load time.
+#[test]
+fn preset_references_follow_retroarch_rules() {
+    use librashader::presets::ShaderPreset;
+    use std::fmt::Write as _;
+
+    let dir = std::env::temp_dir().join("demarc-preset-reference-rules");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let stock = crate::system_dir().join("shaders/slangp/stock.slangp");
+    let mut root = format!("#reference \"{}\" // the passes\n", stock.display());
+    // Well past SHADER_MAX_REFERENCE_DEPTH (16) files, but only one level deep:
+    // a pack preset pulls in this many .params siblings, each one annotated.
+    for i in 0..20 {
+        let leaf = dir.join(format!("leaf{i}.params"));
+        std::fs::write(&leaf, format!("leaf_param{i} = \"{i}.0\"\n")).expect("leaf");
+        let _ = writeln!(root, "#reference \"leaf{i}.params\" // leaf {i}");
+    }
+    // A reference to a file the pack never shipped: RetroArch warns and moves on.
+    root.push_str("#reference \"absent.params\" // renamed upstream\n");
+
+    let root_path = dir.join("root.slangp");
+    std::fs::write(&root_path, root).expect("root preset");
+
+    let preset = ShaderPreset::try_parse(&root_path, ShaderFeatures::NONE)
+        .unwrap_or_else(|err| panic!("annotated reference chain should parse: {err}"));
+    assert_eq!(preset.passes.len(), 1, "should inherit the stock pass");
+    assert!(
+        preset.passes[0].path.is_file(),
+        "reference paths should not keep their quotes: {:?}",
+        preset.passes[0].path
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Parse a slice of an installed Mega Bezel pack. Ignored because it needs the
+/// pack and a `slang-shaders` checkout laid out as `docs/SHADERS.md` describes;
+/// run it after updating either, or after `scripts/fix-megabezel-pack.sh`.
+#[test]
+#[ignore]
+fn megabezel_pack_presets_resolve() {
+    use librashader::presets::ShaderPreset;
+
+    let root = PathBuf::from("shaders/Mega_Bezel_Packs/TheNamec-Commodore/presets");
+    assert!(root.is_dir(), "no pack at {root:?}");
+
+    let mut presets = Vec::new();
+    let mut dirs = vec![root];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("readable").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "slangp") {
+                presets.push(path);
+            }
+        }
+    }
+    presets.sort();
+    assert!(!presets.is_empty(), "no presets found");
+
+    // The pack ships ~72k presets built from a few hundred building blocks;
+    // every 200th covers each device/flavour/scene combination many times over.
+    let mut checked = 0;
+    for path in presets.iter().step_by(200) {
+        let preset = ShaderPreset::try_parse(path, ShaderFeatures::NONE)
+            .unwrap_or_else(|err| panic!("{path:?}: {err}"));
+        // No passes means every reference that carried them went missing —
+        // the pack and the Mega Bezel checkout have drifted apart.
+        assert!(!preset.passes.is_empty(), "{path:?} resolved to no passes");
+        checked += 1;
+    }
+    println!("{checked} of {} presets parsed", presets.len());
+}
