@@ -273,18 +273,18 @@ pub fn set_variant(field: &mut dyn PartialReflect, variant: &str) -> bool {
 
 /// Sizes are in the 1600-tall virtual space `crate::egui_ui::update_ui` sets up
 /// with `set_pixels_per_point`, so these are much larger than egui's defaults.
-const TITLE_SIZE: f32 = 40.0;
+pub(crate) const TITLE_SIZE: f32 = 40.0;
 /// Side of the square close button in the panel's top-right corner.
-const CLOSE_SIZE: f32 = 40.0;
-const LABEL_SIZE: f32 = 28.0;
-const BODY_SIZE: f32 = 26.0;
+pub(crate) const CLOSE_SIZE: f32 = 40.0;
+pub(crate) const LABEL_SIZE: f32 = 28.0;
+pub(crate) const BODY_SIZE: f32 = 26.0;
 /// Width of the editor column. Fixed, so the rows line up and the panel does not
 /// resize as a combo box's text changes.
-const WIDGET_WIDTH: f32 = 320.0;
-const ROW_SPACING: egui::Vec2 = egui::vec2(24.0, 12.0);
+pub(crate) const WIDGET_WIDTH: f32 = 320.0;
+pub(crate) const ROW_SPACING: egui::Vec2 = egui::vec2(24.0, 12.0);
 /// Fraction of the screen height the field grid may take before it scrolls.
-const GRID_HEIGHT_FRACTION: f32 = 0.6;
-const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
+pub(crate) const GRID_HEIGHT_FRACTION: f32 = 0.6;
+pub(crate) const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
 
 /// Scales the widgets that size themselves from the *style* rather than from a
 /// font we hand them -- checkboxes, drag values, colour swatches, buttons.
@@ -294,7 +294,7 @@ const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
 /// egui's default 14pt, which is unreadably small in this app's 1600-tall
 /// virtual space. The spacing has to grow with it or the widgets stay
 /// letterbox-thin around the bigger text.
-fn scale_widgets(ui: &mut Ui) {
+pub(crate) fn scale_widgets(ui: &mut Ui) {
     let style = ui.style_mut();
     style.text_styles.insert(
         egui::TextStyle::Button,
@@ -600,8 +600,12 @@ fn open_settings<T: SettingsType>(
         state.fields = describe(msg.value.as_partial_reflect());
         state.draft = msg.value.clone();
         state.title = msg.title.clone();
+        // Reported once per transition: `HudState` counts open dialogs, so
+        // reopening one that is already up must not count twice.
+        if !state.open {
+            hud.set_settings_open(true);
+        }
         state.open = true;
-        hud.set_settings_open(true);
     }
 }
 
@@ -678,7 +682,7 @@ fn settings_ui<T: SettingsType>(
 /// because the panel is only as wide as its widest row, which is not known until
 /// they are drawn. The title row has already reserved [`CLOSE_SIZE`] for it, so
 /// the two cannot collide.
-fn close_button(ui: &mut Ui, panel: egui::Rect) -> bool {
+pub(crate) fn close_button(ui: &mut Ui, panel: egui::Rect) -> bool {
     let rect = egui::Rect::from_min_size(
         egui::pos2(panel.right() - CLOSE_SIZE, panel.top()),
         egui::Vec2::splat(CLOSE_SIZE),

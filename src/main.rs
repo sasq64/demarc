@@ -42,6 +42,7 @@ mod post_process;
 mod retro_emu;
 mod screensaver;
 mod settings;
+mod shader_dialog;
 mod speed_test;
 mod system_dir;
 mod tiff_pal;
@@ -510,6 +511,7 @@ fn main() {
             ScreenSaverPlugin,
             SpeedTestPlugin,
             jobs::JobsPlugin,
+            shader_dialog::ShaderDialogPlugin,
         ));
     // The settings dialog, registered per settings type. `DemoSettings` is the
     // one the RightAlt+E hotkey opens.

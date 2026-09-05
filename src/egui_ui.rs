@@ -212,10 +212,12 @@ pub struct HudText {
 pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
-    /// Whether a settings dialog (`crate::settings`) is up. Kept here rather
-    /// than on the generic `SettingsState<T>` so [`HudState::modal`] can answer
-    /// without naming the settings type.
-    settings_open: bool,
+    /// How many dialogs (`crate::settings`, `crate::shader_dialog`) are up.
+    /// Kept here rather than on the generic `SettingsState<T>` so
+    /// [`HudState::modal`] can answer without naming the settings type, and
+    /// counted rather than a flag so closing one dialog while another is still
+    /// open does not hand the keyboard back to the emulated machine.
+    open_dialogs: u32,
     /// Caller-chosen id of the open list, echoed back in [`FuzzyListSelect`].
     list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`render_list`],
@@ -255,12 +257,17 @@ impl HudState {
     /// check; a settings dialog with a focused text field would otherwise type
     /// into the emulator as well.
     pub fn modal(&self) -> bool {
-        self.show_list || self.settings_open
+        self.show_list || self.open_dialogs > 0
     }
 
-    /// Told by `crate::settings` as its dialog opens and closes.
+    /// Told by a dialog as it opens and closes. Each dialog reports each
+    /// transition once, so the count only has to survive a stray close.
     pub fn set_settings_open(&mut self, open: bool) {
-        self.settings_open = open;
+        self.open_dialogs = if open {
+            self.open_dialogs + 1
+        } else {
+            self.open_dialogs.saturating_sub(1)
+        };
     }
 }
 

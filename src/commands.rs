@@ -18,6 +18,7 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::settings::{DemoSettings, ShowSettings};
+use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -46,6 +47,7 @@ pub enum Cmd {
     OpenFile,
     Reload,
     Settings,
+    ShaderDialog,
 }
 
 #[derive(Message)]
@@ -119,6 +121,7 @@ const HOTKEYS: &[KeyMapping] = &[
     ),
     KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
     KeyMapping::new(KeyCode::KeyE, "Edit settings", Cmd::Settings),
+    KeyMapping::shifted(KeyCode::KeyE, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
@@ -503,6 +506,7 @@ fn handle_cmd(
     mut writer: MessageWriter<SetHudText>,
     mut show_list: MessageWriter<ShowFuzzyList>,
     mut show_settings: MessageWriter<ShowSettings<DemoSettings>>,
+    mut show_shader: MessageWriter<ShowShaderDialog>,
     mut demo_settings: ResMut<DemoSettings>,
 ) {
     let mut show_info = false;
@@ -615,6 +619,12 @@ fn handle_cmd(
                 // sends a `SettingsApplied` back on every edit, which is what
                 // puts it into effect — see `settings::apply_settings`.
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
+            }
+            Cmd::ShaderDialog => {
+                // Its own dialog rather than a field of `DemoSettings`: the
+                // choices are directories, not an enum's variants — see
+                // `crate::shader_dialog`.
+                show_shader.write(ShowShaderDialog);
             }
             _ => {}
         }
