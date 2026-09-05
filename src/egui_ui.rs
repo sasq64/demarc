@@ -212,6 +212,10 @@ pub struct HudText {
 pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
+    /// Whether a settings dialog (`crate::settings`) is up. Kept here rather
+    /// than on the generic `SettingsState<T>` so [`HudState::modal`] can answer
+    /// without naming the settings type.
+    settings_open: bool,
     /// Caller-chosen id of the open list, echoed back in [`FuzzyListSelect`].
     list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`render_list`],
@@ -246,10 +250,17 @@ pub struct Images {
 }
 
 impl HudState {
-    /// Whether the file picker is up. It owns the keyboard while it is, so the
-    /// callers that feed keys to the emulated machine swallow them instead.
-    pub fn list_open(&self) -> bool {
-        self.show_list
+    /// Whether *any* modal UI owns the keyboard -- the picker or a settings
+    /// dialog. This is what the callers that feed keys to the emulated machine
+    /// check; a settings dialog with a focused text field would otherwise type
+    /// into the emulator as well.
+    pub fn modal(&self) -> bool {
+        self.show_list || self.settings_open
+    }
+
+    /// Told by `crate::settings` as its dialog opens and closes.
+    pub fn set_settings_open(&mut self, open: bool) {
+        self.settings_open = open;
     }
 }
 
@@ -284,7 +295,7 @@ const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x10, 0x10);
 /// left a row, so a row the user passed over dims out instead of blinking off.
 const FADE_SECS: f32 = 0.5;
 
-fn panel_frame() -> egui::Frame {
+pub(crate) fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL_FILL)
         .stroke(egui::Stroke::new(PANEL_BORDER, PANEL_STROKE))
@@ -393,7 +404,7 @@ fn scroll_area<T>(
 /// plain arrow key again. Bevy clears its keyboard state outright on
 /// [`KeyboardFocusLost`](bevy::input::keyboard::KeyboardFocusLost), so this
 /// answer recovers by itself.
-fn live_modifiers(keys: &ButtonInput<KeyCode>) -> egui::Modifiers {
+pub(crate) fn live_modifiers(keys: &ButtonInput<KeyCode>) -> egui::Modifiers {
     let held = |a, b| keys.pressed(a) || keys.pressed(b);
     let alt = held(KeyCode::AltLeft, KeyCode::AltRight);
     let ctrl = held(KeyCode::ControlLeft, KeyCode::ControlRight);
@@ -417,7 +428,7 @@ fn live_modifiers(keys: &ButtonInput<KeyCode>) -> egui::Modifiers {
 /// modifiers stamped on the key events still queued for this frame -- with
 /// `mods`, so the search box drawn afterwards resolves its own shortcuts
 /// against the live keyboard too instead of a stuck one.
-fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
+pub(crate) fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
     i.modifiers = mods;
     for event in &mut i.events {
         if let egui::Event::Key { modifiers, .. } = event {
@@ -430,7 +441,7 @@ fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
 /// modifiers came with it, so nothing downstream acts on it.
 /// [`egui::InputState::count_and_consume_key`] insists on an exact modifier
 /// match instead, which is one stale modifier away from dropping the key.
-fn take_key(i: &mut egui::InputState, key: egui::Key) -> i64 {
+pub(crate) fn take_key(i: &mut egui::InputState, key: egui::Key) -> i64 {
     let mut count = 0;
     i.events.retain(|event| {
         let hit = matches!(event, egui::Event::Key { key: k, pressed: true, .. } if *k == key);
@@ -655,7 +666,7 @@ fn heading_with_shadow(
     ui.painter().galley(pos, galley, color);
 }
 
-fn update_ui(
+pub(crate) fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
     images: Res<Images>,

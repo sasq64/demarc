@@ -59,6 +59,30 @@ fn unpacking_reaches_into_a_double_packed_release() {
     assert_eq!(wf.get_meta_or("latency", ""), "2");
 }
 
+/// `latency` is a run-wide meta value set from `--latency`, and the settings
+/// dialog moves it by writing over that one. Which is only worth anything if
+/// what it writes is what the *next* release loaded gets — a release already
+/// running read its own copy when its backend was built.
+///
+/// An IFF still image, so this needs no libretro core.
+#[test]
+fn set_meta_reaches_the_next_release() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let iff = root.join("testdata").join("test.iff");
+    let latency_of = |sys: &NewSys| {
+        sys.load_file(&iff, &HashMap::new(), None)
+            .unwrap()
+            .work_file
+            .get_meta_or("latency", "")
+    };
+
+    let mut sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
+    assert_eq!(latency_of(&sys), "2");
+
+    sys.set_meta("latency", "5".into());
+    assert_eq!(latency_of(&sys), "5");
+}
+
 /// A file that is not an archive is left exactly where it is — nothing is
 /// copied, so a local release the user pointed at stays untouched.
 #[test]

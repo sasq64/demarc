@@ -11,7 +11,8 @@ use crate::{
     commands::FilePickerSource,
     emu_file::{EmuFile, Override},
     newsys::NewSys,
-    post_process::{BorderMode, ScaleMode},
+    post_process::{BorderMode, ScaleMode, ShaderEffect},
+    system_dir::system_dir,
 };
 
 const CLAP_STYLES: Styles = Styles::styled()
@@ -428,9 +429,15 @@ impl From<ScaleModeArg> for ScaleMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+/// One of the bundled post-process shaders. Picked on the command line with
+/// `--shader` and, at runtime, from the settings dialog -- which is why it is
+/// `Reflect` (the dialog reads its variant list off the type) and `PartialEq`
+/// (only a shader that actually changed re-points the render world at a new
+/// preset, so an unrelated Apply cannot throw away a `--slangp`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, bevy::reflect::Reflect, clap::ValueEnum)]
 pub enum ShaderArg {
     /// Timothy Lottes CRT shader — scanlines/shadow mask, for CRT-era systems.
+    #[default]
     Lottes,
     /// Single-pass WGSL port of the Lottes CRT shader
     LottesSimple,
@@ -458,6 +465,19 @@ impl ShaderArg {
             // path only matters if it's toggled on, so reuse the stock
             // passthrough preset.
             ShaderArg::None => "shaders/slangp/stock.slangp",
+        }
+    }
+
+    /// Which post-process backend this shader selects, with its path resolved:
+    /// a `.wgsl` name picks the single-pass backend and stays an asset path
+    /// (the Bevy asset root *is* the `system` dir), anything else a librashader
+    /// preset, which librashader opens itself and so needs the full path.
+    pub fn effect(self) -> ShaderEffect {
+        let path = self.path();
+        if path.ends_with(".wgsl") {
+            ShaderEffect::Wgsl(path.into())
+        } else {
+            ShaderEffect::Slangp(system_dir().join(path))
         }
     }
 }

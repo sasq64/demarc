@@ -41,6 +41,7 @@ mod pixels;
 mod post_process;
 mod retro_emu;
 mod screensaver;
+mod settings;
 mod speed_test;
 mod system_dir;
 mod tiff_pal;
@@ -59,8 +60,9 @@ use commands::CommandPlugin;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::RetroPlugin;
 use newsys::NewSys;
-use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderPath};
+use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
 use screensaver::ScreenSaverPlugin;
+use settings::AppSettingsExt;
 use speed_test::SpeedTestPlugin;
 use system_dir::system_dir;
 
@@ -390,21 +392,13 @@ fn main() {
     // A user-supplied `--slangp` wins; otherwise resolve the bundled shader by
     // name — a `.wgsl` path selects the single-pass WGSL backend, anything
     // else a `.slangp` preset run through librashader.
-    let downsample = system_dir().join(DOWNSAMPLE_PRESET);
-    let shader_path = match &args.slangp {
-        Some(path) => ShaderPath::Slangp {
-            effect: path.clone(),
-            downsample,
-            downsample_limit: args.downsample,
+    let shader_path = ShaderPath {
+        effect: match &args.slangp {
+            Some(path) => ShaderEffect::Slangp(path.clone()),
+            None => shader.effect(),
         },
-        None if shader.path().ends_with(".wgsl") => ShaderPath::Wgsl {
-            asset_path: shader.path().into(),
-        },
-        None => ShaderPath::Slangp {
-            effect: system_dir().join(shader.path()),
-            downsample,
-            downsample_limit: args.downsample,
-        },
+        downsample: system_dir().join(DOWNSAMPLE_PRESET),
+        downsample_limit: args.downsample,
     };
 
     let render_settings = RenderSettings {
@@ -438,6 +432,16 @@ fn main() {
 
     let win = args.window;
     let clear_color = args.clear_color;
+    // What the settings dialog opens showing. Seeded from the command line so
+    // the first open reports the state the app is actually in; from then on it
+    // is the record of what was last applied (see `settings::apply_settings`).
+    let demo_settings = settings::DemoSettings {
+        fullscreen: !win,
+        latency: args.latency,
+        volume: 100.0,
+        background: clear_color,
+        shader,
+    };
 
     let speed_test = args.speed_test;
     let mut app = App::new();
@@ -507,6 +511,11 @@ fn main() {
             SpeedTestPlugin,
             jobs::JobsPlugin,
         ));
+    // The settings dialog, registered per settings type. `DemoSettings` is the
+    // one the RightAlt+E hotkey opens.
+    app.insert_resource(demo_settings)
+        .add_settings_type::<settings::DemoSettings>()
+        .add_systems(Update, settings::apply_settings);
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);
     // A Windows demo takes the screen off demarc while it runs; this puts it

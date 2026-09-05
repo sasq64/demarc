@@ -17,6 +17,7 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
+use crate::settings::{DemoSettings, ShowSettings};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -44,6 +45,7 @@ pub enum Cmd {
     NextFileAll,
     OpenFile,
     Reload,
+    Settings,
 }
 
 #[derive(Message)]
@@ -116,6 +118,7 @@ const HOTKEYS: &[KeyMapping] = &[
         Cmd::ToggleInput,
     ),
     KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
+    KeyMapping::new(KeyCode::KeyE, "Edit settings", Cmd::Settings),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
@@ -219,7 +222,7 @@ fn handle_textlist(
         settings.hotkey_pressed = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = hud.list_open();
+        let modal = hud.modal();
         if modal {
             return;
         }
@@ -499,6 +502,8 @@ fn handle_cmd(
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
     mut show_list: MessageWriter<ShowFuzzyList>,
+    mut show_settings: MessageWriter<ShowSettings<DemoSettings>>,
+    mut demo_settings: ResMut<DemoSettings>,
 ) {
     let mut show_info = false;
     let count = emus.iter().count();
@@ -553,6 +558,11 @@ fn handle_cmd(
                     }
                     _ => WindowMode::Windowed,
                 };
+                // So the settings dialog opens showing where the window
+                // actually is, and doesn't undo this the next time it is
+                // applied. This is the only hotkey that moves a field the
+                // dialog also owns.
+                demo_settings.fullscreen = window.mode != WindowMode::Windowed;
             }
             Cmd::ToggleAll if multi => {
                 settings.all_emus = !settings.all_emus;
@@ -599,6 +609,12 @@ fn handle_cmd(
                     id: FILE_PICKER_ID,
                     source: Arc::new(settings.file_source.clone().unwrap()),
                 });
+            }
+            Cmd::Settings => {
+                // Opens over a copy of the last-applied values; the dialog
+                // sends a `SettingsApplied` back on every edit, which is what
+                // puts it into effect — see `settings::apply_settings`.
+                show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
             }
             _ => {}
         }

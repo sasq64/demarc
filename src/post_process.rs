@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::{
     asset::AssetId,
@@ -13,7 +13,7 @@ use bevy::{
             ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
             UniformComponentPlugin,
         },
-        extract_resource::ExtractResourcePlugin,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_resource::{
             AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
@@ -48,32 +48,67 @@ const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 /// `--downsample` (by default: that minify it).
 pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
 
-/// Which post-process backend to run, selected on the command line.
-#[derive(Resource, Clone)]
-pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect and a
-    /// downsampler for views that show the source too small. Absolute paths,
-    /// resolved from the `system` dir (or a user-supplied `--slangp`) in
-    /// `main`. With the effect toggled off there is no chain at all — the
-    /// composite blit samples the emulator framebuffer directly (see
-    /// [`post_process_pass`]).
-    Slangp {
-        effect: PathBuf,
-        /// DREZ downsample preset, substituted for `effect` on views below
-        /// `downsample_limit`.
-        downsample: PathBuf,
-        /// Magnification (on-screen pixels per source pixel) below which the
-        /// downsampler replaces the effect, from `--downsample`. Mirrors
-        /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
-        /// kicks in exactly when the view shows the source *smaller* than its
-        /// native resolution; `0` disables the downsampler entirely.
-        downsample_limit: f32,
-    },
+/// Asset path of the passthrough composite shader, used on the
+/// [`ShaderEffect::Slangp`] backend where the filter chain has already applied
+/// the effect into the intermediate this samples.
+const BLIT_SHADER: &str = "shaders/blit.wgsl";
+
+/// Which post-process backend to run.
+#[derive(Clone, Debug)]
+pub enum ShaderEffect {
+    /// librashader `.slangp` filter chain, run into an intermediate texture
+    /// that the (passthrough) composite blit then draws. An absolute path,
+    /// resolved from the `system` dir — or given verbatim by `--slangp`.
+    /// With the effect toggled off there is no chain at all: the composite
+    /// samples the emulator framebuffer directly (see [`post_process_pass`]).
+    Slangp(PathBuf),
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
     /// and applies the effect in the composite pass itself. The
     /// effect/passthrough toggle is handled in-shader via `crt_enabled`.
-    Wgsl { asset_path: String },
+    Wgsl(String),
+}
+
+impl ShaderEffect {
+    /// The `.slangp` preset to build a filter chain from, or `None` on the
+    /// WGSL backend, which runs no chains.
+    fn slangp(&self) -> Option<&Path> {
+        match self {
+            ShaderEffect::Slangp(path) => Some(path),
+            ShaderEffect::Wgsl(_) => None,
+        }
+    }
+
+    /// Asset path of the shader the composite pass runs: the passthrough blit
+    /// behind a filter chain, the effect itself on the WGSL backend.
+    fn composite_shader(&self) -> &str {
+        match self {
+            ShaderEffect::Slangp(_) => BLIT_SHADER,
+            ShaderEffect::Wgsl(asset_path) => asset_path,
+        }
+    }
+}
+
+/// The post-process shader in force, chosen on the command line
+/// (`--shader`/`--slangp`) and changeable at runtime from the settings dialog.
+///
+/// [`ExtractResource`] so a change made in the main world reaches the render
+/// world, which rebuilds whatever it invalidated: the composite pipeline in
+/// [`post_process_pass`] and the filter chains in [`SlangChains::set_effect`].
+/// It is also inserted into the render world directly, so `RenderStartup` — one
+/// extract too early to see it — has it.
+#[derive(Resource, Clone, ExtractResource)]
+pub struct ShaderPath {
+    pub effect: ShaderEffect,
+    /// DREZ downsample preset, substituted for the effect on views below
+    /// `downsample_limit`. Slangp backend only.
+    pub downsample: PathBuf,
+    /// Magnification (on-screen pixels per source pixel) below which the
+    /// downsampler replaces the effect, from `--downsample`. Mirrors
+    /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
+    /// kicks in exactly when the view shows the source *smaller* than its
+    /// native resolution; `0` disables the downsampler entirely.
+    pub downsample_limit: f32,
 }
 
 pub struct PostProcessPlugin {
@@ -83,23 +118,27 @@ pub struct PostProcessPlugin {
 
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            ExtractResourcePlugin::<RenderSettings>::default(),
-            ExtractComponentPlugin::<PostProcess>::default(),
-            ExtractComponentPlugin::<PostProcessUniform>::default(),
-            ExtractComponentPlugin::<BorderScissor>::default(),
-            ExtractComponentPlugin::<ViewRect>::default(),
-            ExtractComponentPlugin::<EmuCamera>::default(),
-            UniformComponentPlugin::<PostProcessUniform>::default(),
-        ))
-        .add_systems(PostUpdate, update_post_process_uniform);
+        app.insert_resource(self.shader.clone())
+            .add_plugins((
+                ExtractResourcePlugin::<RenderSettings>::default(),
+                ExtractResourcePlugin::<ShaderPath>::default(),
+                ExtractComponentPlugin::<PostProcess>::default(),
+                ExtractComponentPlugin::<PostProcessUniform>::default(),
+                ExtractComponentPlugin::<BorderScissor>::default(),
+                ExtractComponentPlugin::<ViewRect>::default(),
+                ExtractComponentPlugin::<EmuCamera>::default(),
+                UniformComponentPlugin::<PostProcessUniform>::default(),
+            ))
+            .add_systems(PostUpdate, update_post_process_uniform);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
-        // Hand the chosen backend/paths to the render world so init can load
-        // them. A plain resource (not extracted) because they never change.
+        // Seed the render world's copy: `RenderStartup` runs before the first
+        // extract, so the systems below would otherwise have nothing to read.
+        // From then on `ExtractResourcePlugin` keeps it in step with the main
+        // world's, which the settings dialog writes to.
         render_app.insert_resource(self.shader.clone());
 
         // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
@@ -496,19 +535,31 @@ fn post_process_pass(
         &BorderScissor,
         &ViewRect,
     )>,
-    pipeline_resource: Res<PostProcessPipeline>,
+    mut pipeline_resource: ResMut<PostProcessPipeline>,
     pipeline_cache: Res<PipelineCache>,
+    asset_server: Res<AssetServer>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
     settings: Res<RenderSettings>,
     shader_path: Res<ShaderPath>,
-    mut chains: Option<ResMut<SlangChains>>,
+    mut chains: ResMut<SlangChains>,
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
     let (view_target, camera) = view.into_inner();
 
-    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
+    // Both of these are no-ops unless the settings dialog has just changed the
+    // shader: the pipeline is already in the map, and the chains already point
+    // at this preset.
+    let pipeline_id = pipeline_resource.pipeline(
+        &pipeline_cache,
+        &asset_server,
+        shader_path.effect.composite_shader(),
+    );
+    chains.set_effect(shader_path.effect.slangp());
+
+    // Not compiled yet — the first frames of a run, and of a shader change.
+    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id) else {
         return;
     };
 
@@ -581,15 +632,11 @@ fn post_process_pass(
         // composite's `uv_scale`/`uv_offset` come from `scale_offset` with the same
         // mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands on exact texel
         // centres: one screen pixel per intermediate texel.
-        let composite_input: &TextureView = match &*shader_path {
+        let composite_input: &TextureView = match &shader_path.effect {
             // WGSL backend: the composite shader applies the effect itself while
             // sampling the emulator framebuffer directly — nothing to prepare.
-            ShaderPath::Wgsl { .. } => &source_image.texture_view,
-            ShaderPath::Slangp { .. } => 'slangp: {
-                // Absent if the preset failed to load; skip rendering rather than panic.
-                let Some(chains) = chains.as_mut() else {
-                    return;
-                };
+            ShaderEffect::Wgsl(_) => &source_image.texture_view,
+            ShaderEffect::Slangp(_) => 'slangp: {
                 let source_id = post_process.source.id();
                 let src_size =
                     UVec2::new(source_image.texture.width(), source_image.texture.height());
@@ -770,7 +817,54 @@ struct PostProcessPipeline {
     /// `ClampToBorder` (black) sampler — used by [`BorderMode::Black`]. Falls
     /// back to a `ClampToEdge` sampler if the adapter lacks the border feature.
     sampler_black: Sampler,
-    pipeline_id: CachedRenderPipelineId,
+    /// The vertex half of every composite pipeline; only the fragment shader
+    /// differs between them.
+    fullscreen: FullscreenShader,
+    /// Composite pipelines by shader asset path, queued the first time that
+    /// shader is selected. Normally holds exactly one entry — the only way to
+    /// gain another is to pick a different backend in the settings dialog, and
+    /// there are three shaders in total to pick from.
+    pipelines: HashMap<String, CachedRenderPipelineId>,
+}
+
+impl PostProcessPipeline {
+    /// The composite pipeline that runs `asset_path`, queueing it on first use.
+    ///
+    /// Lazy rather than queued up front so a run that never opens the settings
+    /// dialog — every run, in practice — compiles the one shader it uses.
+    fn pipeline(
+        &mut self,
+        cache: &PipelineCache,
+        assets: &AssetServer,
+        asset_path: &str,
+    ) -> CachedRenderPipelineId {
+        if let Some(id) = self.pipelines.get(asset_path) {
+            return *id;
+        }
+        let id = cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(format!("composite:{asset_path}").into()),
+            layout: vec![self.layout.clone()],
+            vertex: self.fullscreen.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: assets.load(asset_path.to_owned()),
+                targets: vec![Some(ColorTargetState {
+                    // Matches the view target's main texture format (Bevy's former
+                    // `TextureFormat::bevy_default()`, now deprecated).
+                    format: TARGET_FORMAT,
+                    // Only `--cross-fade` ever writes an alpha below 1, and it
+                    // relies on this to blend the incoming release over the
+                    // outgoing one; every other view is opaque, for which
+                    // `SrcAlpha`/`OneMinusSrcAlpha` is the same as no blending.
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            ..default()
+        });
+        self.pipelines.insert(asset_path.to_owned(), id);
+        id
+    }
 }
 
 /// A librashader intermediate render target: the emulator framebuffer with the
@@ -882,7 +976,8 @@ struct SourceChains {
 #[derive(Resource)]
 struct SlangChains {
     /// Path of the effect preset (`--shader`/`--slangp`), built per source.
-    effect_path: PathBuf,
+    /// `None` on the WGSL backend, which has no chain to build.
+    effect_path: Option<PathBuf>,
     /// Path of the DREZ downsample preset.
     downsample_path: PathBuf,
     /// Magnification below which `downsample_path` replaces the effect;
@@ -924,8 +1019,8 @@ impl SlangChains {
             sc.target = build_target(device, size);
         }
         let (slot, path) = match kind {
-            ChainKind::Effect => (&mut sc.effect, Some(&*effect_path)),
-            ChainKind::Downsample => (&mut sc.downsample, Some(&*downsample_path)),
+            ChainKind::Effect => (&mut sc.effect, effect_path.as_deref()),
+            ChainKind::Downsample => (&mut sc.downsample, Some(downsample_path.as_path())),
         };
         let chain = slot.get_or_load(|| {
             #[allow(clippy::result_large_err)]
@@ -942,26 +1037,37 @@ impl SlangChains {
         })?;
         Some((chain, &sc.target, &mut sc.frame_count))
     }
+
+    /// Point the effect chains at a different preset, dropping every chain
+    /// built from the old one so the next view that wants an effect rebuilds
+    /// it. A no-op while the preset is unchanged, which is every frame but the
+    /// one the settings dialog changes it on.
+    ///
+    /// Only the effect is dropped: the downsample preset is `--downsample`, so
+    /// those chains stay valid across a shader change.
+    fn set_effect(&mut self, path: Option<&Path>) {
+        if self.effect_path.as_deref() == path {
+            return;
+        }
+        self.effect_path = path.map(Path::to_path_buf);
+        for source in self.sources.values_mut() {
+            source.effect = LazyChain::Pending;
+        }
+    }
 }
 
 /// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
 /// are built lazily, once per emulator source and only for the presets a view
 /// actually selects (see [`SlangChains::chain`]).
+///
+/// Inserted even on the WGSL backend, which runs no chains: the settings dialog
+/// can switch to a `.slangp` preset later, and there is nothing to build until
+/// it does.
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
-    // The WGSL backend runs no filter chains; the single-pass shader loaded by
-    // `init_blit_pipeline` does everything.
-    let ShaderPath::Slangp {
-        effect,
-        downsample,
-        downsample_limit,
-    } = &*shader_path
-    else {
-        return;
-    };
     commands.insert_resource(SlangChains {
-        effect_path: effect.clone(),
-        downsample_path: downsample.clone(),
-        downsample_limit: *downsample_limit,
+        effect_path: shader_path.effect.slangp().map(Path::to_path_buf),
+        downsample_path: shader_path.downsample.clone(),
+        downsample_limit: shader_path.downsample_limit,
         sources: HashMap::new(),
     });
 }
@@ -969,10 +1075,7 @@ fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
 fn init_blit_pipeline(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
-    asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
-    pipeline_cache: Res<PipelineCache>,
-    shader_path: Res<ShaderPath>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
         "lottes_bind_group_layout",
@@ -1007,41 +1110,16 @@ fn init_blit_pipeline(
         );
         render_device.create_sampler(&SamplerDescriptor::default())
     };
-    // Slangp backend: passthrough composite blit — the CRT/LCD effect is
-    // applied upstream by the librashader filter chain into an intermediate
-    // texture that this samples. WGSL backend: the single-pass effect shader
-    // itself (same bindings/uniform layout), sampling the emulator framebuffer.
-    let shader = match &*shader_path {
-        ShaderPath::Slangp { .. } => asset_server.load("shaders/blit.wgsl"),
-        ShaderPath::Wgsl { asset_path } => asset_server.load(asset_path.clone()),
-    };
-
-    let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("lottes_pipeline".into()),
-        layout: vec![layout.clone()],
-        vertex: fullscreen_shader.to_vertex_state(),
-        fragment: Some(FragmentState {
-            shader,
-            targets: vec![Some(ColorTargetState {
-                // Matches the view target's main texture format (Bevy's former
-                // `TextureFormat::bevy_default()`, now deprecated).
-                format: TARGET_FORMAT,
-                // Only `--cross-fade` ever writes an alpha below 1, and it
-                // relies on this to blend the incoming release over the
-                // outgoing one; every other view is opaque, for which
-                // `SrcAlpha`/`OneMinusSrcAlpha` is the same as no blending.
-                blend: Some(BlendState::ALPHA_BLENDING),
-                write_mask: ColorWrites::ALL,
-            })],
-            ..default()
-        }),
-        ..default()
-    });
+    // The composite pipeline itself is queued on demand: which shader it runs
+    // (the passthrough blit behind a filter chain, or a single-pass effect)
+    // depends on the backend in force, which the settings dialog can change.
+    // See [`PostProcessPipeline::pipeline`].
     commands.insert_resource(PostProcessPipeline {
         layout,
         sampler_stretch,
         sampler_black,
-        pipeline_id,
+        fullscreen: fullscreen_shader.clone(),
+        pipelines: HashMap::new(),
     });
 }
 

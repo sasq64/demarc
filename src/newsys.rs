@@ -496,6 +496,16 @@ impl NewSys {
         }
     }
 
+    /// Change one of the run-wide meta values set up by [`NewSys::new`] — how
+    /// the settings dialog moves `latency`.
+    ///
+    /// Applied in [`load_prepared`](Self::load_prepared), so it takes hold on
+    /// the next release loaded, not on the one playing: a backend reads its
+    /// meta once, as it is built.
+    pub fn set_meta(&mut self, key: &str, value: String) {
+        self.meta.insert(key.into(), value);
+    }
+
     /// Load a release, with `over` carrying whatever `overrides.toml` had to
     /// say about it (see [`crate::overrides`]) and `None` when it had nothing.
     ///

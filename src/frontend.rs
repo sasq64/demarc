@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::window::{PrimaryWindow, WindowMode};
+use bevy::window::{CursorOptions, Monitor, PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
@@ -16,7 +16,7 @@ use crate::config::{AppSettings, Args, RenderSettings, SoundWait};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
-use crate::screensaver::ScreenSaverInhibitor;
+use crate::screensaver::is_fullscreen;
 
 pub struct RetroPlugin {}
 
@@ -125,7 +125,7 @@ fn setup_retro(world: &mut World) {
         for i in 0..CROSS_FADE_EMUS {
             spawn_emulator(world, color_cycle, max_time, speed_test, i, None);
         }
-        world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
+        world.resource_mut::<HideMouse>().0 = true;
         // Only the first emulator starts a load. The second stays idle until
         // whatever is on screen asks to advance, which is what hands it the
         // next release (see `run_retro`).
@@ -135,7 +135,7 @@ fn setup_retro(world: &mut World) {
         }
     } else {
         spawn_emulator(world, color_cycle, max_time, speed_test, 0, None);
-        world.resource_mut::<ScreenSaverInhibitor>().hide_mouse = true;
+        world.resource_mut::<HideMouse>().0 = true;
     }
 
     // With `--select` the user picks a file from the selector before anything
@@ -352,7 +352,7 @@ fn run_retro(
     // The file picker or a controlled TextList is capturing keyboard
     // navigation; while one is open, swallow all keys so they don't also reach
     // the emulated machine.
-    let modal = hud.list_open();
+    let modal = hud.modal();
     let cmd = if !modal {
         let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
         if hot_key {
@@ -365,7 +365,12 @@ fn run_retro(
 
     let mut show_info = false;
     let mut stop_input = false;
-    if mouse_buttons.just_pressed(MouseButton::Left)
+    // `!modal` for the same reason the keys above are swallowed: the settings
+    // dialog is driven by the mouse, so a click on its Ok button would otherwise
+    // also pick an emulator -- and, as the second of two quick clicks, maximize
+    // it. The picker never ran into this because it is keyboard-only.
+    if !modal
+        && mouse_buttons.just_pressed(MouseButton::Left)
         && let Some(i) = settings.mouse_index
     {
         stop_input = true;
@@ -913,8 +918,86 @@ fn drives_playlist(settings: &AppSettings, i: usize) -> bool {
     i == settings.current_emu && settings.fade.incoming.is_none()
 }
 
+/// Whether the mouse pointer should be hidden while the window is fullscreen.
+///
+/// Set by [`setup_retro`] for the layouts that fill the window with emulator
+/// output and nothing else. A `--grid` leaves it clear: there the pointer picks
+/// which view has focus, so it has to stay visible.
+#[derive(Resource, Default)]
+pub struct HideMouse(pub bool);
+
+/// Hides the OS pointer over a fullscreen emulator, and brings it back for any
+/// UI the user is expected to point at.
+///
+/// The picker and the settings dialog are both mouse-driven, so [`HudState::modal`]
+/// vetoes the hide for as long as either is up.
+fn sync_cursor_visibility(
+    window: Single<&Window, With<PrimaryWindow>>,
+    monitors: Query<&Monitor>,
+    mut cursor_options: Single<&mut CursorOptions>,
+    hide_mouse: Res<HideMouse>,
+    hud: Res<HudState>,
+    #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
+) {
+    let hide = hide_mouse.0 && !hud.modal() && is_fullscreen(*window, &monitors);
+
+    cursor_options.visible = !hide;
+    #[cfg(target_os = "macos")]
+    mac_cursor.set_hidden(hide);
+}
+
+/// Hides the OS cursor via Quartz on macOS.
+///
+/// Bevy/winit's `CursorOptions::visible` maps to `NSCursor hide`/`unhide`,
+/// which the window server keeps re-asserting via its cursor-rect mechanism
+/// for a borderless-fullscreen `NSWindow` (there's no real fullscreen space to
+/// anchor it to), so the arrow reappears the moment the mouse moves. Dropping
+/// to `CGDisplayHideCursor`/`CGDisplayShowCursor` hides it at the display
+/// level instead, sidestepping that entirely.
+#[cfg(target_os = "macos")]
+mod mac_cursor {
+    use bevy::prelude::*;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+        fn CGDisplayHideCursor(display: u32) -> i32;
+        fn CGDisplayShowCursor(display: u32) -> i32;
+    }
+
+    /// Tracks the last state we told Quartz, so repeated calls with the same
+    /// value are no-ops. This matters because `CGDisplayHideCursor` /
+    /// `CGDisplayShowCursor` are refcounted (per Apple's docs): calling
+    /// `Hide` every frame without a balancing `Show` each time would need an
+    /// equal number of `Show` calls to ever bring the cursor back.
+    #[derive(Resource, Default)]
+    pub struct MacCursor {
+        hidden: bool,
+    }
+
+    impl MacCursor {
+        pub fn set_hidden(&mut self, hidden: bool) {
+            if hidden == self.hidden {
+                return;
+            }
+            self.hidden = hidden;
+            // SAFETY: CGMainDisplayID/CGDisplayHideCursor/CGDisplayShowCursor
+            // take no pointers and are safe to call from any thread.
+            unsafe {
+                let display = CGMainDisplayID();
+                if hidden {
+                    CGDisplayHideCursor(display);
+                } else {
+                    CGDisplayShowCursor(display);
+                }
+            }
+        }
+    }
+}
+
 impl Plugin for RetroPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<HideMouse>();
         app.add_systems(
             Startup,
             (setup_retro, setup_ui_camera, fix_window, setup_gizmos),
@@ -928,6 +1011,7 @@ impl Plugin for RetroPlugin {
                 update_cross_fade.after(run_retro),
                 update_view_rects,
                 draw_current_emu_outline,
+                sync_cursor_visibility,
             ),
         );
     }

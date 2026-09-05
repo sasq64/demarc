@@ -11,15 +11,13 @@
 use bevy::prelude::*;
 #[cfg(not(target_os = "linux"))]
 use bevy::window::WindowMode;
-use bevy::window::{CursorOptions, Monitor, PrimaryWindow, RawHandleWrapper, WindowPosition};
+use bevy::window::{Monitor, PrimaryWindow, RawHandleWrapper, WindowPosition};
 
 pub struct ScreenSaverPlugin;
 
 impl Plugin for ScreenSaverPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScreenSaverInhibitor>();
-        #[cfg(target_os = "macos")]
-        app.init_resource::<mac_cursor::MacCursor>();
         app.add_systems(Update, sync_screen_saver);
     }
 }
@@ -30,17 +28,21 @@ impl Plugin for ScreenSaverPlugin {
 fn sync_screen_saver(
     window: Single<(&Window, Option<&RawHandleWrapper>), With<PrimaryWindow>>,
     monitors: Query<&Monitor>,
-    mut cursor_options: Single<&mut CursorOptions>,
     mut inhibitor: ResMut<ScreenSaverInhibitor>,
-    #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
 ) {
     let (window, handle) = window.into_inner();
-    // `window.mode` is the primary signal on macOS, where `covers_a_monitor`
-    // never matches (a fullscreen NSWindow is sized to the visible frame, not
-    // the monitor's physical bounds). On Linux it's unreliable: under Wayland
-    // winit leaves `window.mode` at a stale `BorderlessFullscreen` after the
-    // window is toggled back out of fullscreen, which would keep us inhibited
-    // forever — so there we trust geometric coverage only, as before.
+    inhibitor.set_inhibited(is_fullscreen(window, &monitors), handle);
+}
+
+/// Whether the window is showing fullscreen, however it got there.
+///
+/// `window.mode` is the primary signal on macOS, where [`covers_a_monitor`]
+/// never matches (a fullscreen NSWindow is sized to the visible frame, not the
+/// monitor's physical bounds). On Linux it's unreliable: under Wayland winit
+/// leaves `window.mode` at a stale `BorderlessFullscreen` after the window is
+/// toggled back out of fullscreen, which would keep us inhibited forever — so
+/// there we trust geometric coverage only.
+pub(crate) fn is_fullscreen(window: &Window, monitors: &Query<&Monitor>) -> bool {
     #[cfg(not(target_os = "linux"))]
     let requested_fullscreen = matches!(
         window.mode,
@@ -48,20 +50,13 @@ fn sync_screen_saver(
     );
     #[cfg(target_os = "linux")]
     let requested_fullscreen = false;
-    let fullscreen = requested_fullscreen || covers_a_monitor(window, &monitors);
-    let hide_cursor = inhibitor.hide_mouse && fullscreen;
-
-    cursor_options.visible = !hide_cursor;
-    #[cfg(target_os = "macos")]
-    mac_cursor.set_hidden(hide_cursor);
-
-    inhibitor.set_inhibited(fullscreen, handle);
+    requested_fullscreen || covers_a_monitor(window, monitors)
 }
 
 /// Fallback fullscreen detection for when [`Window::mode`] doesn't reflect
 /// reality.
 ///
-/// [`sync_screen_saver`] checks `window.mode` first since that's the mode we
+/// [`is_fullscreen`] checks `window.mode` first since that's the mode we
 /// ourselves requested. This exists for the case a compositor (notably
 /// Wayland tiling WMs like Hyprland) fullscreens a window on its own,
 /// leaving `window.mode` at [`WindowMode::Windowed`]. We catch that by
@@ -97,55 +92,6 @@ pub(crate) fn covers_a_monitor(window: &Window, monitors: &Query<&Monitor>) -> b
         }
         None => win_w == monitor.physical_width && win_h == monitor.physical_height,
     })
-}
-
-/// Hides the OS cursor via Quartz on macOS.
-///
-/// Bevy/winit's `CursorOptions::visible` maps to `NSCursor hide`/`unhide`,
-/// which the window server keeps re-asserting via its cursor-rect mechanism
-/// for a borderless-fullscreen `NSWindow` (there's no real fullscreen space to
-/// anchor it to), so the arrow reappears the moment the mouse moves. Dropping
-/// to `CGDisplayHideCursor`/`CGDisplayShowCursor` hides it at the display
-/// level instead, sidestepping that entirely.
-#[cfg(target_os = "macos")]
-mod mac_cursor {
-    use bevy::prelude::*;
-
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGMainDisplayID() -> u32;
-        fn CGDisplayHideCursor(display: u32) -> i32;
-        fn CGDisplayShowCursor(display: u32) -> i32;
-    }
-
-    /// Tracks the last state we told Quartz, so repeated calls with the same
-    /// value are no-ops. This matters because `CGDisplayHideCursor` /
-    /// `CGDisplayShowCursor` are refcounted (per Apple's docs): calling
-    /// `Hide` every frame without a balancing `Show` each time would need an
-    /// equal number of `Show` calls to ever bring the cursor back.
-    #[derive(Resource, Default)]
-    pub struct MacCursor {
-        hidden: bool,
-    }
-
-    impl MacCursor {
-        pub fn set_hidden(&mut self, hidden: bool) {
-            if hidden == self.hidden {
-                return;
-            }
-            self.hidden = hidden;
-            // SAFETY: CGMainDisplayID/CGDisplayHideCursor/CGDisplayShowCursor
-            // take no pointers and are safe to call from any thread.
-            unsafe {
-                let display = CGMainDisplayID();
-                if hidden {
-                    CGDisplayHideCursor(display);
-                } else {
-                    CGDisplayShowCursor(display);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -199,7 +145,6 @@ mod linux {
         /// Cleared on success so a later, genuinely new failure still gets
         /// reported once.
         warned: bool,
-        pub hide_mouse: bool,
     }
 
     impl ScreenSaverInhibitor {
@@ -401,9 +346,7 @@ mod stub {
     use bevy::window::RawHandleWrapper;
 
     #[derive(Resource, Default)]
-    pub struct ScreenSaverInhibitor {
-        pub hide_mouse: bool,
-    }
+    pub struct ScreenSaverInhibitor;
 
     impl ScreenSaverInhibitor {
         pub fn set_inhibited(&mut self, _inhibited: bool, _window: Option<&RawHandleWrapper>) {}
