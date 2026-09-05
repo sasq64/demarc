@@ -200,6 +200,11 @@ fn tame_openmp_cores() {
     }
 }
 
+/// How many glibc malloc arenas `cap_malloc_arenas` leaves us, and so how many
+/// threads can allocate hard at once without queueing on an arena lock.
+#[cfg(all(unix, target_env = "gnu"))]
+const MALLOC_ARENAS: usize = 8;
+
 /// Keep glibc's per-thread malloc arenas from crowding the address space a
 /// JIT core needs for its translation cache.
 ///
@@ -224,12 +229,40 @@ fn cap_malloc_arenas() {
         return;
     }
     // SAFETY: `mallopt` is thread-safe, and nothing has spawned a thread yet.
-    unsafe { libc::mallopt(libc::M_ARENA_MAX, 8) };
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, MALLOC_ARENAS as libc::c_int) };
+}
+
+/// Keep rayon's pool from outrunning those arenas.
+///
+/// The heavy rayon user in the tree is librashader, which compiles the passes
+/// of a `.slangp` in parallel — glslang work that is nearly all allocation.
+/// rayon defaults to a thread per core, so with the arenas capped at 8 those
+/// threads spend their time contending for an arena lock instead of compiling:
+/// a 42-pass Mega Bezel preset measured 0.82-1.20s of pass compilation over 48
+/// threads against 0.38-0.39s over 8, which is what it costs with the arena cap
+/// lifted. Beyond that the single largest pass is the floor and more threads
+/// buy nothing anyway. See docs/SHADERS.md for the whole table.
+///
+/// Setting the variable rather than calling `ThreadPoolBuilder::build_global`
+/// keeps rayon out of demarc's dependencies; rayon reads it when it builds its
+/// global pool, which is the first `.slangp` load.
+#[cfg(all(unix, target_env = "gnu"))]
+fn cap_rayon_threads() {
+    // Leave an explicit choice on the command line alone, as above.
+    if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        return;
+    }
+    let threads = std::thread::available_parallelism()
+        .map_or(MALLOC_ARENAS, |cores| cores.get().min(MALLOC_ARENAS));
+    // SAFETY: single-threaded here — `main` has not spawned a thread yet.
+    unsafe { std::env::set_var("RAYON_NUM_THREADS", threads.to_string()) };
 }
 
 fn main() {
     #[cfg(all(unix, target_env = "gnu"))]
     cap_malloc_arenas();
+    #[cfg(all(unix, target_env = "gnu"))]
+    cap_rayon_threads();
     tame_openmp_cores();
 
     #[cfg(unix)]

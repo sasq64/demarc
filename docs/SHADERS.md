@@ -9,10 +9,11 @@ takes any path, which is how the big bezel packs get used.
 
 `Cargo.toml` pins `librashader` to a branch of a fork rather than the crates.io
 release, because stock librashader 0.11 cannot parse the presets the Mega Bezel
-packs ship, nor compile a shader that calls `modf()`:
+packs ship, nor compile a shader that calls `modf()`, and compiles the passes it
+does parse one at a time:
 
 * <https://github.com/sasq64/librashader> branch `demarc`,
-  four commits on top of `librashader-v0.11.4`.
+  five commits on top of `librashader-v0.11.4`.
 
 ### Preset parsing
 
@@ -53,6 +54,24 @@ the vertex to the fragment stage (`handheld/shaders/color/*.slang`,
 `bezel/scanline-classic/shaders/composite-demod.slang`) has to be moved into the
 fragment stage by hand. librashader splits array varyings for this reason
 (`split_io_arrays`) but not matrix ones.
+
+### Parallel pass compilation
+
+`compile_preset_passes` in `librashader-reflect` compiled the passes of a preset
+in a serial `into_iter().map()`, though the per-pass work is independent — the
+only state they shared was `uniform_semantics`, which the map filled in as it
+went. The fork gathers those parameters from the finished artifacts instead and
+runs the compiles over rayon, which is where librashader's runtimes already go
+for their own per-pass work. Order is unchanged, so the semantics that come out
+are identical to the serial ones.
+
+That is the first row of the cost table below. Only `Output: Send` was added to
+the public bounds; the per-pass closure returns its own error type rather than
+the caller's `E`, so a caller can still ask for a plain `Box<dyn Error>`.
+
+How much this buys depends on how many threads rayon may actually allocate on at
+once — see `cap_rayon_threads` in `main.rs`, without which most of it is spent
+queueing for a malloc arena.
 
 ### Updating
 
@@ -118,11 +137,28 @@ a Mega Bezel preset (42 passes, 32 LUTs) on a desktop GPU:
 
 | stage | cost |
 |---|---|
-| parse the `#reference` chain | 5 ms |
-| read the files, decode the LUT PNGs (`ShaderPresetPack`) | 130 ms |
-| glslang, GLSL -> SPIR-V | **1.5 s** |
-| naga, SPIR-V -> WGSL | 95 ms |
-| wgpu/driver pipelines | ~30 ms |
+| parse the `#reference` chain | 9 ms |
+| read the files, decode the LUT PNGs (`ShaderPresetPack`) | 120 ms |
+| glslang, GLSL -> SPIR-V, and naga's SPIR-V parse (`compile_preset_passes`) | **0.38 s** |
+| naga, SPIR-V -> WGSL, and the wgpu pipelines (`init_passes`) | 110 ms |
+| upload the LUT textures | 80 ms |
+
+The two compile rows are per-pass work spread over rayon, so each is really "the
+largest single pass", not a sum. Measured in the app, on a 48-thread box, with
+the emulator running alongside; the whole build lands in **0.68-0.80 s**. Two
+things had to be true for that:
+
+| | `compile_preset_passes` | whole chain |
+|---|---|---|
+| passes compiled serially, rayon left at a thread per core | 1.57-1.61 s | 1.89-2.00 s |
+| ...rayon capped to the malloc arenas, still serial | 1.53-1.66 s | 1.82-1.99 s |
+| passes compiled in parallel, rayon at a thread per core | 0.82-1.20 s | 1.14-1.52 s |
+| **both** | **0.38-0.39 s** | **0.68-0.70 s** |
+
+Parallelising the compile without capping rayon gets a third of the way there and
+no further: 48 glslang threads through 8 malloc arenas spend their time on the
+arena lock. `cap_rayon_threads` is documented in `main.rs` next to the arena cap
+it exists to match.
 
 So `SlangChains` never builds a chain on the render thread; `AsyncChain` spawns
 the whole `FilterChain::load_from_path` onto `AsyncComputeTaskPool` (wgpu's
@@ -130,7 +166,7 @@ device and queue are handles that may be used from any thread) and the view
 carries on rendering with whatever it has: the *previous* preset's chain while a
 new one compiles, or the emulator framebuffer composited unshaded before the
 first one lands. A shader change therefore costs no dropped frames — measured at
-276-358 frames drawn during a build that took 1.7-2.2 s.
+41-122 frames drawn during a build that took 0.67-0.80 s.
 
 Only one build per source is ever in flight. Clicking through the dialog
 supersedes builds faster than they finish, and glslang cannot be interrupted
@@ -142,12 +178,6 @@ queued behind the ones they clicked past.
 
 The obvious next steps, in order of payoff:
 
-* **Parallelise glslang.** `compile_preset_passes` in the fork's
-  `librashader-reflect` compiles passes in a serial `into_iter().map()`, though
-  the per-pass work is independent (only `uniform_semantics` is shared and can be
-  merged afterwards). Chunking those 42 passes across threads measured 1.55 s ->
-  0.69 s at 4 threads and 0.36 s at 16, the floor being the one huge Mega Bezel
-  pass.
 * **Reuse retired chains.** `SlangChains::sources` is keyed by source image, so
   every new emulator — each `--cross-fade` transition, each grid reshuffle —
   builds its own copy of the same preset from scratch and the old one is never

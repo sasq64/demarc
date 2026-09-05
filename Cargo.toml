@@ -61,11 +61,12 @@ libloading = "0.9"
 # Fork of librashader 0.11.4, branch `demarc`: three preset-parser fixes demarc
 # needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
 # reference depth counted per chain instead of per file, and unresolvable
-# references skipped the way RetroArch skips them), plus the modf/frexp result
-# types naga's SPIR-V frontend forgets to register. See docs/SHADERS.md.
+# references skipped the way RetroArch skips them), the modf/frexp result types
+# naga's SPIR-V frontend forgets to register, and a parallel `compile_preset_passes`
+# so a 42-pass bezel preset does not spend 1.4 s in glslang. See docs/SHADERS.md.
 librashader = {
   git = "https://github.com/sasq64/librashader",
-  rev = "376d37386fe6d7793ed81359ff635d301d54f9c9",
+  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
   default-features = false,
   features = [
     "presets",

@@ -5034,7 +5034,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "librashader"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "librashader-cache",
  "librashader-common",
@@ -5051,7 +5051,7 @@ dependencies = [
 [[package]]
 name = "librashader-cache"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "bincode",
  "blake3",
@@ -5068,7 +5068,7 @@ dependencies = [
 [[package]]
 name = "librashader-common"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "bitflags 2.13.1",
  "halfbrown",
@@ -5082,7 +5082,7 @@ dependencies = [
 [[package]]
 name = "librashader-pack"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "image",
  "librashader-common",
@@ -5094,7 +5094,7 @@ dependencies = [
 [[package]]
 name = "librashader-preprocess"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "encoding_rs",
  "librashader-common",
@@ -5106,7 +5106,7 @@ dependencies = [
 [[package]]
 name = "librashader-presets"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "librashader-common",
  "librashader-preprocess",
@@ -5123,7 +5123,7 @@ dependencies = [
 [[package]]
 name = "librashader-reflect"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -5133,6 +5133,7 @@ dependencies = [
  "librashader-preprocess",
  "librashader-presets",
  "naga 29.0.4",
+ "rayon",
  "rspirv",
  "rustc-hash 2.1.3",
  "serde",
@@ -5144,7 +5145,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "arc-swap",
  "array-concat",
@@ -5162,7 +5163,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime-wgpu"
 version = "0.11.4"
-source = "git+https://github.com/sasq64/librashader?rev=376d37386fe6d7793ed81359ff635d301d54f9c9#376d37386fe6d7793ed81359ff635d301d54f9c9"
+source = "git+https://github.com/sasq64/librashader?rev=9fed63109652f50e352f4f08e4a8bcf75e518b5c#9fed63109652f50e352f4f08e4a8bcf75e518b5c"
 dependencies = [
  "array-concat",
  "bytemuck",
