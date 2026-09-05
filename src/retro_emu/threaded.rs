@@ -140,16 +140,6 @@ impl RetroCoreThreaded {
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
 
-        let is_atari = core_path
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-            .contains("hatari");
-
-        // TODO: Why is this necessary
-        let aspect_tweak = 1.0; //if is_atari { 1.13 } else { 1.0 };
-
         let mut latency = 3;
         if let Some(l) = meta.get("latency") {
             latency = l.parse().unwrap_or(3);
@@ -217,7 +207,7 @@ impl RetroCoreThreaded {
                 frame_height: height,
                 audio: Vec::new(),
                 aspect_ratio: 0.0,
-                aspect_tweak,
+                aspect_tweak: 1.0,
                 sample_rate: 0.0,
                 fps,
                 disk_count: disks,
