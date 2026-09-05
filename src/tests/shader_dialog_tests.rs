@@ -249,17 +249,88 @@ fn the_shown_path_is_relative_to_the_pack() {
     assert_eq!(browser.relative_path().as_deref(), Some(SAMPLE[0]));
 }
 
+/// A pack directory names its author first; the dialog names the machines.
+#[test]
+fn a_pack_is_named_after_its_machines() {
+    assert_eq!(pack_label("TheNamec-Commodore"), "Commodore");
+    assert_eq!(pack_label("Duimon-Sega_Genesis"), "Sega Genesis");
+    assert_eq!(pack_label("Commodore"), "Commodore");
+}
+
+/// A dialog over one pack, plus the default collection every dialog has.
+fn dialog_over(pack: &Pack) -> ShaderDialog {
+    ShaderDialog {
+        collections: vec![
+            Collection {
+                label: "Default".to_owned(),
+                browser: None,
+            },
+            Collection {
+                label: "Commodore".to_owned(),
+                browser: Some(pack.browser()),
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+/// Opening over a running preset selects the collection it came from, and
+/// every level of it; the default collection has no levels to select, which is
+/// what greys its rows out.
+#[test]
+fn reveal_selects_the_collection_the_preset_came_from() {
+    let pack = Pack::new("collections", SAMPLE);
+    let mut dialog = dialog_over(&pack);
+    assert!(
+        dialog.browser().is_none(),
+        "opens on the default collection"
+    );
+
+    dialog.reveal(&pack.0.join(SAMPLE[4]));
+    assert_eq!(dialog.selected, 1);
+    assert_eq!(
+        dialog.browser().and_then(PresetBrowser::path),
+        Some(pack.0.join(SAMPLE[4]))
+    );
+
+    // A preset of the pack's shape that it no longer ships is still the pack's,
+    // so the collection stays selected rather than falling back to the default.
+    dialog.reveal(
+        &pack
+            .0
+            .join("Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/GONE_FLAT_DAY.slangp"),
+    );
+    assert_eq!(dialog.selected, 1);
+
+    // The built-in shader belongs to no pack, and is the default collection.
+    dialog.reveal(Path::new("shaders/slangp/crt/crt-lottes.slangp"));
+    assert_eq!(dialog.selected, DEFAULT);
+    assert!(dialog.browser().is_none());
+}
+
+/// With no pack installed there is still a collection to show: the default,
+/// which browses nothing.
+#[test]
+fn the_default_collection_is_always_there() {
+    let found = collections();
+    assert_eq!(found[DEFAULT].label, "Default");
+    assert!(found[DEFAULT].browser.is_none());
+}
+
 /// The real pack, if this checkout has one. Ignored for the same reason
 /// `post_process_tests::megabezel_pack_presets_resolve` is: it needs
 /// `shaders/` laid out as `docs/SHADERS.md` describes.
 #[test]
 #[ignore]
 fn the_installed_pack_browses() {
-    let root = preset_root().expect("no pack installed");
-    let mut browser = PresetBrowser::new(root).expect("pack should open");
+    let mut found = collections();
+    let pack = found.get_mut(1).expect("no pack installed");
+    assert_eq!(pack.label, "Commodore");
+    let browser = pack.browser.as_mut().expect("a collection with a tree");
 
-    let wanted = Path::new(PACK_PRESETS)
-        .join("Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_NIGHT.slangp");
+    let wanted = Path::new(PACKS_DIR).join(
+        "TheNamec-Commodore/presets/Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_NIGHT.slangp",
+    );
     assert!(browser.reveal(&wanted), "{wanted:?} should be in the pack");
     assert_eq!(
         labels(&browser.levels[0])[browser.levels[0].index],

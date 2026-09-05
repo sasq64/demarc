@@ -204,3 +204,38 @@ fn megabezel_pack_presets_resolve() {
     }
     println!("{checked} of {} presets parsed", presets.len());
 }
+
+/// A shader change starts one build and, until it lands, exactly one: the
+/// selections the user clicked past on the way are never compiled.
+#[test]
+fn rapid_shader_changes_coalesce_onto_one_build() {
+    let a = Path::new("/presets/a.slangp");
+    let b = Path::new("/presets/b.slangp");
+    let c = Path::new("/presets/c.slangp");
+
+    // Nothing ready, nothing running: the first draw starts the build.
+    assert!(should_start(None, None, a, false));
+    // Already building what we want, or already running it: no second build.
+    assert!(!should_start(None, Some(a), a, false));
+    assert!(!should_start(Some(a), None, a, false));
+    // The dialog moves on twice while a's build still holds a pool thread.
+    // Neither b nor c is started — b is skipped entirely.
+    assert!(!should_start(None, Some(a), b, false));
+    assert!(!should_start(None, Some(a), c, false));
+    // a lands and is dropped (it is not what is selected any more); only now,
+    // and only for the current selection, does a build start.
+    assert!(should_start(None, None, c, false));
+    // The same holds with an older preset still on screen: the switch away from
+    // a chain that is already rendering is what a shader change is.
+    assert!(should_start(Some(a), None, c, false));
+}
+
+/// A preset that failed to load is not retried on every frame — and is not
+/// papered over with the preset the user switched away from.
+#[test]
+fn a_failed_preset_is_not_retried() {
+    let a = Path::new("/presets/a.slangp");
+    let broken = Path::new("/presets/broken.slangp");
+    assert!(!should_start(Some(a), None, broken, true));
+    assert!(!should_start(None, None, broken, true));
+}

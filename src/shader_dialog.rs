@@ -1,7 +1,12 @@
-//! The shader dialog: a Mega Bezel preset picked one directory level at a time.
+//! The shader dialog: the post-process shader picked from a collection combo
+//! box and, for a Mega Bezel pack, one directory level at a time.
 //!
-//! The bezel packs are not a handful of shaders but a directory tree of tens of
-//! thousands of `.slangp` presets, laid out
+//! The top row picks a *collection*: `Default`, which is whatever shader
+//! `--shader` (or the settings dialog) last chose, and one entry per bezel pack
+//! found under `shaders/Mega_Bezel_Packs`. `Default` is a single preset with
+//! nothing to browse, so the rows below it are greyed out. A pack is not a
+//! handful of shaders but a directory tree of tens of thousands of `.slangp`
+//! presets, laid out
 //! `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting>.slangp`
 //! (see `docs/SHADERS.md`). That is far too many for the fuzzy list and not
 //! something [`crate::settings`] can draw either -- its combo boxes come from a
@@ -10,8 +15,8 @@
 //! fills each from what the level above selected:
 //!
 //! ```text
-//! Commodore_Amiga500 / Commodore_C1084 / MBZ_SHARP_STD / NEAR_CURVED_NIGHT.slangp
-//!   System             Monitor           Shader          Type       Day/Night
+//! Commodore / Commodore_Amiga500 / Commodore_C1084 / MBZ_SHARP_STD / NEAR_CURVED_NIGHT.slangp
+//! Collection  System              Monitor           Shader          Type       Day/Night
 //! ```
 //!
 //! Like the settings dialog, a pick takes effect the moment it is made: the
@@ -31,33 +36,38 @@ use bevy_egui::{
     egui::{self, Ui},
 };
 
-use crate::config::RenderSettings;
-use crate::egui_ui::{
-    HudState, SetHudText, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui,
-};
+use crate::config::{RenderSettings, ShaderArg};
+use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
 use crate::post_process::{ShaderEffect, ShaderPath};
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
 use crate::settings::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
-    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, DemoSettings, GRID_HEIGHT_FRACTION, LABEL_SIZE,
+    ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
 
-/// The preset directory the dialog browses, relative to the checkout root (or
-/// to the executable) -- see the Mega Bezel section of `docs/SHADERS.md` for why
-/// the pack has to sit exactly there.
-pub const PACK_PRESETS: &str = "shaders/Mega_Bezel_Packs/TheNamec-Commodore/presets";
+/// Where the Mega Bezel packs are unpacked, relative to the checkout root (or
+/// to the executable) -- see the Mega Bezel section of `docs/SHADERS.md` for
+/// why a pack has to sit exactly there.
+pub const PACKS_DIR: &str = "shaders/Mega_Bezel_Packs";
 
-/// Locate [`PACK_PRESETS`]: next to the working directory, which is where the
-/// `shaders/` working checkout lives, or next to the executable for a copy that
-/// ships beside the binary.
-fn preset_root() -> Option<PathBuf> {
-    let local = PathBuf::from(PACK_PRESETS);
-    if local.is_dir() {
-        return Some(local);
+/// The subdirectory of a pack that holds its preset tree.
+const PRESETS: &str = "presets";
+
+/// The directories a shader collection is looked for in: the working directory,
+/// which is where the `shaders/` working checkout lives, and next to the
+/// executable, for a copy that ships beside the binary. The working directory
+/// is the empty path, so what is built on it stays relative -- and so stays
+/// copyable into a `--slangp` argument.
+fn search_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::new()];
+    if let Some(beside) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
+        roots.push(beside);
     }
-    let beside = std::env::current_exe().ok()?.parent()?.join(PACK_PRESETS);
-    beside.is_dir().then_some(beside)
+    roots
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +253,14 @@ impl PresetBrowser {
         true
     }
 
+    /// Whether `preset` is one of this tree's, which is what picks the
+    /// collection the dialog opens on -- including a path of the pack's shape
+    /// naming a preset it no longer ships, which still belongs to this pack
+    /// rather than to the default collection.
+    pub fn contains(&self, preset: &Path) -> bool {
+        self.strip_root(preset).is_some()
+    }
+
     /// `preset` relative to the pack root. Tried as given first, so a browser
     /// built on a relative root still recognises a relative path, and through
     /// `canonicalize` after that, which is what matches an absolute
@@ -395,6 +413,79 @@ fn label(raw: &str, labeling: Labeling) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Collections
+// ---------------------------------------------------------------------------
+
+/// One entry of the dialog's top combo box.
+///
+/// The first is always the default collection: whatever `--shader` (or the
+/// settings dialog) last picked, which is what the app runs when no pack preset
+/// is chosen, and the only entry a checkout with no `shaders/` directory has.
+/// Every other entry is a directory tree that [`PresetBrowser`] walks.
+///
+/// Only the Mega Bezel packs are found for now. The other thing under
+/// `shaders/` worth offering is the slang-shaders checkout itself, but
+/// `shaders_slang` is a pile of category directories with presets sitting at
+/// several depths rather than the packs' fixed five levels, so what a "level"
+/// would mean there is still TBD. When it is settled it becomes another
+/// [`collections`] entry with a browser of its own, and nothing below here
+/// changes.
+struct Collection {
+    /// What the combo box shows.
+    label: String,
+    /// The tree this collection browses, or `None` for the default collection,
+    /// which is one preset and has no levels.
+    browser: Option<PresetBrowser>,
+}
+
+/// Index of the default collection, which is also what the dialog falls back
+/// to.
+const DEFAULT: usize = 0;
+
+/// Everything the dialog can offer, the default collection first.
+fn collections() -> Vec<Collection> {
+    let mut found = vec![Collection {
+        label: "Default".to_owned(),
+        browser: None,
+    }];
+    found.extend(bezel_packs());
+    found
+}
+
+/// The bezel packs under [`PACKS_DIR`], one collection each. A pack whose tree
+/// cannot be browsed -- no `presets` directory, or no presets in it -- is left
+/// out rather than offered as a row of empty combo boxes, and the same pack
+/// found twice (in the working directory and beside the executable) is offered
+/// once.
+fn bezel_packs() -> Vec<Collection> {
+    let mut packs: Vec<Collection> = Vec::new();
+    for base in search_roots() {
+        let dir = base.join(PACKS_DIR);
+        for name in subdirectories(&dir) {
+            let label = pack_label(&name);
+            if packs.iter().any(|pack| pack.label == label) {
+                continue;
+            }
+            if let Ok(browser) = PresetBrowser::new(dir.join(&name).join(PRESETS)) {
+                packs.push(Collection {
+                    label,
+                    browser: Some(browser),
+                });
+            }
+        }
+    }
+    packs
+}
+
+/// A pack directory is named `<author>-<machines>`, and it is the machines the
+/// dialog is naming: `TheNamec-Commodore` -> `Commodore`. A name with no author
+/// half is already the name.
+fn pack_label(dir: &str) -> String {
+    let name = dir.rsplit_once('-').map_or(dir, |(_, name)| name);
+    name.replace('_', " ")
+}
+
+// ---------------------------------------------------------------------------
 // The dialog
 // ---------------------------------------------------------------------------
 
@@ -402,12 +493,49 @@ fn label(raw: &str, labeling: Labeling) -> String {
 #[derive(Message)]
 pub struct ShowShaderDialog;
 
-/// The dialog, and the tree it is browsing. The browser outlives a close, so
-/// reopening comes up where it was left.
+/// The dialog, the collections it found and which of them is selected. All of
+/// it outlives a close, so reopening comes up where it was left.
 #[derive(Resource, Default)]
 pub struct ShaderDialog {
     open: bool,
-    browser: Option<PresetBrowser>,
+    /// Filled on the first open: the trees are on disk, and reading them once
+    /// per session is enough.
+    collections: Vec<Collection>,
+    /// Index into `collections`; [`DEFAULT`] until a pack is picked.
+    selected: usize,
+}
+
+impl ShaderDialog {
+    /// The selected collection's tree, or `None` on the default collection --
+    /// which is what greys the level rows out.
+    fn browser(&self) -> Option<&PresetBrowser> {
+        self.collections.get(self.selected)?.browser.as_ref()
+    }
+
+    /// Moves the selection onto the collection holding `preset`, and onto the
+    /// preset itself within it. A preset from no collection -- the built-in
+    /// Lottes, or a `--slangp` from somewhere else -- selects the default.
+    fn reveal(&mut self, preset: &Path) {
+        for (index, collection) in self.collections.iter_mut().enumerate() {
+            if let Some(browser) = collection.browser.as_mut()
+                && browser.contains(preset)
+            {
+                browser.reveal(preset);
+                self.selected = index;
+                return;
+            }
+        }
+        self.selected = DEFAULT;
+    }
+}
+
+/// What a frame of the dialog picked, applied once the panel is no longer
+/// borrowing the dialog.
+enum Picked {
+    /// A row of the top combo box.
+    Collection(usize),
+    /// `(level, index)` of one of the level combo boxes below it.
+    Level(usize, usize),
 }
 
 pub struct ShaderDialogPlugin;
@@ -427,31 +555,21 @@ fn open_dialog(
     mut reader: MessageReader<ShowShaderDialog>,
     mut dialog: ResMut<ShaderDialog>,
     mut hud_state: ResMut<HudState>,
-    mut hud: MessageWriter<SetHudText>,
     shader: Res<ShaderPath>,
 ) {
     // One open however many asked for it this frame.
     if reader.read().count() == 0 {
         return;
     }
-    if dialog.browser.is_none() {
-        let found = preset_root().ok_or_else(|| format!("No shader pack at {PACK_PRESETS}"));
-        match found.and_then(PresetBrowser::new) {
-            Ok(browser) => dialog.browser = Some(browser),
-            Err(err) => {
-                // Nothing to draw, so say why rather than opening an empty panel.
-                hud.write(SetHudText {
-                    text: err,
-                    duration: std::time::Duration::from_secs(4),
-                    ..default()
-                });
-                return;
-            }
-        }
+    if dialog.collections.is_empty() {
+        dialog.collections = collections();
     }
-    // Come up showing what is on screen, when that is one of the pack's.
-    if let (Some(browser), ShaderEffect::Slangp(path)) = (dialog.browser.as_mut(), &shader.effect) {
-        browser.reveal(path);
+    // Come up showing what is on screen: the collection the preset belongs to,
+    // with every level of it selected, or the default collection for anything
+    // else (which is what the default collection means).
+    match &shader.effect {
+        ShaderEffect::Slangp(path) => dialog.reveal(path),
+        ShaderEffect::Wgsl(_) => dialog.selected = DEFAULT,
     }
     if !dialog.open {
         hud_state.set_settings_open(true);
@@ -466,6 +584,7 @@ fn shader_dialog_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut shader_path: ResMut<ShaderPath>,
     mut render: ResMut<RenderSettings>,
+    settings: Res<DemoSettings>,
 ) -> Result {
     if !dialog.open {
         return Ok(());
@@ -480,49 +599,61 @@ fn shader_dialog_ui(
         sync_modifiers(i, mods);
         take_key(i, egui::Key::Escape) > 0
     });
-    // Picked inside the closure and applied after it, because the browser is
+    // Picked inside the closure and applied after it, because the dialog is
     // borrowed for as long as the panel is being drawn.
     let mut picked = None;
+    let composed = composed_path(&dialog, settings.shader);
 
-    if let Some(browser) = &dialog.browser {
-        egui::Area::new(egui::Id::new("shader_dialog"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                panel_frame().show(ui, |ui| {
-                    scale_widgets(ui);
-                    let panel = ui
-                        .vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Shader").size(TITLE_SIZE).strong());
-                                // Room for the close button, placed in this row's
-                                // right corner once the width is known.
-                                ui.add_space(CLOSE_SIZE);
-                            });
-                            ui.add_space(ROW_SPACING.y);
-                            let max_height = ctx.content_rect().height() * GRID_HEIGHT_FRACTION;
-                            egui::ScrollArea::vertical()
-                                .max_height(max_height)
-                                .auto_shrink([true, true])
-                                .show(ui, |ui| picked = browser_body(ui, browser));
-                        })
-                        .response
-                        .rect;
-                    closing |= close_button(ui, panel);
-                });
+    egui::Area::new(egui::Id::new("shader_dialog"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            panel_frame().show(ui, |ui| {
+                scale_widgets(ui);
+                let panel = ui
+                    .vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Shader").size(TITLE_SIZE).strong());
+                            // Room for the close button, placed in this row's
+                            // right corner once the width is known.
+                            ui.add_space(CLOSE_SIZE);
+                        });
+                        ui.add_space(ROW_SPACING.y);
+                        let max_height = ctx.content_rect().height() * GRID_HEIGHT_FRACTION;
+                        egui::ScrollArea::vertical()
+                            .max_height(max_height)
+                            .auto_shrink([true, true])
+                            .show(ui, |ui| picked = dialog_body(ui, &dialog));
+                        // Under the scroll area rather than in it, so a long
+                        // grid scrolls without taking the line with it.
+                        ui.add_space(ROW_SPACING.y);
+                        ui.label(
+                            egui::RichText::new(&composed)
+                                .size(BODY_SIZE * 0.75)
+                                .color(DISABLED_COLOR),
+                        );
+                    })
+                    .response
+                    .rect;
+                closing |= close_button(ui, panel);
             });
-    }
+        });
 
-    if let Some((level, index)) = picked
-        && let Some(browser) = dialog.browser.as_mut()
-    {
-        browser.select(level, index);
-        if let Some(path) = browser.path() {
-            shader_path.effect = ShaderEffect::Slangp(path);
-            // Picking a preset is asking to see it, so switch the effect on the
-            // way `crate::settings::apply_settings` does for `--shader`.
-            render.crt_effect = true;
+    match picked {
+        Some(Picked::Collection(index)) => {
+            dialog.selected = index;
+            apply(&dialog, &mut shader_path, &mut render, settings.shader);
         }
+        Some(Picked::Level(level, index)) => {
+            let selected = dialog.selected;
+            if let Some(collection) = dialog.collections.get_mut(selected)
+                && let Some(browser) = collection.browser.as_mut()
+            {
+                browser.select(level, index);
+            }
+            apply(&dialog, &mut shader_path, &mut render, settings.shader);
+        }
+        None => {}
     }
     if closing {
         dialog.open = false;
@@ -531,44 +662,102 @@ fn shader_dialog_ui(
     Ok(())
 }
 
-/// One combo box per level, and the preset they compose underneath. Returns the
-/// `(level, index)` picked this frame, if any.
-fn browser_body(ui: &mut Ui, browser: &PresetBrowser) -> Option<(usize, usize)> {
+/// Puts the selection on screen. A pack preset is a filter chain to run;
+/// the default collection is whatever shader the command line or the settings
+/// dialog last chose, switched on the way `crate::settings::apply_settings`
+/// does for `--shader`.
+fn apply(
+    dialog: &ShaderDialog,
+    shader_path: &mut ShaderPath,
+    render: &mut RenderSettings,
+    default: ShaderArg,
+) {
+    match dialog.browser().and_then(PresetBrowser::path) {
+        Some(path) => {
+            shader_path.effect = ShaderEffect::Slangp(path);
+            // Picking a preset is asking to see it, so switch the effect on.
+            render.crt_effect = true;
+        }
+        None => {
+            shader_path.effect = default.effect();
+            render.crt_effect = default != ShaderArg::None;
+        }
+    }
+}
+
+/// What the dialog prints under the combo boxes: the preset the selection
+/// names, relative to its collection, which is also the tail of a `--slangp`
+/// argument.
+fn composed_path(dialog: &ShaderDialog, default: ShaderArg) -> String {
+    match dialog.browser() {
+        Some(browser) => browser.relative_path().unwrap_or_default(),
+        // `--shader none` is the stock passthrough preset with the effect
+        // switched off, so name what it does rather than what it does it with.
+        None if default == ShaderArg::None => "no effect".to_owned(),
+        None => default.path().to_owned(),
+    }
+}
+
+/// The collection combo box and one combo box per level under it. Returns what
+/// was picked this frame, if anything.
+fn dialog_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
     let mut picked = None;
+    let browser = dialog.browser();
     egui::Grid::new("shader_grid")
         .num_columns(2)
         .spacing(ROW_SPACING)
         .show(ui, |ui| {
+            let labels: Vec<&str> = dialog
+                .collections
+                .iter()
+                .map(|c| c.label.as_str())
+                .collect();
+            if let Some(index) = row(ui, "Collection", true, |ui| {
+                combo(ui, "Collection", &labels, dialog.selected)
+            }) {
+                picked = Some(Picked::Collection(index));
+            }
+            // The levels of the selected collection, or -- on the default
+            // collection, which has none -- greyed-out rows in their place, so
+            // the dialog keeps its shape as the top box is switched.
             for (level, spec) in LEVELS.iter().enumerate() {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(spec.label).size(LABEL_SIZE));
-                });
-                ui.scope(|ui| {
-                    ui.set_min_width(WIDGET_WIDTH);
-                    if let Some(index) = draw_level(ui, level, &browser.levels[level]) {
-                        picked = Some((level, index));
-                    }
-                });
-                ui.end_row();
+                let state = browser.map(|browser| &browser.levels[level]);
+                if let Some(index) = row(ui, spec.label, browser.is_some(), |ui| {
+                    draw_level(ui, level, state)
+                }) {
+                    picked = Some(Picked::Level(level, index));
+                }
             }
         });
-    // The preset itself, so what the five boxes add up to is visible -- and
-    // copyable into a `--slangp` on the command line.
-    if let Some(path) = browser.relative_path() {
-        ui.add_space(ROW_SPACING.y);
-        ui.label(
-            egui::RichText::new(path)
-                .size(BODY_SIZE * 0.75)
-                .color(DISABLED_COLOR),
-        );
-    }
     picked
 }
 
-/// One level's combo box, or a dash for a level with nothing to offer (a preset
-/// name with no lighting half, or a directory the pack left empty).
-fn draw_level(ui: &mut Ui, level: usize, state: &Level) -> Option<usize> {
-    let Some(current) = state.choices.get(state.index) else {
+/// One row of the grid: its label on the left, whatever `widget` draws on the
+/// right, the pair greyed out and unclickable when `enabled` is false.
+fn row<R>(ui: &mut Ui, label: &str, enabled: bool, widget: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let text = egui::RichText::new(label).size(LABEL_SIZE);
+        ui.label(if enabled {
+            text
+        } else {
+            text.color(DISABLED_COLOR)
+        });
+    });
+    let inner = ui
+        .scope(|ui| {
+            ui.set_min_width(WIDGET_WIDTH);
+            ui.add_enabled_ui(enabled, widget).inner
+        })
+        .inner;
+    ui.end_row();
+    inner
+}
+
+/// One level's combo box, or a dash for a level with nothing to offer: the
+/// default collection, a preset name with no lighting half, or a directory the
+/// pack left empty.
+fn draw_level(ui: &mut Ui, level: usize, state: Option<&Level>) -> Option<usize> {
+    let Some(state) = state.filter(|state| state.raw().is_some()) else {
         ui.label(
             egui::RichText::new("—")
                 .size(BODY_SIZE)
@@ -576,15 +765,25 @@ fn draw_level(ui: &mut Ui, level: usize, state: &Level) -> Option<usize> {
         );
         return None;
     };
+    let labels: Vec<&str> = state.choices.iter().map(|c| c.label.as_str()).collect();
+    combo(ui, LEVELS[level].label, &labels, state.index)
+}
+
+/// One combo box, showing `selected` of `labels`. Returns the index picked this
+/// frame, if any.
+fn combo(ui: &mut Ui, id_salt: &str, labels: &[&str], selected: usize) -> Option<usize> {
     let mut picked = None;
-    egui::ComboBox::from_id_salt(LEVELS[level].label)
-        .selected_text(egui::RichText::new(&current.label).size(BODY_SIZE))
+    let current = labels.get(selected).copied().unwrap_or_default();
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(egui::RichText::new(current).size(BODY_SIZE))
         .width(WIDGET_WIDTH)
         .show_ui(ui, |ui| {
-            for (index, choice) in state.choices.iter().enumerate() {
-                let selected = index == state.index;
+            for (index, label) in labels.iter().enumerate() {
                 if ui
-                    .selectable_label(selected, egui::RichText::new(&choice.label).size(BODY_SIZE))
+                    .selectable_label(
+                        index == selected,
+                        egui::RichText::new(*label).size(BODY_SIZE),
+                    )
                     .clicked()
                 {
                     picked = Some(index);

@@ -85,6 +85,14 @@ demarc demos/rebels.adf --slangp \
 Presets are named `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting>.slangp`;
 the pack's `README.md` explains what each one does.
 
+The shader dialog (RightAlt+Shift+E, `src/shader_dialog.rs`) picks one of those
+without the command line: its top combo box lists `Default` -- whatever
+`--shader` chose -- and one entry per pack found under `Mega_Bezel_Packs`, with
+a combo box per level below it. A pack is offered as soon as it is unpacked
+there, named after the machines half of its directory (`TheNamec-Commodore` ->
+`Commodore`), as long as its presets sit under `<pack>/presets` in the five-level
+layout above.
+
 ### Pack fixups
 
 `scripts/fix-megabezel-pack.sh` repairs three broken references in TheNamec RC4.1
@@ -102,3 +110,52 @@ either way, they just lose whatever the missing file contributed):
 Re-run it after updating the pack or slang-shaders, then
 `cargo test megabezel_pack_presets_resolve -- --ignored` to check a sample of the
 whole pack still parses.
+
+## Chain building is asynchronous
+
+Loading a `.slangp` is expensive and the cost is all compilation, not assets. For
+a Mega Bezel preset (42 passes, 32 LUTs) on a desktop GPU:
+
+| stage | cost |
+|---|---|
+| parse the `#reference` chain | 5 ms |
+| read the files, decode the LUT PNGs (`ShaderPresetPack`) | 130 ms |
+| glslang, GLSL -> SPIR-V | **1.5 s** |
+| naga, SPIR-V -> WGSL | 95 ms |
+| wgpu/driver pipelines | ~30 ms |
+
+So `SlangChains` never builds a chain on the render thread; `AsyncChain` spawns
+the whole `FilterChain::load_from_path` onto `AsyncComputeTaskPool` (wgpu's
+device and queue are handles that may be used from any thread) and the view
+carries on rendering with whatever it has: the *previous* preset's chain while a
+new one compiles, or the emulator framebuffer composited unshaded before the
+first one lands. A shader change therefore costs no dropped frames — measured at
+276-358 frames drawn during a build that took 1.7-2.2 s.
+
+Only one build per source is ever in flight. Clicking through the dialog
+supersedes builds faster than they finish, and glslang cannot be interrupted
+once it has the shaders, so a superseded build is flagged cancelled (which skips
+it outright if it has not started yet), left to finish if it has, and its result
+dropped; only the selection current when it lands is compiled next. Four rapid
+changes cost two builds, not four, and the preset the user settled on is not
+queued behind the ones they clicked past.
+
+The obvious next steps, in order of payoff:
+
+* **Parallelise glslang.** `compile_preset_passes` in the fork's
+  `librashader-reflect` compiles passes in a serial `into_iter().map()`, though
+  the per-pass work is independent (only `uniform_semantics` is shared and can be
+  merged afterwards). Chunking those 42 passes across threads measured 1.55 s ->
+  0.69 s at 4 threads and 0.36 s at 16, the floor being the one huge Mega Bezel
+  pass.
+* **Reuse retired chains.** `SlangChains::sources` is keyed by source image, so
+  every new emulator — each `--cross-fade` transition, each grid reshuffle —
+  builds its own copy of the same preset from scratch and the old one is never
+  dropped. Pruning sources that no longer exist and handing their chains to a new
+  source wanting the same preset would make a demo switch instant.
+* Do **not** reach for `FilterChainOptions::enable_cache`. It only wraps the
+  driver pipeline cache — the wgpu runtime uses `SpirvCompilation` rather than
+  `CachedCompilation`, so glslang, the expensive part, is never cached — and it
+  measured neutral to far worse (one load took 9 s reading and writing the persy
+  blob). Caching that would actually pay means swapping that front end in the
+  fork, where presets from one pack share nearly all their pass sources.
