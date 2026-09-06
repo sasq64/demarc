@@ -25,9 +25,13 @@ meta = { wine_dll_overrides = "d3dx9_43=n" }
 
 [zoo.108]
 file = "2nd_real.zip"
+meta = { dosbox_pure_cycles = 100000 }
 
 [zoo.138]
 file = "variform_by_kewlers.zip"
+
+[zoo.3298]
+file = "fr-025-final.zip"
 
 [zoo.7236]
 boot = "dEEP"
