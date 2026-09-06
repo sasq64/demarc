@@ -27,7 +27,8 @@ just gs-web demos/thing.html               # an HTML/JS release through Chrome
 ```
 
 A Windows demo has to opt in with `wine_capture=true`, because `WineEmu` is still the
-default (see Status). A page does not: `src/newsys/web.rs` claims `.html`/`.htm` outright,
+default (see Status). What it then runs is the very same command `WineEmu` would have —
+the dialog driver, the resolution, a virtual desktop if the entry asked for one. A page does not: `src/newsys/web.rs` claims `.html`/`.htm` outright,
 since nothing else here could ever run one.
 
 Build prerequisites beyond demarc's own: `meson`, `vulkan-headers`, `glslang`, and the
@@ -74,7 +75,8 @@ Three pieces:
 | core | `external/gamescope/src/libretro/core.cpp` | the `.so` demarc loads. Links libc and libstdc++ and nothing else. |
 
 On demarc's side: a branch in `WindowsSystem::create` (`src/newsys/windows.rs`) for the
-wine path, and `WebSystem` (`src/newsys/web.rs`) for pages. `WebSystem` claims only the
+wine path, with `capture_meta` beside it turning the entry's settings into core options and
+its wine command into `gamescope_command`, and `WebSystem` (`src/newsys/web.rs`) for pages. `WebSystem` claims only the
 page itself — a release ships its `.js`, textures and shaders beside it, Chrome fetches
 those over `file://`, and they must stay available to the image and music systems.
 
@@ -132,15 +134,22 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 |---|---|---|
 | `gamescope_resolution` | `800x600` | session size; both the output captured and what the client is told it has |
 | `gamescope_refresh` | `60` | Hz. `50` for demos that want it |
-| `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead |
+| `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead. Split on ASCII US (`\x1f`) when it holds one — which is how demarc sends a whole argv whose paths have spaces in them — and on whitespace otherwise, which is what a hand-typed `-x gamescope_command="vkcube --gpu 0"` wants |
 | `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
-| `gamescope_wine_desktop` | `false` | reserved; not yet wired to `explorer /desktop=` |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
-(`src/newsys/windows.rs`), so an entry keeps saying `wine_res` and an `overrides.toml`
-written for the on-top backend means the same thing here. `wine_res=pick` is not a size and
-is deliberately not passed through.
+(`src/newsys/windows.rs`), so an entry keeps saying `wine_res` and `wine_desktop` and an
+`overrides.toml` written for the on-top backend means the same thing here.
+
+The command is the substantial half of that translation. Left to itself the core turns a
+`.exe` into `wine <exe>`, which is a demo sitting on its setup dialog with nobody to answer
+it; what it is given instead is the argv `crate::wine_emu::wine_command` builds — the same
+one `WineEmu` spawns, dialog driver and all — so neither backend can drift away from the
+other. `wine_desktop` rides along inside it as `explorer /desktop=`, which is why the core
+has no option of its own for it. `wine_res=pick` is not a size, so the resolution passed is
+the one the backend picks to stand in for it (1920x1200, big enough to hold whatever the
+person watching chooses).
 
 ---
 
@@ -152,11 +161,14 @@ is deliberately not passed through.
   produces nothing today. Ours composites; because `paint_all` already built the
   `FrameInfo_t` for us, nothing needs repainting first, which is the one way this is
   simpler than `paint_pipewire()`.
-- **A core cannot find anything by looking beside itself.** demarc copies every core into a
-  private temp directory before `dlopen` so two instances get separate globals, and
-  `GET_LIBRETRO_PATH` returns that copy too. The compositor's build and install paths are
-  baked into the core at compile time instead (`GAMESCOPE_BUILD_BIN` /
-  `GAMESCOPE_INSTALL_BIN`); `GAMESCOPE_LIBRETRO_BIN` overrides both.
+- **A core cannot find anything beside the copy it was loaded from.** demarc copies every
+  core into a private temp directory before `dlopen` so two instances get separate
+  globals, and nothing is unpacked beside that copy. `GET_LIBRETRO_PATH` now answers with
+  the core as it lives on disk rather than the copy — which is what the callback means,
+  and what lets `FindGamescope()` pick up the compositor a downloaded release unpacked
+  next to the library. Failing that the build and install paths baked in at compile time
+  (`GAMESCOPE_BUILD_BIN` / `GAMESCOPE_INSTALL_BIN`) still answer, which is what a local
+  build uses; `GAMESCOPE_LIBRETRO_BIN` overrides everything.
 - **Chrome needs X11, not Wayland.** gamescope sets `WAYLAND_DISPLAY` to the empty string,
   and Chrome's Ozone reads "set" as "Wayland is available", tries to connect to `""` and
   exits. Giving it a real Wayland socket fixes that and introduces two worse problems: it
@@ -181,6 +193,12 @@ is deliberately not passed through.
   `wineserver -k` — verified by trying it by hand on a leftover and watching it ignore me.
   This is the same class of leak `wine_emu.rs` documents ("thirty-seven of them left by
   earlier sessions"). A session now tears down with nothing left behind.
+- **A command is an argv, not a string.** `gamescope_command` is one core-option string,
+  and the wine command demarc builds has two paths in it — the demo's and the driver's —
+  both of which routinely contain spaces, brackets and apostrophes. Splitting it back up on
+  whitespace would tear those in half, and quoting rules would mean writing a shell. ASCII
+  US between the words instead: it exists for this, cannot occur in a path, and leaves the
+  whitespace split in place for commands people type by hand.
 - **Input wants no new plumbing.** `wlserver_key(evdev, down, time)` and friends take a
   `wlserver_lock()` and can be called from any thread, which is what `SDLBackend` already
   does from its own. The backend runs one reader thread rather than adding a waitable to
@@ -203,12 +221,19 @@ Kept as small as possible, so the tree stays diffable:
 
 ## Status
 
+`WineEmu` is still what a Windows entry gets by default — not for want of anything here,
+and no longer for want of a core to load: `gamescope` is an `ALT_SOURCES` entry now
+(below), so an ordinary demarc downloads it like any other core.
+
 Working, and verified by eye on captured frames:
 
 - **glxgears** (X11/GL) — 229 real frames of 240, animating, correct channel order.
 - **Chromium** (X11, HTML/JS canvas) — 213 of 260, fullscreen, undecorated, 1:1, and
   reached by `demarc thing.html` with no flags.
 - **wine** (`notepad.exe`) — renders fullscreen in the session.
+- **A Windows demo with a setup dialog** (fr-025) — `wine_capture=true` reaches the driver,
+  which answers the dialog, launches the demo, undecorates its window and reports
+  `!demarc started`; the demo plays inside a demarc view at the session size.
 - **Keyboard injection** — `retro_keyboard_callback` → socket → `wlserver_key` → Xwayland →
   the client. Typing "hello demarc" at a page that echoes keys shows "hello demarc".
 - **Through demarc** — the picture reaches a view, with the CRT shader applied to it.
@@ -222,13 +247,21 @@ Open:
    still advances; a wine demo's sound goes to the user's speakers as it does under
    `wine_emu.rs` today. The intended fix is a private PipeWire null sink with the child's
    `PULSE_SINK` pointed at it, captured into `retro_audio_sample_batch`.
-2. **No `demarc-autodlg.exe` yet.** The wine path runs `wine <exe>` directly, so a demo
-   that opens a setup dialog will sit on it, and the core cannot tell when the demo itself
-   ended. `wine_emu.rs` solves both with the dialog driver, and the same command should be
-   built here. Until then `WineEmu` remains the default and `wine_capture=true` is opt-in.
-3. **`gamescope_wine_desktop` is announced but not wired** to `explorer /desktop=`.
-   Relatedly, `wineserver -k` on teardown is wholesale, exactly as `wine_emu.rs`'s
-   `close_prefix` is: two wine sessions sharing one prefix cannot be closed independently.
+2. **The end of a demo is noticed late.** `demarc-autodlg.exe` is now in the command, so
+   the setup dialog gets answered and the driver writes `!demarc started` / `exited` as it
+   always has — but the core inherits gamescope's stdout rather than reading it, so nobody
+   here sees those lines. What ends a captured session instead is demarc's ordinary idle
+   detection: the compositor keeps presenting the same empty frame once the demo is gone,
+   and a frozen, silent view is one the frontend moves on from. Reading the driver's stream
+   in the core would make it prompt, and would tell a demo that failed to start from one on
+   a long loading screen.
+3. **The wine prefix is handled wholesale**, exactly as `wine_emu.rs`'s `close_prefix` is.
+   `wineserver -k` on teardown ends every wine process in the prefix, and
+   `WindowsSystem::create` clears it again before starting a captured session — which is
+   what collects the tree a killed demarc leaves behind, since a core that never got to
+   unload never closed anything. Both mean two wine sessions cannot share the prefix, so
+   two Windows demos at once is out (item 6 is about Chrome and other clients, which are
+   unaffected).
 4. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
 5. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome
@@ -236,9 +269,48 @@ Open:
    it is the routing that needs teaching.
 6. **Not tested in a grid.** Each core instance forks its own compositor, so several should
    work; nobody has run two at once.
-7. **No distribution story.** Like PCem, this core is not on the libretro buildbot. The
-   answer is an `ALT_SOURCES` entry in `src/libloader.rs` and a release publishing
-   `gamescope_libretro-linux-x86_64.zip` — but the core also needs its compositor, which no
-   other core has to ship.
+7. **The release has not been run on a machine that did not build it.** See
+   Distribution — the bundle is built against Ubuntu 24.04's libraries and carries the
+   ones a desktop cannot be assumed to have, but nobody has yet unpacked it on a
+   different distribution and started a session from it.
+
+---
+
+## Distribution
+
+`external/gamescope/.github/workflows/libretro.yml` builds the compositor and the core on
+every push to the `demarc` branch and publishes them to a rolling `latest` release, the
+same shape amiberry's workflow uses. `src/libloader.rs` fetches it from there:
+
+```
+https://github.com/sasq64/gamescope/releases/download/latest/gamescope_libretro-linux-x86_64.zip
+```
+
+The zip is unpacked into the core cache and holds three things:
+
+```
+gamescope_libretro.so   the core — the only file libloader looks for
+gamescope               the compositor it forks, found through GET_LIBRETRO_PATH
+lib/                    the libraries a current desktop cannot be assumed to have
+```
+
+`lib/` is what makes this core unlike every other one, and it is deliberately small.
+wlroots 0.20 wants libraries newer than any LTS ships (libdrm 2.4.129, wayland 1.24,
+wayland-protocols 1.47, xkbcommon 1.8, pixman 0.46), so the workflow builds those five
+from pinned releases and ships them; alongside them go libinput, libseat, libdecor,
+libdisplay-info and luajit, which plenty of desktops do not have installed at all. What is
+*not* shipped is everything the host must provide anyway or must own: the C/C++ runtime,
+the graphics stack the host's Vulkan driver is built against, X11, and the systemd/glib
+layer. They are reached through a `DT_RPATH` of `$ORIGIN/lib` rather than an
+`LD_LIBRARY_PATH`, because the compositor execs wine and Chrome and an `LD_LIBRARY_PATH`
+would follow them into processes that must use the host's libraries.
+
+Built on Ubuntu 24.04, so the release needs glibc 2.39 or newer — Ubuntu 24.04, Debian 13,
+Fedora 40, SteamOS 3.7, Arch. From the host it also needs a Vulkan driver, `Xwayland`, and
+whatever the session runs (`wine`, `google-chrome`).
+
+A locally built core still wins over all of this: `DEMARC_CORE_DIR` pointing at
+`external/gamescope/build-lr/src` is unchanged, and there the compositor is found beside
+the library exactly as it is in a release.
 
 [gamescope]: https://github.com/ValveSoftware/gamescope

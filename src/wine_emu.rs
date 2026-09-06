@@ -299,6 +299,60 @@ impl Config {
     }
 }
 
+/// The dialog driver, if it is where it should be.
+///
+/// Wanted whatever the dialog setting is: `pick` only turns off the pressing of
+/// buttons, not the driver's other job of saying when the demo starts and ends.
+///
+/// Missing, a demo is still worth running — one whose dialog someone dismisses
+/// by hand runs fine. What is lost with the driver is the end of the demo, see
+/// [`Signals`], so the session will sit there until the next entry is asked for.
+pub(crate) fn autodlg() -> Option<PathBuf> {
+    let driver = system_dir().join(AUTODLG);
+    if driver.is_file() {
+        return Some(driver);
+    }
+    warn!(
+        "No dialog driver at {driver:?} - the setup dialog will need answering, \
+         and the demo's end will go unnoticed"
+    );
+    None
+}
+
+/// The wine command a Windows release runs under, for a backend that is not
+/// this one — see [`wine_command`].
+pub(crate) struct WineCommand {
+    /// `wine` and everything after it: the virtual desktop if one was asked
+    /// for, the dialog driver if there is one, and the demo. Ready to be
+    /// spawned as it stands — no shell is involved, so nothing is quoted and
+    /// nothing may be re-split on spaces.
+    pub argv: Vec<String>,
+    /// The size the session has to be, which is not always the size an entry
+    /// asked for: `wine_res=pick` has no size of its own and gets one big
+    /// enough to hold whatever the dialog is asked for.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Work out how a release would be started, without starting it.
+///
+/// [`WineEmu`] puts this command inside a gamescope of its own on top of
+/// demarc; the gamescope libretro core (`docs/GAMESCOPE.md`) puts the very same
+/// command inside a headless one and hands the frames back. Which of the two
+/// runs a release is an entry's choice — see `wine_capture` in
+/// [`crate::newsys::windows`] — and neither should have to know how the other
+/// spells "run this demo", so both ask here.
+pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
+    let cfg = Config::from_meta(exe, meta)?;
+    let mut argv = vec!["wine".to_string()];
+    argv.extend(cfg.wine_args(autodlg().as_deref()));
+    Ok(WineCommand {
+        argv,
+        width: cfg.width,
+        height: cfg.height,
+    })
+}
+
 /// How many demo sessions are on screen right now — one at most, but a count
 /// rather than a flag so that a session starting before the last one has been
 /// dropped cannot leave it stuck.
@@ -378,23 +432,7 @@ impl Session {
                  (this backend runs wine inside gamescope)"
             );
         }
-        // Wanted whatever the dialog setting is: `pick` only turns off the
-        // pressing of buttons, not the driver's other job of saying when the
-        // demo starts and ends.
-        let driver = system_dir().join(AUTODLG);
-        let autodlg = if driver.is_file() {
-            Some(driver)
-        } else {
-            // Worth running anyway: a demo whose dialog someone dismisses by
-            // hand still runs. What is lost with the driver is the end of the
-            // demo — see [`Signals`] — so the session will sit there until the
-            // next entry is asked for.
-            warn!(
-                "No dialog driver at {driver:?} - the setup dialog will need answering, \
-                 and the demo's end will go unnoticed"
-            );
-            None
-        };
+        let autodlg = autodlg();
 
         let prefix = wine_prefix()?;
         // Anything still running in the prefix is left over from a session that
@@ -584,7 +622,7 @@ impl Drop for Session {
 /// wineserver that will not answer must not be able to hold the quit up.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
-fn close_prefix(prefix: &Path) {
+pub(crate) fn close_prefix(prefix: &Path) {
     if !has_tool("wineserver") {
         sweep_prefix(prefix, None);
         return;

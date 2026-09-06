@@ -447,6 +447,10 @@ impl RetroCoreDirect {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();
                 }
                 RETRO_ENVIRONMENT_GET_LIBRETRO_PATH => {
+                    // The core as it lives on disk, not the private copy we
+                    // dlopen'd — this is how a core finds what was unpacked
+                    // beside it, and nothing was unpacked beside the copy. The
+                    // gamescope core looks here for its compositor.
                     *(data as *mut *const c_char) = self.core_path.as_ptr();
                 }
                 RETRO_ENVIRONMENT_GET_VFS_INTERFACE => {
@@ -580,9 +584,8 @@ impl RetroCoreDirect {
             .ok_or_else(|| anyhow!("core path has no file name: {}", core_path.display()))?;
         let loaded_core_path = core_tempdir.path().join(file_name);
         std::fs::copy(core_path, &loaded_core_path)?;
-        let core_path = loaded_core_path.as_path();
 
-        let lib = unsafe { Library::new(core_path)? };
+        let lib = unsafe { Library::new(&loaded_core_path)? };
         unsafe {
             let retro_set_environment: libloading::Symbol<
                 unsafe extern "C" fn(<retro_environment_t as OptionInner>::Inner),

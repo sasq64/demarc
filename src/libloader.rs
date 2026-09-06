@@ -71,6 +71,15 @@ const ALT_SOURCES: &[(&str, &str)] = &[
         "hatari",
         "https://github.com/sasq64/hatari/releases/download/latest",
     ),
+    // The one core that ships a program as well as a library: the zip holds the
+    // gamescope compositor and its private libraries beside gamescope_libretro.so,
+    // and the core finds them through the path this module hands it. Linux only,
+    // so `alt_system()` answering for another platform only means a 404 and a
+    // warning — nothing here can run a gamescope session anyway.
+    (
+        "gamescope",
+        "https://github.com/sasq64/gamescope/releases/download/latest",
+    ),
 ];
 
 /// The platform segment used by the [`ALT_SOURCES`] archives, which name

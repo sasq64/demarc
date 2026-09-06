@@ -107,4 +107,3 @@ pub fn unpack(image: &Path, dest: &Path) -> Result<usize> {
 #[cfg(test)]
 #[path = "tests/adf_tests.rs"]
 mod tests;
-

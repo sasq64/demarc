@@ -5,14 +5,14 @@ use anyhow::Result;
 use super::System;
 use crate::backend::Backend;
 #[cfg(target_os = "linux")]
-use anyhow::Context;
-#[cfg(target_os = "linux")]
 use crate::libloader;
 #[cfg(target_os = "linux")]
 use crate::retro_emu::RetroCoreThreaded;
 #[cfg(target_os = "linux")]
 use crate::system_dir;
 use crate::workfile::WorkFile;
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 
 /// HTML/JS releases, shown in an undecorated Chrome inside a gamescope session.
 ///

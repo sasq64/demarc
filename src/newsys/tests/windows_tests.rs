@@ -1,8 +1,6 @@
 use super::*;
-#[cfg(target_os = "linux")]
 use std::fs;
 
-#[cfg(target_os = "linux")]
 fn write_bytes(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, body).unwrap();
@@ -27,8 +25,7 @@ fn tells_a_windows_program_from_a_dos_one() {
     win[0x80..0x84].copy_from_slice(b"PE\0\0");
     let win = write("setup32.exe", &win);
     assert!(is_windows_program(&win));
-    // Only where there is a wine to run it.
-    assert_eq!(sys.can_load(&win), CAN_RUN_WINDOWS);
+    assert!(sys.can_load(&win));
 
     // A 64K intro packs the two headers into one: `e_lfanew` points at
     // 0x0c, so the PE header's own fields make up the rest of the DOS
@@ -68,10 +65,9 @@ fn tells_a_windows_program_from_a_dos_one() {
     assert!(!is_windows_program(&text));
 }
 
-/// A release directory holding a Windows program is the release, and on
-/// Linux it is ours to start.
+/// A release directory holding a Windows program is the release, and it is
+/// ours to start.
 #[test]
-#[cfg(target_os = "linux")]
 fn claims_a_windows_release_for_wine() {
     let dir = tempfile::tempdir().unwrap();
     let sys = WindowsSystem {};
@@ -92,16 +88,12 @@ fn claims_a_windows_release_for_wine() {
 
     // The size the dialog driver is told to pick, unless an entry says
     // otherwise - see `crate::wine_emu`.
-    assert_eq!(
-        sys.default_meta().get(crate::wine_emu::META_RES),
-        Some(&"800x600")
-    );
+    assert_eq!(sys.default_meta().get(META_RES), Some(&"800x600"));
 }
 
 /// A Windows release often names the size it was built for, and that name
 /// is the only place the size is written down.
 #[test]
-#[cfg(target_os = "linux")]
 fn takes_the_resolution_out_of_a_windows_program_name() {
     let dir = tempfile::tempdir().unwrap();
     let sys = WindowsSystem {};
@@ -116,13 +108,13 @@ fn takes_the_resolution_out_of_a_windows_program_name() {
 
     let mut wf = WorkFile::new(release.clone());
     assert!(sys.load(&mut wf).unwrap());
-    assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1920x1080");
+    assert_eq!(wf.get_meta_or(META_RES, ""), "1920x1080");
 
     // What the entry says was decided by a person, and beats a file name.
-    let meta = HashMap::from([(crate::wine_emu::META_RES.to_string(), "800x600".to_string())]);
+    let meta = HashMap::from([(META_RES.to_string(), "800x600".to_string())]);
     let mut wf = WorkFile::new_with_meta(release, meta);
     assert!(sys.load(&mut wf).unwrap());
-    assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "800x600");
+    assert_eq!(wf.get_meta_or(META_RES, ""), "800x600");
 
     // The same release, spelled the other way.
     let elevated = dir.path().join("elevated");
@@ -130,7 +122,7 @@ fn takes_the_resolution_out_of_a_windows_program_name() {
     write_bytes(&elevated, "elevated_1440_900.exe", &pe);
     let mut wf = WorkFile::new(elevated);
     assert!(sys.load(&mut wf).unwrap());
-    assert_eq!(wf.get_meta_or(crate::wine_emu::META_RES, ""), "1440x900");
+    assert_eq!(wf.get_meta_or(META_RES, ""), "1440x900");
 
     // A DOS program is not this system's, so nothing here fills anything
     // in for it - it runs under DOSBox, which has no such setting.
@@ -141,7 +133,7 @@ fn takes_the_resolution_out_of_a_windows_program_name() {
     write_bytes(&dos, "demo_640x480.exe", &mz);
     let mut wf = WorkFile::new(dos);
     assert!(!sys.load(&mut wf).unwrap());
-    assert!(!wf.has_meta(crate::wine_emu::META_RES));
+    assert!(!wf.has_meta(META_RES));
 }
 
 /// The scan has to tell a screen mode from every other reason two numbers
@@ -175,53 +167,141 @@ fn reads_a_resolution_only_where_a_name_holds_one() {
     assert_eq!(res("demo.exe"), None);
 }
 
+/// A Windows program, on disk, so the command built for it can be checked
+/// against a path that really exists.
+fn windows_exe(dir: &Path, name: &str) -> PathBuf {
+    let mut pe = vec![0u8; 0x100];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    write_bytes(dir, name, &pe)
+}
+
+/// The words of a `gamescope_command`, as the core will split them again.
+fn argv(meta: &HashMap<String, String>) -> Vec<String> {
+    meta.get("gamescope_command")
+        .expect("a command")
+        .split(ARG_SEPARATOR)
+        .map(str::to_string)
+        .collect()
+}
+
 /// An entry says `wine_res`; the core says `gamescope_resolution`. The
 /// translation happens in one place so an `overrides.toml` written for the
 /// on-top backend still means the same thing to the captured one.
-#[cfg(target_os = "linux")]
 #[test]
 fn restates_wine_settings_as_core_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
     let file = WorkFile::new_with_meta(
-        PathBuf::from("/demo/thing.exe"),
-        HashMap::from([(crate::wine_emu::META_RES.to_string(), "640x480".to_string())]),
+        exe.clone(),
+        HashMap::from([(META_RES.to_string(), "640x480".to_string())]),
     );
 
     let meta = capture_meta(&file);
 
-    assert_eq!(meta.get("gamescope_resolution").map(String::as_str), Some("640x480"));
-    assert_eq!(meta.get("gamescope_command").map(String::as_str), Some("wine"));
+    assert_eq!(
+        meta.get("gamescope_resolution").map(String::as_str),
+        Some("640x480")
+    );
     // Both backends share a prefix, so a release prepared under one is prepared
     // under the other.
     assert!(meta.contains_key("gamescope_wineprefix"));
     // The original key survives: it is still what the entry said.
-    assert_eq!(meta.get(crate::wine_emu::META_RES).map(String::as_str), Some("640x480"));
+    assert_eq!(meta.get(META_RES).map(String::as_str), Some("640x480"));
+
+    // Not `wine <exe>`, which is a demo sitting on its setup dialog: the whole
+    // command the on-top backend would have run.
+    let args = argv(&meta);
+    assert_eq!(args[0], "wine");
+    let exe = exe.canonicalize().unwrap().to_string_lossy().into_owned();
+    match args.iter().position(|a| a == "--launch") {
+        // With the driver in the command, the demo is what the driver launches,
+        // and the size demarc asked for is the size it presses for.
+        Some(launch) => {
+            assert_eq!(args[launch + 1], exe);
+            let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
+            assert_eq!(args[prefer + 1], "640x480");
+        }
+        // No driver built into this checkout: the demo is the command, and the
+        // dialog is somebody else's problem. See `wine_emu::autodlg`.
+        None => assert_eq!(args, vec!["wine".to_string(), exe]),
+    }
 }
 
-/// `wine_res=pick` is not a size at all — it means "let the demo's own dialog
-/// choose", and handing it to the core as a resolution would be nonsense.
-#[cfg(target_os = "linux")]
+/// `wine_res=pick` is not a size — it means "let whoever is watching answer the
+/// dialog" — so the size the session gets is the backend's own, big enough to
+/// hold whatever they pick, and the driver is told to press nothing.
 #[test]
-fn does_not_pass_pick_through_as_a_resolution() {
+fn a_picked_dialog_gets_a_session_big_enough_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
     let file = WorkFile::new_with_meta(
-        PathBuf::from("/demo/thing.exe"),
-        HashMap::from([(
-            crate::wine_emu::META_RES.to_string(),
-            crate::wine_emu::PICK.to_string(),
-        )]),
+        exe,
+        HashMap::from([(META_RES.to_string(), crate::wine_emu::PICK.to_string())]),
     );
 
-    assert!(!capture_meta(&file).contains_key("gamescope_resolution"));
+    let meta = capture_meta(&file);
+
+    assert_eq!(
+        meta.get("gamescope_resolution").map(String::as_str),
+        Some("1920x1200")
+    );
+    let args = argv(&meta);
+    assert!(!args.contains(&"--prefer".to_string()));
+    if args.iter().any(|a| a == "--launch") {
+        assert!(args.contains(&"--no-go".to_string()));
+    }
+}
+
+/// A release's path is the one thing in the command that demarc did not choose,
+/// and demo filenames are full of spaces. Splitting the command back up on them
+/// would tear such a path in half, so the words are held apart by something a
+/// path cannot contain.
+#[test]
+fn a_path_with_spaces_in_it_stays_one_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "second reality (final).exe");
+    let file = WorkFile::new(exe.clone());
+
+    let args = argv(&capture_meta(&file));
+
+    let exe = exe.canonicalize().unwrap().to_string_lossy().into_owned();
+    assert!(args.contains(&exe), "{args:?}");
+}
+
+/// `wine_desktop` is an entry's word for `explorer /desktop=`, and it has to
+/// reach the captured session as such: the core's own option for it does
+/// nothing, and the command is where the desktop actually lives.
+#[test]
+fn a_virtual_desktop_reaches_the_captured_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "kotpg.exe");
+    let file = WorkFile::new_with_meta(
+        exe,
+        HashMap::from([
+            (META_DESKTOP.to_string(), "true".to_string()),
+            (META_RES.to_string(), "800x600".to_string()),
+        ]),
+    );
+
+    let args = argv(&capture_meta(&file));
+
+    assert_eq!(args[0], "wine");
+    assert_eq!(args[1], "explorer");
+    assert_eq!(args[2], "/desktop=demarc,800x600");
 }
 
 /// A value set by hand — `-x gamescope_command=...`, which is how the core gets
 /// pointed at a client that is not wine — must survive the translation.
-#[cfg(target_os = "linux")]
 #[test]
 fn an_explicit_option_beats_the_translation() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
     let file = WorkFile::new_with_meta(
-        PathBuf::from("/demo/thing.exe"),
+        exe,
         HashMap::from([
-            (crate::wine_emu::META_RES.to_string(), "800x600".to_string()),
+            (META_RES.to_string(), "800x600".to_string()),
             ("gamescope_resolution".to_string(), "1280x720".to_string()),
             ("gamescope_command".to_string(), "glxgears".to_string()),
         ]),
@@ -229,6 +309,27 @@ fn an_explicit_option_beats_the_translation() {
 
     let meta = capture_meta(&file);
 
-    assert_eq!(meta.get("gamescope_resolution").map(String::as_str), Some("1280x720"));
-    assert_eq!(meta.get("gamescope_command").map(String::as_str), Some("glxgears"));
+    assert_eq!(
+        meta.get("gamescope_resolution").map(String::as_str),
+        Some("1280x720")
+    );
+    assert_eq!(
+        meta.get("gamescope_command").map(String::as_str),
+        Some("glxgears")
+    );
+}
+
+/// A release that has gone missing has no command to build, and must not take
+/// the session down with it: the core is left to make what it can of the path.
+#[test]
+fn a_missing_release_still_gets_a_command() {
+    let file = WorkFile::new(PathBuf::from("/no/such/demo.exe"));
+
+    let meta = capture_meta(&file);
+
+    assert_eq!(
+        meta.get("gamescope_command").map(String::as_str),
+        Some("wine")
+    );
+    assert!(!meta.contains_key("gamescope_resolution"));
 }

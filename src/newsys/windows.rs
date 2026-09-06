@@ -1,23 +1,25 @@
+//! Windows releases, run under wine.
+//!
+//! The whole module is Linux-only — wine and gamescope are — and
+//! [`super`] only compiles it there; see the `mod windows` declaration for
+//! what a `.exe` becomes on the platforms that don't have it.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-#[cfg(target_os = "linux")]
-use tracing::info;
+use anyhow::{Context, Result};
+use tracing::{info, warn};
 
 use super::dos::{ExeKind, exe_kind};
 use super::{System, get_ext, walk_dir};
 use crate::backend::Backend;
-#[cfg(target_os = "linux")]
-use anyhow::Context;
-#[cfg(target_os = "linux")]
 use crate::libloader;
-#[cfg(target_os = "linux")]
 use crate::retro_emu::RetroCoreThreaded;
-#[cfg(target_os = "linux")]
 use crate::system_dir;
-#[cfg(target_os = "linux")]
-use crate::wine_emu::WineEmu;
+use crate::wine_emu::{
+    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_RES, WineEmu, close_prefix, is_yes,
+    wine_command, wine_prefix,
+};
 use crate::workfile::WorkFile;
 
 /// Meta key: show the demo *inside* demarc rather than on top of it.
@@ -29,13 +31,22 @@ use crate::workfile::WorkFile;
 /// instead, which composites the session headlessly and hands the frames back
 /// like any other core. That picture is demarc's to do as it likes with; the
 /// price is a readback per frame. See `docs/GAMESCOPE.md`.
-#[cfg(target_os = "linux")]
 pub const META_CAPTURE: &str = "wine_capture";
 
 /// The core that runs the gamescope session. Not on the libretro buildbot, so
 /// it only ever resolves through `DEMARC_CORE_DIR` — see [`libloader`].
-#[cfg(target_os = "linux")]
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
+
+/// What holds the words of `gamescope_command` apart.
+///
+/// A core option is one string, and the command in it is a demo's path with a
+/// driver and its arguments around it — full of spaces, brackets and
+/// apostrophes, as demo filenames are. Splitting that back into an argv on
+/// spaces would break every release with one in its name, so the core splits on
+/// this instead when it finds it, and on spaces only when it does not (which is
+/// what a `-x gamescope_command=glxgears` typed by hand still wants). ASCII US,
+/// the separator that exists for exactly this and cannot appear in a path.
+const ARG_SEPARATOR: &str = "\u{1f}";
 
 /// Win32 programs, run rather than emulated.
 ///
@@ -48,14 +59,6 @@ const CORE_NAME_GAMESCOPE: &str = "gamescope";
 /// `wine_res` sets the size it runs at, and a release that names its own size —
 /// `demo_1920x1080.exe` — fills that in by itself, see [`res_from_name`].
 pub struct WindowsSystem {}
-
-/// Whether a Windows program can be started at all here.
-///
-/// wine and gamescope are Linux-only, so everywhere else a `.exe` with a `PE`
-/// image in it is something nothing can run — and claiming it would take the
-/// release away from the picture and music systems that can at least show what
-/// it shipped beside the program.
-const CAN_RUN_WINDOWS: bool = cfg!(target_os = "linux");
 
 /// Does this look like a Windows program?
 ///
@@ -97,12 +100,7 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
 /// and none of them is a size to run a demo at. The bounds are what a display
 /// could actually be — 320x200 at the bottom, 8K at the top — which throws all
 /// three out without needing to understand the rest of the name.
-// Only consumed from the `wine_res` handling below, which is Linux-only; kept
-// available everywhere so `reads_a_resolution_only_where_a_name_holds_one`
-// exercises the same parsing on every platform.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const MIN_SIDE: u32 = 120;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const MAX_SIDE: u32 = 7680;
 
 /// What can sit between the two numbers, most telling first.
@@ -112,7 +110,6 @@ const MAX_SIDE: u32 = 7680;
 /// included. So a name carrying both — `elevated_1920x1080` — is read by its
 /// `x`, and the `_` form is what is left for the names spelled
 /// `elevated_1920_1080`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
 
 /// Read the resolution a Windows release named itself after.
@@ -126,7 +123,6 @@ const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
 ///
 /// The digits are taken as they lie, so `vga640x480` reads as well as
 /// `demo_640x480` does; only the numbers have to make sense, per [`MIN_SIDE`].
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn res_from_name(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy().into_owned();
     RES_SEPARATORS
@@ -136,7 +132,6 @@ fn res_from_name(path: &Path) -> Option<String> {
 
 /// The first `<digits><separator><digits>` in `stem` that could be a screen
 /// mode, normalised to `WIDTHxHEIGHT`.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn scan_res(stem: &str, separators: &[char]) -> Option<String> {
     let bytes = stem.as_bytes();
     for (i, sep) in stem.match_indices(separators) {
@@ -201,7 +196,7 @@ impl System for WindowsSystem {
     }
 
     fn can_load(&self, path: &Path) -> bool {
-        CAN_RUN_WINDOWS && self.handles_ext(path) && is_windows_program(path)
+        self.handles_ext(path) && is_windows_program(path)
     }
 
     /// The default walks for the first file it can load, in whatever order the
@@ -217,21 +212,19 @@ impl System for WindowsSystem {
             return Ok(false);
         };
 
-        #[cfg(target_os = "linux")]
         if file.has_tag("512x384") {
-            file.set_meta(crate::wine_emu::META_RES, "512x384");
+            file.set_meta(META_RES, "512x384");
         }
 
         // A release that names its size in the file name is telling us the one
         // thing that has to be known before it starts - see [`res_from_name`].
         // An entry that sets `wine_res` itself has said it more deliberately,
         // so it wins.
-        #[cfg(target_os = "linux")]
-        if !file.has_meta(crate::wine_emu::META_RES)
+        if !file.has_meta(META_RES)
             && let Some(res) = res_from_name(&target)
         {
             info!("Running {target:?} at {res}, after its name");
-            file.set_meta(crate::wine_emu::META_RES, res);
+            file.set_meta(META_RES, res);
         }
 
         file.path = target;
@@ -243,21 +236,10 @@ impl System for WindowsSystem {
     /// run in. Spelled out here rather than left to the backend so they show up
     /// with the rest of an entry's settings.
     fn default_meta(&self) -> HashMap<&str, &str> {
-        #[allow(unused_mut)]
-        let mut meta: HashMap<&str, &str> = HashMap::new();
-        #[cfg(target_os = "linux")]
-        {
-            meta.insert(crate::wine_emu::META_RES, crate::wine_emu::DEFAULT_RES);
-            meta.insert(
-                crate::wine_emu::META_DESKTOP,
-                if crate::wine_emu::DEFAULT_DESKTOP {
-                    "true"
-                } else {
-                    "false"
-                },
-            );
-        }
-        meta
+        HashMap::from([
+            (META_RES, DEFAULT_RES),
+            (META_DESKTOP, if DEFAULT_DESKTOP { "true" } else { "false" }),
+        ])
     }
 
     fn name(&self) -> &'static str {
@@ -268,25 +250,27 @@ impl System for WindowsSystem {
     /// differs is where it lands — on top of demarc through [`WineEmu`], or
     /// inside it through the gamescope core. See [`META_CAPTURE`].
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        #[cfg(target_os = "linux")]
-        {
-            if crate::wine_emu::is_yes(&path.get_meta_or(META_CAPTURE, "false")) {
-                let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
-                    .context("Could not load the gamescope core")?;
-                return Ok(Box::new(RetroCoreThreaded::new(
-                    &core,
-                    system_dir(),
-                    Some(path),
-                    capture_meta(path),
-                    false,
-                )?));
-            }
-            Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?))
+        if !is_yes(&path.get_meta_or(META_CAPTURE, "true")) {
+            return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
         }
-        // `can_load` said no everywhere else, so this is only reachable by
-        // asking for a Windows program by hand.
-        #[cfg(not(target_os = "linux"))]
-        anyhow::bail!("{:?} needs wine, which demarc only has on Linux", path.path);
+        let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
+            .context("Could not load the gamescope core")?;
+        // The same clearing [`WineEmu`] does before a session of its own, and
+        // for the same reason: what is still running in the shared prefix is
+        // left over from a demarc that was killed before it could close one,
+        // and it would otherwise sit there one wine tree per launch. The core
+        // closes its own prefix on the way out, but only a session that got to
+        // unload cleanly.
+        if let Ok(prefix) = wine_prefix() {
+            close_prefix(&prefix);
+        }
+        Ok(Box::new(RetroCoreThreaded::new(
+            &core,
+            system_dir(),
+            Some(path),
+            capture_meta(path),
+            false,
+        )?))
     }
 }
 
@@ -298,27 +282,49 @@ impl System for WindowsSystem {
 /// Translating here keeps the entry vocabulary the one people already write, and
 /// keeps `overrides.toml` working unchanged whichever backend runs the release.
 ///
+/// The command is the whole point of doing it here rather than leaving the core
+/// to work it out from the file name. Left alone the core runs `wine <exe>`,
+/// which is a demo sitting on its setup dialog with nobody to answer it; what it
+/// is given instead is exactly the command [`WineEmu`] would have run — the
+/// dialog driver, the resolution to pick, the virtual desktop if one was asked
+/// for — built in one place by [`crate::wine_emu::wine_command`] so the two
+/// backends cannot drift apart. See `docs/GAMESCOPE.md`.
+///
 /// Anything already set explicitly wins, so `-x gamescope_command=...` still
 /// overrides the whole thing, which is how the core gets tested against a client
 /// that is not wine at all.
-#[cfg(target_os = "linux")]
 fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
     let mut meta = path.get_all_meta();
 
-    if !meta.contains_key("gamescope_resolution")
-        && let Some(res) = meta.get(crate::wine_emu::META_RES)
-        && res != crate::wine_emu::PICK
-    {
-        meta.insert("gamescope_resolution".into(), res.clone());
+    match wine_command(&path.path, &meta) {
+        Ok(cmd) => {
+            // The size the driver is about to ask the dialog for, which is the
+            // size the session has to be. Not read from `wine_res` directly:
+            // `pick` is not a size, and the one it stands for is the backend's
+            // to decide.
+            meta.entry("gamescope_resolution".into())
+                .or_insert_with(|| format!("{}x{}", cmd.width, cmd.height));
+            meta.entry("gamescope_command".into())
+                .or_insert_with(|| cmd.argv.join(ARG_SEPARATOR));
+        }
+        Err(err) => {
+            // Only a release that has gone missing between being unpacked and
+            // being started gets here. The core can still make a command out of
+            // the path it is handed, so let it: a demo with an unanswered dialog
+            // is better than no demo at all.
+            warn!(
+                "Could not work out the wine command for {:?}: {err}",
+                path.path
+            );
+            meta.entry("gamescope_command".into())
+                .or_insert_with(|| "wine".into());
+        }
     }
-
-    meta.entry("gamescope_command".into())
-        .or_insert_with(|| "wine".into());
 
     // The same prefix [`WineEmu`] uses, so a release prepared under one backend is
     // still prepared under the other and neither goes near the user's own `~/.wine`.
     if !meta.contains_key("gamescope_wineprefix")
-        && let Ok(prefix) = crate::wine_emu::wine_prefix()
+        && let Ok(prefix) = wine_prefix()
     {
         meta.insert(
             "gamescope_wineprefix".into(),
