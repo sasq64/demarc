@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 use std::io::Write;
 use std::os::fd::FromRawFd;
 
@@ -350,7 +351,11 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
 
         let args = cfg.wine_args(Some(driver));
         assert_eq!(args[0], "explorer", "{spelling:?}");
-        assert_eq!(args[1], "/desktop=demarc,800x600", "{spelling:?}");
+        assert_eq!(
+            args[1],
+            format!("/desktop={},800x600", cfg.desktop_name),
+            "{spelling:?}"
+        );
         // Everything the desktop hosts is still one command: the driver,
         // which starts the demo itself.
         assert_eq!(args[2], "/sys/win/autodlg.exe", "{spelling:?}");
@@ -364,7 +369,7 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
     ]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
     let args = cfg.wine_args(Some(driver));
-    assert_eq!(args[1], "/desktop=demarc,1920x1200");
+    assert_eq!(args[1], format!("/desktop={},1920x1200", cfg.desktop_name));
     // ...and it hosts the driver even with the dialog left alone, since
     // the driver is what starts the demo inside it.
     assert_eq!(args[2], "/sys/win/autodlg.exe");
@@ -377,6 +382,25 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
         assert!(!cfg.desktop, "{spelling:?}");
         assert_ne!(cfg.wine_args(Some(driver))[0], "explorer", "{spelling:?}");
     }
+}
+
+/// Two sessions must never land on one desktop.
+///
+/// A wine desktop owns the display mode, and `explorer /desktop=NAME` hands a
+/// second caller the *existing* desktop of that name rather than one of its
+/// own — so a shared name is a shared display mode, which a grid of demos each
+/// going fullscreen cannot survive. See [`super::desktop_name`].
+#[test]
+fn every_session_gets_a_desktop_of_its_own() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let meta = HashMap::from([(META_DESKTOP.to_string(), "true".to_string())]);
+
+    let names: Vec<String> = (0..8)
+        .map(|_| Config::from_meta(&exe, &meta).unwrap().desktop_name)
+        .collect();
+
+    let unique: HashSet<&String> = names.iter().collect();
+    assert_eq!(unique.len(), names.len(), "{names:?}");
 }
 
 /// `wine_dll_overrides` is wine's variable and goes to wine as it stands —
@@ -406,4 +430,34 @@ fn carries_dll_overrides_through_untouched() {
             .dll_overrides,
         None
     );
+}
+
+/// The whole of the grid fix: `wineserver -k` ends every wine process in a
+/// prefix at once, so it must happen exactly twice per run of demarc — once
+/// before the first session, to clear what a killed demarc left behind, and
+/// once after the last, to close the prefix. Never in between, where it would
+/// end the wine of every cell that is still running.
+///
+/// The one test that touches [`PREFIX_USERS`], since the counter is global.
+#[test]
+fn only_the_first_and_last_session_touch_the_prefix() {
+    assert_eq!(PREFIX_USERS.load(Ordering::SeqCst), 0);
+
+    // First in clears the prefix; the cells that follow it do not.
+    assert!(claim_prefix());
+    assert!(!claim_prefix());
+    assert!(!claim_prefix());
+
+    // Nor does a cell that ends while others are still running.
+    assert!(!release_prefix());
+    assert!(!release_prefix());
+
+    // Only the last one out closes it.
+    assert!(release_prefix());
+    assert_eq!(PREFIX_USERS.load(Ordering::SeqCst), 0);
+
+    // And a session started after that is a first session again.
+    assert!(claim_prefix());
+    assert!(release_prefix());
+    assert_eq!(PREFIX_USERS.load(Ordering::SeqCst), 0);
 }

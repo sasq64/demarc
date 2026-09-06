@@ -289,7 +289,14 @@ fn a_virtual_desktop_reaches_the_captured_session() {
 
     assert_eq!(args[0], "wine");
     assert_eq!(args[1], "explorer");
-    assert_eq!(args[2], "/desktop=demarc,800x600");
+    // The name is a session's own — see `wine_emu::desktop_name` — so only the
+    // shape of it, and the size, are anyone else's business.
+    let desktop = args[2]
+        .strip_prefix("/desktop=")
+        .expect("a desktop argument");
+    let (name, size) = desktop.split_once(',').expect("a name and a size");
+    assert!(!name.is_empty());
+    assert_eq!(size, "800x600");
 }
 
 /// A value set by hand — `-x gamescope_command=...`, which is how the core gets
@@ -425,4 +432,32 @@ fn restates_dll_overrides_as_a_core_option() {
     // same as no WINEDLLOVERRIDES.
     let file = WorkFile::new(exe);
     assert!(!capture_meta(&file).contains_key("gamescope_wine_dll_overrides"));
+}
+
+/// `wineserver -k` ends every wine process in a prefix at once, so a grid of
+/// captured sessions sharing one prefix can only work if exactly one thing
+/// decides when to run it. That thing is demarc, not the core.
+#[test]
+fn leaves_closing_the_prefix_to_demarc() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
+
+    let meta = capture_meta(&WorkFile::new(exe.clone()));
+    assert_eq!(
+        meta.get("gamescope_close_prefix").map(String::as_str),
+        Some("false")
+    );
+
+    // Still an option like any other, so a session run against the core by hand
+    // can have it back.
+    let file = WorkFile::new_with_meta(
+        exe,
+        HashMap::from([("gamescope_close_prefix".to_string(), "true".to_string())]),
+    );
+    assert_eq!(
+        capture_meta(&file)
+            .get("gamescope_close_prefix")
+            .map(String::as_str),
+        Some("true")
+    );
 }

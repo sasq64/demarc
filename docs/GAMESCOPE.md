@@ -153,6 +153,21 @@ has no option of its own for it. `wine_res=pick` is not a size, so the resolutio
 the one the backend picks to stand in for it (1920x1200, big enough to hold whatever the
 person watching chooses).
 
+`wine_desktop` is *on* by default here, where the on-top backend leaves it off, and the
+desktop's name is a session's own (`demarc<pid>_<n>`, from `wine_emu::desktop_name`). Both
+follow from the one thing capture can do that `WineEmu` cannot: run several sessions at
+once. They share a prefix, so they share a wineserver, and on wine's default desktop they
+would share a display mode — one demo going fullscreen sets it, the next is refused
+(`D3D9: EnterFullscreenMode: Failed to change display mode`) and usually page-faults
+rather than carry on. A desktop each is what keeps a `--grid` of them apart, and two
+sessions on one desktop name would be back to one desktop, since `explorer /desktop=NAME`
+hands out the *existing* desktop of that name.
+
+What a desktop each does not buy is the *list of modes* it can offer: that is written once
+per prefix by whichever desktop registered last, so a demo asking for a size no other
+session is using can still be refused (Elevated at 1440x900 beside two 800x600 sessions is
+the case to try). Nothing short of a prefix per session fixes that one.
+
 ---
 
 ## What was learned
@@ -257,20 +272,29 @@ Open:
    and a frozen, silent view is one the frontend moves on from. Reading the driver's stream
    in the core would make it prompt, and would tell a demo that failed to start from one on
    a long loading screen.
-3. **The wine prefix is handled wholesale**, exactly as `wine_emu.rs`'s `close_prefix` is.
-   `wineserver -k` on teardown ends every wine process in the prefix, and
-   `WindowsSystem::create` clears it again before starting a captured session — which is
-   what collects the tree a killed demarc leaves behind, since a core that never got to
-   unload never closed anything. Both mean two wine sessions cannot share the prefix, so
-   two Windows demos at once is out (item 6 is about Chrome and other clients, which are
-   unaffected).
+3. **The wine prefix is handled wholesale, and demarc owns it.** `wineserver -k` ends
+   every wine process in a prefix at once, so the one thing it cannot be is per session:
+   in a grid, one core unloading would end every other cell's wine. So the core does not
+   do it. `capture_meta` sets `gamescope_close_prefix=false`, which leaves the core's
+   `StopWineServer` a no-op, and demarc counts the sessions instead
+   (`PrefixGuard`/`PREFIX_USERS` in `src/wine_emu.rs`): the first one in clears whatever a
+   killed demarc left behind, the last one out closes the prefix. What that costs is the
+   service processes of sessions that have already ended — `winedevice.exe` `setsid()`s
+   out of the process group and survives the group kill — which now accumulate at most one
+   set per cell until the last session goes. The demos themselves still die with their
+   cell: `CloseSession` signals the process group either way. Set
+   `-x gamescope_close_prefix=true` to give the core its own teardown back, which is what
+   a session run against the core by hand wants.
 4. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
 5. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome
    itself is happy with either (`BuildClient` passes an `http` path through unchanged);
    it is the routing that needs teaching.
-6. **Not tested in a grid.** Each core instance forks its own compositor, so several should
-   work; nobody has run two at once.
+6. **Barely tested in a grid.** Each core instance forks its own compositor and gets its
+   own copy of the core `.so` (see the core-duping note in `retro_emu.rs`), and the shared
+   wine prefix no longer rules several out (item 3) — but nobody has run a grid of Windows
+   demos for long. The prefix is still one directory: a release that installs something
+   into it does so for every cell at once.
 7. **The release has not been run on a machine that did not build it.** See
    Distribution — the bundle is built against Ubuntu 24.04's libraries and carries the
    ones a desktop cannot be assumed to have, but nobody has yet unpacked it on a

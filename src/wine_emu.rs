@@ -73,7 +73,7 @@ use bevy::prelude::*;
 use bevy::window::{Monitor, PrimaryWindow, WindowMode};
 use tracing::{debug, info, warn};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, ViewFocus};
 use crate::screensaver::covers_a_monitor;
 use crate::system_dir;
 
@@ -118,6 +118,11 @@ pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 /// fullscreen becomes a window the size of the desktop, and anything the demo
 /// does with the real display mode stops working. Most demos are happier
 /// without it — but see [`META_DESKTOP`] for the ones that are not.
+///
+/// This is the answer for a session of [`WineEmu`]'s, which is the only one on
+/// the machine. A captured session is not: several of them run at once and a
+/// desktop each is what keeps their display modes apart, so
+/// [`crate::newsys::windows`] turns it on before this is ever consulted.
 pub const DEFAULT_DESKTOP: bool = false;
 
 /// What a `pick` session runs at, since the size is not known until the person
@@ -136,7 +141,7 @@ const PICK_RES: &str = "1920x1200";
 /// Deliberately not `~/.wine`: a demo is free to install fonts, codecs and DLL
 /// overrides, and none of that belongs in the prefix the user runs their own
 /// programs from. wine creates it on first use.
-const PREFIX_DIR: &str = ".wine";
+const PREFIX_DIR: &str = ".wine-demarc";
 
 /// The dialog driver, relative to [`system_dir`].
 const AUTODLG: &str = "win/demarc-autodlg.exe";
@@ -212,6 +217,183 @@ pub(crate) fn wine_prefix() -> Result<PathBuf> {
     Ok(home.join(PREFIX_DIR))
 }
 
+/// How many things are running in the shared wine prefix right now.
+///
+/// There is one prefix for every Windows release demarc runs, and the only way
+/// to end wine cleanly in it is `wineserver -k`, which ends *every* wine process
+/// in it at once — see [`close_prefix`]. With one demo at a time that is exactly
+/// right. In a `--grid` it is not: the second cell starting would sweep the
+/// first cell's demo away, and the first cell to finish would take the rest of
+/// them with it.
+///
+/// So the sweep is counted rather than done per session. The first user in
+/// clears whatever a killed demarc left behind; the last user out closes the
+/// prefix; in between nobody touches it. What that costs is the service
+/// processes of a session that has already ended — `winedevice.exe` `setsid()`s
+/// out of the process group and so survives the group kill, and nothing but
+/// `wineserver -k` can reach it — so they accumulate, at most one set per cell,
+/// until the last session goes. That is the same trade `close_prefix` already
+/// makes; it just now spans a grid rather than a single demo.
+///
+/// Counted in demarc's process, which is enough because both users of it —
+/// [`Session::start`] and `WindowsSystem::create` — run on the main thread.
+static PREFIX_USERS: AtomicUsize = AtomicUsize::new(0);
+
+/// A claim on the shared wine prefix, held for as long as something is running
+/// in it and dropped when that thing is. See [`PREFIX_USERS`].
+///
+/// Backends that run wine themselves ([`Session`]) hold one directly; the
+/// gamescope core, which runs its own wine but is told not to close the prefix
+/// after it, has one held for it by [`PrefixBound`].
+pub(crate) struct PrefixGuard {
+    prefix: PathBuf,
+}
+
+impl PrefixGuard {
+    /// The prefix this guard is a claim on, for handing to wine.
+    pub(crate) fn path(&self) -> &Path {
+        &self.prefix
+    }
+}
+
+/// Claim the shared wine prefix, clearing it first if nothing else is using it.
+///
+/// Anything running in the prefix with no live claim behind it is left over from
+/// a session that never got to `Drop` — a demarc that was killed, or crashed.
+/// Clearing it here keeps those from piling up one set per launch, and costs
+/// nothing when there is nothing to clear.
+pub(crate) fn open_prefix() -> Result<PrefixGuard> {
+    let prefix = wine_prefix()?;
+    if claim_prefix() {
+        close_prefix(&prefix);
+    }
+    Ok(PrefixGuard { prefix })
+}
+
+impl Drop for PrefixGuard {
+    fn drop(&mut self) {
+        if release_prefix() {
+            close_prefix(&self.prefix);
+        }
+    }
+}
+
+/// Take a share of the prefix. True when this is the only one, and so the
+/// caller is the one that has to clear whatever was left in it.
+fn claim_prefix() -> bool {
+    PREFIX_USERS.fetch_add(1, Ordering::SeqCst) == 0
+}
+
+/// Give a share back. True when it was the last one, and so the caller is the
+/// one that has to close the prefix.
+fn release_prefix() -> bool {
+    PREFIX_USERS.fetch_sub(1, Ordering::SeqCst) == 1
+}
+
+/// A backend that runs wine in the shared prefix without owning the prefix's
+/// lifetime, wrapped so that it does.
+///
+/// The gamescope core is the one that needs this. It runs wine itself and would
+/// close the prefix on unload exactly as [`Session`] used to, which in a grid
+/// means one cell's core going away takes every other cell's wine with it. So
+/// demarc tells it not to (`gamescope_close_prefix=false`, see
+/// [`crate::newsys::windows`]) and holds the claim out here instead, where it
+/// can be counted against every other session — the core's copy of the option
+/// is per instance and could not count anything but itself.
+///
+/// Everything else is delegation: the wrapper adds no behaviour, only a
+/// lifetime.
+pub(crate) struct PrefixBound<B> {
+    inner: B,
+    /// Dropped with the backend, which is what makes the claim last exactly as
+    /// long as the session behind it.
+    _prefix: PrefixGuard,
+}
+
+impl<B: Backend> PrefixBound<B> {
+    pub(crate) fn new(inner: B, prefix: PrefixGuard) -> Self {
+        Self {
+            inner,
+            _prefix: prefix,
+        }
+    }
+}
+
+impl<B: Backend> Backend for PrefixBound<B> {
+    fn set_disk(&mut self, no: u32) {
+        self.inner.set_disk(no);
+    }
+    fn get_number_of_disks(&mut self) -> u32 {
+        self.inner.get_number_of_disks()
+    }
+    fn run(&mut self) -> bool {
+        self.inner.run()
+    }
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+    fn press_key(&mut self, code: u32, down: bool, mods: u16) {
+        self.inner.press_key(code, down, mods);
+    }
+    fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
+        self.inner.add_mouse_motion(dx, dy);
+    }
+    fn set_mouse_position(&mut self, x: f32, y: f32) {
+        self.inner.set_mouse_position(x, y);
+    }
+    fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
+        self.inner.set_mouse_buttons(left, right, middle);
+    }
+    fn set_joypad(&mut self, port: u32, id: u32, down: bool) {
+        self.inner.set_joypad(port, id, down);
+    }
+    fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
+        self.inner.with_frame(f);
+    }
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+        self.inner.with_audio(f);
+    }
+    fn get_frame_size(&self) -> (usize, usize) {
+        self.inner.get_frame_size()
+    }
+    fn aspect_ratio(&self) -> f32 {
+        self.inner.aspect_ratio()
+    }
+    fn sample_rate(&self) -> f64 {
+        self.inner.sample_rate()
+    }
+    fn fps(&self) -> f64 {
+        self.inner.fps()
+    }
+    fn skip_frames(&mut self, frames: u32) {
+        self.inner.skip_frames(frames);
+    }
+    fn frames_stepped(&self) -> u64 {
+        self.inner.frames_stepped()
+    }
+    fn state(&self) -> u64 {
+        self.inner.state()
+    }
+    fn frame_hash(&self) -> u64 {
+        self.inner.frame_hash()
+    }
+    fn is_idle(&self) -> bool {
+        self.inner.is_idle()
+    }
+    fn is_silent(&self) -> bool {
+        self.inner.is_silent()
+    }
+    fn focus(&mut self, focus: ViewFocus) {
+        self.inner.focus(focus);
+    }
+    fn send_keys(&mut self, keys: &[(u32, u32)]) {
+        self.inner.send_keys(keys);
+    }
+    fn get_info(&self) -> Option<String> {
+        self.inner.get_info()
+    }
+}
+
 /// What to do about the setup dialog nearly every PC demo opens with.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Dialog {
@@ -228,6 +410,28 @@ enum Dialog {
     Pick,
 }
 
+/// A name no other wine virtual desktop is using.
+///
+/// A desktop is wine's unit of "one screen": it owns the display mode, the
+/// window list and the foreground window, and `explorer /desktop=NAME` gives a
+/// second caller the *existing* desktop of that name rather than one of its
+/// own. Two demos on one desktop therefore fight over a single display mode —
+/// the second to call `ChangeDisplaySettings` is told no, and a demo that
+/// cannot go fullscreen usually falls over rather than carry on (`D3D9:
+/// EnterFullscreenMode: Failed to change display mode`, then a page fault).
+/// One name per session is what keeps a grid of them apart.
+///
+/// The pid is in there for the same reason at the next level up: two demarcs
+/// share a prefix as readily as two cells of one grid do.
+fn desktop_name() -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "demarc{}_{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// How a session is set up, resolved once from the entry's metadata so
 /// [`Backend::reset`] can build an identical one.
 #[derive(Clone)]
@@ -239,6 +443,11 @@ struct Config {
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
     desktop: bool,
+    /// What that desktop is called, and the reason the name is not a constant:
+    /// wine keeps one desktop per name per prefix, so two sessions sharing a
+    /// name share a desktop — and with it the one thing each of them has to
+    /// own, the display mode. See [`desktop_name`].
+    desktop_name: String,
     /// `WINEDLLOVERRIDES` for the session, or nothing to leave wine's own
     /// choices alone — see [`META_DLL_OVERRIDES`].
     dll_overrides: Option<String>,
@@ -281,6 +490,7 @@ impl Config {
                 .get(META_DESKTOP)
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_DESKTOP),
+            desktop_name: desktop_name(),
             dll_overrides: dll_overrides(meta),
         })
     }
@@ -298,7 +508,10 @@ impl Config {
         if self.desktop {
             args.extend([
                 "explorer".to_string(),
-                format!("/desktop=demarc,{}x{}", self.width, self.height),
+                format!(
+                    "/desktop={},{}x{}",
+                    self.desktop_name, self.width, self.height
+                ),
             ]);
         }
         // Only when there is no driver to run at all does the demo become the
@@ -436,8 +649,10 @@ struct Session {
     /// [`drain`] and [`Session::drop`].
     stop: Arc<AtomicBool>,
     logger: Option<JoinHandle<()>>,
-    /// The prefix this demo runs in, so [`Drop`] can tell wine to close it.
-    prefix: PathBuf,
+    /// This session's claim on the shared wine prefix. Never read: it is held
+    /// so that dropping the session drops the claim, which closes the prefix if
+    /// this was the last thing using it — see [`PREFIX_USERS`].
+    _prefix: PrefixGuard,
     /// What the driver has told us, filled in by the logger thread.
     signals: Arc<Signals>,
     /// Whether there is a driver in the command to hear it from. Without one
@@ -466,12 +681,7 @@ impl Session {
         }
         let autodlg = autodlg();
 
-        let prefix = wine_prefix()?;
-        // Anything still running in the prefix is left over from a session that
-        // never got to `Drop` — a demarc that was killed, or crashed. Clearing
-        // it here keeps those from piling up one set per launch, and costs
-        // nothing when there is nothing to clear.
-        close_prefix(&prefix);
+        let prefix = open_prefix()?;
         let wine_args = cfg.wine_args(autodlg.as_deref());
         debug!("wine {}", wine_args.join(" "));
 
@@ -491,7 +701,7 @@ impl Session {
             // neither when started from wherever demarc was launched, and fails
             // silently - a dialog that works and then a black screen.
             .current_dir(cfg.exe.parent().unwrap_or(Path::new(".")))
-            .env("WINEPREFIX", &prefix)
+            .env("WINEPREFIX", prefix.path())
             .env(
                 "WINEDEBUG",
                 std::env::var("WINEDEBUG").unwrap_or_else(|_| "-all".into()),
@@ -545,14 +755,14 @@ impl Session {
                 Dialog::Drive => "driving the setup dialog",
                 Dialog::Pick => "setup dialog left to you",
             },
-            prefix
+            prefix.path()
         );
         SESSIONS.fetch_add(1, Ordering::Relaxed);
         Ok(Session {
             gamescope,
             stop,
             logger: Some(logger),
-            prefix,
+            _prefix: prefix,
             signals,
             driven: autodlg.is_some(),
             began: Instant::now(),
@@ -634,7 +844,8 @@ impl Drop for Session {
             unsafe { libc::kill(-(self.gamescope.id() as i32), libc::SIGKILL) };
             let _ = self.gamescope.wait();
         }
-        close_prefix(&self.prefix);
+        // The prefix itself is closed by dropping `self.prefix`, which happens
+        // after this body — and only if no other session is still using it.
 
         // Bounded, because `drain` polls rather than blocks: the pipes can
         // still be open here (see `close_prefix`), and joining a thread parked
@@ -656,9 +867,9 @@ impl Drop for Session {
 /// pipe, and demarc parked in `join` for as long as it was left alone.)
 ///
 /// Safe to do wholesale because the prefix is this backend's own — nothing of
-/// the user's runs in `~/.wine-demos`. The one thing it rules out is two
-/// Windows demos at once, which a backend that takes the whole screen could not
-/// do anyway.
+/// the user's runs in it. Wholesale is also why nothing calls this directly:
+/// it would end the wine of every other session sharing the prefix, so it is
+/// [`PrefixGuard`]'s to call, once nothing is left in there to end.
 /// Waited for, but never for long: this runs on the way out of demarc, and a
 /// wineserver that will not answer must not be able to hold the quit up.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);

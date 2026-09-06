@@ -17,14 +17,14 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine_emu::{
-    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_DLL_OVERRIDES, META_RES, WineEmu,
-    close_prefix, dll_overrides, is_yes, wine_command, wine_prefix,
+    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_DLL_OVERRIDES, META_RES, PrefixBound, WineEmu,
+    dll_overrides, is_yes, open_prefix, wine_command, wine_prefix,
 };
 use crate::workfile::WorkFile;
 
 /// Meta key: show the demo *inside* demarc rather than on top of it.
 ///
-/// Off by default. [`WineEmu`] draws wine straight to the screen, which costs
+/// On by default. [`WineEmu`] draws wine straight to the screen, which costs
 /// nothing and looks right but leaves the release outside everything demarc
 /// does to a picture — no shaders, no grid, no screenshots, no audio. Setting
 /// this routes the same wine command through the gamescope libretro core
@@ -314,6 +314,22 @@ impl System for WindowsSystem {
             file.set_meta(META_DLL_OVERRIDES, overrides);
         }
 
+        // A captured session runs in a wine virtual desktop unless an entry has
+        // said otherwise, where [`WineEmu`]'s does not. The difference is that
+        // there can be several captured sessions at once — a `--grid` of them —
+        // and they share one wine prefix, so they share one wineserver and, on
+        // wine's default desktop, one display mode. A demo going fullscreen
+        // sets that mode; the next one to try is refused and most of them fall
+        // over on the spot. A desktop of its own gives each session a display
+        // mode of its own, which is the only thing they were fighting over.
+        // See [`crate::wine_emu::desktop_name`].
+        //
+        // Before `default_meta` fills the key in, so this is the default rather
+        // than an override of one, and an entry's own `wine_desktop` still wins.
+        if is_yes(&file.get_meta_or(META_CAPTURE, "true")) && !file.has_meta(META_DESKTOP) {
+            file.set_meta(META_DESKTOP, "true");
+        }
+
         file.path = target;
         Ok(true)
     }
@@ -342,22 +358,18 @@ impl System for WindowsSystem {
         }
         let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
             .context("Could not load the gamescope core")?;
-        // The same clearing [`WineEmu`] does before a session of its own, and
-        // for the same reason: what is still running in the shared prefix is
-        // left over from a demarc that was killed before it could close one,
-        // and it would otherwise sit there one wine tree per launch. The core
-        // closes its own prefix on the way out, but only a session that got to
-        // unload cleanly.
-        if let Ok(prefix) = wine_prefix() {
-            close_prefix(&prefix);
-        }
-        Ok(Box::new(RetroCoreThreaded::new(
-            &core,
-            system_dir(),
-            Some(path),
-            capture_meta(path),
-            false,
-        )?))
+        // The same claim on the shared prefix [`WineEmu`] takes for a session of
+        // its own, and for the same reasons: the first one in clears what a
+        // killed demarc left behind, and the last one out closes the prefix.
+        // The core is told to keep its hands off it (`gamescope_close_prefix`
+        // in [`capture_meta`]) so that `wineserver -k` happens once, here, when
+        // nothing is left running in there — otherwise one cell of a grid
+        // unloading would end every other cell's wine.
+        let prefix = open_prefix()?;
+        Ok(Box::new(PrefixBound::new(
+            RetroCoreThreaded::new(&core, system_dir(), Some(path), capture_meta(path), false)?,
+            prefix,
+        )))
     }
 }
 
@@ -427,6 +439,14 @@ fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
             prefix.to_string_lossy().into_owned(),
         );
     }
+
+    // Whose job it is to end wine in that prefix. Not the core's: `wineserver -k`
+    // ends every wine process in a prefix at once, and each core instance can
+    // only ever know about its own session, so a grid of them would close the
+    // prefix out from under each other. demarc counts the sessions and closes it
+    // when the last one goes — see [`crate::wine_emu::PrefixGuard`].
+    meta.entry("gamescope_close_prefix".into())
+        .or_insert_with(|| "false".into());
 
     meta
 }
