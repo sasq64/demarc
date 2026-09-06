@@ -63,9 +63,8 @@ fn produces_once_and_then_hits() {
 #[test]
 fn distinct_keys_get_distinct_entries() {
     let (_tmp, cache) = temp_cache();
-    let write = |text: &'static str| {
-        move |dest: &Path| -> Result<()> { Ok(std::fs::write(dest, text)?) }
-    };
+    let write =
+        |text: &'static str| move |dest: &Path| -> Result<()> { Ok(std::fs::write(dest, text)?) };
     let a = cache
         .get_file("http://x/v1/game.zip", "game.zip", write("one"))
         .unwrap();

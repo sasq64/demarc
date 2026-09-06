@@ -5,8 +5,8 @@ use std::io::Write;
 fn make_zip(entry: &str, contents: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zw.start_file(entry, opts).unwrap();
     zw.write_all(contents).unwrap();
     zw.finish().unwrap();

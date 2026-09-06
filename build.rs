@@ -113,7 +113,12 @@ fn build_adflib() {
     // declaration of 'mempcpy' follows non-static declaration"), so tell it the
     // libc ones are there. MSVC has none of the four, so it keeps its own.
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        for probe in ["HAVE_STRNLEN", "HAVE_STRNDUP", "HAVE_STPNCPY", "HAVE_MEMPCPY"] {
+        for probe in [
+            "HAVE_STRNLEN",
+            "HAVE_STRNDUP",
+            "HAVE_STPNCPY",
+            "HAVE_MEMPCPY",
+        ] {
             build.define(probe, Some("1"));
         }
     }

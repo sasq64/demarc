@@ -152,8 +152,7 @@ fn downloads_ftp_path_containing_a_space() {
 #[test]
 #[ignore = "hits the network"]
 fn downloads_a_link_class_url() {
-    let buf =
-        download("SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip").unwrap();
+    let buf = download("SceneOrgFile:/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip").unwrap();
     assert_eq!(buf.len(), 46596);
     assert_eq!(&buf[..2], b"PK");
 }

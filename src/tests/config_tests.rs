@@ -63,8 +63,7 @@ fn cross_fade_length_is_optional() {
 fn waiting_for_sound_needs_a_fade_and_implies_a_silent_drive() {
     assert!(Args::try_parse_from(["demarc", "--cross-wait-sound"]).is_err());
 
-    let mut args =
-        Args::try_parse_from(["demarc", "--cross-fade", "--cross-wait-sound"]).unwrap();
+    let mut args = Args::try_parse_from(["demarc", "--cross-fade", "--cross-wait-sound"]).unwrap();
     assert!(!args.silent_drive, "not until the implications are applied");
     args.apply_implications();
     assert!(args.silent_drive);

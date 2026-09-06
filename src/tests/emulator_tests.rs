@@ -123,8 +123,8 @@ fn an_archive_is_unpacked_before_the_main_thread_sees_it() {
     let dir = tempfile::tempdir().unwrap();
     let archive = dir.path().join("demo.zip");
     let mut zw = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     // Nothing any system claims, so the load fails once it gets there —
     // after the unpacking step this test is about.
     zw.start_file("inside.xyz", opts).unwrap();

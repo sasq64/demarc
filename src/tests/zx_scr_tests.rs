@@ -108,8 +108,7 @@ fn flash_becomes_a_cycle_range() {
     assert!(img.indices.iter().all(|&i| i == 16 || i == 17));
 
     // A flashing cell whose colours match has nothing to swap.
-    let same =
-        load_indexed_from_memory(&flat_screen(0xff, FLASH | 0x02 | (0x02 << 3))).unwrap();
+    let same = load_indexed_from_memory(&flat_screen(0xff, FLASH | 0x02 | (0x02 << 3))).unwrap();
     assert!(same.ranges.is_empty());
     assert_eq!(same.palette.len(), PALETTE_COLOURS);
 }

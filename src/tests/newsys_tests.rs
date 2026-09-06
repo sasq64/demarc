@@ -25,8 +25,8 @@ fn test_load(path: &Path, name: &str) -> WorkFile {
 fn zip_with(path: &Path, entry: &str, contents: &[u8]) {
     use std::io::Write;
     let mut zw = zip::ZipWriter::new(fs::File::create(path).unwrap());
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zw.start_file(entry, opts).unwrap();
     zw.write_all(contents).unwrap();
     zw.finish().unwrap();
@@ -47,7 +47,10 @@ fn unpacking_reaches_into_a_double_packed_release() {
     let meta = HashMap::from([("latency".to_string(), "2".to_string())]);
     let wf = unpack_release(&outer, &meta).unwrap();
 
-    assert!(wf.is_temporary(), "unpacking never writes beside the archive");
+    assert!(
+        wf.is_temporary(),
+        "unpacking never writes beside the archive"
+    );
     assert_eq!(
         fs::read(wf.path.join("demo.adf")).unwrap(),
         b"the release itself",

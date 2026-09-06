@@ -87,8 +87,7 @@ fn only_entries_with_several_urls_have_downloads_to_pick() {
     assert!(DownloadSource::new(&EmuFile::default()).is_none());
     assert!(DownloadSource::new(&file(vec![URL])).is_none());
 
-    let source =
-        DownloadSource::new(&file(vec![URL, "https://mirror.example/demo.lha"])).unwrap();
+    let source = DownloadSource::new(&file(vec![URL, "https://mirror.example/demo.lha"])).unwrap();
     let rows = source.search("", DEFAULT_MAX_RESULTS);
     assert_eq!(
         rows.iter()
