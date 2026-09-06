@@ -333,3 +333,96 @@ fn a_missing_release_still_gets_a_command() {
     );
     assert!(!meta.contains_key("gamescope_resolution"));
 }
+
+/// A demo that ships its own d3dx9 ships it because wine's builtin one is not
+/// the build it was linked against — see `NATIVE_DLLS`. Nobody writes that
+/// down in an entry, so it is read off the release itself.
+#[test]
+fn takes_dll_overrides_from_the_dlls_a_release_ships() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+
+    let release = dir.path().join("stargazer");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "stargazer.exe");
+    write_bytes(&release, "d3dx9_43.dll", b"MZ");
+    // Upper case on disk, lower case in the variable: wine matches the module
+    // name either way, and one spelling keeps the string predictable.
+    write_bytes(&release, "D3DX9_37.DLL", b"MZ");
+    // Shipped too, and not ours to override: wine's own is the better one.
+    write_bytes(&release, "openal32.dll", b"MZ");
+    // Not beside the executable, so not something wine is about to load.
+    fs::create_dir_all(release.join("data")).unwrap();
+    write_bytes(&release.join("data"), "d3dx9_31.dll", b"MZ");
+
+    let mut wf = WorkFile::new(release.clone());
+    assert!(sys.load(&mut wf).unwrap());
+    assert_eq!(
+        wf.get_meta_or(META_DLL_OVERRIDES, ""),
+        "d3dx9_37,d3dx9_43=n"
+    );
+
+    // What the entry says was written by a person who knew what they meant,
+    // and it is the whole variable — adding to it is theirs to do.
+    let meta = HashMap::from([(META_DLL_OVERRIDES.to_string(), "d3d9=n,b".to_string())]);
+    let mut wf = WorkFile::new_with_meta(release, meta);
+    assert!(sys.load(&mut wf).unwrap());
+    assert_eq!(wf.get_meta_or(META_DLL_OVERRIDES, ""), "d3d9=n,b");
+}
+
+/// A release with nothing worth overriding gets no variable at all, rather than
+/// an empty one.
+#[test]
+fn a_release_with_no_native_dlls_asks_for_no_overrides() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+
+    let release = dir.path().join("plain");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "plain.exe");
+    write_bytes(&release, "fmod.dll", b"MZ");
+
+    let mut wf = WorkFile::new(release);
+    assert!(sys.load(&mut wf).unwrap());
+    assert!(!wf.has_meta(META_DLL_OVERRIDES));
+}
+
+/// Only one `*`, and it stands for anything or nothing.
+#[test]
+fn globs_dll_names_loosely_enough_to_be_useful() {
+    assert!(glob_match("d3dx9_43.dll", "d3dx9*.dll"));
+    assert!(glob_match("D3DX9_43.DLL", "d3dx9*.dll"));
+    // The `*` may stand for nothing at all.
+    assert!(glob_match("d3dx9.dll", "d3dx9*.dll"));
+    // ...but the two ends may not overlap to make one.
+    assert!(!glob_match("d3dx9.dl", "d3dx9*.dll"));
+    assert!(!glob_match("d3dx10_43.dll", "d3dx9*.dll"));
+    assert!(!glob_match("xd3dx9_43.dll", "d3dx9*.dll"));
+    // No `*` is a plain comparison.
+    assert!(glob_match("fmod.dll", "fmod.dll"));
+    assert!(!glob_match("fmodex.dll", "fmod.dll"));
+}
+
+/// The captured backend runs the same wine, so it needs the same variable —
+/// under the name the core knows it by.
+#[test]
+fn restates_dll_overrides_as_a_core_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_DLL_OVERRIDES.to_string(), "d3dx9_37=n".to_string())]),
+    );
+
+    let meta = capture_meta(&file);
+
+    assert_eq!(
+        meta.get("gamescope_wine_dll_overrides").map(String::as_str),
+        Some("d3dx9_37=n")
+    );
+
+    // Nothing asked for, nothing sent: an empty WINEDLLOVERRIDES is not the
+    // same as no WINEDLLOVERRIDES.
+    let file = WorkFile::new(exe);
+    assert!(!capture_meta(&file).contains_key("gamescope_wine_dll_overrides"));
+}

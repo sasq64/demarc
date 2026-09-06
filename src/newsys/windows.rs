@@ -17,8 +17,8 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine_emu::{
-    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_RES, WineEmu, close_prefix, is_yes,
-    wine_command, wine_prefix,
+    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_DLL_OVERRIDES, META_RES, WineEmu,
+    close_prefix, dll_overrides, is_yes, wine_command, wine_prefix,
 };
 use crate::workfile::WorkFile;
 
@@ -90,6 +90,80 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
         rank -= 20;
     }
     rank
+}
+
+/// DLLs a release ships beside its executable that wine must be told to load
+/// instead of its own, as `*`-globs matched against the file name.
+///
+/// Only d3dx9 for now, and it is the one that keeps coming up. The D3DX helper
+/// libraries were never redistributable as part of Windows: a demo that uses
+/// one ships that exact build of it, down to the `_37`, and wine's builtin
+/// d3dx9 is a reimplementation that is not that build. Left to choose, wine
+/// prefers its own and the demo either draws nothing or falls over on a
+/// function the real one had.
+///
+/// The general rule this is a careful slice of — "a DLL a release brought with
+/// it is one it meant to use" — is not safe to apply wholesale: a release also
+/// ships DLLs wine implements properly and does better with its own of
+/// (`d3d9.dll` wrappers, `openal32.dll`, `msvcr*.dll` from a bundled runtime),
+/// so the list stays a list.
+const NATIVE_DLLS: [&str; 1] = ["d3dx9*.dll"];
+
+/// What wine calls "load the file that is there, not mine": see
+/// `WINEDLLOVERRIDES` in wine(1).
+const NATIVE: &str = "n";
+
+/// Does `name` match a `*`-glob, ignoring case?
+///
+/// One `*`, standing for any run of characters including none; anything else in
+/// the pattern is a literal. Enough for [`NATIVE_DLLS`] and small enough to read
+/// — a pattern with no `*` is a plain comparison.
+fn glob_match(name: &str, pattern: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let pattern = pattern.to_ascii_lowercase();
+    match pattern.split_once('*') {
+        Some((head, tail)) => {
+            name.len() >= head.len() + tail.len() && name.starts_with(head) && name.ends_with(tail)
+        }
+        None => name == pattern,
+    }
+}
+
+/// The `WINEDLLOVERRIDES` a release's own files ask for, or nothing if it
+/// brought none of the DLLs in [`NATIVE_DLLS`].
+///
+/// Only the directory the executable is in is looked at — a DLL is loaded from
+/// beside the program that wants it, so one buried in `data/` is not one wine is
+/// about to pick up anyway.
+///
+/// The result is wine's own syntax, sorted so the same release always produces
+/// the same string: `d3dx9_37,d3dx9_43=n`.
+fn native_dll_overrides(dir: &Path) -> Option<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return None;
+    };
+    let mut modules: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            NATIVE_DLLS
+                .iter()
+                .any(|pattern| glob_match(&name, pattern))
+                // wine names the module without its extension, and matches it
+                // case-insensitively; lower case is how it is usually written.
+                .then(|| {
+                    Path::new(&name)
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                })
+        })
+        .collect();
+    modules.sort();
+    modules.dedup();
+    (!modules.is_empty()).then(|| format!("{}={NATIVE}", modules.join(",")))
 }
 
 /// The smallest and largest either side of a resolution in a file name is
@@ -227,6 +301,19 @@ impl System for WindowsSystem {
             file.set_meta(META_RES, res);
         }
 
+        // A release that carries its own d3dx9 carries it because it needs that
+        // build of it - see [`NATIVE_DLLS`]. An entry that has written the
+        // overrides out itself has said something more deliberate, so it wins,
+        // and adding to it is its author's business: the variable is wine's and
+        // is passed through whole.
+        if !file.has_meta(META_DLL_OVERRIDES)
+            && let Some(dir) = target.parent()
+            && let Some(overrides) = native_dll_overrides(dir)
+        {
+            info!("Running {target:?} with WINEDLLOVERRIDES={overrides}, after its own DLLs");
+            file.set_meta(META_DLL_OVERRIDES, overrides);
+        }
+
         file.path = target;
         Ok(true)
     }
@@ -319,6 +406,15 @@ fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
             meta.entry("gamescope_command".into())
                 .or_insert_with(|| "wine".into());
         }
+    }
+
+    // Whatever DLLs the release brought with it, or an entry asked for by hand.
+    // The core exports it for the same reason [`WineEmu`] does — it is wine
+    // inside there either way — and it is spelled out here so both backends read
+    // it off the one key.
+    if let Some(overrides) = dll_overrides(&meta) {
+        meta.entry("gamescope_wine_dll_overrides".into())
+            .or_insert(overrides);
     }
 
     // The same prefix [`WineEmu`] uses, so a release prepared under one backend is

@@ -14,10 +14,14 @@
 #   WINEARCH = "win32",
 #   WINEDLLOVERRIDES = "mscoree,mshtml=",
 # }
+#
+[zoo.76]
+meta = { wine_dll_overrides = "d3dx9_31=n" }
 
 [zoo.102]
 file = "rgba_tbc_elevated_2016.zip"
 boot = "elevated_1280x720.exe"
+meta = { wine_dll_overrides = "d3dx9_43=n" }
 
 [zoo.108]
 file = "2nd_real.zip"

@@ -378,3 +378,32 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
         assert_ne!(cfg.wine_args(Some(driver))[0], "explorer", "{spelling:?}");
     }
 }
+
+/// `wine_dll_overrides` is wine's variable and goes to wine as it stands —
+/// there is no second syntax to learn. What it is not is a variable that has to
+/// be there: an empty one says nothing and is better left unset.
+#[test]
+fn carries_dll_overrides_through_untouched() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let of = |value: &str| {
+        let meta = HashMap::from([(META_DLL_OVERRIDES.to_string(), value.to_string())]);
+        Config::from_meta(&exe, &meta).unwrap().dll_overrides
+    };
+
+    assert_eq!(
+        of("d3dx9_37,d3dx9_43=n;d3d9=n,b").as_deref(),
+        Some("d3dx9_37,d3dx9_43=n;d3d9=n,b")
+    );
+    // Whitespace around it is a `-x` or an `overrides.toml` line, not part of
+    // what wine is being told.
+    assert_eq!(of("  d3dx9_37=n \n").as_deref(), Some("d3dx9_37=n"));
+
+    assert_eq!(of(""), None);
+    assert_eq!(of("   "), None);
+    assert_eq!(
+        Config::from_meta(&exe, &HashMap::new())
+            .unwrap()
+            .dll_overrides,
+        None
+    );
+}

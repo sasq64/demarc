@@ -136,10 +136,12 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_refresh` | `60` | Hz. `50` for demos that want it |
 | `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead. Split on ASCII US (`\x1f`) when it holds one — which is how demarc sends a whole argv whose paths have spaces in them — and on whitespace otherwise, which is what a hand-typed `-x gamescope_command="vkcube --gpu 0"` wants |
 | `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client |
+| `gamescope_wine_dll_overrides` | — | `WINEDLLOVERRIDES` for a wine client, wine's own syntax (`d3dx9_37=n`). demarc fills it in from the DLLs a release ships beside its `.exe` |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
-(`src/newsys/windows.rs`), so an entry keeps saying `wine_res` and `wine_desktop` and an
+(`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_desktop` and
+`wine_dll_overrides`, and an
 `overrides.toml` written for the on-top backend means the same thing here.
 
 The command is the substantial half of that translation. Left to itself the core turns a

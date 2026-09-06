@@ -40,6 +40,10 @@
 //!   the process demarc started stays alive long after the picture has gone.
 //!   The driver holds the demo's own handle, and writes a line when it starts
 //!   and another when it ends — see [`Signals`].
+//! - `wine_dll_overrides` is `WINEDLLOVERRIDES`, spelled wine's way and passed
+//!   through unread. Unset, [`crate::newsys::windows`] writes one from the DLLs
+//!   the release itself ships next to its executable: a demo that carries its
+//!   own `d3dx9_37.dll` needs that build of it and not wine's reimplementation.
 //! - `wine_desktop=true` puts the pair inside a wine virtual desktop
 //!   (`explorer /desktop=`) fixed at the session size. Demos switch display
 //!   modes on their way to fullscreen, and under gamescope's Xwayland that
@@ -96,6 +100,17 @@ const DRIVER_STREAM: &str = "autodlg";
 /// Meta key asking for the demo to be run inside a wine virtual desktop.
 pub const META_DESKTOP: &str = "wine_desktop";
 
+/// Meta key holding wine's `WINEDLLOVERRIDES`, passed through as it stands.
+///
+/// The wine spelling exactly — `d3dx9_37=n;d3dx9_43=n`, modules comma-separated
+/// on the left and `n`/`b` on the right — because there is no reason to invent a
+/// second one for something an entry's author already knows how to write.
+///
+/// Unset, [`crate::newsys::windows`] fills it in from the DLLs a release ships
+/// beside its executable: a demo that carries its own `d3dx9_37.dll` carries it
+/// because it needs that one, and wine's builtin d3dx9 is not it.
+pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
+
 /// Whether one is used when nothing says otherwise.
 ///
 /// Off, because the desktop is a window manager of wine's own between the demo
@@ -121,7 +136,7 @@ const PICK_RES: &str = "1920x1200";
 /// Deliberately not `~/.wine`: a demo is free to install fonts, codecs and DLL
 /// overrides, and none of that belongs in the prefix the user runs their own
 /// programs from. wine creates it on first use.
-const PREFIX_DIR: &str = ".wine-demos";
+const PREFIX_DIR: &str = ".wine";
 
 /// The dialog driver, relative to [`system_dir`].
 const AUTODLG: &str = "win/demarc-autodlg.exe";
@@ -163,6 +178,19 @@ const SAMPLE_RATE: f64 = 44100.0;
 fn parse_res(text: &str) -> Option<(u32, u32)> {
     let (w, h) = text.trim().split_once(['x', 'X'])?;
     Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+}
+
+/// The `WINEDLLOVERRIDES` an entry asks for, if it asks for one.
+///
+/// Whitespace-trimmed and nothing else: the value is wine's own syntax and goes
+/// to wine unread — see [`META_DLL_OVERRIDES`]. An empty one is no override at
+/// all rather than an empty variable, which to wine means "override nothing
+/// with nothing" and is worth keeping out of the environment.
+pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
+    meta.get(META_DLL_OVERRIDES)
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 /// Is a meta value one of the ways of saying yes?
@@ -211,6 +239,9 @@ struct Config {
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
     desktop: bool,
+    /// `WINEDLLOVERRIDES` for the session, or nothing to leave wine's own
+    /// choices alone — see [`META_DLL_OVERRIDES`].
+    dll_overrides: Option<String>,
 }
 
 impl Config {
@@ -250,6 +281,7 @@ impl Config {
                 .get(META_DESKTOP)
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_DESKTOP),
+            dll_overrides: dll_overrides(meta),
         })
     }
 
@@ -463,7 +495,16 @@ impl Session {
             .env(
                 "WINEDEBUG",
                 std::env::var("WINEDEBUG").unwrap_or_else(|_| "-all".into()),
-            )
+            );
+        // Handed to gamescope, which passes its environment on to the command
+        // it runs; wine is the one that reads it. Only set when there is
+        // something to say, so a demo that needs no override runs in whatever
+        // the user's own environment has (nothing, usually).
+        if let Some(overrides) = &cfg.dll_overrides {
+            debug!("WINEDLLOVERRIDES={overrides}");
+            command.env("WINEDLLOVERRIDES", overrides);
+        }
+        command
             .stdin(Stdio::null())
             // Both pipes are drained on a thread below. They have to be: wine
             // and gamescope are chatty enough to fill a pipe and block on it.
