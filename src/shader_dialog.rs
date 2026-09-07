@@ -42,7 +42,7 @@ use crate::post_process::{ShaderEffect, ShaderPath};
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
 use crate::settings::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, DemoSettings, GRID_HEIGHT_FRACTION, LABEL_SIZE,
+    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, DemarcSettings, GRID_HEIGHT_FRACTION, LABEL_SIZE,
     ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
 
@@ -584,7 +584,7 @@ fn shader_dialog_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut shader_path: ResMut<ShaderPath>,
     mut render: ResMut<RenderSettings>,
-    settings: Res<DemoSettings>,
+    settings: Res<DemarcSettings>,
 ) -> Result {
     if !dialog.open {
         return Ok(());

@@ -17,7 +17,7 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::settings::{DemoSettings, ShowSettings};
+use crate::settings::{DemarcSettings, ShowSettings};
 use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
@@ -505,9 +505,9 @@ fn handle_cmd(
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
     mut show_list: MessageWriter<ShowFuzzyList>,
-    mut show_settings: MessageWriter<ShowSettings<DemoSettings>>,
+    mut show_settings: MessageWriter<ShowSettings<DemarcSettings>>,
     mut show_shader: MessageWriter<ShowShaderDialog>,
-    mut demo_settings: ResMut<DemoSettings>,
+    mut demo_settings: ResMut<DemarcSettings>,
 ) {
     let mut show_info = false;
     let count = emus.iter().count();

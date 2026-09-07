@@ -229,7 +229,7 @@ fn set_variant_reaches_a_field_through_the_struct() {
 /// `Unsupported` is a setting nobody can change.
 #[test]
 fn demo_settings_are_all_editable() {
-    let fields = describe(DemoSettings::default().as_partial_reflect());
+    let fields = describe(DemarcSettings::default().as_partial_reflect());
     assert_eq!(
         widgets(&fields),
         vec![

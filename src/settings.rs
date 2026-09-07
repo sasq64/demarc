@@ -700,6 +700,17 @@ fn close<T: SettingsType>(state: &mut SettingsState<T>, hud: &mut HudState) {
     hud.set_settings_open(false);
 }
 
+#[derive(Default, Debug, Clone, Copy, Reflect)]
+pub enum Resolution {
+    Res640x480,
+    #[default]
+    Res800x600,
+    Res1024x768,
+
+    Res1280x720,
+    Res1920x1080,
+}
+
 // ---------------------------------------------------------------------------
 // The app's own settings
 // ---------------------------------------------------------------------------
@@ -713,10 +724,14 @@ fn close<T: SettingsType>(state: &mut SettingsState<T>, hud: &mut HudState) {
 /// what was last applied, which is both what a fresh open shows and the
 /// baseline [`apply_settings`] compares against.
 #[derive(Resource, Reflect, Clone, Debug, Default)]
-pub struct DemoSettings {
+pub struct DemarcSettings {
     pub fullscreen: bool,
-    pub shader: ShaderArg,
     pub background: Color,
+
+    pub fast_load: bool,
+    pub resolution: Resolution,
+
+    pub shader: ShaderArg,
     /// Frames a core's worker thread may run ahead. Takes effect on the next
     /// release loaded -- see [`crate::newsys::NewSys::set_meta`]. `0` would be
     /// a rendezvous channel (the worker blocked until the frontend takes each
@@ -737,8 +752,8 @@ pub struct DemoSettings {
 /// clobber what something else did while it was open -- RightAlt+F moving the
 /// window, or a `--slangp` preset that no [`ShaderArg`] names.
 pub fn apply_settings(
-    mut reader: MessageReader<SettingsApplied<DemoSettings>>,
-    mut current: ResMut<DemoSettings>,
+    mut reader: MessageReader<SettingsApplied<DemarcSettings>>,
+    mut current: ResMut<DemarcSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     mut clear_color: ResMut<ClearColor>,
     mut shader_path: ResMut<ShaderPath>,
@@ -753,13 +768,6 @@ pub fn apply_settings(
             } else {
                 WindowMode::Windowed
             };
-        }
-        if new.shader != current.shader {
-            shader_path.effect = new.shader.effect();
-            // `--shader none` is the passthrough preset with the effect switched
-            // off (RightAlt+C is what turns it back on); picking any other
-            // shader here is asking to see it, so switch it on.
-            render.crt_effect = new.shader != ShaderArg::None;
         }
         if new.background != current.background {
             clear_color.0 = new.background;

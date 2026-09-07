@@ -469,12 +469,14 @@ fn main() {
     // What the settings dialog opens showing. Seeded from the command line so
     // the first open reports the state the app is actually in; from then on it
     // is the record of what was last applied (see `settings::apply_settings`).
-    let demo_settings = settings::DemoSettings {
+    let demo_settings = settings::DemarcSettings {
         fullscreen: !win,
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
         shader,
+        fast_load: false,
+        resolution: settings::Resolution::Res800x600,
     };
 
     let speed_test = args.speed_test;
@@ -549,7 +551,7 @@ fn main() {
     // The settings dialog, registered per settings type. `DemoSettings` is the
     // one the RightAlt+E hotkey opens.
     app.insert_resource(demo_settings)
-        .add_settings_type::<settings::DemoSettings>()
+        .add_settings_type::<settings::DemarcSettings>()
         .add_systems(Update, settings::apply_settings);
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);
