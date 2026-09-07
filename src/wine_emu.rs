@@ -136,7 +136,7 @@ const PICK_RES: &str = "1920x1200";
 /// Deliberately not `~/.wine`: a demo is free to install fonts, codecs and DLL
 /// overrides, and none of that belongs in the prefix the user runs their own
 /// programs from. wine creates it on first use.
-const PREFIX_DIR: &str = ".wine";
+const PREFIX_DIR: &str = ".wine-demarc";
 
 /// The dialog driver, relative to [`system_dir`].
 const AUTODLG: &str = "win/demarc-autodlg.exe";
