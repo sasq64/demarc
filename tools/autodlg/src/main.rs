@@ -7,8 +7,11 @@
 //! "Fullscreen" can be turned off by name on the demos that offer them.
 //!
 //! Real dialogs vary more than they look. Resolution is a radio group in some
-//! (Equinox, We Cell) and a combo box in others (Conspiracy), and button labels
-//! carry decoration — `GO!`, `&Run` — so every comparison goes through `norm`.
+//! (Equinox, We Cell), a combo box in others (Conspiracy), a *list* box in
+//! others still (Haujobb's *You Should*), and in others again (Fairlight's
+//! *Panic Room*) a row of *checkboxes* the demo makes exclusive itself — see
+//! [`drive`]. Button labels carry decoration — `GO!`, `&Run` — so every
+//! comparison goes through `norm`.
 //!
 //! Everything printed here is for whoever is reading the log, bar three lines:
 //! see [`report`], which is how demarc learns what the demo is doing.
@@ -230,6 +233,12 @@ const CB_GETLBTEXT: u32 = 0x0148;
 const CB_GETLBTEXTLEN: u32 = 0x0149;
 const CB_SETCURSEL: u32 = 0x014E;
 const CBN_SELCHANGE: usize = 1;
+const LB_GETCURSEL: u32 = 0x0188;
+const LB_GETCOUNT: u32 = 0x018B;
+const LB_GETTEXT: u32 = 0x0189;
+const LB_GETTEXTLEN: u32 = 0x018A;
+const LB_SETCURSEL: u32 = 0x0186;
+const LBN_SELCHANGE: usize = 1;
 const WM_COMMAND: u32 = 0x0111;
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
@@ -263,6 +272,10 @@ enum Kind {
     /// A group box: a `Button` by class, but clicking it does nothing useful.
     Group,
     Combo,
+    /// A list box, which is a combo box that is already open: same list, same
+    /// one-of-many selection, a different set of message numbers — see
+    /// [`Ctl::list_msgs`]. Haujobb's *You Should* offers its resolutions in one.
+    List,
     Other,
 }
 
@@ -288,6 +301,8 @@ impl Ctl {
             }
         } else if class.eq_ignore_ascii_case("ComboBox") {
             Kind::Combo
+        } else if class.eq_ignore_ascii_case("ListBox") {
+            Kind::List
         } else {
             Kind::Other
         };
@@ -307,32 +322,83 @@ impl Ctl {
         unsafe { SendMessageW(self.hwnd, BM_CLICK, 0, 0) };
     }
 
-    /// The entries of a combo box, in order.
+    /// The messages that read and write a list of entries, for the two controls
+    /// that hold one.
+    ///
+    /// A combo box and a list box are the same control asked a different way —
+    /// one list, one selected entry — and the only thing that differs between
+    /// them is the numbers: `CB_GETCOUNT` against `LB_GETCOUNT`, and so on down
+    /// the line. So the numbers are all that is picked here, and [`items`] and
+    /// [`select`] are written once.
+    ///
+    /// `(count, textlen, text, setcursel, selchange)`, or nothing for a control
+    /// that is not a list at all.
+    ///
+    /// [`items`]: Ctl::items
+    /// [`select`]: Ctl::select
+    fn list_msgs(&self) -> Option<(u32, u32, u32, u32, usize)> {
+        match self.kind {
+            Kind::Combo => Some((
+                CB_GETCOUNT,
+                CB_GETLBTEXTLEN,
+                CB_GETLBTEXT,
+                CB_SETCURSEL,
+                CBN_SELCHANGE,
+            )),
+            Kind::List => Some((
+                LB_GETCOUNT,
+                LB_GETTEXTLEN,
+                LB_GETTEXT,
+                LB_SETCURSEL,
+                LBN_SELCHANGE,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The entries of a combo box or list box, in order. Empty for anything
+    /// else — asking a push button for its list is a question with no answer,
+    /// not an error.
     fn items(&self) -> Vec<String> {
-        let count = unsafe { SendMessageW(self.hwnd, CB_GETCOUNT, 0, 0) };
+        let Some((get_count, get_len, get_text, _, _)) = self.list_msgs() else {
+            return Vec::new();
+        };
+        let count = unsafe { SendMessageW(self.hwnd, get_count, 0, 0) };
         (0..count.max(0))
             .map(|i| {
-                let len = unsafe { SendMessageW(self.hwnd, CB_GETLBTEXTLEN, i as usize, 0) };
+                let len = unsafe { SendMessageW(self.hwnd, get_len, i as usize, 0) };
                 let mut buf = vec![0u16; (len.max(0) as usize) + 1];
                 let n = unsafe {
-                    SendMessageW(self.hwnd, CB_GETLBTEXT, i as usize, buf.as_mut_ptr() as isize)
+                    SendMessageW(self.hwnd, get_text, i as usize, buf.as_mut_ptr() as isize)
                 };
                 String::from_utf16_lossy(&buf[..n.max(0) as usize])
             })
             .collect()
     }
 
-    /// Select combo box entry `index`, and tell the dialog it changed — some
-    /// demos track the selection from the notification rather than reading it
-    /// back when the start button is pressed.
+    /// Which entry is selected, or -1 for none.
+    fn selected(&self) -> isize {
+        match self.kind {
+            Kind::Combo => unsafe { SendMessageW(self.hwnd, CB_GETCURSEL, 0, 0) },
+            Kind::List => unsafe { SendMessageW(self.hwnd, LB_GETCURSEL, 0, 0) },
+            _ => -1,
+        }
+    }
+
+    /// Select entry `index`, and tell the dialog it changed — some demos track
+    /// the selection from the notification rather than reading it back when the
+    /// start button is pressed.
     fn select(&self, index: usize) {
+        let Some((_, _, _, set_cursel, selchange)) = self.list_msgs() else {
+            return;
+        };
         unsafe {
-            SendMessageW(self.hwnd, CB_SETCURSEL, index, 0);
+            SendMessageW(self.hwnd, set_cursel, index, 0);
             let id = GetDlgCtrlID(self.hwnd) as usize & 0xffff;
             SendMessageW(
                 GetParent(self.hwnd),
                 WM_COMMAND,
-                id | (CBN_SELCHANGE << 16),
+                id | (selchange << 16),
                 self.hwnd,
             );
         }
@@ -466,9 +532,8 @@ fn print_tree(top: &Ctl, kids: &[Ctl]) {
                     " [ ]".to_string()
                 }
             }
-            Kind::Combo => {
-                let sel = unsafe { SendMessageW(c.hwnd, CB_GETCURSEL, 0, 0) };
-                format!(" items={:?} selected={sel}", c.items())
+            Kind::Combo | Kind::List => {
+                format!(" items={:?} selected={}", c.items(), c.selected())
             }
             _ => String::new(),
         };
@@ -481,6 +546,15 @@ fn print_tree(top: &Ctl, kids: &[Ctl]) {
 
 /// Apply every requested option to one dialog, then press its start button.
 /// Returns false if there was no button to press and no fallback was sent.
+///
+/// `--prefer` takes a checkbox as readily as a radio button, because a dialog
+/// that offers its resolutions as `BS_AUTOCHECKBOX` is offering a radio group
+/// in all but style: *Panic Room* draws eleven of them and unticks the other
+/// ten itself the moment one is clicked. Only the wanted box is ever ticked, so
+/// a dialog that does *not* do that is left with two ticked and picks whichever
+/// it likes — which is no worse than the default it would otherwise have kept.
+/// Unticking the rest is not an option here: `VSync` and `Aspect: 16:9` sit in
+/// the same list and are nobody's peers.
 fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     unsafe { SetForegroundWindow(top.hwnd) };
 
@@ -489,16 +563,16 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     for want in args.prefer.iter().map(|p| norm(p)) {
         for c in kids {
             match c.kind {
-                Kind::Radio if norm(&c.text).contains(&want) => {
+                Kind::Radio | Kind::Check if norm(&c.text).contains(&want) => {
                     if !c.checked() {
                         println!("select {:?}", c.text);
                         c.click();
                     }
                 }
-                Kind::Combo => {
+                Kind::Combo | Kind::List => {
                     let items = c.items();
                     if let Some(i) = items.iter().position(|it| norm(it).contains(&want)) {
-                        println!("select {:?} from combo box", items[i]);
+                        println!("select {:?} from {:?}", items[i], c.class);
                         c.select(i);
                     }
                 }
