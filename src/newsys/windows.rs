@@ -1,8 +1,4 @@
 //! Windows releases, run under wine.
-//!
-//! The whole module is Linux-only — wine and gamescope are — and
-//! [`super`] only compiles it there; see the `mod windows` declaration for
-//! what a `.exe` becomes on the platforms that don't have it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,47 +13,17 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine_emu::{
-    DEFAULT_DESKTOP, DEFAULT_RES, META_DESKTOP, META_DLL_OVERRIDES, META_RES, WineEmu,
-    close_prefix, dll_overrides, is_yes, wine_command, wine_prefix,
+    DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE, META_DESKTOP,
+    META_DLL_OVERRIDES, META_GL_COMPAT, META_RES, WineEmu, close_prefix, dll_overrides, gl_compat,
+    wine_command, wine_prefix,
 };
 use crate::workfile::WorkFile;
 
-/// Meta key: show the demo *inside* demarc rather than on top of it.
-///
-/// Off by default. [`WineEmu`] draws wine straight to the screen, which costs
-/// nothing and looks right but leaves the release outside everything demarc
-/// does to a picture — no shaders, no grid, no screenshots, no audio. Setting
-/// this routes the same wine command through the gamescope libretro core
-/// instead, which composites the session headlessly and hands the frames back
-/// like any other core. That picture is demarc's to do as it likes with; the
-/// price is a readback per frame. See `docs/GAMESCOPE.md`.
-pub const META_CAPTURE: &str = "wine_capture";
-
-/// The core that runs the gamescope session. Not on the libretro buildbot, so
-/// it only ever resolves through `DEMARC_CORE_DIR` — see [`libloader`].
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
 
 /// What holds the words of `gamescope_command` apart.
-///
-/// A core option is one string, and the command in it is a demo's path with a
-/// driver and its arguments around it — full of spaces, brackets and
-/// apostrophes, as demo filenames are. Splitting that back into an argv on
-/// spaces would break every release with one in its name, so the core splits on
-/// this instead when it finds it, and on spaces only when it does not (which is
-/// what a `-x gamescope_command=glxgears` typed by hand still wants). ASCII US,
-/// the separator that exists for exactly this and cannot appear in a path.
 const ARG_SEPARATOR: &str = "\u{1f}";
 
-/// Win32 programs, run rather than emulated.
-///
-/// A Windows release is the same `.exe` a DOS one is, with a `PE` image behind
-/// the DOS stub — see [`exe_kind`], which reads the header for both sides. What
-/// happens to it afterwards has nothing in common with the DOS half: there is
-/// no core and no emulated machine, only wine running the program on top of
-/// demarc. See [`crate::wine_emu`].
-///
-/// `wine_res` sets the size it runs at, and a release that names its own size —
-/// `demo_1920x1080.exe` — fills that in by itself, see [`res_from_name`].
 pub struct WindowsSystem {}
 
 /// Does this look like a Windows program?
@@ -69,12 +35,6 @@ fn is_windows_program(path: &Path) -> bool {
 }
 
 /// How much we want to start a given program, biggest first.
-///
-/// A release is usually a directory holding one program worth running and
-/// several that aren't — an installer, a setup tool, a viewer for the .NFO —
-/// and the walk reaches them in whatever order the filesystem gives. So rank
-/// them: the file named after the release is what the release is, and anything
-/// called INSTALL or SETUP is the one thing we know we don't want.
 fn launch_rank(path: &Path, release: &str) -> i32 {
     let stem = path
         .file_stem()
@@ -94,24 +54,7 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
 
 /// DLLs a release ships beside its executable that wine must be told to load
 /// instead of its own, as `*`-globs matched against the file name.
-///
-/// Only d3dx9 for now, and it is the one that keeps coming up. The D3DX helper
-/// libraries were never redistributable as part of Windows: a demo that uses
-/// one ships that exact build of it, down to the `_37`, and wine's builtin
-/// d3dx9 is a reimplementation that is not that build. Left to choose, wine
-/// prefers its own and the demo either draws nothing or falls over on a
-/// function the real one had.
-///
-/// The general rule this is a careful slice of — "a DLL a release brought with
-/// it is one it meant to use" — is not safe to apply wholesale: a release also
-/// ships DLLs wine implements properly and does better with its own of
-/// (`d3d9.dll` wrappers, `openal32.dll`, `msvcr*.dll` from a bundled runtime),
-/// so the list stays a list.
 const NATIVE_DLLS: [&str; 1] = ["d3dx9*.dll"];
-
-/// What wine calls "load the file that is there, not mine": see
-/// `WINEDLLOVERRIDES` in wine(1).
-const NATIVE: &str = "n";
 
 /// Does `name` match a `*`-glob, ignoring case?
 ///
@@ -131,13 +74,6 @@ fn glob_match(name: &str, pattern: &str) -> bool {
 
 /// The `WINEDLLOVERRIDES` a release's own files ask for, or nothing if it
 /// brought none of the DLLs in [`NATIVE_DLLS`].
-///
-/// Only the directory the executable is in is looked at — a DLL is loaded from
-/// beside the program that wants it, so one buried in `data/` is not one wine is
-/// about to pick up anyway.
-///
-/// The result is wine's own syntax, sorted so the same release always produces
-/// the same string: `d3dx9_37,d3dx9_43=n`.
 fn native_dll_overrides(dir: &Path) -> Option<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return None;
@@ -163,7 +99,7 @@ fn native_dll_overrides(dir: &Path) -> Option<String> {
         .collect();
     modules.sort();
     modules.dedup();
-    (!modules.is_empty()).then(|| format!("{}={NATIVE}", modules.join(",")))
+    (!modules.is_empty()).then(|| format!("{}=n", modules.join(",")))
 }
 
 /// The smallest and largest either side of a resolution in a file name is
@@ -273,10 +209,6 @@ impl System for WindowsSystem {
         self.handles_ext(path) && is_windows_program(path)
     }
 
-    /// The default walks for the first file it can load, in whatever order the
-    /// filesystem hands them over — which for a release directory holding
-    /// several programs is not a choice at all. See
-    /// [`WindowsSystem::pick_target`].
     fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
         self.pick_target(dir)
     }
@@ -286,14 +218,13 @@ impl System for WindowsSystem {
             return Ok(false);
         };
 
-        if file.has_tag("512x384") {
-            file.set_meta(META_RES, "512x384");
+        for tag in ["512x384", "320x200"] {
+            if file.has_tag(tag) {
+                file.set_meta(META_RES, tag);
+                break;
+            }
         }
 
-        // A release that names its size in the file name is telling us the one
-        // thing that has to be known before it starts - see [`res_from_name`].
-        // An entry that sets `wine_res` itself has said it more deliberately,
-        // so it wins.
         if !file.has_meta(META_RES)
             && let Some(res) = res_from_name(&target)
         {
@@ -301,11 +232,6 @@ impl System for WindowsSystem {
             file.set_meta(META_RES, res);
         }
 
-        // A release that carries its own d3dx9 carries it because it needs that
-        // build of it - see [`NATIVE_DLLS`]. An entry that has written the
-        // overrides out itself has said something more deliberate, so it wins,
-        // and adding to it is its author's business: the variable is wine's and
-        // is passed through whole.
         if !file.has_meta(META_DLL_OVERRIDES)
             && let Some(dir) = target.parent()
             && let Some(overrides) = native_dll_overrides(dir)
@@ -320,12 +246,17 @@ impl System for WindowsSystem {
 
     /// The size a Windows demo is asked to run at, and the size demarc gives
     /// the gamescope it runs in, plus whether it gets a wine virtual desktop to
-    /// run in. Spelled out here rather than left to the backend so they show up
-    /// with the rest of an entry's settings.
+    /// run in and whether Mesa is asked for a compatibility profile. Spelled out
+    /// here rather than left to the backend so they show up with the rest of an
+    /// entry's settings.
     fn default_meta(&self) -> HashMap<&str, &str> {
         HashMap::from([
             (META_RES, DEFAULT_RES),
             (META_DESKTOP, if DEFAULT_DESKTOP { "true" } else { "false" }),
+            (
+                META_GL_COMPAT,
+                if DEFAULT_GL_COMPAT { "true" } else { "false" },
+            ),
         ])
     }
 
@@ -333,21 +264,14 @@ impl System for WindowsSystem {
         "Windows"
     }
 
-    /// Nothing is emulated here either way: the program is run by wine. What
-    /// differs is where it lands — on top of demarc through [`WineEmu`], or
-    /// inside it through the gamescope core. See [`META_CAPTURE`].
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        if !is_yes(&path.get_meta_or(META_CAPTURE, "true")) {
+        if path.is_disabled("wine_capture") {
+            // Use old WineEmu that runs outside of demarc
             return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
         }
         let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
             .context("Could not load the gamescope core")?;
-        // The same clearing [`WineEmu`] does before a session of its own, and
-        // for the same reason: what is still running in the shared prefix is
-        // left over from a demarc that was killed before it could close one,
-        // and it would otherwise sit there one wine tree per launch. The core
-        // closes its own prefix on the way out, but only a session that got to
-        // unload cleanly.
+
         if let Ok(prefix) = wine_prefix() {
             close_prefix(&prefix);
         }
@@ -415,6 +339,15 @@ fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
     if let Some(overrides) = dll_overrides(&meta) {
         meta.entry("gamescope_wine_dll_overrides".into())
             .or_insert(overrides);
+    }
+
+    // `wine_gl_compat` is a yes/no an entry's author can answer; what the core
+    // exports is the Mesa variable itself, so the two are not the same key and
+    // the translation happens here with the rest of them. Only set when the
+    // answer is yes: unset is what leaves the demo's own profile request alone.
+    if gl_compat(&meta) {
+        meta.entry("gamescope_mesa_gl_version_override".into())
+            .or_insert_with(|| GL_COMPAT_OVERRIDE.to_string());
     }
 
     // The same prefix [`WineEmu`] uses, so a release prepared under one backend is

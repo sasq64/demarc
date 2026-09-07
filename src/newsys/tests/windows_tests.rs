@@ -426,3 +426,38 @@ fn restates_dll_overrides_as_a_core_option() {
     let file = WorkFile::new(exe);
     assert!(!capture_meta(&file).contains_key("gamescope_wine_dll_overrides"));
 }
+
+/// `wine_gl_compat` is demarc's yes/no; what the core exports is the Mesa
+/// variable itself. The translation is what lets an `overrides.toml` entry go on
+/// saying the readable thing.
+#[test]
+fn restates_gl_compat_as_a_mesa_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
+
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_GL_COMPAT.to_string(), "true".to_string())]),
+    );
+    assert_eq!(
+        capture_meta(&file)
+            .get("gamescope_mesa_gl_version_override")
+            .map(String::as_str),
+        Some(GL_COMPAT_OVERRIDE)
+    );
+
+    // A no leaves the variable out altogether: unset is what lets the demo's own
+    // profile request stand, which is right for everything that does not need
+    // this.
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_GL_COMPAT.to_string(), "false".to_string())]),
+    );
+    assert!(
+        !capture_meta(&file).contains_key("gamescope_mesa_gl_version_override"),
+        "an explicit no should ask for nothing"
+    );
+
+    let file = WorkFile::new(exe);
+    assert!(!capture_meta(&file).contains_key("gamescope_mesa_gl_version_override"));
+}

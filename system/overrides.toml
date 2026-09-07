@@ -65,6 +65,13 @@ patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgA
 
 file = "ninja2.zip"
 
+# Gaia Machina by Approximate. Asks for a GL 3.3 context without naming a
+# profile, so it gets a core one, and then calls glActiveTextureARB — which
+# wine's wglGetProcAddress will not resolve on a core context, and which the
+# intro calls without checking. NULL, during FBO setup, every time.
+[zoo.31427]
+meta = { wine_gl_compat = true }
+
 [zoo.68604]
 file = "puls.zip"
 libretro = { dosbox_pure_cycles = "max" }

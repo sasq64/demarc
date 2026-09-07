@@ -65,6 +65,20 @@ impl WorkFile {
         self.meta.get(arg).map_or(def.into(), |s| s.to_string())
     }
 
+    pub fn is_enabled(&self, arg: &str) -> bool {
+        match self.meta.get(arg).cloned().unwrap_or_default().as_str() {
+            "enabled" | "true" => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_disabled(&self, arg: &str) -> bool {
+        match self.meta.get(arg).cloned().unwrap_or_default().as_str() {
+            "disabled" | "false" => true,
+            _ => false,
+        }
+    }
+
     pub fn get_all_meta(&self) -> HashMap<String, String> {
         self.meta.clone()
     }

@@ -44,6 +44,10 @@
 //!   through unread. Unset, [`crate::newsys::windows`] writes one from the DLLs
 //!   the release itself ships next to its executable: a demo that carries its
 //!   own `d3dx9_37.dll` needs that build of it and not wine's reimplementation.
+//! - `wine_gl_compat=true` asks Mesa for a compatibility profile even when the
+//!   demo asked for a core one, because a core context is missing the extension
+//!   strings wine's `wglGetProcAddress` gates the legacy aliases on — see
+//!   [`META_GL_COMPAT`].
 //! - `wine_desktop=true` puts the pair inside a wine virtual desktop
 //!   (`explorer /desktop=`) fixed at the session size. Demos switch display
 //!   modes on their way to fullscreen, and under gamescope's Xwayland that
@@ -100,6 +104,27 @@ const DRIVER_STREAM: &str = "autodlg";
 /// Meta key asking for the demo to be run inside a wine virtual desktop.
 pub const META_DESKTOP: &str = "wine_desktop";
 
+/// Meta key asking Mesa for a compatibility profile whatever the demo requested.
+///
+/// A GL demo of the 2010s asks for a 3.x context and, as the spec says it may,
+/// leaves `WGL_CONTEXT_PROFILE_MASK_ARB` out. The default is *core*, so that is
+/// what it gets — and a core context does not advertise `GL_ARB_multitexture`,
+/// `GL_EXT_draw_range_elements` or the rest of the pre-3.0 extension strings,
+/// because their functionality has been core for years.
+///
+/// On Windows nobody notices. An ICD's `wglGetProcAddress` is a name lookup, so
+/// `glActiveTextureARB` comes back as a pointer to `glActiveTexture` no matter
+/// which profile is current. Wine's is stricter and checks that the extension
+/// the name belongs to is on the current context first, so the same call returns
+/// NULL — and a 64k intro, which resolves its GL entry points once into a table
+/// and never checks one, calls straight through it. Approximate's *Gaia Machina*
+/// dies exactly that way, on `glActiveTextureARB(GL_TEXTURE6)` during FBO setup.
+///
+/// Asking Mesa for a compatibility context puts the legacy strings back, wine's
+/// check passes, and the aliases resolve to the functions they always aliased.
+/// Nothing else about the demo changes: it is the same GL either way.
+pub const META_GL_COMPAT: &str = "wine_gl_compat";
+
 /// Meta key holding wine's `WINEDLLOVERRIDES`, passed through as it stands.
 ///
 /// The wine spelling exactly — `d3dx9_37=n;d3dx9_43=n`, modules comma-separated
@@ -119,6 +144,23 @@ pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 /// does with the real display mode stops working. Most demos are happier
 /// without it — but see [`META_DESKTOP`] for the ones that are not.
 pub const DEFAULT_DESKTOP: bool = false;
+
+/// Whether a compatibility profile is asked for when nothing says otherwise.
+///
+/// Off. It is Mesa-only (nothing else reads [`GL_COMPAT_OVERRIDE`]), it makes
+/// every context on the demo's side a compatibility one, and the demos that need
+/// it are the ones that resolve GL entry points without checking them — a
+/// minority worth naming one at a time rather than a default worth carrying.
+pub const DEFAULT_GL_COMPAT: bool = false;
+
+/// What [`META_GL_COMPAT`] sets `MESA_GL_VERSION_OVERRIDE` to.
+///
+/// The `COMPAT` suffix is the operative half — it is what makes Mesa hand back a
+/// compatibility context for a core request. `4.6` rather than the `3.3` the
+/// demo asked for so that nothing else is taken away in the process: the version
+/// is a ceiling, and lowering it to the request would be a second change nobody
+/// asked for.
+pub const GL_COMPAT_OVERRIDE: &str = "4.6COMPAT";
 
 /// What a `pick` session runs at, since the size is not known until the person
 /// watching has chosen one.
@@ -193,6 +235,13 @@ pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Does an entry want a compatibility profile? See [`META_GL_COMPAT`].
+pub(crate) fn gl_compat(meta: &HashMap<String, String>) -> bool {
+    meta.get(META_GL_COMPAT)
+        .map(|v| is_yes(v))
+        .unwrap_or(DEFAULT_GL_COMPAT)
+}
+
 /// Is a meta value one of the ways of saying yes?
 pub(crate) fn is_yes(value: &str) -> bool {
     matches!(
@@ -242,6 +291,9 @@ struct Config {
     /// `WINEDLLOVERRIDES` for the session, or nothing to leave wine's own
     /// choices alone — see [`META_DLL_OVERRIDES`].
     dll_overrides: Option<String>,
+    /// Ask Mesa for a compatibility profile whatever the demo requests — see
+    /// [`META_GL_COMPAT`].
+    gl_compat: bool,
 }
 
 impl Config {
@@ -282,6 +334,7 @@ impl Config {
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_DESKTOP),
             dll_overrides: dll_overrides(meta),
+            gl_compat: gl_compat(meta),
         })
     }
 
@@ -503,6 +556,13 @@ impl Session {
         if let Some(overrides) = &cfg.dll_overrides {
             debug!("WINEDLLOVERRIDES={overrides}");
             command.env("WINEDLLOVERRIDES", overrides);
+        }
+        // Read by Mesa in the demo's own process, not by wine or by gamescope,
+        // both of which are along for the ride. Harmless to them: gamescope
+        // composites through Vulkan and never asks for a GL version at all.
+        if cfg.gl_compat {
+            debug!("MESA_GL_VERSION_OVERRIDE={GL_COMPAT_OVERRIDE}");
+            command.env("MESA_GL_VERSION_OVERRIDE", GL_COMPAT_OVERRIDE);
         }
         command
             .stdin(Stdio::null())

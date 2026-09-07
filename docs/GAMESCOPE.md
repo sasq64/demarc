@@ -137,11 +137,12 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead. Split on ASCII US (`\x1f`) when it holds one — which is how demarc sends a whole argv whose paths have spaces in them — and on whitespace otherwise, which is what a hand-typed `-x gamescope_command="vkcube --gpu 0"` wants |
 | `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client |
 | `gamescope_wine_dll_overrides` | — | `WINEDLLOVERRIDES` for a wine client, wine's own syntax (`d3dx9_37=n`). demarc fills it in from the DLLs a release ships beside its `.exe` |
+| `gamescope_mesa_gl_version_override` | — | `MESA_GL_VERSION_OVERRIDE` for the client. demarc sets it to `4.6COMPAT` when an entry says `wine_gl_compat` |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
-(`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_desktop` and
-`wine_dll_overrides`, and an
+(`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_desktop`,
+`wine_dll_overrides` and `wine_gl_compat`, and an
 `overrides.toml` written for the on-top backend means the same thing here.
 
 The command is the substantial half of that translation. Left to itself the core turns a
@@ -152,6 +153,18 @@ other. `wine_desktop` rides along inside it as `explorer /desktop=`, which is wh
 has no option of its own for it. `wine_res=pick` is not a size, so the resolution passed is
 the one the backend picks to stand in for it (1920x1200, big enough to hold whatever the
 person watching chooses).
+
+`wine_gl_compat` is the other translation worth knowing about. A GL demo of the 2010s asks
+for a 3.x context and leaves the profile mask out, which per spec means *core* — and a core
+context does not advertise `GL_ARB_multitexture` or the rest of the pre-3.0 extension
+strings. Wine's `wglGetProcAddress` checks that the extension a name belongs to is on the
+current context before it resolves it, so `glActiveTextureARB` comes back NULL where a
+Windows ICD would have handed over a pointer to `glActiveTexture`; an intro that resolves
+its entry points into a table without checking them then calls straight through the NULL.
+Setting `MESA_GL_VERSION_OVERRIDE=4.6COMPAT` on the client asks Mesa for a compatibility
+context, which puts the strings back and lets the aliases resolve. Approximate's *Gaia
+Machina* (`zoo.31427`) is the worked example: without it, a page fault at address 0 during
+FBO setup, every time.
 
 ---
 

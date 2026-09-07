@@ -407,3 +407,29 @@ fn carries_dll_overrides_through_untouched() {
         None
     );
 }
+
+/// `wine_gl_compat` is a yes/no, spelled any of the ways the rest of demarc's
+/// yes/nos are, and it is off unless an entry says otherwise — a compatibility
+/// profile is for the demo that resolves GL entry points without checking them,
+/// not for everything.
+#[test]
+fn reads_gl_compat_as_a_yes_or_no() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let of = |value: &str| {
+        let meta = HashMap::from([(META_GL_COMPAT.to_string(), value.to_string())]);
+        Config::from_meta(&exe, &meta).unwrap().gl_compat
+    };
+
+    for spelling in ["true", "1", "YES", " on "] {
+        assert!(of(spelling), "{spelling:?}");
+    }
+    // Anything else is a no, including nonsense and an empty value.
+    for spelling in ["false", "no", "0", "", "maybe"] {
+        assert!(!of(spelling), "{spelling:?}");
+    }
+
+    assert_eq!(
+        Config::from_meta(&exe, &HashMap::new()).unwrap().gl_compat,
+        DEFAULT_GL_COMPAT
+    );
+}
