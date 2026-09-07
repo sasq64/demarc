@@ -153,11 +153,13 @@ native:
 PRE := HOME / ".wine-demarc"
 
 wine-prefix:
+    curl -fsSL -o winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+    chmod +x winetricks
     rm -rf {{PRE}}
     WINEPREFIX={{PRE}} wineboot -i
     WINEPREFIX={{PRE}} wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f
     WINEPREFIX={{PRE}} wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 96 /f
-    WINEPREFIX={{PRE}} winetricks dxvk d3dx9_31 d3dx9_43
+    WINEPREFIX={{PRE}} ./winetricks dxvk d3dx9 d3dx10
     install -Dm644 data/tssoft32.acm {{PRE}}/drive_c/windows/syswow64/tssoft32.acm
     install -Dm644 data/tsd32.dll    {{PRE}}/drive_c/windows/syswow64/tsd32.dll
     WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f

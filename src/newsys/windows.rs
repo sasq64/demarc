@@ -14,8 +14,8 @@ use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine_emu::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE, META_DESKTOP,
-    META_DLL_OVERRIDES, META_GL_COMPAT, META_RES, WineEmu, close_prefix, dll_overrides, gl_compat,
-    wine_command, wine_prefix,
+    META_GL_COMPAT, META_RES, WineEmu, close_prefix, dll_overrides, gl_compat, wine_command,
+    wine_prefix,
 };
 use crate::workfile::WorkFile;
 
@@ -50,56 +50,6 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
         rank -= 20;
     }
     rank
-}
-
-/// DLLs a release ships beside its executable that wine must be told to load
-/// instead of its own, as `*`-globs matched against the file name.
-const NATIVE_DLLS: [&str; 1] = ["d3dx9*.dll"];
-
-/// Does `name` match a `*`-glob, ignoring case?
-///
-/// One `*`, standing for any run of characters including none; anything else in
-/// the pattern is a literal. Enough for [`NATIVE_DLLS`] and small enough to read
-/// — a pattern with no `*` is a plain comparison.
-fn glob_match(name: &str, pattern: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    let pattern = pattern.to_ascii_lowercase();
-    match pattern.split_once('*') {
-        Some((head, tail)) => {
-            name.len() >= head.len() + tail.len() && name.starts_with(head) && name.ends_with(tail)
-        }
-        None => name == pattern,
-    }
-}
-
-/// The `WINEDLLOVERRIDES` a release's own files ask for, or nothing if it
-/// brought none of the DLLs in [`NATIVE_DLLS`].
-fn native_dll_overrides(dir: &Path) -> Option<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return None;
-    };
-    let mut modules: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.path().is_file())
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            NATIVE_DLLS
-                .iter()
-                .any(|pattern| glob_match(&name, pattern))
-                // wine names the module without its extension, and matches it
-                // case-insensitively; lower case is how it is usually written.
-                .then(|| {
-                    Path::new(&name)
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_ascii_lowercase()
-                })
-        })
-        .collect();
-    modules.sort();
-    modules.dedup();
-    (!modules.is_empty()).then(|| format!("{}=n", modules.join(",")))
 }
 
 /// The smallest and largest either side of a resolution in a file name is
@@ -225,19 +175,15 @@ impl System for WindowsSystem {
             }
         }
 
+        // Native for all D3D seems to work
+        file.set_meta("gamescope_dll_overrides", "d3d*=n,b");
+        file.set_meta("gamescope_wine_dll_overrides", "d3d*=n,b");
+
         if !file.has_meta(META_RES)
             && let Some(res) = res_from_name(&target)
         {
             info!("Running {target:?} at {res}, after its name");
             file.set_meta(META_RES, res);
-        }
-
-        if !file.has_meta(META_DLL_OVERRIDES)
-            && let Some(dir) = target.parent()
-            && let Some(overrides) = native_dll_overrides(dir)
-        {
-            info!("Running {target:?} with WINEDLLOVERRIDES={overrides}, after its own DLLs");
-            file.set_meta(META_DLL_OVERRIDES, overrides);
         }
 
         file.path = target;

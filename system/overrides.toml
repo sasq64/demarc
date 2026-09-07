@@ -16,12 +16,12 @@
 # }
 #
 [zoo.76]
-meta = { wine_dll_overrides = "d3dx9_31=n" }
+# meta = { wine_dll_overrides = "d3dx9_31=n" }
 
 [zoo.102]
 file = "rgba_tbc_elevated_2016.zip"
 boot = "elevated_1280x720.exe"
-meta = { wine_dll_overrides = "d3dx9_43=n" }
+# meta = { wine_dll_overrides = "d3dx9_43=n" }
 
 [zoo.108]
 file = "2nd_real.zip"
@@ -31,7 +31,7 @@ meta = { dosbox_pure_cycles = 100000 }
 file = "variform_by_kewlers.zip"
 
 [zoo.350]
-meta = { wine_dll_overrides = "d3dx9_31=n" }
+# meta = { wine_dll_overrides = "d3dx9_31=n" }
 
 [zoo.3298]
 file = "fr-025-final.zip"
