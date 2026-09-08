@@ -22,8 +22,7 @@ cargo clippy
 ```
 
 Handy `just` recipes: `just run|ami|c64|gb|iff|royale` (launch a sample), `just test`, `just clippy`,
-`just coverage`, `just profile` + `just trace-summary` (Bevy per-system spans → `trace.json`),
-`just win` (cross-build the Windows exe with cargo-xwin), `just pcem-core` / `just pc <cfg>`,
+`just coverage`, `just win` (cross-build the Windows exe with cargo-xwin), `just pcem-core` / `just pc <cfg>`,
 `just release-check` / `release-local`, `just pal|ntsc|native` (flip the Hyprland monitor to 50/60Hz —
 demos want 50Hz).
 

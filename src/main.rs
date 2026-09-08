@@ -52,8 +52,6 @@ mod zx_scr;
 
 #[cfg(feature = "flash")]
 mod flash_emu;
-#[cfg(feature = "profile")]
-mod profiling;
 #[cfg(target_os = "linux")]
 mod wine_emu;
 #[cfg(target_os = "linux")]
@@ -69,7 +67,6 @@ use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
 use system_dir::system_dir;
 
-#[cfg(not(feature = "profile"))]
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{AppSettings, Args, InfoDisplay, RenderSettings, ShaderArg, SortArg};
@@ -293,33 +290,26 @@ fn main() {
         let _ = SAVED_STDOUT.set(writer);
     }
 
-    // Under `--features profile` the subscriber is built by Bevy's `LogPlugin`
-    // instead (see `profiling::log_plugin`), because that's where the
-    // chrome-trace layer that records the ECS spans is installed. Setting one
-    // here too would just lose the race and log an error.
-    #[cfg(not(feature = "profile"))]
-    {
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new(if cfg!(debug_assertions) {
-                "demarc=debug,warn"
-            } else {
-                "error"
-            })
-        });
-        let builder = tracing_subscriber::fmt()
-            .with_ansi(cfg!(not(target_os = "windows")))
-            .with_env_filter(filter)
-            .with_target(true)
-            .compact();
-        #[cfg(unix)]
-        match saved_stdout {
-            Some(writer) => builder.with_writer(move || writer).init(),
-            // Silencing disabled or redirect failed: use the default stdout writer.
-            None => builder.init(),
-        }
-        #[cfg(not(unix))]
-        builder.init();
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(if cfg!(debug_assertions) {
+            "demarc=debug,warn"
+        } else {
+            "error"
+        })
+    });
+    let builder = tracing_subscriber::fmt()
+        .with_ansi(cfg!(not(target_os = "windows")))
+        .with_env_filter(filter)
+        .with_target(true)
+        .compact();
+    #[cfg(unix)]
+    match saved_stdout {
+        Some(writer) => builder.with_writer(move || writer).init(),
+        // Silencing disabled or redirect failed: use the default stdout writer.
+        None => builder.init(),
     }
+    #[cfg(not(unix))]
+    builder.init();
 
     // Trim the caches before anything writes into them, so this run's own
     // downloads and built discs can't be evicted out from under it.
@@ -479,18 +469,8 @@ fn main() {
     }
 
     // `main` installs its own tracing subscriber above, so the default one is
-    // dropped — except in a profiling build, where `LogPlugin` owns the
-    // subscriber (it carries the chrome-trace layer) and gets our writer.
-    let default_plugins = DefaultPlugins.build();
-    #[cfg(not(feature = "profile"))]
-    let default_plugins = default_plugins.disable::<bevy::log::LogPlugin>();
-    #[cfg(feature = "profile")]
-    let default_plugins = default_plugins.set(profiling::log_plugin(
-        #[cfg(unix)]
-        saved_stdout,
-        #[cfg(not(unix))]
-        None,
-    ));
+    // dropped.
+    let default_plugins = DefaultPlugins.build().disable::<bevy::log::LogPlugin>();
 
     let max_threads = args.max_threads as usize;
     app.insert_resource(args)
@@ -545,8 +525,6 @@ fn main() {
     app.insert_resource(demo_settings)
         .add_settings_type::<demarc_settings::DemarcSettings>()
         .add_systems(Update, demarc_settings::apply_settings);
-    #[cfg(feature = "profile")]
-    app.add_plugins(profiling::ProfilingPlugin);
     // A Windows demo takes the screen off demarc while it runs; this puts it
     // back afterwards.
     #[cfg(target_os = "linux")]

@@ -202,11 +202,6 @@ flash = [
   "dep:ruffle_render_wgpu",
   "dep:swf",
 ]
-# Profiling build (src/profiling.rs): Bevy's per-system tracing spans written to
-# a Chrome/Perfetto trace file, frame/CPU diagnostics, and a per-second audit of
-# which components are being marked changed. Costs a full Bevy rebuild, so keep
-# it out of the default set. Use with `--profile profiling` for symbols.
-profile = ["bevy/sysinfo_plugin", "bevy/trace_chrome"]
 
 [profile.release]
 opt-level = 2
