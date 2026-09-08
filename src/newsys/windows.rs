@@ -17,6 +17,7 @@ use crate::wine_emu::{
     META_GL_COMPAT, META_RES, WineEmu, close_prefix, dll_overrides, gl_compat, wine_command,
     wine_prefix,
 };
+use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
 
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
@@ -218,16 +219,61 @@ impl System for WindowsSystem {
         let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
             .context("Could not load the gamescope core")?;
 
-        if let Ok(prefix) = wine_prefix() {
+        let sandbox = sandbox_for(path);
+        if sandbox.is_none()
+            && let Ok(prefix) = wine_prefix()
+        {
+            // Every unsandboxed session runs in the one prefix, so anything
+            // still alive in it belongs to a demarc that never got to shut it
+            // down — a crash, or a core unloaded without teardown. Clearing it
+            // here is what keeps those from piling up one tree per launch.
+            //
+            // It is also why this cannot happen when there *is* a sandbox: the
+            // shared prefix would be closed out from under a demo that is using
+            // it, which is exactly the "one at a time" this is meant to end.
             close_prefix(&prefix);
         }
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
             system_dir(),
             Some(path),
-            capture_meta(path),
+            capture_meta(path, sandbox.as_ref()),
             false,
         )?))
+    }
+}
+
+/// A throwaway prefix for this session, if it can have one.
+///
+/// Nothing here is fatal: a machine without `bwrap`, a kernel that will not
+/// give an unprivileged overlay, or a first run with no prefix to copy yet all
+/// mean the session runs in the shared prefix as it always did — one demo at a
+/// time, which is what demarc did up to now anyway. See [`crate::wine_sandbox`].
+fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
+    let meta = file.get_all_meta();
+    if !wine_sandbox::wanted(&meta) {
+        return None;
+    }
+    // A command someone typed is not one we built, so there is no telling what
+    // it is or whether a prefix is even involved; wrapping it in a sandbox it
+    // never asked for would only make `-x gamescope_command=glxgears` harder to
+    // reason about. See [`capture_meta`].
+    if meta.contains_key("gamescope_command") {
+        return None;
+    }
+    // A bare file name has a parent, and it is the empty path — which is not a
+    // directory to start anything in. Left out, the sandbox keeps demarc's own
+    // working directory, which is the one that name was relative to anyway.
+    let workdir = file
+        .path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty());
+    match wine_sandbox::prepare(&wine_prefix().ok()?, workdir) {
+        Ok(sandbox) => Some(sandbox),
+        Err(err) => {
+            info!("Running in the shared wine prefix: {err}");
+            None
+        }
     }
 }
 
@@ -250,7 +296,10 @@ impl System for WindowsSystem {
 /// Anything already set explicitly wins, so `-x gamescope_command=...` still
 /// overrides the whole thing, which is how the core gets tested against a client
 /// that is not wine at all.
-fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
+///
+/// `sandbox`, when there is one, goes on the front of that command and takes the
+/// prefix with it — see [`sandbox_for`] and [`crate::wine_sandbox`].
+fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, String> {
     let mut meta = path.get_all_meta();
 
     match wine_command(&path.path, &meta) {
@@ -261,8 +310,12 @@ fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
             // to decide.
             meta.entry("gamescope_resolution".into())
                 .or_insert_with(|| format!("{}x{}", cmd.width, cmd.height));
+            let argv = match sandbox {
+                Some(sandbox) => sandbox.wrap(cmd.argv),
+                None => cmd.argv,
+            };
             meta.entry("gamescope_command".into())
-                .or_insert_with(|| cmd.argv.join(ARG_SEPARATOR));
+                .or_insert_with(|| argv.join(ARG_SEPARATOR));
         }
         Err(err) => {
             // Only a release that has gone missing between being unpacked and
@@ -298,13 +351,29 @@ fn capture_meta(path: &WorkFile) -> HashMap<String, String> {
 
     // The same prefix [`WineEmu`] uses, so a release prepared under one backend is
     // still prepared under the other and neither goes near the user's own `~/.wine`.
-    if !meta.contains_key("gamescope_wineprefix")
-        && let Ok(prefix) = wine_prefix()
-    {
-        meta.insert(
-            "gamescope_wineprefix".into(),
-            prefix.to_string_lossy().into_owned(),
-        );
+    // Sandboxed, it is that prefix seen through a throwaway overlay at a path of
+    // this session's own, which is the whole difference.
+    if !meta.contains_key("gamescope_wineprefix") {
+        let prefix = match sandbox {
+            Some(sandbox) => Some(sandbox.prefix.clone()),
+            None => wine_prefix().ok(),
+        };
+        if let Some(prefix) = prefix {
+            meta.insert(
+                "gamescope_wineprefix".into(),
+                prefix.to_string_lossy().into_owned(),
+            );
+        }
+    }
+
+    // A sandboxed prefix is nobody's to close but the kernel's. `wineserver -k`
+    // reaches a socket in the sandbox's own `/tmp`, which is unreachable from
+    // out here, and there is nothing to reach anyway: the pid namespace goes
+    // when the demo does and takes wine's services with it. Left armed, the
+    // core's teardown would spend its timeout talking to a prefix that no longer
+    // exists. See `StopWineServer` in the core and [`crate::wine_sandbox`].
+    if sandbox.is_some() {
+        meta.insert("gamescope_close_prefix".into(), "false".into());
     }
 
     meta

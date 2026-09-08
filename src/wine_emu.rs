@@ -48,6 +48,11 @@
 //!   demo asked for a core one, because a core context is missing the extension
 //!   strings wine's `wglGetProcAddress` gates the legacy aliases on — see
 //!   [`META_GL_COMPAT`].
+//! - `wine_sandbox` is on unless an entry turns it off, and puts the whole
+//!   command inside a `bwrap` that gives the session a throwaway copy of the
+//!   prefix and a pid namespace of its own — so a demo cannot damage what
+//!   `just wine-prefix` installed, and wine's services cannot outlive it. See
+//!   [`crate::wine_sandbox`].
 //! - `wine_desktop=true` puts the pair inside a wine virtual desktop
 //!   (`explorer /desktop=`) fixed at the session size. Demos switch display
 //!   modes on their way to fullscreen, and under gamescope's Xwayland that
@@ -80,6 +85,7 @@ use tracing::{debug, info, warn};
 use crate::backend::Backend;
 use crate::screensaver::covers_a_monitor;
 use crate::system_dir;
+use crate::wine_sandbox;
 
 /// Meta key holding the resolution to run at, as `WIDTHxHEIGHT`.
 pub const META_RES: &str = "wine_res";
@@ -250,7 +256,7 @@ pub(crate) fn is_yes(value: &str) -> bool {
     )
 }
 
-fn has_tool(name: &str) -> bool {
+pub(crate) fn has_tool(name: &str) -> bool {
     std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
         .unwrap_or(false)
@@ -294,6 +300,11 @@ struct Config {
     /// Ask Mesa for a compatibility profile whatever the demo requests — see
     /// [`META_GL_COMPAT`].
     gl_compat: bool,
+    /// Run in a throwaway copy of the prefix — see
+    /// [`crate::wine_sandbox::META_SANDBOX`]. Kept here rather than looked up
+    /// again so [`Backend::reset`] builds the same kind of session twice, with a
+    /// fresh sandbox.
+    sandbox: bool,
 }
 
 impl Config {
@@ -335,6 +346,7 @@ impl Config {
                 .unwrap_or(DEFAULT_DESKTOP),
             dll_overrides: dll_overrides(meta),
             gl_compat: gl_compat(meta),
+            sandbox: wine_sandbox::wanted(meta),
         })
     }
 
@@ -491,6 +503,11 @@ struct Session {
     logger: Option<JoinHandle<()>>,
     /// The prefix this demo runs in, so [`Drop`] can tell wine to close it.
     prefix: PathBuf,
+    /// Whether that prefix is this session's own throwaway one. It changes what
+    /// closing means: a shared prefix is closed through `wineserver -k`, and a
+    /// sandboxed one closes itself when its pid namespace goes — see
+    /// [`Session::drop`] and [`crate::wine_sandbox`].
+    sandboxed: bool,
     /// What the driver has told us, filled in by the logger thread.
     signals: Arc<Signals>,
     /// Whether there is a driver in the command to hear it from. Without one
@@ -519,14 +536,42 @@ impl Session {
         }
         let autodlg = autodlg();
 
-        let prefix = wine_prefix()?;
-        // Anything still running in the prefix is left over from a session that
-        // never got to `Drop` — a demarc that was killed, or crashed. Clearing
-        // it here keeps those from piling up one set per launch, and costs
-        // nothing when there is nothing to clear.
-        close_prefix(&prefix);
-        let wine_args = cfg.wine_args(autodlg.as_deref());
-        debug!("wine {}", wine_args.join(" "));
+        // A throwaway copy of the prefix when the machine can make one, so a
+        // demo cannot damage what `just wine-prefix` installed and its services
+        // cannot outlive it. Not being able to is no reason not to run: the
+        // session then uses the shared prefix, exactly as it did before.
+        let base = wine_prefix()?;
+        let sandbox = cfg
+            .sandbox
+            .then(|| wine_sandbox::prepare(&base, cfg.exe.parent()))
+            .transpose()
+            .unwrap_or_else(|err| {
+                info!("Running in the shared wine prefix: {err}");
+                None
+            });
+        let prefix = sandbox
+            .as_ref()
+            .map_or_else(|| base.clone(), |sandbox| sandbox.prefix.clone());
+
+        if sandbox.is_none() {
+            // Anything still running in the prefix is left over from a session
+            // that never got to `Drop` — a demarc that was killed, or crashed.
+            // Clearing it here keeps those from piling up one set per launch,
+            // and costs nothing when there is nothing to clear.
+            //
+            // Only for the shared prefix. A sandboxed session has a prefix
+            // nobody else is in, so there is nothing of anyone else's to clear
+            // — and doing it wholesale would be reaching into the one place
+            // another demo might be running.
+            close_prefix(&prefix);
+        }
+
+        let mut argv = vec!["wine".to_string()];
+        argv.extend(cfg.wine_args(autodlg.as_deref()));
+        if let Some(sandbox) = &sandbox {
+            argv = sandbox.wrap(argv);
+        }
+        debug!("{}", argv.join(" "));
 
         let mut command = Command::new("gamescope");
         command
@@ -537,9 +582,8 @@ impl Session {
                 &cfg.height.to_string(),
                 "-f",
                 "--",
-                "wine",
             ])
-            .args(&wine_args)
+            .args(&argv)
             // A release that ships a `data/` folder or its own `fmod.dll` finds
             // neither when started from wherever demarc was launched, and fails
             // silently - a dialog that works and then a black screen.
@@ -597,13 +641,18 @@ impl Session {
         };
 
         info!(
-            "Running {:?} under wine in {}x{} gamescope ({}), prefix {:?}",
+            "Running {:?} under wine in {}x{} gamescope ({}), {} prefix {:?}",
             cfg.exe,
             cfg.width,
             cfg.height,
             match cfg.dialog {
                 Dialog::Drive => "driving the setup dialog",
                 Dialog::Pick => "setup dialog left to you",
+            },
+            if sandbox.is_some() {
+                "sandboxed"
+            } else {
+                "shared"
             },
             prefix
         );
@@ -613,6 +662,7 @@ impl Session {
             stop,
             logger: Some(logger),
             prefix,
+            sandboxed: sandbox.is_some(),
             signals,
             driven: autodlg.is_some(),
             began: Instant::now(),
@@ -694,7 +744,14 @@ impl Drop for Session {
             unsafe { libc::kill(-(self.gamescope.id() as i32), libc::SIGKILL) };
             let _ = self.gamescope.wait();
         }
-        close_prefix(&self.prefix);
+        if self.sandboxed {
+            // Nothing to close. The prefix and every wine process in it lived
+            // in a pid and mount namespace that went with the sandbox, so all
+            // that is left out here is the empty directory it was mounted on.
+            wine_sandbox::release(&self.prefix);
+        } else {
+            close_prefix(&self.prefix);
+        }
 
         // Bounded, because `drain` polls rather than blocks: the pipes can
         // still be open here (see `close_prefix`), and joining a thread parked
@@ -716,9 +773,10 @@ impl Drop for Session {
 /// pipe, and demarc parked in `join` for as long as it was left alone.)
 ///
 /// Safe to do wholesale because the prefix is this backend's own — nothing of
-/// the user's runs in `~/.wine-demos`. The one thing it rules out is two
-/// Windows demos at once, which a backend that takes the whole screen could not
-/// do anyway.
+/// the user's runs in `~/.wine-demarc`. What it rules out is two demos sharing
+/// that prefix, since closing it for one closes it for both; a sandboxed
+/// session has a prefix nobody else is in and never comes here at all, which is
+/// what lets several run at once (see [`crate::wine_sandbox`]).
 /// Waited for, but never for long: this runs on the way out of demarc, and a
 /// wineserver that will not answer must not be able to hold the quit up.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);

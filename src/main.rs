@@ -7,7 +7,6 @@ use std::path::Path;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
 use clap::Parser;
-use regex::Regex;
 
 #[allow(warnings)]
 mod libretro;
@@ -56,6 +55,8 @@ mod flash_emu;
 mod profiling;
 #[cfg(target_os = "linux")]
 mod wine_emu;
+#[cfg(target_os = "linux")]
+mod wine_sandbox;
 
 use commands::CommandPlugin;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
@@ -328,17 +329,7 @@ fn main() {
     // Expand any directory in `games` into the `.m3u` files found within it.
     let mut files = Vec::with_capacity(args.files.len());
 
-    // Load entries from a tab-separated demo database (id, title, author, date,
-    // party, category, tags, download — named or in that order). Each URL is
-    // fetched on demand when loaded.
-
-    // A Windows demo takes the whole screen for its own wine + gamescope
-    // session, so it has nothing to render into a grid cell: leave those
-    // entries out of a grid rather than let one blank the grid while it runs.
-    let mut exclude = args.exclude.clone();
-    if args.grid.is_some() {
-        exclude.push(Regex::new("(?i)^platform:windows$").unwrap());
-    }
+    let exclude = args.exclude.clone();
     let filter = DbFilter {
         include: &args.include,
         exclude: &exclude,

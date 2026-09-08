@@ -135,7 +135,8 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_resolution` | `800x600` | session size; both the output captured and what the client is told it has |
 | `gamescope_refresh` | `60` | Hz. `50` for demos that want it |
 | `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead. Split on ASCII US (`\x1f`) when it holds one — which is how demarc sends a whole argv whose paths have spaces in them — and on whitespace otherwise, which is what a hand-typed `-x gamescope_command="vkcube --gpu 0"` wants |
-| `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client |
+| `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client. Sandboxed, this is the session's own throwaway overlay rather than `~/.wine-demarc` itself |
+| `gamescope_close_prefix` | `true` | run `wineserver -k` on that prefix at unload. demarc sends `false` for a sandboxed session, which has nothing out here to close |
 | `gamescope_wine_dll_overrides` | — | `WINEDLLOVERRIDES` for a wine client, wine's own syntax (`d3dx9_37=n`). demarc fills it in from the DLLs a release ships beside its `.exe` |
 | `gamescope_mesa_gl_version_override` | — | `MESA_GL_VERSION_OVERRIDE` for the client. demarc sets it to `4.6COMPAT` when an entry says `wine_gl_compat` |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
@@ -153,6 +154,43 @@ other. `wine_desktop` rides along inside it as `explorer /desktop=`, which is wh
 has no option of its own for it. `wine_res=pick` is not a size, so the resolution passed is
 the one the backend picks to stand in for it (1920x1200, big enough to hold whatever the
 person watching chooses).
+
+### The prefix each session runs in
+
+The command demarc sends is not `wine ...` but `bwrap ... -- wine ...`. `src/wine_sandbox.rs`
+puts the real `~/.wine-demarc` underneath an overlay whose upper layer is an invisible
+tmpfs, mounts it at a path this session alone uses, gives the session a private
+`/tmp/.wine-<uid>` and a pid namespace of its own, and points `WINEPREFIX` at the result:
+
+```sh
+bwrap --dev-bind / / --proc /proc --unshare-pid --die-with-parent \
+      --perms 0700 --tmpfs /tmp/.wine-1000 \
+      --overlay-src ~/.wine-demarc \
+      --tmp-overlay /run/user/1000/demarc-wine-1000/4711/0 \
+      --setenv WINEPREFIX /run/user/1000/demarc-wine-1000/4711/0 \
+      -- wine demarc-autodlg.exe --launch demo.exe --prefer 800x600 --check Fullscreen
+```
+
+That is what makes a grid of Windows demos work. wine names its server socket after the
+prefix's device and inode under `/tmp/.wine-<uid>`, so two sessions in one prefix are two
+clients of one wineserver and `wineserver -k` closes both; each session having its own
+prefix *and* its own socket directory makes them two servers that know nothing of each
+other. The pid namespace is the other half: wine's services `setsid` out of any process
+group, which is why both backends carry code to hunt them down, and inside a namespace
+there is nowhere to go — when the demo exits, the kernel takes `wineserver`,
+`services.exe` and `winedevice.exe` with it. Writes land in the tmpfs and are gone with
+the session, so a demo cannot damage what `just wine-prefix` installed either.
+
+It is not a security boundary and does not try to be: `--dev-bind / /` hands the demo the
+whole host filesystem, because it needs the GPU nodes, the audio socket, gamescope's X
+socket and its own directory. Containment of writes and of processes is the point.
+
+`wine_sandbox=false` turns it off, and so does a machine without `bwrap` or without
+unprivileged user namespaces and overlayfs — demarc probes for that once per run with the
+real argument list and `true` in place of the demo, and falls back to the shared prefix,
+one demo at a time, as it worked before. The first run on a machine with no
+`~/.wine-demarc` yet also falls back: there would be nothing to overlay, and a prefix
+built inside a tmpfs is one thrown away again.
 
 `wine_gl_compat` is the other translation worth knowing about. A GL demo of the 2010s asks
 for a 3.x context and leaves the profile mask out, which per spec means *core* — and a core
@@ -254,6 +292,9 @@ Working, and verified by eye on captured frames:
 - **Through demarc** — the picture reaches a view, with the CRT shader applied to it.
 - **Teardown** — after a wine session unloads, no `gamescope`, `Xwayland`,
   `gamescopereaper`, `wineserver` or `winedevice.exe` is left running.
+- **Two Windows demos at once** — `--grid=2x1 -x wine_capture=true heaven7.exe tracie.exe`
+  brings up two compositors, two sandboxes, two wineservers and two demos rendering side
+  by side in demarc's grid. See The prefix each session runs in.
 
 Open:
 
@@ -270,21 +311,15 @@ Open:
    and a frozen, silent view is one the frontend moves on from. Reading the driver's stream
    in the core would make it prompt, and would tell a demo that failed to start from one on
    a long loading screen.
-3. **The wine prefix is handled wholesale**, exactly as `wine_emu.rs`'s `close_prefix` is.
-   `wineserver -k` on teardown ends every wine process in the prefix, and
-   `WindowsSystem::create` clears it again before starting a captured session — which is
-   what collects the tree a killed demarc leaves behind, since a core that never got to
-   unload never closed anything. Both mean two wine sessions cannot share the prefix, so
-   two Windows demos at once is out (item 6 is about Chrome and other clients, which are
-   unaffected).
-4. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
-5. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
+3. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
+4. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome
    itself is happy with either (`BuildClient` passes an `http` path through unchanged);
    it is the routing that needs teaching.
-6. **Not tested in a grid.** Each core instance forks its own compositor, so several should
-   work; nobody has run two at once.
-7. **The release has not been run on a machine that did not build it.** See
+5. **Chrome sessions still share one profile directory.** `ProfileDir()` is one path under
+   the save directory, so two pages at once fight over it — the wine half of this is
+   solved (see The prefix each session runs in), the Chrome half is not.
+6. **The release has not been run on a machine that did not build it.** See
    Distribution — the bundle is built against Ubuntu 24.04's libraries and carries the
    ones a desktop cannot be assumed to have, but nobody has yet unpacked it on a
    different distribution and started a session from it.
