@@ -120,20 +120,6 @@ fn refuses_a_prefix_that_is_not_there() {
     assert!(prepare(&missing, None).is_err());
 }
 
-/// `release` deletes a directory, so it may only ever look at one of ours.
-#[test]
-fn releases_only_its_own_mount_points() {
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let stranger = dir.path().join("not-ours");
-    std::fs::create_dir(&stranger).expect("a directory");
-
-    release(&stranger);
-    assert!(
-        stranger.is_dir(),
-        "release() left its own directories alone"
-    );
-}
-
 /// A crash leaves mount points behind. They are empty directories rather than
 /// mounts, so this is tidiness — but a live demarc's must survive it.
 #[test]

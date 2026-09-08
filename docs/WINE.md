@@ -1,8 +1,8 @@
 # WINE INFO
 
 demarc runs every Windows release in `~/.wine-demarc` (`PREFIX_DIR` in
-`src/wine_emu.rs`), whichever backend does the running — so that is the prefix
-every command below wants `WINEPREFIX` pointed at. Deliberately not the user's
+`src/wine.rs`) — so that is the prefix every command below wants `WINEPREFIX`
+pointed at. Deliberately not the user's
 own `~/.wine`: besides what a demo may install into it, a personal prefix on a
 hidpi screen carries `LogPixels` 192, and wine then hands a non-DPI-aware demo
 a screen half the size and blows the result up — the top-left quarter of the

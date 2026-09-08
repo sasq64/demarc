@@ -1,5 +1,5 @@
 use super::*;
-use crate::wine_emu::META_DLL_OVERRIDES;
+use crate::wine::META_DLL_OVERRIDES;
 use std::fs;
 
 fn write_bytes(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
@@ -88,7 +88,7 @@ fn claims_a_windows_release_for_wine() {
     assert!(wf.path.ends_with("kotpg.exe"), "picked {:?}", wf.path);
 
     // The size the dialog driver is told to pick, unless an entry says
-    // otherwise - see `crate::wine_emu`.
+    // otherwise - see `crate::wine`.
     assert_eq!(sys.default_meta().get(META_RES), Some(&"800x600"));
 }
 
@@ -225,7 +225,7 @@ fn restates_wine_settings_as_core_options() {
             assert_eq!(args[prefer + 1], "640x480");
         }
         // No driver built into this checkout: the demo is the command, and the
-        // dialog is somebody else's problem. See `wine_emu::autodlg`.
+        // dialog is somebody else's problem. See `wine::autodlg`.
         None => assert_eq!(args, vec!["wine".to_string(), exe]),
     }
 }
@@ -239,7 +239,7 @@ fn a_picked_dialog_gets_a_session_big_enough_for_it() {
     let exe = windows_exe(dir.path(), "thing.exe");
     let file = WorkFile::new_with_meta(
         exe,
-        HashMap::from([(META_RES.to_string(), crate::wine_emu::PICK.to_string())]),
+        HashMap::from([(META_RES.to_string(), crate::wine::PICK.to_string())]),
     );
 
     let meta = capture_meta(&file, None);

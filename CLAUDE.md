@@ -54,8 +54,7 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins; stdout muzz
 | still image | `image_emu.rs` | IFF/ILBM (`ilbm.rs`), DEGAS (`degas.rs`), ZX SCR (`zx_scr.rs`), palette TIFF (`tiff_pal.rs`, which the `image` crate refuses), plus `image` crate formats; optional palette colour-cycling |
 | music | `music_emu.rs` | `musix` chiptune/tracker player, renders audio inline (no worker thread) and draws a Luau visualizer (`music_vis.rs`) |
 | Flash | `flash_emu.rs` | behind the `flash` feature; Ruffle with its own wgpu device |
-| Windows demos | `wine_emu.rs` | Linux only, and *not* a picture source: it launches wine inside gamescope on top of demarc, so shaders/grid/screenshots don't apply |
-| gamescope session | `external/gamescope/src/libretro/` (C++) | Linux only. A patched gamescope composites a headless Wayland/Xwayland session into a shared dmabuf and a thin `gamescope_libretro.so` hands the frames back, so wine — or an HTML/JS release in an undecorated Chrome — *is* a picture source. Opt-in with `wine_capture=true`; see `docs/GAMESCOPE.md`. |
+| gamescope session | `external/gamescope/src/libretro/` (C++) | Linux only. A patched gamescope composites a headless Wayland/Xwayland session into a shared dmabuf and a thin `gamescope_libretro.so` hands the frames back, so wine — or an HTML/JS release in an undecorated Chrome — is a picture source like any other. What to run inside it is `src/wine.rs`'s job for a Windows release (the wine command, the prefix, its teardown), restated as core options by `src/newsys/windows.rs`. See `docs/GAMESCOPE.md`. |
 
 ### System detection — `newsys.rs` + `src/newsys/*`
 

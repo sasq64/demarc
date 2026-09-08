@@ -75,10 +75,10 @@ gamescope-core:
 # `--no-silence` matters: without it gamescope's and wine's diagnostics go to
 # /dev/null along with the cores'.
 #
-# Run a Windows demo captured *into* demarc, rather than drawn on top of it.
+# Run a Windows demo against a locally built gamescope core.
 gs file:
     DEMARC_CORE_DIR={{justfile_directory()}}/external/gamescope/build-lr/src \
-        cargo run --profile release-fast -- --no-silence -x wine_capture=true {{file}}
+        cargo run --profile release-fast -- --no-silence {{file}}
 
 # Same, for an HTML/JS release through an undecorated Chrome. WebSystem claims
 # the page, so nothing extra has to be said on the command line.

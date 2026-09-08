@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
 use super::dos::{ExeKind, exe_kind};
@@ -12,9 +12,9 @@ use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
-use crate::wine_emu::{
+use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE, META_DESKTOP,
-    META_GL_COMPAT, META_RES, WineEmu, close_prefix, dll_overrides, gl_compat, wine_command,
+    META_GL_COMPAT, META_RES, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
     wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
@@ -80,7 +80,7 @@ const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
 /// it says it. It matters because the size has to be settled before the demo
 /// starts: the dialog driver picks the mode by matching what demarc asked for
 /// against the labels in the setup dialog, and gamescope is given a session
-/// that size (see [`crate::wine_emu`]).
+/// that size (see [`crate::wine`]).
 ///
 /// The digits are taken as they lie, so `vga640x480` reads as well as
 /// `demo_640x480` does; only the numbers have to make sense, per [`MIN_SIDE`].
@@ -212,9 +212,13 @@ impl System for WindowsSystem {
     }
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
-        if path.is_disabled("wine_capture") {
-            // Use old WineEmu that runs outside of demarc
-            return Ok(Box::new(WineEmu::new(&path.path, path.get_all_meta())?));
+        // wine is exec'd inside the session, so a machine without it would
+        // otherwise show a session that comes up empty and a line in the core's
+        // log. Said here instead, once and plainly, at load time. Not for a
+        // command someone typed: `-x gamescope_command=...` may be anything,
+        // and often is nothing to do with wine.
+        if !path.has_meta("gamescope_command") && !has_tool("wine") {
+            bail!("Running Windows demos needs `wine`, which is not on PATH");
         }
         let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
             .context("Could not load the gamescope core")?;
@@ -285,10 +289,10 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
 /// The command is the whole point of doing it here rather than leaving the core
 /// to work it out from the file name. Left alone the core runs `wine <exe>`,
 /// which is a demo sitting on its setup dialog with nobody to answer it; what it
-/// is given instead is exactly the command [`WineEmu`] would have run — the
-/// dialog driver, the resolution to pick, the virtual desktop if one was asked
-/// for — built in one place by [`crate::wine_emu::wine_command`] so the two
-/// backends cannot drift apart. See `docs/GAMESCOPE.md`.
+/// is given instead is the whole command — the dialog driver, the resolution to
+/// pick, the virtual desktop if one was asked for — built by
+/// [`crate::wine::wine_command`], which is where all of that is decided. See
+/// `docs/GAMESCOPE.md`.
 ///
 /// Anything already set explicitly wins, so `-x gamescope_command=...` still
 /// overrides the whole thing, which is how the core gets tested against a client
@@ -329,9 +333,8 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
     }
 
     // Whatever DLLs the release brought with it, or an entry asked for by hand.
-    // The core exports it for the same reason [`WineEmu`] does — it is wine
-    // inside there either way — and it is spelled out here so both backends read
-    // it off the one key.
+    // The core exports it to the session as `WINEDLLOVERRIDES`; an entry says it
+    // as `wine_dll_overrides`, and this is where the one becomes the other.
     if let Some(overrides) = dll_overrides(&meta) {
         meta.entry("gamescope_wine_dll_overrides".into())
             .or_insert(overrides);
@@ -346,10 +349,9 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
             .or_insert_with(|| GL_COMPAT_OVERRIDE.to_string());
     }
 
-    // The same prefix [`WineEmu`] uses, so a release prepared under one backend is
-    // still prepared under the other and neither goes near the user's own `~/.wine`.
-    // Sandboxed, it is that prefix seen through a throwaway overlay at a path of
-    // this session's own, which is the whole difference.
+    // demarc's own prefix — the one `just wine-prefix` prepares — and never the
+    // user's `~/.wine`. Sandboxed, it is that prefix seen through a throwaway
+    // overlay at a path of this session's own, which is the whole difference.
     if !meta.contains_key("gamescope_wineprefix") {
         let prefix = match sandbox {
             Some(sandbox) => Some(sandbox.prefix.clone()),

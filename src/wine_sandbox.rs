@@ -8,7 +8,7 @@
 //!   inode* of the prefix (`/tmp/.wine-<uid>/server-<dev>-<ino>`), so everything
 //!   pointed at the same directory joins the same server. `wineserver -k` is
 //!   then all-or-nothing: closing one demo closes every demo. That is exactly
-//!   what [`crate::wine_emu::close_prefix`] does, what the gamescope core's
+//!   what [`crate::wine::close_prefix`] does, what the gamescope core's
 //!   `StopWineServer` does, and why `docs/GAMESCOPE.md` lists "two Windows demos
 //!   at once is out".
 //! - **One set of files.** A demo is free to write to the prefix — registry
@@ -43,7 +43,7 @@
 //! The pid namespace is the other half, and it is worth as much as the prefix
 //! is. wine's services (`wineserver`, `services.exe`, `winedevice.exe`) call
 //! `setsid` and leave the process group, which is why both backends carry code
-//! to hunt them down afterwards — [`crate::wine_emu::sweep_prefix`] exists
+//! to hunt them down afterwards — [`crate::wine::sweep_prefix`] exists
 //! because thirty-seven of them had piled up. Inside a pid namespace there is
 //! nowhere to escape to: when the demo (pid 1 in there) exits, the kernel takes
 //! the rest of the namespace with it, and so does `--die-with-parent` if the
@@ -68,7 +68,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use anyhow::{Context, Result, bail};
 use tracing::{debug, info, warn};
 
-use crate::wine_emu::{has_tool, is_yes};
+use crate::wine::{has_tool, is_yes};
 
 /// Entry key: run this demo in a sandboxed, throwaway copy of the prefix.
 ///
@@ -293,18 +293,6 @@ pub fn prepare(base: &Path, workdir: Option<&Path>) -> Result<Sandbox> {
         argv: bwrap_args(base, &prefix, workdir),
         prefix,
     })
-}
-
-/// Drop a session's mount point, once the session is gone.
-///
-/// Only the empty directory out here; the overlay went with the sandbox. Best
-/// effort, and never on a path that is not one of ours — a sandbox whose owner
-/// cannot say when it ended simply leaves its mount point to [`sweep`].
-pub fn release(prefix: &Path) {
-    if !prefix.starts_with(run_dir()) {
-        return;
-    }
-    let _ = fs::remove_dir(prefix);
 }
 
 #[cfg(test)]

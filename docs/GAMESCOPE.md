@@ -1,15 +1,15 @@
 # gamescope as a libretro core
 
 Every backend in demarc is a picture source — step it, take its frame, put the frame on a
-quad — except one. `src/wine_emu.rs` runs Windows demos by launching a fullscreen
-[gamescope] *on top of* demarc, and says plainly what that costs: "shaders, the grid and
-screenshots don't apply to it". It also gives up audio, input routing, and any reliable
-knowledge of when the demo ended.
+quad — and Windows demos are no exception, though it takes a compositor to make them one.
+demarc used to run them by launching a fullscreen [gamescope] *on top of* itself, which
+cost shaders, the grid, screenshots, audio, input routing and any reliable knowledge of
+when the demo ended.
 
-`external/gamescope/` now carries a second way of doing it. A new backend inside gamescope
-composites the session into a shared buffer instead of onto a display, and a small
+`external/gamescope/` is how they are run now. A new backend inside gamescope composites
+the session into a shared buffer instead of onto a display, and a small
 `gamescope_libretro.so` beside it hands those frames to demarc through the ordinary
-libretro path. The demo becomes a view like any other — shaders, grid and screenshots all
+libretro path. The demo is a view like any other — shaders, grid and screenshots all
 apply — and the same machinery runs an HTML/JS release in an undecorated Chrome.
 
 This file is the working reference: what exists, how to build and run it, what was learned
@@ -26,10 +26,10 @@ just gs demos/some-demo.exe                # a Windows demo, captured into demar
 just gs-web demos/thing.html               # an HTML/JS release through Chrome
 ```
 
-A Windows demo has to opt in with `wine_capture=true`, because `WineEmu` is still the
-default (see Status). What it then runs is the very same command `WineEmu` would have —
-the dialog driver, the resolution, a virtual desktop if the entry asked for one. A page does not: `src/newsys/web.rs` claims `.html`/`.htm` outright,
-since nothing else here could ever run one.
+`WindowsSystem` routes a `.exe` here by itself, and hands the core the whole command to
+run inside the session — the dialog driver, the resolution, a virtual desktop if the entry
+asked for one. So does `src/newsys/web.rs` for a page, which claims `.html`/`.htm`
+outright since nothing else here could ever run one.
 
 Build prerequisites beyond demarc's own: `meson`, `vulkan-headers`, `glslang`, and the
 wlroots build dependencies (`wayland-protocols`, `libseat`, the `xcb-*` set, `gbm`,
@@ -46,7 +46,7 @@ To drive it by hand, past the `WindowsSystem` routing:
 ```sh
 DEMARC_CORE_DIR=$PWD/external/gamescope/build-lr/src \
   cargo run --profile release-fast -- --no-silence \
-    -x wine_capture=true -x gamescope_command=glxgears some.exe
+    -x gamescope_command=glxgears some.exe
 ```
 
 ---
@@ -143,17 +143,17 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
 (`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_desktop`,
-`wine_dll_overrides` and `wine_gl_compat`, and an
-`overrides.toml` written for the on-top backend means the same thing here.
+`wine_dll_overrides` and `wine_gl_compat`, and an `overrides.toml` written before any of
+this existed means the same thing here.
 
 The command is the substantial half of that translation. Left to itself the core turns a
 `.exe` into `wine <exe>`, which is a demo sitting on its setup dialog with nobody to answer
-it; what it is given instead is the argv `crate::wine_emu::wine_command` builds — the same
-one `WineEmu` spawns, dialog driver and all — so neither backend can drift away from the
-other. `wine_desktop` rides along inside it as `explorer /desktop=`, which is why the core
-has no option of its own for it. `wine_res=pick` is not a size, so the resolution passed is
-the one the backend picks to stand in for it (1920x1200, big enough to hold whatever the
-person watching chooses).
+it; what it is given instead is the argv `crate::wine::wine_command` builds, dialog driver
+and all — everything demarc knows about starting a Windows release lives in `src/wine.rs`,
+and the core is handed the result. `wine_desktop` rides along inside it as
+`explorer /desktop=`, which is why the core has no option of its own for it. `wine_res=pick`
+is not a size, so the resolution passed is the stand-in for it (1920x1200, big enough to
+hold whatever the person watching chooses).
 
 ### The prefix each session runs in
 
@@ -244,8 +244,8 @@ FBO setup, every time.
   talks to is still alive: kill the group first and `winedevice.exe`, which `setsid()`s out
   of the group and survives everything, is orphaned beyond the reach of any later
   `wineserver -k` — verified by trying it by hand on a leftover and watching it ignore me.
-  This is the same class of leak `wine_emu.rs` documents ("thirty-seven of them left by
-  earlier sessions"). A session now tears down with nothing left behind.
+  This is the same class of leak `sweep_prefix` in `src/wine.rs` documents ("thirty-seven
+  of them left by earlier sessions"). A session now tears down with nothing left behind.
 - **A command is an argv, not a string.** `gamescope_command` is one core-option string,
   and the wine command demarc builds has two paths in it — the demo's and the driver's —
   both of which routinely contain spaces, brackets and apostrophes. Splitting it back up on
@@ -274,9 +274,9 @@ Kept as small as possible, so the tree stays diffable:
 
 ## Status
 
-`WineEmu` is still what a Windows entry gets by default — not for want of anything here,
-and no longer for want of a core to load: `gamescope` is an `ALT_SOURCES` entry now
-(below), so an ordinary demarc downloads it like any other core.
+This is what a Windows entry gets, and the only way demarc runs one; the on-top backend
+that came before it is gone. `gamescope` is an `ALT_SOURCES` entry (below), so an ordinary
+demarc downloads it like any other core.
 
 Working, and verified by eye on captured frames:
 
@@ -284,15 +284,15 @@ Working, and verified by eye on captured frames:
 - **Chromium** (X11, HTML/JS canvas) — 213 of 260, fullscreen, undecorated, 1:1, and
   reached by `demarc thing.html` with no flags.
 - **wine** (`notepad.exe`) — renders fullscreen in the session.
-- **A Windows demo with a setup dialog** (fr-025) — `wine_capture=true` reaches the driver,
-  which answers the dialog, launches the demo, undecorates its window and reports
+- **A Windows demo with a setup dialog** (fr-025) — the driver answers the dialog,
+  launches the demo, undecorates its window and reports
   `!demarc started`; the demo plays inside a demarc view at the session size.
 - **Keyboard injection** — `retro_keyboard_callback` → socket → `wlserver_key` → Xwayland →
   the client. Typing "hello demarc" at a page that echoes keys shows "hello demarc".
 - **Through demarc** — the picture reaches a view, with the CRT shader applied to it.
 - **Teardown** — after a wine session unloads, no `gamescope`, `Xwayland`,
   `gamescopereaper`, `wineserver` or `winedevice.exe` is left running.
-- **Two Windows demos at once** — `--grid=2x1 -x wine_capture=true heaven7.exe tracie.exe`
+- **Two Windows demos at once** — `--grid=2x1 heaven7.exe tracie.exe`
   brings up two compositors, two sandboxes, two wineservers and two demos rendering side
   by side in demarc's grid. See The prefix each session runs in.
 
@@ -300,8 +300,8 @@ Open:
 
 1. **No audio.** gamescope has none — an exhaustive grep of `src/` finds only keycode
    names. The core reports silence and pushes silent samples so the frontend's audio clock
-   still advances; a wine demo's sound goes to the user's speakers as it does under
-   `wine_emu.rs` today. The intended fix is a private PipeWire null sink with the child's
+   still advances; a wine demo's sound goes straight to the user's speakers. The
+   intended fix is a private PipeWire null sink with the child's
    `PULSE_SINK` pointed at it, captured into `retro_audio_sample_batch`.
 2. **The end of a demo is noticed late.** `demarc-autodlg.exe` is now in the command, so
    the setup dialog gets answered and the driver writes `!demarc started` / `exited` as it

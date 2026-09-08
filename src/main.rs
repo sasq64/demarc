@@ -53,7 +53,7 @@ mod zx_scr;
 #[cfg(feature = "flash")]
 mod flash_emu;
 #[cfg(target_os = "linux")]
-mod wine_emu;
+mod wine;
 #[cfg(target_os = "linux")]
 mod wine_sandbox;
 
@@ -462,10 +462,6 @@ fn main() {
     app.insert_resource(demo_settings)
         .add_settings_type::<demarc_settings::DemarcSettings>()
         .add_systems(Update, demarc_settings::apply_settings);
-    // A Windows demo takes the screen off demarc while it runs; this puts it
-    // back afterwards.
-    #[cfg(target_os = "linux")]
-    app.add_plugins(wine_emu::WinePlugin);
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
     // this restores the actually-requested fullscreen mode afterward.

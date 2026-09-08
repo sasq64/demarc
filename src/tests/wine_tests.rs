@@ -1,86 +1,6 @@
 use super::*;
-use std::io::Write;
-use std::os::fd::FromRawFd;
 
-/// A pipe, as `(read end, write end)`.
-fn pipe() -> (File, File) {
-    let mut fds = [0; 2];
-    // SAFETY: `pipe` writes two fds into an array of the right size.
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "no pipe");
-    unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) }
-}
-
-fn joins_within(handle: JoinHandle<()>, limit: Duration) -> bool {
-    let deadline = Instant::now() + limit;
-    while !handle.is_finished() {
-        if Instant::now() > deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    handle.join().is_ok()
-}
-
-fn drain_thread(read: File, stop: &Arc<AtomicBool>, signals: &Arc<Signals>) -> JoinHandle<()> {
-    let stop = Arc::clone(stop);
-    let signals = Arc::clone(signals);
-    // Labelled as the driver's stream: that is the one the reports and the
-    // signs of life come up.
-    thread::spawn(move || drain(vec![(OwnedFd::from(read), DRIVER_STREAM)], &stop, &signals))
-}
-
-/// The reader has to keep up — gamescope and wine fill a pipe and then
-/// block on it, taking the demo down with them — and it has to notice the
-/// end when it comes.
-#[test]
-fn drains_a_pipe_and_returns_when_it_ends() {
-    let (read, mut write) = pipe();
-    let stop = Arc::new(AtomicBool::new(false));
-    let reader = drain_thread(read, &stop, &Arc::new(Signals::default()));
-
-    // Several times a pipe buffer, so these writes can only complete
-    // because something is emptying the other end.
-    let filler = "x".repeat(1000);
-    for i in 0..256 {
-        writeln!(write, "line {i} {filler}").expect("the reader stopped reading");
-    }
-    // ...and a last line with no newline on it, which still gets logged.
-    write!(write, "no newline here").unwrap();
-    drop(write);
-
-    assert!(
-        joins_within(reader, Duration::from_secs(5)),
-        "the reader did not notice the pipe ending"
-    );
-}
-
-/// The bug this backend shipped with: wine's service processes put
-/// themselves in their own sessions and inherit demarc's stdout and stderr,
-/// so the pipes stay open after the demo's whole process group is killed.
-/// A reader parked in `read` on one of those could not be joined, and the
-/// quit hung in `Session::drop` for as long as it was left alone.
-#[test]
-fn a_pipe_someone_else_holds_open_cannot_wedge_the_quit() {
-    // Kept alive to the end of the test, the way `winedevice.exe` keeps its
-    // copy of the write end.
-    let (read, _write) = pipe();
-    let stop = Arc::new(AtomicBool::new(false));
-    let reader = drain_thread(read, &stop, &Arc::new(Signals::default()));
-
-    thread::sleep(Duration::from_millis(300));
-    assert!(
-        !reader.is_finished(),
-        "the reader gave up on a pipe that is still open"
-    );
-
-    stop.store(true, Ordering::Relaxed);
-    assert!(
-        joins_within(reader, Duration::from_secs(2)),
-        "the reader would not stop - a quit here hangs demarc"
-    );
-}
-
-/// Wait for `f`, or give up. The reports arrive on the logger thread.
+/// Wait for `f`, or give up.
 fn becomes_true(mut f: impl FnMut() -> bool, limit: Duration) -> bool {
     let deadline = Instant::now() + limit;
     while !f() {
@@ -90,95 +10,6 @@ fn becomes_true(mut f: impl FnMut() -> bool, limit: Duration) -> bool {
         thread::sleep(Duration::from_millis(10));
     }
     true
-}
-
-/// The driver's reports are the only honest account of the demo there is —
-/// gamescope outlives it, see `Signals` — so they have to survive the trip
-/// through the log pipe: mixed in with everything wine has to say, and read
-/// as news rather than logged and forgotten.
-#[test]
-fn the_drivers_reports_come_back_through_the_log() {
-    let (read, mut write) = pipe();
-    let stop = Arc::new(AtomicBool::new(false));
-    let signals = Arc::new(Signals::default());
-    let reader = drain_thread(read, &stop, &signals);
-
-    writeln!(write, "fixme:win:something wine has to say").unwrap();
-    // The driver is a PE writing to a pipe, so its lines arrive with the
-    // carriage return still on them.
-    write!(write, "{SENTINEL}started\r\n").unwrap();
-    assert!(
-        becomes_true(
-            || signals.started.load(Ordering::Relaxed),
-            Duration::from_secs(2)
-        ),
-        "the start of the demo was not heard"
-    );
-    assert!(
-        !signals.ended.load(Ordering::Relaxed),
-        "a running demo was taken for a finished one"
-    );
-
-    writeln!(write, "undecorated the demo window (800x600)").unwrap();
-    writeln!(write, "{SENTINEL}exited").unwrap();
-    assert!(
-        becomes_true(
-            || signals.ended.load(Ordering::Relaxed),
-            Duration::from_secs(2)
-        ),
-        "the end of the demo was not heard - the session would hold the screen"
-    );
-
-    drop(write);
-    assert!(joins_within(reader, Duration::from_secs(5)));
-}
-
-/// A demo that never starts has to end the session too, or demarc sits
-/// behind an empty gamescope forever.
-#[test]
-fn a_demo_that_never_started_ends_the_session() {
-    let (read, mut write) = pipe();
-    let stop = Arc::new(AtomicBool::new(false));
-    let signals = Arc::new(Signals::default());
-    let reader = drain_thread(read, &stop, &signals);
-
-    writeln!(write, "{SENTINEL}failed").unwrap();
-    assert!(
-        becomes_true(
-            || signals.ended.load(Ordering::Relaxed),
-            Duration::from_secs(2)
-        ),
-        "a demo that could not be started was left running"
-    );
-    assert!(!signals.started.load(Ordering::Relaxed));
-
-    drop(write);
-    assert!(joins_within(reader, Duration::from_secs(5)));
-}
-
-/// A driver too old to report anything must not have its demo shot at
-/// `START_TIMEOUT`: it still says what it is doing, and that is enough to
-/// know something is running in there.
-#[test]
-fn an_older_drivers_chatter_still_counts_as_a_sign_of_life() {
-    let (read, mut write) = pipe();
-    let stop = Arc::new(AtomicBool::new(false));
-    let signals = Arc::new(Signals::default());
-    let reader = drain_thread(read, &stop, &signals);
-
-    writeln!(write, "launched /demos/x.exe as pid 42").unwrap();
-    assert!(
-        becomes_true(
-            || signals.heard.load(Ordering::Relaxed),
-            Duration::from_secs(2)
-        ),
-        "a driver that is plainly running was not heard"
-    );
-    assert!(!signals.started.load(Ordering::Relaxed));
-    assert!(!signals.ended.load(Ordering::Relaxed));
-
-    drop(write);
-    assert!(joins_within(reader, Duration::from_secs(5)));
 }
 
 /// The pile-up this exists to stop: a process left in the prefix that
@@ -277,8 +108,8 @@ fn a_broken_resolution_still_gives_a_usable_config() {
     assert_eq!(cfg.dialog, Dialog::Drive);
 }
 
-/// `wine_res=pick` hands the dialog to whoever is watching: no driver in
-/// the command at all, and a session big enough for whatever they choose.
+/// `wine_res=pick` hands the dialog to whoever is watching: nothing pressed
+/// at all, and a session big enough for whatever they choose.
 #[test]
 fn pick_leaves_the_dialog_alone() {
     let exe = std::env::current_exe().expect("this test binary");
@@ -384,10 +215,9 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
 /// be there: an empty one says nothing and is better left unset.
 #[test]
 fn carries_dll_overrides_through_untouched() {
-    let exe = std::env::current_exe().expect("this test binary");
     let of = |value: &str| {
         let meta = HashMap::from([(META_DLL_OVERRIDES.to_string(), value.to_string())]);
-        Config::from_meta(&exe, &meta).unwrap().dll_overrides
+        dll_overrides(&meta)
     };
 
     assert_eq!(
@@ -400,12 +230,7 @@ fn carries_dll_overrides_through_untouched() {
 
     assert_eq!(of(""), None);
     assert_eq!(of("   "), None);
-    assert_eq!(
-        Config::from_meta(&exe, &HashMap::new())
-            .unwrap()
-            .dll_overrides,
-        None
-    );
+    assert_eq!(dll_overrides(&HashMap::new()), None);
 }
 
 /// `wine_gl_compat` is a yes/no, spelled any of the ways the rest of demarc's
@@ -414,10 +239,9 @@ fn carries_dll_overrides_through_untouched() {
 /// not for everything.
 #[test]
 fn reads_gl_compat_as_a_yes_or_no() {
-    let exe = std::env::current_exe().expect("this test binary");
     let of = |value: &str| {
         let meta = HashMap::from([(META_GL_COMPAT.to_string(), value.to_string())]);
-        Config::from_meta(&exe, &meta).unwrap().gl_compat
+        gl_compat(&meta)
     };
 
     for spelling in ["true", "1", "YES", " on "] {
@@ -428,8 +252,5 @@ fn reads_gl_compat_as_a_yes_or_no() {
         assert!(!of(spelling), "{spelling:?}");
     }
 
-    assert_eq!(
-        Config::from_meta(&exe, &HashMap::new()).unwrap().gl_compat,
-        DEFAULT_GL_COMPAT
-    );
+    assert_eq!(gl_compat(&HashMap::new()), DEFAULT_GL_COMPAT);
 }
