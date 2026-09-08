@@ -434,8 +434,12 @@ fn main() {
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
     let sys = NewSys::new(&args);
+    // The same table `sys` holds, so what the settings dialog writes here is
+    // what the next release is loaded with.
+    let meta = sys.global_meta();
     let settings = AppSettings {
         demozoo_overrides: overrides::load_default(),
+        meta,
         boot_file: args.boot_file.clone().map(files::leak),
         system: sys,
         current_game: -1,
@@ -465,9 +469,14 @@ fn main() {
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
-        shader,
-        fast_load: false,
-        resolution: settings::Resolution::Res800x600,
+        fast_load: args.fast_load,
+        reu: args.reu,
+        silent_drive: args.silent_drive,
+        // Nothing on the command line names these, and they are deliberately
+        // left out of the meta table until the dialog sets one: `Resolution::Auto`
+        // is what leaves a Windows release free to be run at the size its own
+        // name asks for (see `newsys::windows::res_from_name`).
+        wine: settings::WineSettings::default(),
     };
 
     let speed_test = args.speed_test;
@@ -537,7 +546,7 @@ fn main() {
             ScreenSaverPlugin,
             SpeedTestPlugin,
             jobs::JobsPlugin,
-            shader_dialog::ShaderDialogPlugin,
+            shader_dialog::ShaderDialogPlugin { default: shader },
         ));
     // The settings dialog, registered per settings type. `DemoSettings` is the
     // one the RightAlt+E hotkey opens.

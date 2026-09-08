@@ -34,6 +34,7 @@ use plus4::Plus4System;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tic80::Tic80System;
 use web::WebSystem;
 #[cfg(target_os = "linux")]
@@ -439,10 +440,93 @@ pub trait System: Send + Sync {
     }
 }
 
+/// The run-wide meta table: the values that belong to the session rather than to
+/// any one release, and that a running demarc may change.
+///
+/// It is what `-x key=value` writes into and what the settings dialog edits, and
+/// [`NewSys::load_prepared`] lays it over every [`WorkFile`] it builds — last, so
+/// it beats the release's own meta and `overrides.toml` alike. A backend reads
+/// its meta once as it is created, so a change takes hold on the next release
+/// loaded, not on the one playing.
+///
+/// A handle, not the table: [`AppSettings`](crate::config::AppSettings) holds one
+/// and the [`NewSys`] inside it holds another, and both see the same map. That is
+/// what the `Arc<Mutex<..>>` buys — [`load_prepared`](NewSys::load_prepared) takes
+/// `&self`, and threading a second borrow of `AppSettings` down through
+/// `update_load` would be a lot of signature for a table that is only ever
+/// touched from the main thread.
+#[derive(Clone, Default)]
+pub struct GlobalMeta(Arc<Mutex<HashMap<String, String>>>);
+
+impl GlobalMeta {
+    /// The table as the command line leaves it.
+    ///
+    /// The flags go in before [`Args::extra_options`], so `-x` still has the last
+    /// word over a flag naming the same key.
+    pub fn from_args(args: &Args) -> Self {
+        let this = Self::default();
+        this.set("latency", args.latency.to_string());
+        if args.grid.is_some() {
+            // TODO: Maybe insert "grid" and let core decide?
+            this.set("psx_core", "beetle");
+        }
+        // Options a running demarc can flip. They live here rather than in the
+        // `System` structs (which are built once, from `Args`, and never again)
+        // precisely so the settings dialog can reach them.
+        this.set_bool("fast_load", args.fast_load);
+        this.set_bool("reu", args.reu);
+        this.set_bool("silent_drive", args.silent_drive);
+        for opt in &args.extra_options {
+            if let Some((key, val)) = opt.split_once("=") {
+                this.set(key.trim(), val.trim());
+            }
+        }
+        this
+    }
+
+    pub fn set(&self, key: &str, value: impl Into<String>) {
+        self.lock().insert(key.into(), value.into());
+    }
+
+    /// Spelled the way [`WorkFile::is_enabled`] reads it.
+    pub fn set_bool(&self, key: &str, on: bool) {
+        self.set(key, if on { "true" } else { "false" });
+    }
+
+    /// Sets `key`, or removes it when `value` is empty.
+    ///
+    /// An empty text field in the dialog means "nothing to say about this", not
+    /// "the empty string": leaving `wine_dll_overrides = ""` behind would pin the
+    /// key at the top of the precedence chain and shut out whatever the release
+    /// or its override had to say about it.
+    pub fn set_or_clear(&self, key: &str, value: &str) {
+        if value.is_empty() {
+            self.lock().remove(key);
+        } else {
+            self.set(key, value);
+        }
+    }
+
+    /// Lays the whole table over `wf`.
+    pub fn apply_to(&self, wf: &mut WorkFile) {
+        for (key, val) in self.lock().iter() {
+            debug!("Adding {key}={val}");
+            wf.set_meta(key, val);
+        }
+    }
+
+    /// Nothing here holds the lock across a call that could take it again, so a
+    /// poisoned mutex would mean a panic somewhere that cannot panic; take the
+    /// table back either way rather than propagate a `Result` nobody can act on.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 #[derive(Default)]
 pub struct NewSys {
     systems: Vec<Box<dyn System>>,
-    meta: HashMap<String, String>,
+    meta: GlobalMeta,
 }
 pub struct LoadResult<'a> {
     pub backend: Box<dyn Backend + Send + Sync>,
@@ -461,7 +545,7 @@ impl NewSys {
             // Before the C64, which would otherwise claim the same disks and
             // programs; it stands aside unless --cbm-variant asked for it.
             Box::new(Plus4System::new(args)),
-            Box::new(C64System::new(args)),
+            Box::new(C64System {}),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
             Box::new(MegadriveSystem::new(args)),
@@ -480,31 +564,30 @@ impl NewSys {
         ]
     }
     pub fn new(args: &Args) -> Self {
-        let mut meta = HashMap::<String, String>::new();
-        for opt in &args.extra_options {
-            if let Some((key, val)) = opt.split_once("=") {
-                meta.insert(key.trim().into(), val.trim().into());
-            }
-        }
-        if args.grid.is_some() {
-            // TODO: Maybe insert "grid" and let core decide?
-            meta.insert("psx_core".into(), "beetle".into());
-        }
-        meta.insert("latency".into(), args.latency.to_string());
         NewSys {
             systems: Self::get_systems(args),
-            meta,
+            meta: GlobalMeta::from_args(args),
         }
     }
 
-    /// Change one of the run-wide meta values set up by [`NewSys::new`] — how
-    /// the settings dialog moves `latency`.
+    /// A second handle on the [`GlobalMeta`] this was built with, for
+    /// [`AppSettings`](crate::config::AppSettings) to hold beside it — the app
+    /// edits the table through that one rather than reaching through here.
+    pub fn global_meta(&self) -> GlobalMeta {
+        self.meta.clone()
+    }
+
+    /// Change one of the run-wide meta values set up by [`NewSys::new`].
     ///
     /// Applied in [`load_prepared`](Self::load_prepared), so it takes hold on
     /// the next release loaded, not on the one playing: a backend reads its
     /// meta once, as it is built.
-    pub fn set_meta(&mut self, key: &str, value: String) {
-        self.meta.insert(key.into(), value);
+    ///
+    /// The app writes through [`AppSettings::meta`](crate::config::AppSettings),
+    /// which is the same table; this is the short way in for the tests.
+    #[allow(dead_code)]
+    pub fn set_meta(&self, key: &str, value: String) {
+        self.meta.set(key, value);
     }
 
     /// Load a release, with `over` carrying whatever `overrides.toml` had to
@@ -541,11 +624,9 @@ impl NewSys {
             apply_override(&mut wf, over)?;
         }
 
-        // Last, so that `-x` on the command line beats every other source.
-        for (key, val) in &self.meta {
-            debug!("Adding {key}={val}");
-            wf.set_meta(key, val);
-        }
+        // Last, so that the run-wide meta -- `-x` on the command line and what
+        // the settings dialog has changed since -- beats every other source.
+        self.meta.apply_to(&mut wf);
 
         // Sort out which side of a disc release we were pointed at before any
         // system looks at it, since a directory holding a cue and its tracks is

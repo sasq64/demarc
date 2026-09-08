@@ -76,11 +76,103 @@ fn set_meta_reaches_the_next_release() {
             .get_meta_or("latency", "")
     };
 
-    let mut sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
+    let sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
     assert_eq!(latency_of(&sys), "2");
 
     sys.set_meta("latency", "5".into());
     assert_eq!(latency_of(&sys), "5");
+}
+
+/// What the command line leaves in the run-wide table: the flags a running
+/// demarc can flip are in it by name, and `-x` still has the last word over a
+/// flag that happens to name the same key.
+///
+/// Read back through [`GlobalMeta::apply_to`], which is the only way the table
+/// is ever used.
+#[test]
+fn the_command_line_fills_the_global_table() {
+    let table = |argv: &[&str]| {
+        let meta = GlobalMeta::from_args(&Args::parse_from(argv));
+        let mut wf = WorkFile::new(Path::new("release"));
+        meta.apply_to(&mut wf);
+        wf
+    };
+
+    let stock = table(&["demarc"]);
+    assert_eq!(stock.get_meta_or("fast_load", ""), "false");
+    assert_eq!(stock.get_meta_or("reu", ""), "false");
+    assert_eq!(stock.get_meta_or("silent_drive", ""), "false");
+    assert!(!stock.is_enabled("fast_load"));
+
+    let asked = table(&["demarc", "--fast-load", "--reu", "--silent-drive"]);
+    assert!(asked.is_enabled("fast_load"));
+    assert!(asked.is_enabled("reu"));
+    assert!(asked.is_enabled("silent_drive"));
+
+    // The flags go in first precisely so this holds.
+    let both = table(&["demarc", "--latency", "2", "-x", "latency=9"]);
+    assert_eq!(both.get_meta_or("latency", ""), "9");
+}
+
+/// `AppSettings` and the `NewSys` inside it hold the same table, so a write
+/// through the handle the app keeps reaches the next release loaded.
+///
+/// An IFF still image, so this needs no libretro core.
+#[test]
+fn the_app_and_newsys_share_one_table() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let iff = root.join("testdata").join("test.iff");
+
+    let sys = NewSys::new(&Args::parse_from(["demarc"]));
+    // What `main` hands to `AppSettings`.
+    let meta = sys.global_meta();
+    meta.set("frobnicate", "yes");
+    meta.set_bool("fast_load", true);
+
+    let wf = sys
+        .load_file(&iff, &HashMap::new(), None)
+        .unwrap()
+        .work_file;
+    assert_eq!(wf.get_meta_or("frobnicate", ""), "yes");
+    assert!(wf.is_enabled("fast_load"));
+
+    // And an empty value takes the key away again rather than pinning it.
+    meta.set_or_clear("frobnicate", "");
+    let wf = sys
+        .load_file(&iff, &HashMap::new(), None)
+        .unwrap()
+        .work_file;
+    assert!(!wf.has_meta("frobnicate"));
+}
+
+/// `fast_load`, `reu` and `silent_drive` reach the systems that act on them as
+/// meta rather than as fields copied out of `Args`, which is what lets the
+/// settings dialog change them between releases.
+#[test]
+fn the_runtime_flags_reach_the_systems_through_meta() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let load = |argv: &[&str], path: &Path| {
+        NewSys::new(&Args::parse_from(argv))
+            .load_file(path, &HashMap::new(), None)
+            .unwrap()
+            .work_file
+    };
+
+    let adf = root.join("testdata").join("amiga").join("rebels.adf");
+    let stock = load(&["demarc"], &adf);
+    assert!(!stock.has_meta("puae_floppy_speed"));
+    assert!(!stock.has_meta("puae_floppy_sound"));
+
+    let fast = load(&["demarc", "--fast-load", "--silent-drive"], &adf);
+    assert_eq!(fast.get_meta_or("puae_floppy_speed", ""), "0");
+    assert_eq!(fast.get_meta_or("puae_floppy_sound", ""), "100");
+
+    let prg = root.join("testdata").join("c64").join("quantum.prg");
+    assert!(!load(&["demarc"], &prg).has_meta("vice_ram_expansion_unit"));
+    assert_eq!(
+        load(&["demarc", "--reu"], &prg).get_meta_or("vice_ram_expansion_unit", ""),
+        "16384kB"
+    );
 }
 
 /// A file that is not an archive is left exactly where it is — nothing is

@@ -10,7 +10,7 @@ use regex::Regex;
 use crate::{
     commands::FilePickerSource,
     emu_file::{EmuFile, Override},
-    newsys::NewSys,
+    newsys::{GlobalMeta, NewSys},
     post_process::{BorderMode, ScaleMode, ShaderEffect},
     system_dir::system_dir,
 };
@@ -615,6 +615,10 @@ impl FadeState {
 #[derive(Resource, Default)]
 pub struct AppSettings {
     pub system: NewSys,
+    /// Run-wide meta: `-x key=value` plus whatever the settings dialog has
+    /// changed since. The same table `system` holds — see [`GlobalMeta`] — so a
+    /// write here reaches the next release loaded.
+    pub meta: GlobalMeta,
     pub show_info: bool,
     pub files: Vec<EmuFile>,
     pub current_game: isize,

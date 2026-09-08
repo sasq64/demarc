@@ -4,17 +4,6 @@
 # 'fast = true' runs an Amiga release on an accelerated A1200 (68030+FPU, 8MB fast, 128MB Z3, JIT);
 # options written in the same entry are applied on top of it.
 
-# Heaven 7 MMX now works and we probably dont need to start windows version
-# [zoo.15]
-# boot = "HEAVEN7W.EXE"
-
-# Debris TBD
-# [zoo.100]
-# wine = {
-#   WINEARCH = "win32",
-#   WINEDLLOVERRIDES = "mscoree,mshtml=",
-# }
-#
 [zoo.76]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 

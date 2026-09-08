@@ -3,7 +3,6 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use crate::{
-    Args,
     backend::Backend,
     cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
@@ -42,19 +41,10 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
     start_addr + data_size <= 0x1_0000
 }
 
-pub struct C64System {
-    fast_load: bool,
-    reu: bool,
-}
-
-impl C64System {
-    pub fn new(args: &Args) -> Self {
-        Self {
-            fast_load: args.fast_load,
-            reu: args.reu,
-        }
-    }
-}
+/// Stateless: `fast_load` and `reu` can be changed while demarc runs, so they
+/// travel as run-wide meta ([`crate::newsys::GlobalMeta`]) and are read off the
+/// [`WorkFile`] in [`C64System::load`] rather than frozen in here from `Args`.
+pub struct C64System {}
 
 impl System for C64System {
     fn core_name(&self) -> &'static str {
@@ -69,7 +59,7 @@ impl System for C64System {
         let mut images = vec![];
         let mut prgs = vec![];
 
-        if self.reu || file.has_tag("reu") {
+        if file.is_enabled("reu") || file.has_tag("reu") {
             file.set_meta("vice_ram_expansion_unit", "16384kB");
         }
 
@@ -122,7 +112,7 @@ impl System for C64System {
         })?;
 
         if !images.is_empty() {
-            if self.fast_load {
+            if file.is_enabled("fast_load") {
                 file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
                 file.set_meta("vice_autostart", "disabled");
             }

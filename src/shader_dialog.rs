@@ -42,8 +42,8 @@ use crate::post_process::{ShaderEffect, ShaderPath};
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
 use crate::settings::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, DemarcSettings, GRID_HEIGHT_FRACTION, LABEL_SIZE,
-    ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
+    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
 
 /// Where the Mega Bezel packs are unpacked, relative to the checkout root (or
@@ -503,6 +503,10 @@ pub struct ShaderDialog {
     collections: Vec<Collection>,
     /// Index into `collections`; [`DEFAULT`] until a pack is picked.
     selected: usize,
+    /// What the [`DEFAULT`] collection stands for: the `--shader` argument.
+    /// Lives here rather than in `DemarcSettings` because this dialog is the
+    /// only thing that reads it -- the shader is picked here, not there.
+    default: ShaderArg,
 }
 
 impl ShaderDialog {
@@ -538,16 +542,23 @@ enum Picked {
     Level(usize, usize),
 }
 
-pub struct ShaderDialogPlugin;
+pub struct ShaderDialogPlugin {
+    /// The bundled shader the [`DEFAULT`] collection resolves to, from
+    /// `--shader`.
+    pub default: ShaderArg,
+}
 
 impl Plugin for ShaderDialogPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShaderDialog>()
-            .add_message::<ShowShaderDialog>()
-            .add_systems(Update, open_dialog.run_if(on_message::<ShowShaderDialog>))
-            // After `update_ui`, which sets the frame's `pixels_per_point` --
-            // the same ordering the settings dialog needs.
-            .add_systems(EguiPrimaryContextPass, shader_dialog_ui.after(update_ui));
+        app.insert_resource(ShaderDialog {
+            default: self.default,
+            ..default()
+        })
+        .add_message::<ShowShaderDialog>()
+        .add_systems(Update, open_dialog.run_if(on_message::<ShowShaderDialog>))
+        // After `update_ui`, which sets the frame's `pixels_per_point` --
+        // the same ordering the settings dialog needs.
+        .add_systems(EguiPrimaryContextPass, shader_dialog_ui.after(update_ui));
     }
 }
 
@@ -584,7 +595,6 @@ fn shader_dialog_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut shader_path: ResMut<ShaderPath>,
     mut render: ResMut<RenderSettings>,
-    settings: Res<DemarcSettings>,
 ) -> Result {
     if !dialog.open {
         return Ok(());
@@ -602,7 +612,7 @@ fn shader_dialog_ui(
     // Picked inside the closure and applied after it, because the dialog is
     // borrowed for as long as the panel is being drawn.
     let mut picked = None;
-    let composed = composed_path(&dialog, settings.shader);
+    let composed = composed_path(&dialog);
 
     egui::Area::new(egui::Id::new("shader_dialog"))
         .order(egui::Order::Foreground)
@@ -642,7 +652,7 @@ fn shader_dialog_ui(
     match picked {
         Some(Picked::Collection(index)) => {
             dialog.selected = index;
-            apply(&dialog, &mut shader_path, &mut render, settings.shader);
+            apply(&dialog, &mut shader_path, &mut render);
         }
         Some(Picked::Level(level, index)) => {
             let selected = dialog.selected;
@@ -651,7 +661,7 @@ fn shader_dialog_ui(
             {
                 browser.select(level, index);
             }
-            apply(&dialog, &mut shader_path, &mut render, settings.shader);
+            apply(&dialog, &mut shader_path, &mut render);
         }
         None => {}
     }
@@ -666,12 +676,8 @@ fn shader_dialog_ui(
 /// the default collection is whatever shader the command line or the settings
 /// dialog last chose, switched on the way `crate::settings::apply_settings`
 /// does for `--shader`.
-fn apply(
-    dialog: &ShaderDialog,
-    shader_path: &mut ShaderPath,
-    render: &mut RenderSettings,
-    default: ShaderArg,
-) {
+fn apply(dialog: &ShaderDialog, shader_path: &mut ShaderPath, render: &mut RenderSettings) {
+    let default = dialog.default;
     match dialog.browser().and_then(PresetBrowser::path) {
         Some(path) => {
             shader_path.effect = ShaderEffect::Slangp(path);
@@ -688,7 +694,8 @@ fn apply(
 /// What the dialog prints under the combo boxes: the preset the selection
 /// names, relative to its collection, which is also the tail of a `--slangp`
 /// argument.
-fn composed_path(dialog: &ShaderDialog, default: ShaderArg) -> String {
+fn composed_path(dialog: &ShaderDialog) -> String {
+    let default = dialog.default;
     match dialog.browser() {
         Some(browser) => browser.relative_path().unwrap_or_default(),
         // `--shader none` is the stock passthrough preset with the effect

@@ -3,6 +3,40 @@ use super::*;
 use bevy::color::{LinearRgba, Srgba};
 use std::path::PathBuf;
 
+/// A registry holding `T` and everything it is built out of -- what the dialog
+/// gets from `AppTypeRegistry` at runtime, since `add_settings_type` registers
+/// the settings struct.
+fn registry<T: GetTypeRegistration>() -> TypeRegistry {
+    let mut registry = TypeRegistry::new();
+    registry.register::<T>();
+    registry
+}
+
+/// `describe` over a default-constructed `T`, which is how all but a couple of
+/// these tests call it.
+fn fields_of<T: Reflect + GetTypeRegistration + Default>() -> Vec<Field> {
+    describe(T::default().as_partial_reflect(), &registry::<T>())
+}
+
+/// The variant list of a combo box field, as (name, label) pairs.
+fn variants_of(fields: &[Field], name: &str) -> Vec<(&'static str, String)> {
+    match widget_of(fields, name) {
+        Widget::Enum { variants } => variants.into_iter().map(|v| (v.name, v.label)).collect(),
+        other => panic!("{name} is {other:?}, not a combo box"),
+    }
+}
+
+/// A combo box's entries where the enum has no `Display` impl: label == name.
+fn plain(names: &[&'static str]) -> Vec<Variant> {
+    names
+        .iter()
+        .map(|&name| Variant {
+            name,
+            label: name.to_owned(),
+        })
+        .collect()
+}
+
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
 enum Mode {
     #[default]
@@ -82,7 +116,7 @@ fn widget_of(fields: &[Field], name: &str) -> Widget {
 
 #[test]
 fn every_supported_type_maps_to_its_widget() {
-    let fields = describe(Every::default().as_partial_reflect());
+    let fields = fields_of::<Every>();
     assert_eq!(
         widgets(&fields),
         vec![
@@ -99,7 +133,7 @@ fn every_supported_type_maps_to_its_widget() {
             (
                 "mode",
                 &Widget::Enum {
-                    variants: vec!["Stretch", "Fit", "Zoom"],
+                    variants: plain(&["Stretch", "Fit", "Zoom"]),
                 },
             ),
         ]
@@ -111,7 +145,7 @@ fn every_supported_type_maps_to_its_widget() {
 /// combo box of `Srgba`/`Hsla`/... instead of a colour picker.
 #[test]
 fn colors_are_not_mistaken_for_enums() {
-    let fields = describe(Every::default().as_partial_reflect());
+    let fields = fields_of::<Every>();
     for name in ["tint", "plain", "linear"] {
         assert_eq!(widget_of(&fields, name), Widget::Color, "{name}");
     }
@@ -119,7 +153,7 @@ fn colors_are_not_mistaken_for_enums() {
 
 #[test]
 fn unsupported_types_are_rows_not_panics() {
-    let fields = describe(Unsupported::default().as_partial_reflect());
+    let fields = fields_of::<Unsupported>();
     assert_eq!(
         widgets(&fields),
         vec![
@@ -134,7 +168,7 @@ fn unsupported_types_are_rows_not_panics() {
 
 #[test]
 fn ranges_come_from_field_attributes() {
-    let fields = describe(Ranged::default().as_partial_reflect());
+    let fields = fields_of::<Ranged>();
     assert_eq!(
         widget_of(&fields, "capped"),
         Widget::Int {
@@ -173,22 +207,23 @@ fn range_takes_integer_bounds() {
 
 #[test]
 fn ignored_fields_do_not_appear() {
-    let fields = describe(WithIgnored::default().as_partial_reflect());
+    let fields = fields_of::<WithIgnored>();
     assert_eq!(widgets(&fields), vec![("kept", &Widget::Bool)]);
 }
 
 #[test]
 fn labels_are_field_names_in_title_case() {
-    let fields = describe(Named::default().as_partial_reflect());
+    let fields = fields_of::<Named>();
     let labels: Vec<&str> = fields.iter().map(|f| f.label.as_str()).collect();
     assert_eq!(labels, vec!["Cross Fade Delay", "Aga", "A"]);
 }
 
 #[test]
 fn non_structs_describe_to_nothing() {
-    assert!(describe(true.as_partial_reflect()).is_empty());
-    assert!(describe(Mode::Fit.as_partial_reflect()).is_empty());
-    assert!(describe(vec![1u32, 2].as_partial_reflect()).is_empty());
+    let registry = registry::<Mode>();
+    assert!(describe(true.as_partial_reflect(), &registry).is_empty());
+    assert!(describe(Mode::Fit.as_partial_reflect(), &registry).is_empty());
+    assert!(describe(vec![1u32, 2].as_partial_reflect(), &registry).is_empty());
 }
 
 #[test]
@@ -216,7 +251,7 @@ fn set_variant_reaches_a_field_through_the_struct() {
     let ReflectMut::Struct(s) = every.reflect_mut() else {
         panic!("not a struct");
     };
-    let index = describe(Every::default().as_partial_reflect())
+    let index = fields_of::<Every>()
         .iter()
         .position(|f| f.name == "mode")
         .unwrap();
@@ -229,32 +264,170 @@ fn set_variant_reaches_a_field_through_the_struct() {
 /// `Unsupported` is a setting nobody can change.
 #[test]
 fn demo_settings_are_all_editable() {
-    let fields = describe(DemarcSettings::default().as_partial_reflect());
+    let registry = registry::<DemarcSettings>();
+    for section in sections(DemarcSettings::default().as_partial_reflect(), &registry) {
+        for field in &section.fields {
+            assert_ne!(
+                field.widget,
+                Widget::Unsupported,
+                "{}.{}",
+                section.title,
+                field.name
+            );
+        }
+    }
+}
+
+/// The nested `wine: WineSettings` is a heading with its own rows, not a row.
+#[test]
+fn nested_structs_become_sections() {
+    let registry = registry::<DemarcSettings>();
+    let sections = sections(DemarcSettings::default().as_partial_reflect(), &registry);
+    let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(titles, vec!["", "Wine"]);
+
+    let root = &sections[0];
+    assert!(root.path.is_empty());
+    assert_eq!(widget_of(&root.fields, "fullscreen"), Widget::Bool);
+    assert_eq!(widget_of(&root.fields, "wine"), Widget::Section);
+
+    let wine = &sections[1];
+    // The path is the index of `wine` in the root struct, which is what
+    // `field_at_path` walks to reach the value the rows edit.
     assert_eq!(
-        widgets(&fields),
+        wine.path,
         vec![
-            ("fullscreen", &Widget::Bool),
-            (
-                "shader",
-                &Widget::Enum {
-                    variants: vec!["Lottes", "LottesSimple", "Lcd", "LcdSimple", "None"],
-                },
-            ),
-            ("background", &Widget::Color),
-            (
-                "latency",
-                &Widget::Int {
-                    range: Some(Range::new(1, 8)),
-                },
-            ),
-            (
-                "volume",
-                &Widget::Float {
-                    range: Some(Range::new(0.0, 100.0)),
-                },
-            ),
+            root.fields
+                .iter()
+                .position(|f| f.name == "wine")
+                .expect("no wine field")
         ]
     );
+    let names: Vec<&str> = wine.fields.iter().map(|f| f.name).collect();
+    assert_eq!(
+        names,
+        vec!["resolution", "overrides", "show_startup_dialog", "filter"]
+    );
+    assert_eq!(widget_of(&wine.fields, "overrides"), Widget::Text);
+    assert_eq!(widget_of(&wine.fields, "show_startup_dialog"), Widget::Bool);
+    assert_eq!(widget_of(&wine.fields, "filter"), Widget::Bool);
+}
+
+/// `Resolution`'s variants cannot be named `640x480`, so the combo box labels
+/// them with the enum's own `Display` impl -- the names stay what `set_variant`
+/// needs.
+#[test]
+fn display_impl_labels_an_enums_variants() {
+    let registry = registry::<DemarcSettings>();
+    let sections = sections(DemarcSettings::default().as_partial_reflect(), &registry);
+    let wine = sections
+        .iter()
+        .find(|s| s.title == "Wine")
+        .expect("no wine");
+    assert_eq!(
+        variants_of(&wine.fields, "resolution"),
+        vec![
+            ("Auto", "Auto".to_owned()),
+            ("Res640x480", "640x480".to_owned()),
+            ("Res800x600", "800x600".to_owned()),
+            ("Res1024x768", "1024x768".to_owned()),
+            ("Res1280x720", "1280x720".to_owned()),
+            ("Res1920x1080", "1920x1080".to_owned()),
+        ]
+    );
+}
+
+/// The two wine fields that share the `wine_res` key: asking for the demo's own
+/// setup dialog wins over a size, and `Auto` is the empty string that
+/// [`crate::newsys::GlobalMeta::set_or_clear`] reads as "take the key away" --
+/// which is what leaves a release free to be run at the size its file name asks
+/// for.
+#[test]
+fn the_wine_resolution_and_the_startup_dialog_share_one_key() {
+    let wine = |resolution, show_startup_dialog| {
+        WineSettings {
+            resolution,
+            show_startup_dialog,
+            ..default()
+        }
+        .wine_res()
+    };
+    assert_eq!(wine(Resolution::Auto, false), "");
+    assert_eq!(wine(Resolution::Res1024x768, false), "1024x768");
+    assert_eq!(wine(Resolution::Res1024x768, true), "pick");
+    assert_eq!(wine(Resolution::Auto, true), "pick");
+}
+
+/// An enum without `#[reflect(Display)]` keeps its variant identifiers -- and so
+/// does one whose type never made it into the registry.
+#[test]
+fn variants_without_display_keep_their_names() {
+    assert_eq!(
+        variants_of(&fields_of::<Every>(), "mode"),
+        vec![
+            ("Stretch", "Stretch".to_owned()),
+            ("Fit", "Fit".to_owned()),
+            ("Zoom", "Zoom".to_owned()),
+        ]
+    );
+    let empty = TypeRegistry::empty();
+    let fields = describe(WineSettings::default().as_partial_reflect(), &empty);
+    // Not `Auto`, whose `Display` output and identifier are the same word and so
+    // would pass either way.
+    assert_eq!(
+        variants_of(&fields, "resolution")[1],
+        ("Res640x480", "Res640x480".to_owned())
+    );
+}
+
+/// Sections are depth first, and a section deeper than one carries the labels
+/// of the fields it came through.
+#[test]
+fn sections_nest_and_name_their_path() {
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Inner {
+        deep: bool,
+    }
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Middle {
+        mid: u32,
+        inner: Inner,
+    }
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Outer {
+        top: bool,
+        first: Middle,
+        tint: Color,
+    }
+
+    let sections = sections(Outer::default().as_partial_reflect(), &registry::<Outer>());
+    let found: Vec<(&str, &[usize])> = sections
+        .iter()
+        .map(|s| (s.title.as_str(), s.path.as_slice()))
+        .collect();
+    // `tint` is a struct under the hood and must stay a colour row.
+    assert_eq!(
+        found,
+        vec![
+            ("", &[][..]),
+            ("First", &[1][..]),
+            ("First / Inner", &[1, 1][..]),
+        ]
+    );
+
+    let mut outer = Outer::default();
+    let deep = field_at_path(outer.as_partial_reflect_mut(), &[1, 1]).expect("no such path");
+    let ReflectMut::Struct(deep) = deep.reflect_mut() else {
+        panic!("not a struct");
+    };
+    *deep
+        .field_mut("deep")
+        .unwrap()
+        .try_downcast_mut::<bool>()
+        .unwrap() = true;
+    assert!(outer.first.inner.deep);
+    // A path through something that is not a struct resolves to nothing.
+    assert!(field_at_path(outer.as_partial_reflect_mut(), &[0, 0]).is_none());
 }
 
 /// Every variant the combo box offers has to resolve to a shader that exists,

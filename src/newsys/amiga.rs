@@ -291,19 +291,19 @@ pub struct AmigaSystem {
     aga: bool,
     xmem: bool,
     fast: bool,
-    fast_load: bool,
-    silent_drive: bool,
     unadf: bool,
 }
 
 impl AmigaSystem {
+    /// `fast_load` and `silent_drive` are deliberately not among these: they can
+    /// be changed while demarc runs, so they travel as run-wide meta
+    /// ([`crate::newsys::GlobalMeta`]) and are read off the [`WorkFile`] in
+    /// [`AmigaSystem::load`] instead of being frozen in here.
     pub fn new(args: &Args) -> Self {
         Self {
             aga: args.aga,
             xmem: args.xmem,
             fast: args.fast,
-            fast_load: args.fast_load,
-            silent_drive: args.silent_drive,
             unadf: args.unadf,
         }
     }
@@ -734,7 +734,7 @@ impl System for AmigaSystem {
                 file.set_machine(Machine::A500);
             }
         }
-        if self.fast_load {
+        if file.is_enabled("fast_load") {
             file.set_meta("puae_floppy_speed", "0");
         }
         if self.xmem {
@@ -744,7 +744,7 @@ impl System for AmigaSystem {
         if self.fast {
             file.set_fast();
         }
-        if self.silent_drive {
+        if file.is_enabled("silent_drive") {
             file.set_meta("puae_floppy_sound", "100");
         }
 
