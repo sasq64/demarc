@@ -61,7 +61,7 @@ mod wine_sandbox;
 use commands::CommandPlugin;
 use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
-use frontend::RetroPlugin;
+use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
 use newsys::NewSys;
 use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
@@ -447,7 +447,7 @@ fn main() {
                     file_path: system_dir().to_string_lossy().into_owned(),
                     ..Default::default()
                 }),
-            RetroPlugin {},
+            FrontendPlugin {},
             CommandPlugin,
             PostProcessPlugin {
                 shader: shader_path,

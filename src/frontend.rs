@@ -18,7 +18,7 @@ use crate::mouse_cursor::HideMouse;
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 
-pub struct RetroPlugin {}
+pub struct FrontendPlugin {}
 
 /// Marks an emulator view as occupying a sub-rectangle of the window,
 /// expressed in normalized `[0, 1]` coordinates. [`update_view_rects`] keeps
@@ -91,7 +91,7 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::Windowed;
 }
 
-fn setup_retro(world: &mut World) {
+fn setup_frontend(world: &mut World) {
     let args = world.resource::<Args>();
 
     let color_cycle = args.color_cycle;
@@ -334,7 +334,7 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
-fn run_retro(
+fn run_frontend(
     mut emus: Query<&mut Emulator>,
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
@@ -918,19 +918,19 @@ fn drives_playlist(settings: &AppSettings, i: usize) -> bool {
     i == settings.current_emu && settings.fade.incoming.is_none()
 }
 
-impl Plugin for RetroPlugin {
+impl Plugin for FrontendPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Startup,
-            (setup_retro, setup_ui_camera, fix_window, setup_gizmos),
+            (setup_frontend, setup_ui_camera, fix_window, setup_gizmos),
         );
         app.add_systems(
             Update,
             (
-                run_retro,
+                run_frontend,
                 // Reads the fade state `run_retro` just moved on, and writes
                 // the alphas it reads back next frame.
-                update_cross_fade.after(run_retro),
+                update_cross_fade.after(run_frontend),
                 update_view_rects,
                 draw_current_emu_outline,
             ),
