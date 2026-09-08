@@ -2,11 +2,7 @@ use super::*;
 
 /// The arguments as words, so a test can ask about pairs without counting.
 fn args(base: &str, prefix: &str, workdir: Option<&str>) -> Vec<String> {
-    bwrap_args(
-        Path::new(base),
-        Path::new(prefix),
-        workdir.map(Path::new),
-    )
+    bwrap_args(Path::new(base), Path::new(prefix), workdir.map(Path::new))
 }
 
 /// Is `value` the word after `flag`?
@@ -132,7 +128,10 @@ fn releases_only_its_own_mount_points() {
     std::fs::create_dir(&stranger).expect("a directory");
 
     release(&stranger);
-    assert!(stranger.is_dir(), "release() left its own directories alone");
+    assert!(
+        stranger.is_dir(),
+        "release() left its own directories alone"
+    );
 }
 
 /// A crash leaves mount points behind. They are empty directories rather than
@@ -150,7 +149,10 @@ fn sweeps_dead_runs_and_keeps_live_ones() {
 
     sweep(dir.path());
 
-    assert!(mine.is_dir(), "a live demarc's sandboxes are not ours to take");
+    assert!(
+        mine.is_dir(),
+        "a live demarc's sandboxes are not ours to take"
+    );
     assert!(!dead.exists(), "a dead run's mount points are swept");
     assert!(other.is_dir(), "only pid-named directories are touched");
 }

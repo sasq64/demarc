@@ -9,7 +9,7 @@
 //! presets, laid out
 //! `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting>.slangp`
 //! (see `docs/SHADERS.md`). That is far too many for the fuzzy list and not
-//! something [`crate::settings`] can draw either -- its combo boxes come from a
+//! something [`crate::egui_settings`] can draw either -- its combo boxes come from a
 //! reflected enum's variant list, and these choices are only known once a
 //! directory has been read. So this dialog draws one combo box per level and
 //! fills each from what the level above selected:
@@ -41,9 +41,10 @@ use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take
 use crate::post_process::{ShaderEffect, ShaderPath};
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
-use crate::settings::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, DemarcSettings, GRID_HEIGHT_FRACTION, LABEL_SIZE,
-    ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+use crate::demarc_settings::DemarcSettings;
+use crate::egui_settings::{
+    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
+    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
 
 /// Where the Mega Bezel packs are unpacked, relative to the checkout root (or
@@ -664,7 +665,7 @@ fn shader_dialog_ui(
 
 /// Puts the selection on screen. A pack preset is a filter chain to run;
 /// the default collection is whatever shader the command line or the settings
-/// dialog last chose, switched on the way `crate::settings::apply_settings`
+/// dialog last chose, switched on the way `crate::demarc_settings::apply_settings`
 /// does for `--shader`.
 fn apply(
     dialog: &ShaderDialog,

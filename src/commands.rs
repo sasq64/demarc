@@ -9,6 +9,8 @@ use percent_encoding::percent_decode_str;
 use url::Url;
 
 use crate::config::{AppSettings, RenderSettings};
+use crate::demarc_settings::DemarcSettings;
+use crate::egui_settings::ShowSettings;
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::{EmuFile, FileSource, UrlList};
@@ -17,7 +19,6 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::settings::{DemarcSettings, ShowSettings};
 use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
@@ -617,7 +618,7 @@ fn handle_cmd(
             Cmd::Settings => {
                 // Opens over a copy of the last-applied values; the dialog
                 // sends a `SettingsApplied` back on every edit, which is what
-                // puts it into effect — see `settings::apply_settings`.
+                // puts it into effect — see `demarc_settings::apply_settings`.
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
             }
             Cmd::ShaderDialog => {

@@ -264,10 +264,7 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
     // A bare file name has a parent, and it is the empty path — which is not a
     // directory to start anything in. Left out, the sandbox keeps demarc's own
     // working directory, which is the one that name was relative to anyway.
-    let workdir = file
-        .path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty());
+    let workdir = file.path.parent().filter(|dir| !dir.as_os_str().is_empty());
     match wine_sandbox::prepare(&wine_prefix().ok()?, workdir) {
         Ok(sandbox) => Some(sandbox),
         Err(err) => {

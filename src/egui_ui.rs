@@ -212,7 +212,7 @@ pub struct HudText {
 pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
-    /// How many dialogs (`crate::settings`, `crate::shader_dialog`) are up.
+    /// How many dialogs (`crate::egui_settings`, `crate::shader_dialog`) are up.
     /// Kept here rather than on the generic `SettingsState<T>` so
     /// [`HudState::modal`] can answer without naming the settings type, and
     /// counted rather than a flag so closing one dialog while another is still

@@ -18,6 +18,8 @@ mod cbmconvert;
 mod commands;
 mod config;
 mod degas;
+mod demarc_settings;
+mod egui_settings;
 mod egui_ui;
 mod emu_file;
 mod emulator;
@@ -40,7 +42,6 @@ mod pixels;
 mod post_process;
 mod retro_emu;
 mod screensaver;
-mod settings;
 mod shader_dialog;
 mod speed_test;
 mod system_dir;
@@ -59,12 +60,12 @@ mod wine_emu;
 mod wine_sandbox;
 
 use commands::CommandPlugin;
+use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::RetroPlugin;
 use newsys::NewSys;
 use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
 use screensaver::ScreenSaverPlugin;
-use settings::AppSettingsExt;
 use speed_test::SpeedTestPlugin;
 use system_dir::system_dir;
 
@@ -459,15 +460,15 @@ fn main() {
     let clear_color = args.clear_color;
     // What the settings dialog opens showing. Seeded from the command line so
     // the first open reports the state the app is actually in; from then on it
-    // is the record of what was last applied (see `settings::apply_settings`).
-    let demo_settings = settings::DemarcSettings {
+    // is the record of what was last applied (see `demarc_settings`).
+    let demo_settings = demarc_settings::DemarcSettings {
         fullscreen: !win,
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
         shader,
         fast_load: false,
-        resolution: settings::Resolution::Res800x600,
+        resolution: demarc_settings::Resolution::Res800x600,
     };
 
     let speed_test = args.speed_test;
@@ -539,11 +540,11 @@ fn main() {
             jobs::JobsPlugin,
             shader_dialog::ShaderDialogPlugin,
         ));
-    // The settings dialog, registered per settings type. `DemoSettings` is the
-    // one the RightAlt+E hotkey opens.
+    // The settings dialog, registered per settings type. `DemarcSettings` is
+    // the one the RightAlt+E hotkey opens.
     app.insert_resource(demo_settings)
-        .add_settings_type::<settings::DemarcSettings>()
-        .add_systems(Update, settings::apply_settings);
+        .add_settings_type::<demarc_settings::DemarcSettings>()
+        .add_systems(Update, demarc_settings::apply_settings);
     #[cfg(feature = "profile")]
     app.add_plugins(profiling::ProfilingPlugin);
     // A Windows demo takes the screen off demarc while it runs; this puts it
