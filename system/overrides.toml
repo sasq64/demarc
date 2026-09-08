@@ -56,8 +56,10 @@ fast = true
 
 [zoo.18030]
 patch = { info = "GUS 0x240", target = "SOUND.CFG", contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
-
 file = "inside.zip"
+
+[zoo.55180]
+file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
 
 # Ninja II by Melon Dezign
 [zoo.18032]

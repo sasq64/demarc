@@ -187,6 +187,43 @@ fn an_override_picks_the_download_it_names() {
     assert_eq!(urls.len(), 2);
 }
 
+/// The name is matched against the end of the whole URL, so an override can
+/// write as much of the path as it takes to tell two downloads apart when
+/// their file names alone don't.
+#[test]
+fn an_override_can_name_the_directory_too() {
+    let listing = || {
+        FileSource::Url(
+            vec![
+                "https://files.scene.org/get/parties/1997/demo.zip",
+                "https://files.scene.org/get/parties/1998/demo.zip",
+            ]
+            .into(),
+        )
+    };
+
+    let mut source = listing();
+    source.pick_download("1998/demo.zip");
+    let FileSource::Url(urls) = &source else {
+        panic!("still a URL list, {source:?}")
+    };
+    assert_eq!(
+        urls.as_slice(),
+        ["https://files.scene.org/get/parties/1998/demo.zip"]
+    );
+
+    // The bare file name matches both, and the first one wins.
+    let mut source = listing();
+    source.pick_download("demo.zip");
+    let FileSource::Url(urls) = &source else {
+        panic!("still a URL list, {source:?}")
+    };
+    assert_eq!(
+        urls.as_slice(),
+        ["https://files.scene.org/get/parties/1997/demo.zip"]
+    );
+}
+
 /// Nothing to try is an error rather than a panic — an entry whose URLs all
 /// got filtered away shouldn't take the process down.
 #[test]

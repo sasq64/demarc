@@ -166,6 +166,17 @@ fn url_file_name(url: &str) -> Option<String> {
     )
 }
 
+/// Whether `url` ends with `name`, matched on the percent-decoded URL and
+/// ignoring case, so an override can name a file plainly (`inside.zip`) or with
+/// as much of the path before it as it takes to be unambiguous
+/// (`mekka/inside.zip`).
+fn url_ends_with(url: &str, name: &str) -> bool {
+    let url = percent_encoding::percent_decode_str(url)
+        .decode_utf8_lossy()
+        .to_ascii_lowercase();
+    url.ends_with(&name.to_ascii_lowercase())
+}
+
 fn is_disk_image_url(url: &str) -> bool {
     const DISK_IMAGE_EXTENSIONS: [&str; 10] = [
         "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
@@ -383,13 +394,18 @@ fn cache_key(url: &str) -> String {
 }
 
 impl FileSource {
-    /// Narrow a URL-backed source down to the one URL whose file name is
-    /// `name`, for an [`Override`] that says which of a release's downloads is
-    /// the demo.
+    /// Narrow a URL-backed source down to the first URL ending with `name`,
+    /// for an [`Override`] that says which of a release's downloads is the
+    /// demo.
     ///
     /// A demozoo release often lists the demo, its soundtrack and a scan of the
     /// disk label side by side, and [`release_downloads`] can only guess
     /// between them from the extensions. Naming the file settles it.
+    ///
+    /// It is the tail of the whole URL that has to match, not just the file
+    /// name, so `name` can carry as much of the path as it takes to pick one of
+    /// two downloads that share a file name: `demo.zip` matches any link ending
+    /// that way, `1997/demo.zip` only the one under that directory.
     ///
     /// A name that matches nothing leaves the list alone and warns: the entry
     /// still has its URLs, so the load falls back to guessing rather than
@@ -399,9 +415,7 @@ impl FileSource {
         let FileSource::Url(urls) = self else {
             return;
         };
-        let picked = urls
-            .iter()
-            .find(|url| url_file_name(url).is_some_and(|f| f.eq_ignore_ascii_case(name)));
+        let picked = urls.iter().find(|url| url_ends_with(url, name));
         match picked {
             Some(url) => *urls = UrlList::one(url),
             None => warn!("No download named {name:?} among {:?}", urls.as_slice()),
