@@ -168,7 +168,7 @@ impl System for WindowsSystem {
             return Ok(false);
         };
 
-        for tag in ["512x384", "320x200"] {
+        for tag in ["512x384", "320x200", "640x480", "1024x768", "1280x720"] {
             if file.has_tag(tag) {
                 file.set_meta(META_RES, tag);
                 break;

@@ -321,6 +321,7 @@ fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> 
 /// DOS release come back from an archive in every case there is, and an override
 /// is written from what the demo's own documentation calls the file.
 fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
+    debug!("Finding {name} in {dir:?}");
     walk_dir_find(dir, 0, |path, _ext, _header| {
         let found = path
             .file_name()
