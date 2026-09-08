@@ -142,7 +142,7 @@ fn is_dos_program(path: &Path) -> bool {
         // size is all there is to go on.
         "com" => size > 0 && size <= MAX_COM_SIZE,
         // A batch file is text, and an empty one starts nothing.
-        "bat" => size > 0 && fs::read(path).is_ok_and(|b| std::str::from_utf8(&b).is_ok()),
+        "bat" => size > 0 && fs::read(path).is_ok(), // _and(|b| std::str::from_utf8(&b).is_ok()),
         _ => false,
     }
 }
