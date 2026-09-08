@@ -225,29 +225,6 @@ fn primary_url(s: &str) -> String {
         .unwrap_or_else(|| s.into())
 }
 
-/// True if `s` looks like a remote URL demarc should download rather than treat
-/// as a local path — either a downloadable scheme or a [`LINK_BASES`] class.
-pub fn is_url(s: &str) -> bool {
-    s.starts_with("http://")
-        || s.starts_with("https://")
-        || s.starts_with("ftp://")
-        || link_class(s).is_some()
-}
-
-/// Download the file at `url` into a local cache directory and return its path.
-///
-/// Files are cached under `<cache>/demarc/downloads/<url-hash>/<name>`, so
-/// re-opening the same link reuses the existing download. The hash covers the
-/// whole URL while the leaf keeps its readable, correctly-suffixed name (see
-/// [`crate::cache::FileCache::get_file`] and [`url_filename`]) — downstream
-/// dispatch keys on the file extension, so the extension has to survive. The
-/// download goes to a `.part` file that is renamed into place on success, so an
-/// interrupted transfer never leaves a truncated file masquerading as a valid
-/// cache hit.
-pub fn fetch_url(url: &str) -> anyhow::Result<PathBuf> {
-    fetch_url_with_progress(url, &|_, _| {})
-}
-
 /// Reports `(bytes written so far, total size if the server declared one)` as a
 /// download runs. Called once per write, so on every chunk `std::io::copy`
 /// moves — cheap enough for an atomic store, too often for anything expensive.

@@ -262,16 +262,9 @@ fn release_dir(file: &WorkFile) -> PathBuf {
     }
 }
 
-/// Write an override's patches into the release.
-///
-/// A patch is nearly always a config file the release was packed without: a
-/// DOS demo asks its own `.CFG` where the sound card is, and without one it
-/// either runs silent or refuses to start. So a target that isn't there yet is
-/// created rather than skipped, in the directory the release was unpacked to.
-///
-/// The release is copied somewhere writable first, since it may just as well be
-/// a plain directory on disk as a temp dir full of unpacked files — and the one
-/// thing a patch must not do is edit the user's own copy of a release.
+/// Patch a release;
+/// Will add or modify files in the release directory
+/// Must call make_temp() to make sure that is OK.
 fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
     file.make_temp()?;
     let dir = release_dir(file);
@@ -298,7 +291,7 @@ fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
 
 /// Write `data` into `target`: replacing it entirely when there is no offset,
 /// or overwriting the bytes at `offset` when there is. A file too short to
-/// reach the offset is extended with zeros, the way DOS itself would.
+/// reach the offset is extended with zeros.
 fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> {
     let Some(offset) = offset else {
         return Ok(fs::write(target, data)?);
@@ -317,9 +310,6 @@ fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> 
     Ok(())
 }
 
-/// The file called `name` anywhere inside `dir`, ignoring case — the names in a
-/// DOS release come back from an archive in every case there is, and an override
-/// is written from what the demo's own documentation calls the file.
 fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
     debug!("Finding {name} in {dir:?}");
     walk_dir_find(dir, 0, |path, _ext, _header| {
@@ -376,7 +366,6 @@ fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
 /// held by a Bevy resource. All implementors are plain data, so this costs
 /// nothing, and it keeps this module free of any bevy dependency.
 pub trait System: Send + Sync {
-    // NOTE: Is the useful?
     fn extensions(&self) -> &'static [&'static str] {
         &[]
     }
@@ -385,6 +374,7 @@ pub trait System: Send + Sync {
         self.extensions().contains(&get_ext(path).as_str())
     }
 
+    // Systems defaulting to gamepad control should return true here
     fn is_console(&self) -> bool {
         false
     }
@@ -393,6 +383,7 @@ pub trait System: Send + Sync {
     fn core_name(&self) -> &'static str {
         ""
     }
+
     // Name of the system
     fn name(&self) -> &'static str;
 
@@ -404,20 +395,14 @@ pub trait System: Send + Sync {
         self.handles_ext(path)
     }
 
-    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        walk_dir_find(dir, 0, |file, _ext, _header| {
-            if self.can_load(file) {
-                return Ok(Some(file.to_owned()));
-            };
-            Ok(None)
-        })
-    }
-
     // Try to load a program with this system. WorkFile may change. On successful
     // result, WorkFile can be used with create() to actually start emulation.
+    // On non-succesful, WorkFile is assumed to be unchanged.
+    //
+    // Default implementation returns first file it "can load".
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         if file.is_dir() {
-            if let Some(path) = self.get_first_file(file)? {
+            if let Some(path) = get_first_file(self, file)? {
                 file.path = path;
                 return Ok(true);
             }
@@ -427,6 +412,8 @@ pub trait System: Send + Sync {
         Ok(false)
     }
 
+    // Create a Backend from a WorkFile. WorkFile must have been succefully passed to load()
+    // earlier.
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
@@ -437,6 +424,15 @@ pub trait System: Send + Sync {
             false,
         )?))
     }
+}
+
+fn get_first_file(sys: &(impl System + ?Sized), dir: &Path) -> Result<Option<PathBuf>> {
+    walk_dir_find(dir, 0, |file, _ext, _header| {
+        if sys.can_load(file) {
+            return Ok(Some(file.to_owned()));
+        };
+        Ok(None)
+    })
 }
 
 #[derive(Default)]

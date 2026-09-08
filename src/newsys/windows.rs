@@ -160,10 +160,6 @@ impl System for WindowsSystem {
         self.handles_ext(path) && is_windows_program(path)
     }
 
-    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        self.pick_target(dir)
-    }
-
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let Some(target) = self.pick_target(file)? else {
             return Ok(false);

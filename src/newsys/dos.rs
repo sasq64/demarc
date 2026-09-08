@@ -317,20 +317,6 @@ impl System for DosSystem {
         }
     }
 
-    /// Narrow a release down to the program to start, and give it the
-    /// extender if the release was marked as needing one.
-    ///
-    /// The default [`System::load`] does the narrowing; what it can't do is
-    /// the order this needs. Copying the release into a temp dir moves every
-    /// path inside it, so which file to start has to be settled first and
-    /// followed across the copy afterwards.
-    /// The default walks for the first file it can load, in whatever order the
-    /// filesystem hands them over — which for a release directory holding
-    /// several programs is not a choice at all. See [`DosSystem::pick_target`].
-    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        self.pick_target(dir)
-    }
-
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let Some(target) = self.pick_target(file)? else {
             return Ok(false);
