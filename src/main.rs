@@ -104,11 +104,8 @@ impl std::io::Write for FdWriter {
 static SAVED_STDOUT: std::sync::OnceLock<FdWriter> = std::sync::OnceLock::new();
 
 /// Print a line to the real terminal, bypassing the `/dev/null` redirect that
-/// [`silence_stdout`] installs on fd 1 to muzzle the libretro cores. Falls back
-/// to the process stdout when nothing was redirected.
+/// [`silence_stdout`] installs on fd 1 to muzzle the libretro cores.
 pub(crate) fn println(text: impl std::fmt::Display) {
-    // Format up front and write once, so a line can't be torn in half by
-    // another thread's write between the text and its newline.
     let mut line = text.to_string();
     line.push('\n');
     #[cfg(unix)]
@@ -121,15 +118,7 @@ pub(crate) fn println(text: impl std::fmt::Display) {
     let _ = std::io::stdout().write_all(line.as_bytes());
 }
 
-/// Raise the process's soft open-file limit to the hard limit (or a large
-/// fallback), best-effort. Some bundled libretro cores (notably the Amiga
-/// `puae` core) leak POSIX named semaphores across reloads — every file
-/// switch loads a fresh core instance, and each one opens sync semaphores
-/// under the same PID-keyed names the previous instance never closed. macOS
-/// defaults to a stingy 256-fd soft limit, which that leak exhausts after only
-/// a few dozen Amiga files; Linux's much larger default rarely notices. This
-/// doesn't stop the leak, it just buys enough headroom that a normal session
-/// won't hit it.
+/// Raise the process's soft open-file limit to the hard limit
 #[cfg(unix)]
 fn raise_fd_limit() {
     const FALLBACK_LIMIT: libc::rlim_t = 65536;
@@ -155,10 +144,7 @@ fn raise_fd_limit() {
 
 /// Silence stdout *and* stderr for the rest of the process by redirecting fds 1
 /// and 2 to `/dev/null`, so libretro cores' `printf`/`fprintf`/`puts` output is
-/// discarded. Returns a `FdWriter` over a dup of the *original* stdout so tracing
-/// can keep writing to the real terminal. Redirecting (rather than `close`ing the
-/// fds) is deliberate: it keeps them valid, so a later `open` can't reuse them and
-/// get scribbled on by a core.
+/// discarded.
 #[cfg(unix)]
 fn silence_stdout() -> std::io::Result<FdWriter> {
     use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
@@ -175,19 +161,7 @@ fn silence_stdout() -> std::io::Result<FdWriter> {
     Ok(FdWriter(saved.into_raw_fd()))
 }
 
-/// Keep the OpenMP-using cores (bsnes, bsnes-hd, flycast) from eating the
-/// machine.
-///
-/// Those cores parallelise tiny per-frame regions — bsnes renders scanlines
-/// with an `omp parallel for` — but libgomp defaults to *active* waiting, so
-/// its `nproc - 1` workers busy-spin between regions. On a 48-thread box that
-/// is ~25 cores burned to render 224 scanlines, and it is also slower than not
-/// spinning at all (bsnes measured 294 fps spinning vs 377 fps passive).
-/// Passive waiting parks the workers instead, and a small pool avoids waking
-/// and joining dozens of threads per frame for work that never fills them.
-///
-/// Must run before the core is `dlopen`ed: libgomp reads these once, when its
-/// first parallel region starts.
+/// Keep the OpenMP-using cores (bsnes, bsnes-hd, flycast) from eating the machine.
 fn tame_openmp_cores() {
     for (key, value) in [("OMP_WAIT_POLICY", "passive"), ("OMP_NUM_THREADS", "4")] {
         // Leave anything the user set on the command line alone.
@@ -204,22 +178,8 @@ fn tame_openmp_cores() {
 #[cfg(all(unix, target_env = "gnu"))]
 const MALLOC_ARENAS: usize = 8;
 
-/// Keep glibc's per-thread malloc arenas from crowding the address space a
-/// JIT core needs for its translation cache.
-///
-/// The x86-64 JIT in the Amiga cores (Amiberry, p-uae) addresses the emulator's
-/// globals RIP-relative, so its translation cache has to land within ±2GB of
-/// them. Amiberry reserves 4GB of "natmem" immediately below the core's
-/// library, which eats the whole window on that side, leaving only the space
-/// above. glibc reserves 64MB of address space per malloc arena and allows
-/// `8 * nproc` of them, so on a many-core box demarc's own threads wall that
-/// window off. The core's 16MB request then fails and its allocator halves it
-/// until something fits — measured here as an **8KB** cache, which thrashes:
-/// TBL's Starstruck rendered visibly slower for it.
-///
-/// A cap costs a little allocator concurrency and buys the window back (16MB
-/// cache, zero failed allocations). Must run before any thread allocates,
-/// which is why it is the first thing `main` does.
+/// Keep glibc's per-thread malloc arenas from crowding the address space
+/// a JIT core (Amiberry) needs for its translation cache.
 #[cfg(all(unix, target_env = "gnu"))]
 fn cap_malloc_arenas() {
     // Leave an explicit choice on the command line alone, the way
@@ -235,16 +195,9 @@ fn cap_malloc_arenas() {
 ///
 /// The heavy rayon user in the tree is librashader, which compiles the passes
 /// of a `.slangp` in parallel — glslang work that is nearly all allocation.
-/// rayon defaults to a thread per core, so with the arenas capped at 8 those
-/// threads spend their time contending for an arena lock instead of compiling:
-/// a 42-pass Mega Bezel preset measured 0.82-1.20s of pass compilation over 48
-/// threads against 0.38-0.39s over 8, which is what it costs with the arena cap
-/// lifted. Beyond that the single largest pass is the floor and more threads
-/// buy nothing anyway. See docs/SHADERS.md for the whole table.
 ///
 /// Setting the variable rather than calling `ThreadPoolBuilder::build_global`
-/// keeps rayon out of demarc's dependencies; rayon reads it when it builds its
-/// global pool, which is the first `.slangp` load.
+/// keeps rayon out of demarc's dependencies;
 #[cfg(all(unix, target_env = "gnu"))]
 fn cap_rayon_threads() {
     // Leave an explicit choice on the command line alone, as above.
@@ -275,9 +228,7 @@ fn main() {
         args.no_silence = true;
     }
 
-    // On Unix, silence the cores by redirecting stdout/stderr to /dev/null and
-    // route tracing to a dup of the original stdout, unless `--no-silence` asks
-    // us to leave them alone (for debugging core output).
+    // On Unix, silence the cores by redirecting stdout/stderr to /dev/null
     #[cfg(unix)]
     let saved_stdout = if args.no_silence {
         None
@@ -436,9 +387,7 @@ fn main() {
 
     let win = args.window;
     let clear_color = args.clear_color;
-    // What the settings dialog opens showing. Seeded from the command line so
-    // the first open reports the state the app is actually in; from then on it
-    // is the record of what was last applied (see `demarc_settings`).
+
     let demo_settings = demarc_settings::DemarcSettings {
         fullscreen: !win,
         latency: args.latency,
@@ -473,7 +422,7 @@ fn main() {
                 // dedicated emulator worker thread, so those extra threads spend
                 // their time coordinating (task-queue push/pop, mutex contention)
                 // rather than computing — ~34% of total CPU on a 24-core machine.
-                // Capping the pool at 2 removes that spin with no throughput cost.
+                // Capping the pool removes that spin with no throughput cost.
                 .set(bevy::app::TaskPoolPlugin {
                     task_pool_options: bevy::app::TaskPoolOptions {
                         compute: bevy::app::TaskPoolThreadAssignmentPolicy {
