@@ -395,7 +395,6 @@ fn main() {
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
-        shader,
         fast_load: false,
         resolution: demarc_settings::Resolution::Res800x600,
     };

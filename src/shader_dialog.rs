@@ -2,7 +2,7 @@
 //! box and, for a Mega Bezel pack, one directory level at a time.
 //!
 //! The top row picks a *collection*: `Default`, which is whatever shader
-//! `--shader` (or the settings dialog) last chose, and one entry per bezel pack
+//! `--shader` names, and one entry per bezel pack
 //! found under `shaders/Mega_Bezel_Packs`. `Default` is a single preset with
 //! nothing to browse, so the rows below it are greyed out. A pack is not a
 //! handful of shaders but a directory tree of tens of thousands of `.slangp`
@@ -36,12 +36,11 @@ use bevy_egui::{
     egui::{self, Ui},
 };
 
-use crate::config::{RenderSettings, ShaderArg};
+use crate::config::{Args, RenderSettings, ShaderArg};
 use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
 use crate::post_process::{ShaderEffect, ShaderPath};
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
-use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::{
     BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
     TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
@@ -419,9 +418,9 @@ fn label(raw: &str, labeling: Labeling) -> String {
 
 /// One entry of the dialog's top combo box.
 ///
-/// The first is always the default collection: whatever `--shader` (or the
-/// settings dialog) last picked, which is what the app runs when no pack preset
-/// is chosen, and the only entry a checkout with no `shaders/` directory has.
+/// The first is always the default collection: whatever `--shader` names, which
+/// is what the app runs when no pack preset is chosen, and the only entry a
+/// checkout with no `shaders/` directory has.
 /// Every other entry is a directory tree that [`PresetBrowser`] walks.
 ///
 /// Only the Mega Bezel packs are found for now. The other thing under
@@ -585,7 +584,7 @@ fn shader_dialog_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut shader_path: ResMut<ShaderPath>,
     mut render: ResMut<RenderSettings>,
-    settings: Res<DemarcSettings>,
+    args: Res<Args>,
 ) -> Result {
     if !dialog.open {
         return Ok(());
@@ -603,7 +602,8 @@ fn shader_dialog_ui(
     // Picked inside the closure and applied after it, because the dialog is
     // borrowed for as long as the panel is being drawn.
     let mut picked = None;
-    let composed = composed_path(&dialog, settings.shader);
+    let default = args.shader.unwrap_or_default();
+    let composed = composed_path(&dialog, default);
 
     egui::Area::new(egui::Id::new("shader_dialog"))
         .order(egui::Order::Foreground)
@@ -643,7 +643,7 @@ fn shader_dialog_ui(
     match picked {
         Some(Picked::Collection(index)) => {
             dialog.selected = index;
-            apply(&dialog, &mut shader_path, &mut render, settings.shader);
+            apply(&dialog, &mut shader_path, &mut render, default);
         }
         Some(Picked::Level(level, index)) => {
             let selected = dialog.selected;
@@ -652,7 +652,7 @@ fn shader_dialog_ui(
             {
                 browser.select(level, index);
             }
-            apply(&dialog, &mut shader_path, &mut render, settings.shader);
+            apply(&dialog, &mut shader_path, &mut render, default);
         }
         None => {}
     }
@@ -663,10 +663,9 @@ fn shader_dialog_ui(
     Ok(())
 }
 
-/// Puts the selection on screen. A pack preset is a filter chain to run;
-/// the default collection is whatever shader the command line or the settings
-/// dialog last chose, switched on the way `crate::demarc_settings::apply_settings`
-/// does for `--shader`.
+/// Puts the selection on screen. A pack preset is a filter chain to run; the
+/// default collection is whatever shader the command line chose, with the
+/// effect switched on unless that is `--shader none`.
 fn apply(
     dialog: &ShaderDialog,
     shader_path: &mut ShaderPath,
