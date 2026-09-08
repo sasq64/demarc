@@ -64,6 +64,7 @@ impl System for MusicSystem {
             "snd", "sndh", "sap", // Atari
             "nsf", "gbs", "spc", "psf", // Console
             "mp3", "flac", // Streaming
+            "v2m",  //
             "emul", "vtx", "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
             "smod", "dm2", "ahx", "aon", "mt2", "mon", "dw", "fred", "smod", "hip", "cus", "fc",
             "hvl", "cm", "fp", "syn", "ma", "hipc", "ml", "mk2", "bd", "dln", "669", // Amiga
