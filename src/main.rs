@@ -34,6 +34,7 @@ mod libloader;
 mod load_error;
 mod m3u;
 mod media_keys;
+mod mouse_cursor;
 mod music_emu;
 mod music_vis;
 mod newsys;
@@ -61,6 +62,7 @@ use commands::CommandPlugin;
 use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::RetroPlugin;
+use mouse_cursor::MouseCursorPlugin;
 use newsys::NewSys;
 use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
 use screensaver::ScreenSaverPlugin;
@@ -453,6 +455,7 @@ fn main() {
             },
             egui_ui::EguiUiPlugin,
             ScreenSaverPlugin,
+            MouseCursorPlugin,
             SpeedTestPlugin,
             jobs::JobsPlugin,
             shader_dialog::ShaderDialogPlugin,
