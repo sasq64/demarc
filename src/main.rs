@@ -338,18 +338,6 @@ fn main() {
     collect_db_stdin(&filter, &mut files).unwrap();
 
     for file in std::mem::take(&mut args.files) {
-        // Download HTTP(S) URLs to the local cache and continue with the file,
-        // so demarc can be launched directly with a link from a browser.
-        let file = match file.to_str() {
-            Some(s) if fetch::is_url(s) => match fetch::fetch_url(s) {
-                Ok(path) => path,
-                Err(e) => {
-                    tracing::error!("Failed to download {s}: {e}");
-                    continue;
-                }
-            },
-            _ => file,
-        };
         if file.is_dir() && args.collect {
             collect_files(&file, &mut files, args.many).unwrap();
         } else {
