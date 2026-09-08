@@ -25,7 +25,11 @@ type Bool32 = i32;
 #[link(name = "user32")]
 unsafe extern "system" {
     fn EnumWindows(cb: unsafe extern "system" fn(Hwnd, isize) -> Bool32, l: isize) -> Bool32;
-    fn EnumChildWindows(p: Hwnd, cb: unsafe extern "system" fn(Hwnd, isize) -> Bool32, l: isize) -> Bool32;
+    fn EnumChildWindows(
+        p: Hwnd,
+        cb: unsafe extern "system" fn(Hwnd, isize) -> Bool32,
+        l: isize,
+    ) -> Bool32;
     fn IsWindowVisible(h: Hwnd) -> Bool32;
     fn GetWindowTextW(h: Hwnd, buf: *mut u16, n: i32) -> i32;
     fn GetClassNameW(h: Hwnd, buf: *mut u16, n: i32) -> i32;
@@ -36,8 +40,7 @@ unsafe extern "system" {
     fn GetWindowLongPtrW(h: Hwnd, idx: i32) -> isize;
     fn SetWindowLongPtrW(h: Hwnd, idx: i32, v: isize) -> isize;
     fn GetClientRect(h: Hwnd, r: *mut Rect) -> Bool32;
-    fn SetWindowPos(h: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32)
-    -> Bool32;
+    fn SetWindowPos(h: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> Bool32;
     fn SendMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> isize;
     fn PostMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> Bool32;
     fn SetForegroundWindow(h: Hwnd) -> Bool32;
@@ -455,7 +458,10 @@ struct Args {
     /// dialog belongs to whoever is sitting in front of it.
     no_go: bool,
     timeout: f64,
-    prefer: Vec<String>,
+    /// One fallback chain per `--prefer`: the alternatives of a chain are tried
+    /// in order and the first one the dialog actually offers wins, so a demo
+    /// that has no 800x600 can still be asked for 640x480 instead.
+    prefer: Vec<Vec<String>>,
     check: Vec<String>,
     uncheck: Vec<String>,
     go: Vec<String>,
@@ -473,7 +479,7 @@ fn parse_args() -> Args {
         prefer: vec![],
         check: vec![],
         uncheck: vec![],
-        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES"]
+        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES", "DEMO"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -503,8 +509,19 @@ fn parse_args() -> Args {
             }
             "--launch" => args.launch = Some(value),
             "--timeout" => args.timeout = value.parse().unwrap_or(20.0),
-            // Substring of a radio button or combo box entry to select.
-            "--prefer" => args.prefer.push(value),
+            // Comma-separated substrings of a radio button or combo box
+            // entry to select, best first. Entries that normalise to nothing
+            // are dropped: an empty one would match every control there is.
+            "--prefer" => {
+                let chain: Vec<String> = value
+                    .split(',')
+                    .filter(|s| !norm(s).is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                if !chain.is_empty() {
+                    args.prefer.push(chain);
+                }
+            }
             "--check" => args.check.push(value),
             "--uncheck" => args.uncheck.push(value),
             "--go" => args.go = value.split(',').map(|s| s.to_string()).collect(),
@@ -544,6 +561,39 @@ fn print_tree(top: &Ctl, kids: &[Ctl]) {
     }
 }
 
+/// Select the option matching `want` wherever this dialog offers it, and say
+/// whether it was offered at all.
+///
+/// That answer is what makes a `--prefer` list a fallback chain: the next
+/// alternative is only tried when this one appears on no control. A radio
+/// button or checkbox that already carries the wanted label counts as offered
+/// even though there is nothing to click.
+fn select_preferred(kids: &[Ctl], want: &str) -> bool {
+    let want = norm(want);
+    let mut found = false;
+    for c in kids {
+        match c.kind {
+            Kind::Radio | Kind::Check if norm(&c.text).contains(&want) => {
+                found = true;
+                if !c.checked() {
+                    println!("select {:?}", c.text);
+                    c.click();
+                }
+            }
+            Kind::Combo | Kind::List => {
+                let items = c.items();
+                if let Some(i) = items.iter().position(|it| norm(it).contains(&want)) {
+                    found = true;
+                    println!("select {:?} from {:?}", items[i], c.class);
+                    c.select(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 /// Apply every requested option to one dialog, then press its start button.
 /// Returns false if there was no button to press and no fallback was sent.
 ///
@@ -559,25 +609,13 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     unsafe { SetForegroundWindow(top.hwnd) };
 
     // Options first — resolution, and switches like Fullscreen — so they are
-    // all in place before anything starts the demo.
-    for want in args.prefer.iter().map(|p| norm(p)) {
-        for c in kids {
-            match c.kind {
-                Kind::Radio | Kind::Check if norm(&c.text).contains(&want) => {
-                    if !c.checked() {
-                        println!("select {:?}", c.text);
-                        c.click();
-                    }
-                }
-                Kind::Combo | Kind::List => {
-                    let items = c.items();
-                    if let Some(i) = items.iter().position(|it| norm(it).contains(&want)) {
-                        println!("select {:?} from {:?}", items[i], c.class);
-                        c.select(i);
-                    }
-                }
-                _ => {}
-            }
+    // all in place before anything starts the demo. Each `--prefer` is a list
+    // of alternatives: the first one this dialog offers is taken and the rest
+    // are left alone, so the caller can name the mode it wants and then the
+    // ones it would settle for.
+    for chain in &args.prefer {
+        if !chain.iter().any(|want| select_preferred(kids, want)) {
+            println!("nothing here matches {chain:?}");
         }
     }
     for (wanted, labels) in [(true, &args.check), (false, &args.uncheck)] {
