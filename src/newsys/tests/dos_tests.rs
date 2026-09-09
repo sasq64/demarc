@@ -149,7 +149,7 @@ fn picks_what_the_release_means_to_start() {
     write_bytes(&release, "crystal.exe", &exe);
     write_bytes(&release, "zzsetup.exe", &exe);
 
-    let found = sys.get_first_file(&release).unwrap().unwrap();
+    let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(
         found.ends_with("crystal.exe"),
         "picked {found:?} out of the release"
@@ -158,7 +158,7 @@ fn picks_what_the_release_means_to_start() {
     // A machine config beside the programs describes the whole machine, so
     // it wins - and takes the release to PCem rather than DOSBox.
     write(&release, "crystal.cfg", "model = ami486\n");
-    let found = sys.get_first_file(&release).unwrap().unwrap();
+    let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("crystal.cfg"), "picked {found:?}");
     assert_eq!(core_for(&found), CORE_NAME_PCEM);
 }
@@ -177,14 +177,14 @@ fn starts_the_program_rather_than_the_batch_file_beside_it() {
     fs::create_dir_all(&release).unwrap();
     write(&release, "go.bat", "@echo off\r\ndemo.exe\r\n");
     write_bytes(&release, "trip.exe", &exe);
-    let found = sys.get_first_file(&release).unwrap().unwrap();
+    let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("trip.exe"), "picked {found:?}");
 
     // With no program to run it is still what starts the release.
     let bare = dir.path().join("bare");
     fs::create_dir_all(&bare).unwrap();
     write(&bare, "go.bat", "@echo off\r\n");
-    let found = sys.get_first_file(&bare).unwrap().unwrap();
+    let found = sys.pick_target(&bare).unwrap().unwrap();
     assert!(found.ends_with("go.bat"), "picked {found:?}");
 }
 
@@ -204,7 +204,7 @@ fn prefers_a_program_with_a_name_dos_could_have_held() {
     fs::create_dir_all(&release).unwrap();
     write_bytes(&release, "read me first.exe", &exe);
     write_bytes(&release, "trip.exe", &exe);
-    let found = sys.get_first_file(&release).unwrap().unwrap();
+    let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("trip.exe"), "picked {found:?}");
 
     // It only breaks a tie: a program named after the release is still
@@ -213,7 +213,7 @@ fn prefers_a_program_with_a_name_dos_could_have_held() {
     fs::create_dir_all(&named).unwrap();
     write_bytes(&named, "crystal demo.exe", &exe);
     write_bytes(&named, "trip.exe", &exe);
-    let found = sys.get_first_file(&named).unwrap().unwrap();
+    let found = sys.pick_target(&named).unwrap().unwrap();
     assert!(found.ends_with("crystal demo.exe"), "picked {found:?}");
 
     // And an installer stays an installer whatever its name looks like.
@@ -221,7 +221,7 @@ fn prefers_a_program_with_a_name_dos_could_have_held() {
     fs::create_dir_all(&installer).unwrap();
     write_bytes(&installer, "install.exe", &exe);
     write_bytes(&installer, "the whole demo.exe", &exe);
-    let found = sys.get_first_file(&installer).unwrap().unwrap();
+    let found = sys.pick_target(&installer).unwrap().unwrap();
     assert!(found.ends_with("the whole demo.exe"), "picked {found:?}");
 }
 
@@ -265,14 +265,14 @@ fn passes_over_an_extender_shipped_beside_the_program() {
     // that the walk reaches the extender before the demo.
     write_bytes(&release, "DOS4GW.EXE", &exe);
     write_bytes(&release, "trip.exe", &exe);
-    let found = sys.get_first_file(&release).unwrap().unwrap();
+    let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("trip.exe"), "picked {found:?}");
 
     // On its own it is still all there is to start.
     let bare = dir.path().join("bare");
     fs::create_dir_all(&bare).unwrap();
     write_bytes(&bare, "dos4gw.exe", &exe);
-    let found = sys.get_first_file(&bare).unwrap().unwrap();
+    let found = sys.pick_target(&bare).unwrap().unwrap();
     assert!(found.ends_with("dos4gw.exe"), "picked {found:?}");
 }
 

@@ -423,7 +423,7 @@ impl FileSource {
     }
 
     /// Ensure the data is available locally — downloading the URL (cached, see
-    /// [`crate::fetch::fetch_url`]) the first time — and return the resulting
+    /// [`crate::fetch::fetch_url_with_progress`]) the first time — and return the resulting
     /// local path. A [`FileSource::Path`] is returned as-is.
     ///
     /// This blocks for as long as the download takes, so on the main thread it

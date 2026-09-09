@@ -17,17 +17,6 @@ fn mirror(url: &str, base: usize) -> Mirror {
 }
 
 #[test]
-fn detects_urls() {
-    assert!(is_url("https://example.com/a.zip"));
-    assert!(is_url("http://example.com/a.zip"));
-    assert!(is_url("ftp://example.com/a.zip"));
-    assert!(is_url("SceneOrgFile:/parties/2006/x.zip"));
-    assert!(!is_url("/home/user/a.zip"));
-    assert!(!is_url("a.zip"));
-    assert!(!is_url("C:/games/a.zip"));
-}
-
-#[test]
 fn resolves_a_link_class_to_its_mirrors() {
     let urls = resolve_url("SceneOrgFile:/parties/2006/assembly06/demo/x.zip");
     assert_eq!(
@@ -161,7 +150,7 @@ fn downloads_a_link_class_url() {
 #[ignore = "hits the network"]
 fn caches_under_url_hash() {
     let url = "https://files.scene.org/get/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip";
-    let path = fetch_url(url).unwrap();
+    let path = fetch_url_with_progress(url, &|_, _| {}).unwrap();
     assert_eq!(path.file_name().unwrap(), "dcs-nmod.zip");
     // The file keeps its readable name, but the directory holding it is
     // named for the url's hash, not for the file.
@@ -176,7 +165,7 @@ fn caches_under_url_hash() {
     assert!(entry.chars().all(|c| c.is_ascii_hexdigit()));
     assert_eq!(std::fs::metadata(&path).unwrap().len(), 46596);
     // Second call is a cache hit on the same path, no re-download.
-    assert_eq!(fetch_url(url).unwrap(), path);
+    assert_eq!(fetch_url_with_progress(url, &|_, _| {}).unwrap(), path);
 }
 
 /// The byte count reported to `on_progress` accumulates across writes and

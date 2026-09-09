@@ -67,7 +67,7 @@ const LARGE_LIMIT: u64 = 750 * 1024 * 1024;
 /// Any class listed here is also a scheme demarc will accept as a url, so keep
 /// the names distinct from real schemes. Matching is case-insensitive: the db
 /// spells the class the way Demozoo does, but a value that has been through
-/// `Url::parse` (which is how db lines reach [`fetch_url`]) arrives lowercased.
+/// `Url::parse` (which is how db lines reach [`fetch_url_with_progress`]) arrives lowercased.
 const LINK_BASES: &[(&str, &[&str])] = &[
     (
         "AmigascneFile",
@@ -230,11 +230,21 @@ fn primary_url(s: &str) -> String {
 /// moves — cheap enough for an atomic store, too often for anything expensive.
 pub type OnProgress<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
 
-/// [`fetch_url`] with progress reporting, for callers that can display it (see
-/// [`crate::jobs::Jobs::download`]).
+/// Download the file at `url` into a local cache directory and return its path.
 ///
-/// `on_progress` is not called at all for a cache hit — there is nothing to
-/// download — so a progress bar should not assume it will ever fire.
+/// Files are cached under `<cache>/demarc/downloads/<url-hash>/<name>`, so
+/// re-opening the same link reuses the existing download. The hash covers the
+/// whole URL while the leaf keeps its readable, correctly-suffixed name (see
+/// [`crate::cache::FileCache::get_file`] and [`url_filename`]) — downstream
+/// dispatch keys on the file extension, so the extension has to survive. The
+/// download goes to a `.part` file that is renamed into place on success, so an
+/// interrupted transfer never leaves a truncated file masquerading as a valid
+/// cache hit.
+///
+/// `on_progress` reports the transfer for callers that can display it (see
+/// [`crate::jobs::Jobs::download`]). It is not called at all for a cache hit —
+/// there is nothing to download — so a progress bar should not assume it will
+/// ever fire.
 pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow::Result<PathBuf> {
     // The cache entry is keyed on the url as the db writes it, so a link class
     // keeps its cache entry when [`LINK_BASES`] changes mirror; the name inside
