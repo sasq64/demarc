@@ -41,6 +41,7 @@ mod newsys;
 mod overrides;
 mod pixels;
 mod post_process;
+mod remote_control;
 mod retro_emu;
 mod screensaver;
 mod shader_dialog;
@@ -65,6 +66,7 @@ use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
 use newsys::NewSys;
 use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
+use remote_control::RemoteControlPlugin;
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
 use system_dir::system_dir;
@@ -478,6 +480,7 @@ fn main() {
             ScreenSaverPlugin,
             MouseCursorPlugin,
             SpeedTestPlugin,
+            RemoteControlPlugin,
             jobs::JobsPlugin,
             shader_dialog::ShaderDialogPlugin,
         ));

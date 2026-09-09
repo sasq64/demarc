@@ -114,6 +114,11 @@ pub struct Args {
     #[arg(long)]
     pub lua: Option<PathBuf>,
 
+    /// Drive demarc from a Luau script: it can send keys and hotkey commands,
+    /// take screenshots and suspend itself for N frames.
+    #[arg(long, value_name = "LUA")]
+    pub remote_control: Option<PathBuf>,
+
     /// Only load db entries with a field matching this regex, e.g.
     /// `-I '(Demo|Intro)'`. Matched against each field of the db line on its
     /// own, so it can pick on any one of them but never spans two.

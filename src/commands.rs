@@ -51,6 +51,41 @@ pub enum Cmd {
     ShaderDialog,
 }
 
+impl Cmd {
+    /// Every variant, so the remote control can name them all.
+    pub const ALL: &'static [Cmd] = &[
+        Cmd::NextFile,
+        Cmd::PrevFile,
+        Cmd::SwapDisk,
+        Cmd::ChangeScale,
+        Cmd::ToggleCrt,
+        Cmd::ToggleBorder,
+        Cmd::PauseResume,
+        Cmd::MouseClick,
+        Cmd::ToggleInput,
+        Cmd::ToggleInfo,
+        Cmd::Reset,
+        Cmd::Screenshot,
+        Cmd::Warp10,
+        Cmd::Warp30,
+        Cmd::Fullscreen,
+        Cmd::ToggleAll,
+        Cmd::NextEmu,
+        Cmd::PrevEmu,
+        Cmd::Maximize,
+        Cmd::NextFileAll,
+        Cmd::OpenFile,
+        Cmd::Reload,
+        Cmd::Settings,
+        Cmd::ShaderDialog,
+    ];
+
+    /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
+    pub fn from_name(name: &str) -> Option<Cmd> {
+        Cmd::ALL.iter().copied().find(|c| format!("{c:?}") == name)
+    }
+}
+
 #[derive(Message)]
 pub struct CmdMessage(pub Cmd);
 
