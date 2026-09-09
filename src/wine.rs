@@ -12,7 +12,7 @@ use crate::system_dir;
 /// Meta key holding the resolution to run at, as `WIDTHxHEIGHT`.
 pub const META_RES: &str = "wine_res";
 
-pub const DEFAULT_RES: &str = "800x600";
+pub const DEFAULT_RES: &str = "1280x1024";
 
 /// The `wine_res` value that means "leave the dialog to me".
 pub const PICK: &str = "pick";
