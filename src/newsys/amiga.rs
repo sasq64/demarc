@@ -591,7 +591,7 @@ fn unpack_boot_disk(image: &Path) -> Option<(WorkFile, PathBuf)> {
 
 /// The bytes puae will not have in an Amiga file name — `evilchars` in its
 /// `src/fsdb_unix.c`. `/` and `\` never reach here (the unpacker refuses them
-/// outright, see `safe_name` in `src/adf_unpack_shim.c`), and the rest are
+/// outright, see `safe_name` in `src/c_shims/adf_unpack_shim.c`), and the rest are
 /// ASCII, so looking for them in the UTF-8 host name is the same as looking for
 /// them in the Amiga one.
 const UAE_ILLEGAL_CHARS: &[char] = &['%', '*', '?', '"', '<', '>', '|'];

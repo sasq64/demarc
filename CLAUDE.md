@@ -109,8 +109,8 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
   the repo. `shaders/` is the RetroArch-shaped layout the Mega Bezel preset packs need — see
   `docs/SHADERS.md`, which also explains why `librashader` is pinned to a fork.
 - `external/ADFlib` and `external/dms` are vendored C, built by `build.rs` and reached through the
-  shims in `src/adf_unpack_shim.c` / `src/dms_unpack_shim.c` (Rust side: `src/newsys/adf.rs` and
-  `src/newsys/dms.rs`). Both serve `--unadf`: ADFlib walks a disk image's file system, xDMS turns a
+  shims in `src/c_shims/adf_unpack_shim.c` / `dms_unpack_shim.c` (Rust side: `src/newsys/adf.rs`
+  and `src/newsys/dms.rs`). Both serve `--unadf`: ADFlib walks a disk image's file system, xDMS turns a
   `.dms` archive back into that image first. The xDMS sources are amiberry's copy, and only
   `pfile.c` was edited — keep the rest diffable against
   `external/amiberry/src/archivers/dms`.

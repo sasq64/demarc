@@ -12,7 +12,7 @@
 //! that the caller logs and shrugs off, and the disk is booted as a floppy.
 //!
 //! The work is done by ADFlib (`external/ADFlib`) through the C shim in
-//! `src/adf_unpack_shim.c`, which is where the reasoning about why the walk is
+//! `src/c_shims/adf_unpack_shim.c`, which is where the reasoning about why the walk is
 //! C rather than Rust lives.
 //!
 //! Not the `adflib` crate on crates.io, which was tried first and cannot do

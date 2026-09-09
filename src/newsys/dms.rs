@@ -9,7 +9,7 @@
 //!
 //! The unpacker is xDMS 1.3 by Andre Rodrigues de la Rocha (public domain),
 //! taken from amiberry's copy and kept in `external/dms`; the C entry point is
-//! `src/dms_unpack_shim.c`. The one thing worth knowing about it from here is
+//! `src/c_shims/dms_unpack_shim.c`. The one thing worth knowing about it from here is
 //! that it writes each track at its own offset in the output, so a truncated
 //! or partly corrupt archive still yields an image with whatever tracks it did
 //! contain in the right places — including, usefully, the boot block and the

@@ -8,9 +8,9 @@ use zip::write::SimpleFileOptions;
 
 fn main() {
     cc::Build::new()
-        .file("src/retro_log_shim.c")
+        .file("src/c_shims/retro_log_shim.c")
         .compile("retro_log_shim");
-    println!("cargo:rerun-if-changed=src/retro_log_shim.c");
+    println!("cargo:rerun-if-changed=src/c_shims/retro_log_shim.c");
 
     build_unrar_isnt_shim();
     build_cbmconvert();
@@ -20,11 +20,11 @@ fn main() {
 }
 
 /// Supply the two `isnt.cpp` symbols that `unrar_sys` leaves out when the build
-/// host isn't Windows. See src/unrar_isnt_shim.cpp for the full story; the short
+/// host isn't Windows. See src/c_shims/unrar_isnt_shim.cpp for the full story; the short
 /// version is that its build script gates that file on `cfg!(windows)`, which is
 /// the host, so cross-compiled Windows builds fail to link.
 fn build_unrar_isnt_shim() {
-    const SRC: &str = "src/unrar_isnt_shim.cpp";
+    const SRC: &str = "src/c_shims/unrar_isnt_shim.cpp";
     println!("cargo:rerun-if-changed={SRC}");
 
     let target_windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
@@ -78,7 +78,7 @@ fn build_cbmconvert() {
     build.compile("cbmconvert");
 }
 
-/// Compile ADFlib (external/ADFlib) plus our own `src/adf_unpack_shim.c` into a
+/// Compile ADFlib (external/ADFlib) plus our own `src/c_shims/adf_unpack_shim.c` into a
 /// static library, for the `--unadf` path in src/newsys/adf.rs.
 ///
 /// ADFlib normally configures itself with autotools or CMake, both of which
@@ -92,7 +92,7 @@ fn build_cbmconvert() {
 /// files, and that is the only one we ever ask for.
 fn build_adflib() {
     const DIR: &str = "external/ADFlib/src";
-    const SHIM: &str = "src/adf_unpack_shim.c";
+    const SHIM: &str = "src/c_shims/adf_unpack_shim.c";
 
     let Ok(sources) = std::fs::read_dir(DIR) else {
         // The library is vendored, not a submodule, so a checkout without it
@@ -141,7 +141,7 @@ fn build_adflib() {
 }
 
 /// Compile the DMS unpacker (external/dms) plus our own
-/// `src/dms_unpack_shim.c` into a static library, for src/newsys/dms.rs.
+/// `src/c_shims/dms_unpack_shim.c` into a static library, for src/newsys/dms.rs.
 ///
 /// The sources are xDMS 1.3 (public domain) as amiberry carries them, with the
 /// `.cpp` extension dropped -- they are plain C, and building them as C keeps
@@ -150,7 +150,7 @@ fn build_adflib() {
 /// says what else changed.
 fn build_dms() {
     const DIR: &str = "external/dms";
-    const SHIM: &str = "src/dms_unpack_shim.c";
+    const SHIM: &str = "src/c_shims/dms_unpack_shim.c";
 
     let mut build = cc::Build::new();
     build.include(DIR);
