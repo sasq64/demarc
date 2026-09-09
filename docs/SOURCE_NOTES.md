@@ -2114,61 +2114,62 @@ starts at 1. `volume` is TBD — nothing reads it yet.
 
 ## `shader_dialog.rs`
 
-The post-process shader picked from a *collection* combo box and, for a Mega Bezel pack, one
-directory level at a time.
+The post-process shader picked from a *collection* combo box and, under it, one combo box per
+wildcard of that collection's pattern.
 
-A pack is not a handful of shaders but a directory tree of **tens of thousands** of `.slangp` presets
-laid out `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting>.slangp` (see
-`docs/SHADERS.md`) — far too many for the fuzzy list, and not something `egui_settings` can draw
-either, since its combo boxes come from a reflected enum's variant list while these choices are only
-known once a directory has been read. So one combo box per level, each filled from what the level
-above selected:
+The collections come from `shaders/shaders.toml` (see `docs/SHADERS.md`): one table each, whose
+`pattern` says both where the presets are and how their paths read. Every `<Tag>` is a wildcard and
+becomes one combo box, named after the tag:
 
 ```
-Commodore / Commodore_Amiga500 / Commodore_C1084 / MBZ_SHARP_STD / NEAR_CURVED_NIGHT.slangp
-Collection  System              Monitor           Shader          Type       Day/Night
+[Commodore]
+pattern = "Mega_Bezel_Packs/TheNamec-Commodore/presets/<System>/<Monitor>/<Shader>/<Type>_<Time>.slangp"
 ```
 
-The tree is walked **lazily**, one `read_dir` per level as the level above changes, because the pack
-holds ~72k presets and only ~60 directory entries are ever on screen. `PresetBrowser` is the whole of
-that logic and knows nothing about egui; the tests exercise it against a tree they build. A pick
-takes effect the moment it is made — composed back into a path and written to `ShaderPath`, which the
-render world extracts. The dialog chrome (panel metrics, widget scaling, close button) is the
-settings dialog's, so the two look like one dialog with two contents.
+That layout is far too big for the fuzzy list (the Commodore pack alone holds ~72k presets) and not
+something `egui_settings` can draw either, since its combo boxes come from a reflected enum's variant
+list while these choices are only known once a directory has been read. So the tree is walked
+**lazily**, one `read_dir` per path component as the boxes above it change, and only a few dozen
+names are ever on screen. `PresetBrowser` is the whole of that logic and knows nothing about egui;
+the tests exercise it against a tree they build. A pick takes effect the moment it is made — composed
+back into a path and written to `ShaderPath`, which the render world extracts. The dialog chrome
+(panel metrics, widget scaling, close button) is the settings dialog's, so the two look like one
+dialog with two contents.
 
-- `PACKS_DIR = "shaders/Mega_Bezel_Packs"`, presets under `<pack>/presets`. Search roots are the
-  working directory (where the `shaders/` checkout lives) and next to the executable. The working
+- `CONFIG_PATH = "shaders/shaders.toml"`, looked for under the working directory first and then
+  beside the executable; the file's own directory is what its patterns are relative to. The working
   directory is the **empty path**, so what is built on it stays relative — and so stays copyable into
-  a `--slangp` argument.
-- Name display: `Words` (`Commodore_Amiga500` → `Commodore Amiga500`, already capitalised the way the
-  pack's author wrote them), `Raw` for the flavour codes (`MBZ_SHARP_STD` — initialisms, and how the
-  pack's README names them), `Title` for the shouted halves of a preset's file name.
-- `split_stem`: the **last** underscore is the seam (`NEAR_CURVED_NIGHT` → `NEAR_CURVED` + `NIGHT`).
-  A name with no underscore has no lighting half and gets an empty one rather than being dropped.
-  The `LIGHT` level lists only the lighting variants of the *selected* type — `OVERLAY_*` ships day
-  only, so the list is not the same for every type.
+  a `--slangp` argument. `toml`'s `preserve_order` feature is what keeps the collections in the order
+  the file writes them.
+- `Segment` is one `/`-separated component of a pattern: the literal text around its `<Tag>` holes,
+  plus a regex built from them. Wildcards never cross `/` and are **lazy** but for the last one of a
+  component, which takes what is left over — `MBZ__<Level>__<Type>.slangp` reads
+  `MBZ__0__SMOOTH-ADV__GDV.slangp` as `0` + `SMOOTH-ADV__GDV`. `literals` is kept so `compose` can
+  put a selection back together, which is how `path()` is built.
+- One level per tag, flattened across the segments in order (`starts` maps segment → first level).
+  A component with two tags is listed **once** and shared by both boxes, and the second box offers
+  only what goes with the first — that is what keeps `NEAR` from leaving a `FLAT_DAY` selected under
+  a monitor that only ships `CURVED_*`.
 - Only the levels **below** the one that changed are re-read, and a level keeps its pick if the new
   choices still contain it — so walking through the monitors of one machine stays on the same flavour
   and preset rather than resetting each time.
+- `label`: a shouted name from a *file* reads as words (`NEAR_CURVED` → `Near Curved`), a shouted
+  *directory* name is a code and is left alone (`MBZ_SHARP_STD`), and anything with lowercase in it is
+  already written the way its author meant it, bar the underscores a directory name uses for spaces
+  (`Commodore_Amiga500` → `Commodore Amiga500`).
 - `reveal` moves the selection onto a given preset when the dialog opens, so it comes up showing
-  what's on screen rather than the first preset in the pack. `contains` decides which collection to
-  open on — including a path of the pack's *shape* naming a preset it no longer ships, which still
-  belongs to that pack rather than the default collection. `strip_root` tries the path as given first
+  what's on screen rather than the first preset of the collection. `contains` decides which collection
+  to open on — including a path of the collection's *shape* naming a preset it no longer ships, which
+  still belongs there rather than to the default collection. `strip_root` tries the path as given first
   (so a browser on a relative root recognises a relative path) and through `canonicalize` after
   (which matches an absolute `--slangp` against a relative root).
-- A pack whose tree can't be browsed (no `presets` dir, or none in it) is left out rather than
-  offered as a row of empty combo boxes, and the same pack found twice (working dir and beside the
-  executable) is offered once. `pack_label`: a pack directory is `<author>-<machines>` and it is the
-  machines being named — `TheNamec-Commodore` → `Commodore`.
-- The default collection (index 0) is whatever `--shader` names — one preset, no levels, so the level
-  rows are greyed out but still drawn, keeping the dialog's shape as the top box is switched. Picking
-  a preset is asking to see it, so it switches `crt_effect` on. `--shader none` is the stock
-  passthrough preset with the effect off, so the path line names what it does ("no effect") rather
-  than what it does it with.
-- **TBD**: the other thing under `shaders/` worth offering is the slang-shaders checkout itself, but
-  `shaders_slang` is a pile of category directories with presets at several depths rather than the
-  packs' fixed five levels, so what a "level" means there is unsettled. When it is, it becomes
-  another `collections()` entry with a browser of its own and nothing else changes.
+- A collection whose pattern matches nothing on disk is left out rather than offered as a row of empty
+  combo boxes, so a checkout with no `shaders.toml` shows the default collection alone.
+- The default collection (index 0) is whatever `--shader` names — one preset, no levels, so it draws
+  the collection row alone; the grid grows and shrinks with the collection picked. Picking a preset is
+  asking to see it, so it switches `crt_effect` on. `--shader none` is the stock passthrough preset
+  with the effect off, so the path line names what it does ("no effect") rather than what it does it
+  with.
 
 ## `audio.rs`
 

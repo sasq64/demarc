@@ -167,7 +167,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 # `overrides.toml`, the per-release fixups read at startup (src/overrides.rs).
 # 1.x follows the TOML 1.1 spec, which is what lets an entry's `patch = { ... }`
 # span several lines; a 0.9 parser would reject the file as written.
-toml = "1.1.4"
+# `preserve_order` keeps `shaders.toml`'s collections in the order it writes them
+# (src/shader_dialog.rs).
+toml = { version = "1.1.4", features = ["preserve_order"] }
 
 [build-dependencies]
 cc = "1"

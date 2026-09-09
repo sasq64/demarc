@@ -1,11 +1,14 @@
 use super::*;
 
-/// A pack-shaped tree under a temp directory, torn down by [`Drop`].
+/// The Mega Bezel pack's pattern, which is the deepest shape the dialog has to
+/// browse: three directory levels and two wildcards in the file name.
+const PACK: &str = "<System>/<Monitor>/<Shader>/<Type>_<Time>.slangp";
+
+/// A tree under a temp directory, torn down by [`Drop`].
 struct Pack(PathBuf);
 
 impl Pack {
-    /// `name` only has to be unique per test; the tree is
-    /// `<system>/<monitor>/<flavour>/<preset>.slangp` as the real pack is.
+    /// `name` only has to be unique per test.
     fn new(name: &str, presets: &[&str]) -> Self {
         let root = std::env::temp_dir().join(format!("demarc-shader-dialog-{name}"));
         let _ = std::fs::remove_dir_all(&root);
@@ -18,7 +21,11 @@ impl Pack {
     }
 
     fn browser(&self) -> PresetBrowser {
-        PresetBrowser::new(self.0.clone()).expect("pack should open")
+        self.browse(PACK)
+    }
+
+    fn browse(&self, pattern: &str) -> PresetBrowser {
+        PresetBrowser::new(self.0.clone(), pattern).expect("pattern should match something")
     }
 }
 
@@ -38,12 +45,26 @@ const SAMPLE: &[&str] = &[
     "Commodore_C64-Breadbin/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_DAY.slangp",
 ];
 
+/// The levels of `PACK`: three directories, then the two halves of the file
+/// name.
+const TYPE: usize = 3;
+const TIME: usize = 4;
+
 fn raws(level: &Level) -> Vec<&str> {
     level.choices.iter().map(|c| c.raw.as_str()).collect()
 }
 
 fn labels(level: &Level) -> Vec<&str> {
     level.choices.iter().map(|c| c.label.as_str()).collect()
+}
+
+/// A pattern's wildcards are its combo boxes, named and ordered as it writes
+/// them.
+#[test]
+fn the_tags_name_the_levels() {
+    let pack = Pack::new("tags", SAMPLE);
+    let browser = pack.browser();
+    assert_eq!(browser.names, ["System", "Monitor", "Shader", "Type", "Time"]);
 }
 
 /// A fresh browser reads only the top level's directory and picks the first of
@@ -59,8 +80,8 @@ fn opens_on_the_first_preset() {
     );
     assert_eq!(raws(&browser.levels[1]), ["Bezel_Black", "Commodore_C1084"]);
     assert_eq!(raws(&browser.levels[2]), ["MBZ_SHARP_STD"]);
-    assert_eq!(raws(&browser.levels[TYPE]), ["NEAR_FLAT"]);
-    assert_eq!(raws(&browser.levels[LIGHT]), ["DAY"]);
+    assert_eq!(raws(&browser.levels[TYPE]), ["NEAR"]);
+    assert_eq!(raws(&browser.levels[TIME]), ["FLAT_DAY"]);
     assert_eq!(
         browser.path(),
         Some(pack.0.join(SAMPLE[0])),
@@ -81,10 +102,10 @@ fn a_pick_re_reads_the_levels_below_it() {
         ["MBZ_SHARP_STD", "NMC_SOFT_RGB"],
         "the other monitor ships a second flavour"
     );
-    assert_eq!(raws(&browser.levels[TYPE]), ["NEAR_CURVED", "OVERLAY_FLAT"]);
-    assert_eq!(raws(&browser.levels[LIGHT]), ["DAY", "NIGHT"]);
+    assert_eq!(raws(&browser.levels[TYPE]), ["NEAR", "OVERLAY"]);
+    assert_eq!(raws(&browser.levels[TIME]), ["CURVED_DAY", "CURVED_NIGHT"]);
 
-    browser.select(LIGHT, 1);
+    browser.select(TIME, 1);
     assert_eq!(browser.path(), Some(pack.0.join(SAMPLE[2])));
 }
 
@@ -97,7 +118,7 @@ fn a_still_valid_pick_survives_a_change_above_it() {
     let mut browser = pack.browser();
 
     browser.select(1, 1);
-    browser.select(LIGHT, 1); // NIGHT
+    browser.select(TIME, 1); // CURVED_NIGHT
     browser.select(0, 1); // the C64, which ships only the day preset
 
     assert_eq!(
@@ -106,26 +127,74 @@ fn a_still_valid_pick_survives_a_change_above_it() {
         "the monitor is still there under the new machine, so it is kept"
     );
     assert_eq!(
-        raws(&browser.levels[LIGHT]),
-        ["DAY"],
-        "NIGHT is not, so that level falls back to its first choice"
+        raws(&browser.levels[TIME]),
+        ["CURVED_DAY"],
+        "CURVED_NIGHT is not, so that level falls back to its first choice"
     );
     assert_eq!(browser.path(), Some(pack.0.join(SAMPLE[5])));
 }
 
-/// The lighting list belongs to the selected type: `OVERLAY_*` ships day only,
-/// and picking it must not leave `NIGHT` selectable (and unopenable).
+/// Two wildcards in one name are still one level each: the second lists only
+/// what goes with the first, so picking `OVERLAY` cannot leave a `CURVED_*`
+/// selected (and unopenable).
 #[test]
-fn lighting_follows_the_selected_type() {
-    let pack = Pack::new("lighting", SAMPLE);
+fn a_wildcard_follows_the_one_before_it() {
+    let pack = Pack::new("pairs", SAMPLE);
     let mut browser = pack.browser();
 
     browser.select(1, 1);
-    browser.select(LIGHT, 1);
-    browser.select(TYPE, 1); // OVERLAY_FLAT
+    browser.select(TIME, 1);
+    browser.select(TYPE, 1); // OVERLAY
 
-    assert_eq!(raws(&browser.levels[LIGHT]), ["DAY"]);
+    assert_eq!(raws(&browser.levels[TIME]), ["FLAT_DAY"]);
     assert_eq!(browser.path(), Some(pack.0.join(SAMPLE[3])));
+}
+
+/// A wildcard takes as little as it can, so a name splits at its *first*
+/// separator -- except for the last wildcard of a name, which takes whatever is
+/// left over.
+#[test]
+fn wildcards_are_lazy() {
+    let segment = Segment::parse("MBZ__<Level>__<Type>.slangp").expect("valid pattern");
+    assert_eq!(
+        segment.captures("MBZ__0__SMOOTH-ADV__GDV.slangp"),
+        Some(vec!["0".to_owned(), "SMOOTH-ADV__GDV".to_owned()])
+    );
+    assert_eq!(segment.captures("MBZ__0.slangp"), None);
+
+    let segment = Segment::parse("<Type>_<Time>.slangp").expect("valid pattern");
+    assert_eq!(
+        segment.captures("NEAR_CURVED_NIGHT.slangp"),
+        Some(vec!["NEAR".to_owned(), "CURVED_NIGHT".to_owned()])
+    );
+    assert_eq!(
+        segment.captures("PLAIN.slangp"),
+        None,
+        "a name without the separator is not this shape"
+    );
+
+    // What was taken apart goes back together the same way.
+    assert_eq!(
+        segment.compose(&["NEAR".to_owned(), "CURVED_NIGHT".to_owned()]),
+        "NEAR_CURVED_NIGHT.slangp"
+    );
+}
+
+/// A pattern with one wildcard is one combo box, and everything that is not its
+/// shape -- another directory, a file of another kind -- is left out of it.
+#[test]
+fn a_single_wildcard_is_a_single_level() {
+    let pack = Pack::new("flat", &["border/gb-pocket.slangp", "border/gg.slangp"]);
+    std::fs::create_dir_all(pack.0.join("border/resources")).expect("mkdir");
+    std::fs::write(pack.0.join("border/README.md"), "notes").expect("write");
+
+    let browser = pack.browse("border/<Type>.slangp");
+    assert_eq!(browser.names, ["Type"]);
+    assert_eq!(raws(&browser.levels[0]), ["gb-pocket", "gg"]);
+    assert_eq!(
+        browser.path(),
+        Some(pack.0.join("border/gb-pocket.slangp"))
+    );
 }
 
 /// Opening the dialog over a running preset selects every level of it.
@@ -139,14 +208,14 @@ fn reveal_selects_an_existing_preset() {
     assert_eq!(browser.path(), Some(wanted));
     assert_eq!(browser.levels[2].raw(), Some("NMC_SOFT_RGB"));
 
-    // A preset from somewhere else is not this pack's business, and leaves the
-    // selection alone.
+    // A preset from somewhere else is not this collection's business, and leaves
+    // the selection alone.
     let elsewhere = PathBuf::from("shaders/slangp/crt/crt-lottes.slangp");
     assert!(!browser.reveal(&elsewhere));
     assert_eq!(browser.path(), Some(pack.0.join(SAMPLE[4])));
 
-    // Neither is a path of the right shape naming something the pack does not
-    // ship -- but the levels that did match are selected.
+    // Neither is a path of the right shape naming something the collection does
+    // not ship -- but the levels that did match are selected.
     let absent = pack
         .0
         .join("Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/GONE_FLAT_DAY.slangp");
@@ -170,8 +239,8 @@ fn every_selection_names_a_real_preset() {
                 browser.select(2, flavour);
                 for ty in 0..browser.levels[TYPE].choices.len() {
                     browser.select(TYPE, ty);
-                    for light in 0..browser.levels[LIGHT].choices.len() {
-                        browser.select(LIGHT, light);
+                    for time in 0..browser.levels[TIME].choices.len() {
+                        browser.select(TIME, time);
                         let path = browser.path().expect("a full selection has a path");
                         assert!(path.is_file(), "{path:?} does not exist");
                     }
@@ -181,43 +250,35 @@ fn every_selection_names_a_real_preset() {
     }
 }
 
-/// A preset with no lighting half is still selectable; the level that has
-/// nothing to offer just drops out of the file name.
+/// Nothing to browse is reported rather than opened: a missing tree (the
+/// `shaders/` checkout is gitignored, so a fresh clone has none), one whose
+/// directories hold no preset of that shape, and a malformed pattern.
 #[test]
-fn a_name_with_no_lighting_half_still_resolves() {
-    let pack = Pack::new("nolight", &["Machine/Monitor/Flavour/PLAIN.slangp"]);
-    let browser = pack.browser();
-
-    assert_eq!(raws(&browser.levels[TYPE]), ["PLAIN"]);
-    assert!(browser.levels[LIGHT].choices.is_empty());
-    assert_eq!(
-        browser.path(),
-        Some(pack.0.join("Machine/Monitor/Flavour/PLAIN.slangp"))
-    );
-}
-
-/// Nothing to browse is reported rather than opened: a missing pack (the
-/// `shaders/` checkout is gitignored, so a fresh clone has none) and one whose
-/// directories hold no presets.
-#[test]
-fn an_unusable_pack_is_an_error() {
+fn an_unusable_collection_is_an_error() {
     let missing = std::env::temp_dir().join("demarc-shader-dialog-absent");
     let _ = std::fs::remove_dir_all(&missing);
-    assert!(PresetBrowser::new(missing).is_err());
+    assert!(PresetBrowser::new(missing, PACK).is_err());
 
     let empty = Pack::new("empty", &["Machine/Monitor/Flavour/notes.txt"]);
-    assert!(PresetBrowser::new(empty.0.clone()).is_err());
+    assert!(PresetBrowser::new(empty.0.clone(), PACK).is_err());
+
+    assert!(PresetBrowser::new(empty.0.clone(), "<Type.slangp").is_err());
 }
 
-/// Each level is labelled the way that level's names read: machine and monitor
-/// names are words, flavour codes are initialisms and stay as they are, and the
-/// halves of a preset's shouted file name become words again.
+/// Each matched string is labelled the way it reads: machine and monitor names
+/// are words, shouted directory names are codes and stay as they are, and the
+/// shouted halves of a file name become words again.
 #[test]
-fn labels_suit_the_level() {
+fn labels_suit_the_string() {
+    assert_eq!(label("Commodore_Amiga500", false), "Commodore Amiga500");
+    assert_eq!(label("MBZ_SHARP_STD", false), "MBZ_SHARP_STD");
+    assert_eq!(label("NEAR_CURVED", true), "Near Curved");
+    assert_eq!(label("NIGHT", true), "Night");
+    assert_eq!(label("gb-pocket", true), "gb-pocket");
+
     let pack = Pack::new("labels", SAMPLE);
     let mut browser = pack.browser();
     browser.select(1, 1);
-
     assert_eq!(
         labels(&browser.levels[0]),
         ["Commodore Amiga500", "Commodore C64-Breadbin"]
@@ -226,38 +287,39 @@ fn labels_suit_the_level() {
         labels(&browser.levels[2]),
         ["MBZ_SHARP_STD", "NMC_SOFT_RGB"]
     );
-    assert_eq!(
-        labels(&browser.levels[TYPE]),
-        ["Near Curved", "Overlay Flat"]
-    );
-    assert_eq!(labels(&browser.levels[LIGHT]), ["Day", "Night"]);
+    assert_eq!(labels(&browser.levels[TYPE]), ["Near", "Overlay"]);
 }
 
+/// What the dialog prints under the combo boxes: the preset without the
+/// collection root, which is the tail of a `--slangp` argument.
 #[test]
-fn a_preset_name_splits_at_its_last_underscore() {
-    assert_eq!(split_stem("NEAR_CURVED_NIGHT"), ("NEAR_CURVED", "NIGHT"));
-    assert_eq!(split_stem("PLAIN"), ("PLAIN", ""));
-    assert_eq!(split_stem("A_B"), ("A", "B"));
-}
-
-/// What the dialog prints under the combo boxes: the preset without the pack
-/// root, which is the tail of a `--slangp` argument.
-#[test]
-fn the_shown_path_is_relative_to_the_pack() {
+fn the_shown_path_is_relative_to_the_collection() {
     let pack = Pack::new("relative", SAMPLE);
     let browser = pack.browser();
     assert_eq!(browser.relative_path().as_deref(), Some(SAMPLE[0]));
 }
 
-/// A pack directory names its author first; the dialog names the machines.
+/// One collection per table of the config, in the order it writes them; a
+/// pattern nothing matches is left out rather than offered as empty combo
+/// boxes.
 #[test]
-fn a_pack_is_named_after_its_machines() {
-    assert_eq!(pack_label("TheNamec-Commodore"), "Commodore");
-    assert_eq!(pack_label("Duimon-Sega_Genesis"), "Sega Genesis");
-    assert_eq!(pack_label("Commodore"), "Commodore");
+fn collections_come_from_the_config() {
+    let pack = Pack::new("config", SAMPLE);
+    let config = format!(
+        "[Commodore]\npattern = \"{PACK}\"\n\n\
+         [Absent]\npattern = \"nowhere/<Type>.slangp\"\n"
+    );
+    let found = parse_collections(&pack.0, &config);
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "Commodore");
+    assert_eq!(
+        found[0].browser.as_ref().and_then(PresetBrowser::path),
+        Some(pack.0.join(SAMPLE[0]))
+    );
 }
 
-/// A dialog over one pack, plus the default collection every dialog has.
+/// A dialog over one collection, plus the default collection every dialog has.
 fn dialog_over(pack: &Pack) -> ShaderDialog {
     ShaderDialog {
         collections: vec![
@@ -276,7 +338,7 @@ fn dialog_over(pack: &Pack) -> ShaderDialog {
 
 /// Opening over a running preset selects the collection it came from, and
 /// every level of it; the default collection has no levels to select, which is
-/// what greys its rows out.
+/// what leaves it with no rows.
 #[test]
 fn reveal_selects_the_collection_the_preset_came_from() {
     let pack = Pack::new("collections", SAMPLE);
@@ -293,8 +355,9 @@ fn reveal_selects_the_collection_the_preset_came_from() {
         Some(pack.0.join(SAMPLE[4]))
     );
 
-    // A preset of the pack's shape that it no longer ships is still the pack's,
-    // so the collection stays selected rather than falling back to the default.
+    // A preset of the collection's shape that it no longer ships is still the
+    // collection's, so it stays selected rather than falling back to the
+    // default.
     dialog.reveal(
         &pack
             .0
@@ -302,13 +365,13 @@ fn reveal_selects_the_collection_the_preset_came_from() {
     );
     assert_eq!(dialog.selected, 1);
 
-    // The built-in shader belongs to no pack, and is the default collection.
+    // The built-in shader belongs to no collection, and is the default.
     dialog.reveal(Path::new("shaders/slangp/crt/crt-lottes.slangp"));
     assert_eq!(dialog.selected, DEFAULT);
     assert!(dialog.browser().is_none());
 }
 
-/// With no pack installed there is still a collection to show: the default,
+/// With no config installed there is still a collection to show: the default,
 /// which browses nothing.
 #[test]
 fn the_default_collection_is_always_there() {
@@ -317,32 +380,28 @@ fn the_default_collection_is_always_there() {
     assert!(found[DEFAULT].browser.is_none());
 }
 
-/// The real pack, if this checkout has one. Ignored for the same reason
-/// `post_process_tests::megabezel_pack_presets_resolve` is: it needs
+/// The real `shaders/shaders.toml`, if this checkout has one. Ignored for the
+/// same reason `post_process_tests::megabezel_pack_presets_resolve` is: it needs
 /// `shaders/` laid out as `docs/SHADERS.md` describes.
 #[test]
 #[ignore]
-fn the_installed_pack_browses() {
+fn the_installed_collections_browse() {
     let mut found = collections();
-    let pack = found.get_mut(1).expect("no pack installed");
-    assert_eq!(pack.label, "Commodore");
+    assert!(found.len() > 1, "no shaders.toml, or nothing in it matched");
+
+    let pack = found
+        .iter_mut()
+        .find(|c| c.label == "Commodore")
+        .expect("no Commodore collection");
     let browser = pack.browser.as_mut().expect("a collection with a tree");
 
-    let wanted = Path::new(PACKS_DIR).join(
-        "TheNamec-Commodore/presets/Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_NIGHT.slangp",
+    let wanted = Path::new("shaders").join(
+        "Mega_Bezel_Packs/TheNamec-Commodore/presets/Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_NIGHT.slangp",
     );
     assert!(browser.reveal(&wanted), "{wanted:?} should be in the pack");
     assert_eq!(
         labels(&browser.levels[0])[browser.levels[0].index],
         "Commodore Amiga500"
-    );
-    assert_eq!(
-        labels(&browser.levels[TYPE])[browser.levels[TYPE].index],
-        "Near Curved"
-    );
-    assert_eq!(
-        labels(&browser.levels[LIGHT])[browser.levels[LIGHT].index],
-        "Night"
     );
     assert_eq!(browser.path(), Some(wanted));
 }

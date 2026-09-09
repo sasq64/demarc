@@ -1,32 +1,42 @@
-//! The shader dialog: the post-process shader picked from a collection combo
-//! box and, for a Mega Bezel pack, one directory level at a time.
+//! The shader dialog: the post-process shader picked from a *collection* combo
+//! box and, under it, one combo box per wildcard of that collection's pattern.
 //!
-//! The top row picks a *collection*: `Default`, which is whatever shader
-//! `--shader` names, and one entry per bezel pack
-//! found under `shaders/Mega_Bezel_Packs`. `Default` is a single preset with
-//! nothing to browse, so the rows below it are greyed out. A pack is not a
-//! handful of shaders but a directory tree of tens of thousands of `.slangp`
-//! presets, laid out
-//! `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting>.slangp`
-//! (see `docs/SHADERS.md`). That is far too many for the fuzzy list and not
-//! something [`crate::egui_settings`] can draw either -- its combo boxes come from a
-//! reflected enum's variant list, and these choices are only known once a
-//! directory has been read. So this dialog draws one combo box per level and
-//! fills each from what the level above selected:
+//! The collections are described by `shaders/shaders.toml`, where each table is
+//! one collection and its `pattern` says both where that collection's presets
+//! are and how their paths are read:
+//!
+//! ```toml
+//! [Commodore]
+//! pattern = "Mega_Bezel_Packs/TheNamec-Commodore/presets/<System>/<Monitor>/<Shader>/<Type>_<Time>.slangp"
+//! [Handheld]
+//! pattern = "shaders_slang/handheld/console-border/<Type>.slangp"
+//! ```
+//!
+//! Every `<Tag>` is a wildcard and becomes one combo box, named after the tag,
+//! in the order the tags appear; it offers the strings that matched at that
+//! position, and picking one re-fills the boxes below it:
 //!
 //! ```text
 //! Commodore / Commodore_Amiga500 / Commodore_C1084 / MBZ_SHARP_STD / NEAR_CURVED_NIGHT.slangp
-//! Collection  System              Monitor           Shader          Type       Day/Night
+//! Collection  System              Monitor           Shader          Type_Time
 //! ```
+//!
+//! A wildcard never crosses `/`, and takes as little as it can except when it
+//! is the last one of a path component -- so `MBZ__<Level>__<Type>.slangp`
+//! reads `MBZ__0__SMOOTH-ADV__GDV.slangp` as `0` and `SMOOTH-ADV__GDV`.
+//!
+//! The first collection is always `Default`: whatever shader `--shader` names,
+//! which is one preset with nothing to browse, so it has no rows under it.
 //!
 //! Like the settings dialog, a pick takes effect the moment it is made: the
 //! selection is composed back into a path and written straight to
 //! [`ShaderPath`], which the render world extracts.
 //!
-//! The tree is walked lazily, one `read_dir` per level as the level above
-//! changes, because the pack holds ~72k presets and only ~60 directory entries
-//! are ever on screen. [`PresetBrowser`] is the whole of that logic and knows
-//! nothing about egui; the tests exercise it against a tree they build.
+//! The tree is walked lazily, one `read_dir` per path component as the boxes
+//! above it change, because the Commodore pack alone holds ~72k presets and
+//! only a few dozen names are ever on screen. [`PresetBrowser`] is the whole of
+//! that logic and knows nothing about egui; the tests exercise it against a
+//! tree they build.
 
 use std::path::{Path, PathBuf};
 
@@ -35,6 +45,8 @@ use bevy_egui::{
     EguiContexts, EguiPrimaryContextPass,
     egui::{self, Ui},
 };
+use regex::Regex;
+use tracing::warn;
 
 use crate::config::{Args, RenderSettings, ShaderArg};
 use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
@@ -46,13 +58,9 @@ use crate::egui_settings::{
     TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
 
-/// Where the Mega Bezel packs are unpacked, relative to the checkout root (or
-/// to the executable) -- see the Mega Bezel section of `docs/SHADERS.md` for
-/// why a pack has to sit exactly there.
-pub const PACKS_DIR: &str = "shaders/Mega_Bezel_Packs";
-
-/// The subdirectory of a pack that holds its preset tree.
-const PRESETS: &str = "presets";
+/// The file the collections are read from, relative to a search root. Its own
+/// directory is what every pattern in it is relative to.
+pub const CONFIG_PATH: &str = "shaders/shaders.toml";
 
 /// The directories a shader collection is looked for in: the working directory,
 /// which is where the `shaders/` working checkout lives, and next to the
@@ -71,62 +79,77 @@ fn search_roots() -> Vec<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// The tree
+// Patterns
 // ---------------------------------------------------------------------------
 
-/// How a directory or file name is turned into what the combo box shows.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Labeling {
-    /// `Commodore_Amiga500` -> `Commodore Amiga500`. The names are already
-    /// capitalised the way the pack's author wrote them.
-    Words,
-    /// Left exactly as it is, for the flavour codes (`MBZ_SHARP_STD`), which are
-    /// initialisms rather than words and are how the pack's README names them.
-    Raw,
-    /// `NEAR_CURVED` -> `Near Curved`: the shouted halves of a preset's file
-    /// name, which are words.
-    Title,
+/// One `/`-separated component of a pattern: literal text with `<Tag>` holes in
+/// it. `literals` is one longer than `tags`, and holds the text around them, so
+/// a name can be taken apart by [`Segment::captures`] and put back together by
+/// [`Segment::compose`].
+struct Segment {
+    literals: Vec<String>,
+    tags: Vec<String>,
+    regex: Regex,
 }
 
-struct LevelSpec {
-    /// Row label in the dialog.
-    label: &'static str,
-    labeling: Labeling,
+impl Segment {
+    fn parse(text: &str) -> Result<Self, String> {
+        let mut literals = Vec::new();
+        let mut tags = Vec::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('<') {
+            let Some(close) = rest[open..].find('>').map(|i| i + open) else {
+                return Err(format!("unclosed <> in {text:?}"));
+            };
+            literals.push(rest[..open].to_owned());
+            tags.push(rest[open + 1..close].to_owned());
+            rest = &rest[close + 1..];
+        }
+        literals.push(rest.to_owned());
+
+        let mut pattern = String::from("^");
+        for (i, literal) in literals.iter().enumerate() {
+            pattern.push_str(&regex::escape(literal));
+            if i < tags.len() {
+                // Lazy but for the last one, which takes whatever is left over.
+                pattern.push_str(if i + 1 == tags.len() { "(.+)" } else { "(.+?)" });
+            }
+        }
+        pattern.push('$');
+        let regex = Regex::new(&pattern).map_err(|err| err.to_string())?;
+        Ok(Self {
+            literals,
+            tags,
+            regex,
+        })
+    }
+
+    /// The wildcard values of `name`, or `None` if it is not this segment's
+    /// shape.
+    fn captures(&self, name: &str) -> Option<Vec<String>> {
+        let caps = self.regex.captures(name)?;
+        Some(
+            caps.iter()
+                .skip(1)
+                .map(|m| m.map_or(String::new(), |m| m.as_str().to_owned()))
+                .collect(),
+        )
+    }
+
+    /// The segment with `values` put back into its holes.
+    fn compose(&self, values: &[String]) -> String {
+        let mut out = self.literals[0].clone();
+        for (value, literal) in values.iter().zip(&self.literals[1..]) {
+            out.push_str(value);
+            out.push_str(literal);
+        }
+        out
+    }
 }
 
-/// One row of the dialog, top to bottom. The first [`DIR_LEVELS`] are
-/// directories under the pack root; the last two are the halves of a preset's
-/// file name.
-const LEVELS: [LevelSpec; 5] = [
-    LevelSpec {
-        label: "System",
-        labeling: Labeling::Words,
-    },
-    LevelSpec {
-        label: "Monitor",
-        labeling: Labeling::Words,
-    },
-    LevelSpec {
-        label: "Shader",
-        labeling: Labeling::Raw,
-    },
-    LevelSpec {
-        label: "Type",
-        labeling: Labeling::Title,
-    },
-    LevelSpec {
-        label: "Day/Night",
-        labeling: Labeling::Title,
-    },
-];
-
-const DEPTH: usize = LEVELS.len();
-/// Levels that name a directory. Below them sit the presets themselves.
-const DIR_LEVELS: usize = 3;
-/// The `NEAR_CURVED` half of a preset's file name.
-const TYPE: usize = 3;
-/// The `NIGHT` half.
-const LIGHT: usize = 4;
+// ---------------------------------------------------------------------------
+// The tree
+// ---------------------------------------------------------------------------
 
 /// One entry of one combo box: the name on disk and what is shown for it.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,7 +167,7 @@ struct Level {
 
 impl Level {
     /// The name on disk of the current pick, or `None` for a level with nothing
-    /// in it (an empty directory, or a preset name with no lighting half).
+    /// in it (a directory holding no preset of this pattern's shape).
     fn raw(&self) -> Option<&str> {
         self.choices.get(self.index).map(|c| c.raw.as_str())
     }
@@ -158,37 +181,50 @@ impl Level {
 /// the first one each time.
 pub struct PresetBrowser {
     root: PathBuf,
-    levels: [Level; DEPTH],
-    /// The `.slangp` files of the selected flavour directory, split into their
-    /// type and lighting halves. Read once per flavour and shared by the two
-    /// levels that are drawn from it.
-    presets: Vec<(String, String)>,
+    segments: Vec<Segment>,
+    /// Index of each segment's first level; a segment holds one level per tag,
+    /// and the levels are the tags of every segment in order.
+    starts: Vec<usize>,
+    /// Row labels: the tag names, flattened the same way.
+    names: Vec<String>,
+    levels: Vec<Level>,
 }
 
 impl PresetBrowser {
     /// Reads the top level of `root` and selects the first of everything.
     ///
-    /// `Err` if the pack is not there or holds no presets, which is what the
-    /// caller reports rather than opening an empty dialog.
-    pub fn new(root: PathBuf) -> Result<Self, String> {
-        if !root.is_dir() {
-            return Err(format!("No shader pack at {}", root.display()));
+    /// `Err` if the pattern is malformed, or if nothing on disk matches it,
+    /// which is what leaves the collection out rather than offering a row of
+    /// empty combo boxes.
+    pub fn new(root: PathBuf, pattern: &str) -> Result<Self, String> {
+        let segments = pattern
+            .split('/')
+            .map(Segment::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut starts = Vec::with_capacity(segments.len());
+        let mut names: Vec<String> = Vec::new();
+        for segment in &segments {
+            starts.push(names.len());
+            names.extend(segment.tags.iter().cloned());
         }
+        let levels = vec![Level::default(); names.len()];
         let mut browser = Self {
             root,
-            levels: std::array::from_fn(|_| Level::default()),
-            presets: Vec::new(),
+            segments,
+            starts,
+            names,
+            levels,
         };
         browser.rebuild(0);
-        if browser.path().is_none() {
-            return Err(format!("No presets under {}", browser.root.display()));
+        match browser.path() {
+            Some(path) if path.exists() => Ok(browser),
+            _ => Err(format!("No presets matching {pattern}")),
         }
-        Ok(browser)
     }
 
     /// Picks `index` at `level` and re-reads everything below it.
     fn select(&mut self, level: usize, index: usize) {
-        if level >= DEPTH || index >= self.levels[level].choices.len() {
+        if level >= self.levels.len() || index >= self.levels[level].choices.len() {
             return;
         }
         self.levels[level].index = index;
@@ -198,52 +234,29 @@ impl PresetBrowser {
     /// The preset the current selection names, or `None` if any level of it came
     /// up empty.
     pub fn path(&self) -> Option<PathBuf> {
-        let dir = self.dir(DIR_LEVELS)?;
-        let ty = self.levels[TYPE].raw()?;
-        // A preset whose name has no lighting half is one whole name already.
-        let file = match self.levels[LIGHT].raw() {
-            Some(light) => format!("{ty}_{light}.slangp"),
-            None => format!("{ty}.slangp"),
-        };
-        Some(dir.join(file))
+        self.dir(self.segments.len())
     }
 
-    /// The same path with the pack root taken off, which is what the dialog
-    /// shows under the combo boxes.
+    /// The same path with the collection root taken off, which is what the
+    /// dialog shows under the combo boxes.
     fn relative_path(&self) -> Option<String> {
         let path = self.path()?;
         let rel = path.strip_prefix(&self.root).unwrap_or(&path);
         Some(rel.to_string_lossy().replace('\\', "/"))
     }
 
-    /// Moves the selection onto `preset`, if it is one of this pack's.
+    /// Moves the selection onto `preset`, if it is one of this collection's.
     ///
     /// Used when the dialog opens so it comes up showing what is on screen
-    /// rather than the first preset in the pack. Returns whether every level
-    /// matched; a path from somewhere else (or one the pack no longer ships)
-    /// leaves the selection as it was.
+    /// rather than the first preset of the collection. Returns whether every
+    /// level matched; a path from somewhere else (or one the collection no
+    /// longer ships) leaves the selection as it was.
     pub fn reveal(&mut self, preset: &Path) -> bool {
-        let Some(rel) = self.strip_root(preset) else {
+        let Some(wanted) = self.match_path(preset) else {
             return false;
         };
-        let parts: Vec<&str> = rel.iter().filter_map(|c| c.to_str()).collect();
-        if parts.len() != DIR_LEVELS + 1 {
-            return false;
-        }
-        let Some(stem) = Path::new(parts[DIR_LEVELS])
-            .file_stem()
-            .and_then(|s| s.to_str())
-        else {
-            return false;
-        };
-        let (ty, light) = split_stem(stem);
-        let wanted = [parts[0], parts[1], parts[2], ty, light];
         for (level, want) in wanted.iter().enumerate() {
-            let Some(index) = self.levels[level]
-                .choices
-                .iter()
-                .position(|c| c.raw == *want)
-            else {
+            let Some(index) = self.levels[level].choices.iter().position(|c| c.raw == *want) else {
                 // Everything above matched and is selected; the levels below are
                 // whatever that leaves, which is a valid preset either way.
                 return false;
@@ -253,17 +266,32 @@ impl PresetBrowser {
         true
     }
 
-    /// Whether `preset` is one of this tree's, which is what picks the
-    /// collection the dialog opens on -- including a path of the pack's shape
-    /// naming a preset it no longer ships, which still belongs to this pack
+    /// Whether `preset` has this collection's shape, which is what picks the
+    /// collection the dialog opens on -- including a path of the right shape
+    /// naming a preset the collection no longer ships, which still belongs here
     /// rather than to the default collection.
     pub fn contains(&self, preset: &Path) -> bool {
-        self.strip_root(preset).is_some()
+        self.match_path(preset).is_some()
     }
 
-    /// `preset` relative to the pack root. Tried as given first, so a browser
-    /// built on a relative root still recognises a relative path, and through
-    /// `canonicalize` after that, which is what matches an absolute
+    /// The wildcard values `preset` has, level by level, or `None` if it is not
+    /// under the root or not the pattern's shape.
+    fn match_path(&self, preset: &Path) -> Option<Vec<String>> {
+        let rel = self.strip_root(preset)?;
+        let parts: Vec<&str> = rel.iter().filter_map(|c| c.to_str()).collect();
+        if parts.len() != self.segments.len() {
+            return None;
+        }
+        let mut values = Vec::with_capacity(self.levels.len());
+        for (segment, part) in self.segments.iter().zip(parts) {
+            values.extend(segment.captures(part)?);
+        }
+        Some(values)
+    }
+
+    /// `preset` relative to the collection root. Tried as given first, so a
+    /// browser built on a relative root still recognises a relative path, and
+    /// through `canonicalize` after that, which is what matches an absolute
     /// `--slangp` against a relative root.
     fn strip_root<'a>(&self, preset: &'a Path) -> Option<std::borrow::Cow<'a, Path>> {
         if let Ok(rel) = preset.strip_prefix(&self.root) {
@@ -275,141 +303,131 @@ impl PresetBrowser {
         Some(rel.to_path_buf().into())
     }
 
-    /// Re-reads levels `from..` , each one under what the level above now
-    /// selects, keeping a level's pick when the new choices still offer it.
+    /// Re-reads every level from `from` down, each one under what the levels
+    /// above it now select, keeping a level's pick when the new choices still
+    /// offer it.
     fn rebuild(&mut self, from: usize) {
-        for level in from..DEPTH {
-            let previous = self.levels[level].raw().map(str::to_owned);
-            let choices = self.choices_at(level);
-            let index = previous
-                .and_then(|raw| choices.iter().position(|c| c.raw == raw))
-                .unwrap_or(0);
-            self.levels[level] = Level { choices, index };
+        if from >= self.levels.len() {
+            return;
+        }
+        for segment in self.segment_of(from)..self.segments.len() {
+            let start = self.starts[segment];
+            let tags = self.segments[segment].tags.len();
+            if tags == 0 {
+                continue;
+            }
+            // One listing for the whole segment, shared by its tags: a name with
+            // two wildcards in it is read once, not once per box.
+            let rows = self.entries(segment);
+            let file = segment + 1 == self.segments.len();
+            for group in 0..tags {
+                let level = start + group;
+                let picked: Vec<String> = (0..group)
+                    .map(|i| self.levels[start + i].raw().unwrap_or_default().to_owned())
+                    .collect();
+                let mut raws: Vec<String> = Vec::new();
+                for row in rows.iter().filter(|row| row[..group] == picked[..]) {
+                    if !raws.contains(&row[group]) {
+                        raws.push(row[group].clone());
+                    }
+                }
+                let previous = self.levels[level].raw().map(str::to_owned);
+                let choices: Vec<Choice> = raws
+                    .into_iter()
+                    .map(|raw| Choice {
+                        label: label(&raw, file),
+                        raw,
+                    })
+                    .collect();
+                let index = previous
+                    .and_then(|raw| choices.iter().position(|c| c.raw == raw))
+                    .unwrap_or(0);
+                self.levels[level] = Level { choices, index };
+            }
         }
     }
 
-    /// What one level offers under the current selection. Reads at most one
-    /// directory, and for [`TYPE`] also caches its listing for [`LIGHT`].
-    fn choices_at(&mut self, level: usize) -> Vec<Choice> {
-        let labeling = LEVELS[level].labeling;
-        let raws: Vec<String> = match level {
-            0..DIR_LEVELS => self
-                .dir(level)
-                .map(|dir| subdirectories(&dir))
-                .unwrap_or_default(),
-            TYPE => {
-                self.presets = self
-                    .dir(DIR_LEVELS)
-                    .map(|dir| presets_in(&dir))
-                    .unwrap_or_default();
-                distinct(self.presets.iter().map(|(ty, _)| ty))
-            }
-            // Only the lighting variants of the selected type: `OVERLAY_*` ships
-            // day only, so this list is not the same for every type.
-            _ => {
-                let ty = self.levels[TYPE].raw().unwrap_or_default().to_owned();
-                distinct(
-                    self.presets
-                        .iter()
-                        .filter(|(t, light)| *t == ty && !light.is_empty())
-                        .map(|(_, light)| light),
-                )
-            }
+    /// The wildcard values of everything in `segment`'s directory that has its
+    /// shape, sorted by name. An unreadable directory is an empty one -- the
+    /// dialog then offers nothing at that level, which is the truth as far as it
+    /// can see.
+    fn entries(&self, segment: usize) -> Vec<Vec<String>> {
+        let Some(dir) = self.dir(segment) else {
+            return Vec::new();
         };
-        raws.into_iter()
-            .map(|raw| Choice {
-                label: label(&raw, labeling),
-                raw,
-            })
+        let file = segment + 1 == self.segments.len();
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_dir() != file)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+            .iter()
+            .filter_map(|name| self.segments[segment].captures(name))
             .collect()
     }
 
-    /// The directory the first `level` selections name: `dir(0)` is the pack
-    /// root, `dir(3)` the flavour directory holding the presets themselves.
-    fn dir(&self, level: usize) -> Option<PathBuf> {
+    /// Which segment `level` belongs to.
+    fn segment_of(&self, level: usize) -> usize {
+        self.starts
+            .iter()
+            .rposition(|start| *start <= level)
+            .unwrap_or(0)
+    }
+
+    /// One path component, the selected values put back into it.
+    fn component(&self, segment: usize) -> Option<String> {
+        let start = self.starts[segment];
+        let values: Option<Vec<String>> = (0..self.segments[segment].tags.len())
+            .map(|i| self.levels[start + i].raw().map(str::to_owned))
+            .collect();
+        Some(self.segments[segment].compose(&values?))
+    }
+
+    /// The path the first `count` components name: `dir(0)` is the collection
+    /// root, `dir(segments.len())` the preset itself.
+    fn dir(&self, count: usize) -> Option<PathBuf> {
         let mut path = self.root.clone();
-        for level in &self.levels[..level] {
-            path.push(level.raw()?);
+        for segment in 0..count {
+            path.push(self.component(segment)?);
         }
         Some(path)
     }
 }
 
-/// Sorted names of the subdirectories of `dir`. An unreadable directory is an
-/// empty one -- the dialog then offers nothing at that level, which is the
-/// truth as far as it can see.
-fn subdirectories(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    names.sort();
-    names
-}
-
-/// The `.slangp` files of `dir`, sorted, each split by [`split_stem`].
-fn presets_in(dir: &Path) -> Vec<(String, String)> {
-    let mut stems: Vec<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "slangp"))
-        .filter_map(|p| p.file_stem()?.to_str().map(str::to_owned))
-        .collect();
-    stems.sort();
-    stems
-        .iter()
-        .map(|stem| {
-            let (ty, light) = split_stem(stem);
-            (ty.to_owned(), light.to_owned())
-        })
-        .collect()
-}
-
-/// Splits a preset's file name into the part that names the geometry and the
-/// part that names the lighting: `NEAR_CURVED_NIGHT` -> `NEAR_CURVED` + `NIGHT`.
+/// What a combo box shows for a matched string.
 ///
-/// The last underscore is the seam. A name with no underscore has no lighting
-/// half, and gets an empty one rather than being dropped.
-fn split_stem(stem: &str) -> (&str, &str) {
-    stem.rsplit_once('_').unwrap_or((stem, ""))
+/// A shouted name from a file (`NEAR_CURVED`, `NIGHT`) is the pack's way of
+/// writing words, and reads as words; a shouted directory name
+/// (`MBZ_SHARP_STD`) is a code, and is how its README names it, so it is left
+/// alone. Anything with lowercase in it is already written the way its author
+/// meant it, bar the underscores a directory name uses for spaces.
+fn label(raw: &str, file: bool) -> String {
+    let shouted = !raw.chars().any(char::is_lowercase);
+    match (file, shouted) {
+        (true, true) => title(raw),
+        (false, false) => raw.replace('_', " "),
+        _ => raw.to_owned(),
+    }
 }
 
-/// The distinct values of `values`, in the order they first appear -- which,
-/// fed a sorted listing, is alphabetical.
-fn distinct<'a>(values: impl Iterator<Item = &'a String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for value in values {
-        if !out.iter().any(|seen| seen == value) {
-            out.push(value.clone());
+/// `NEAR_CURVED` -> `Near Curved`.
+fn title(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for (i, word) in raw.split('_').filter(|w| !w.is_empty()).enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.extend(chars.flat_map(char::to_lowercase));
         }
     }
     out
-}
-
-fn label(raw: &str, labeling: Labeling) -> String {
-    match labeling {
-        Labeling::Raw => raw.to_owned(),
-        Labeling::Words => raw.replace('_', " "),
-        Labeling::Title => {
-            let mut out = String::with_capacity(raw.len());
-            for (i, word) in raw.split('_').filter(|w| !w.is_empty()).enumerate() {
-                if i > 0 {
-                    out.push(' ');
-                }
-                let mut chars = word.chars();
-                if let Some(first) = chars.next() {
-                    out.extend(first.to_uppercase());
-                    out.extend(chars.flat_map(char::to_lowercase));
-                }
-            }
-            out
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -419,17 +437,9 @@ fn label(raw: &str, labeling: Labeling) -> String {
 /// One entry of the dialog's top combo box.
 ///
 /// The first is always the default collection: whatever `--shader` names, which
-/// is what the app runs when no pack preset is chosen, and the only entry a
-/// checkout with no `shaders/` directory has.
-/// Every other entry is a directory tree that [`PresetBrowser`] walks.
-///
-/// Only the Mega Bezel packs are found for now. The other thing under
-/// `shaders/` worth offering is the slang-shaders checkout itself, but
-/// `shaders_slang` is a pile of category directories with presets sitting at
-/// several depths rather than the packs' fixed five levels, so what a "level"
-/// would mean there is still TBD. When it is settled it becomes another
-/// [`collections`] entry with a browser of its own, and nothing below here
-/// changes.
+/// is what the app runs when no preset is chosen, and the only entry a checkout
+/// with no `shaders/shaders.toml` has. Every other entry is one table of that
+/// file, browsed by a [`PresetBrowser`] over its pattern.
 struct Collection {
     /// What the combo box shows.
     label: String,
@@ -448,41 +458,51 @@ fn collections() -> Vec<Collection> {
         label: "Default".to_owned(),
         browser: None,
     }];
-    found.extend(bezel_packs());
+    if let Some((root, text)) = read_config() {
+        found.extend(parse_collections(&root, &text));
+    }
     found
 }
 
-/// The bezel packs under [`PACKS_DIR`], one collection each. A pack whose tree
-/// cannot be browsed -- no `presets` directory, or no presets in it -- is left
-/// out rather than offered as a row of empty combo boxes, and the same pack
-/// found twice (in the working directory and beside the executable) is offered
-/// once.
-fn bezel_packs() -> Vec<Collection> {
-    let mut packs: Vec<Collection> = Vec::new();
+/// The first [`CONFIG_PATH`] found under the search roots, with the directory
+/// its patterns are relative to.
+fn read_config() -> Option<(PathBuf, String)> {
     for base in search_roots() {
-        let dir = base.join(PACKS_DIR);
-        for name in subdirectories(&dir) {
-            let label = pack_label(&name);
-            if packs.iter().any(|pack| pack.label == label) {
-                continue;
-            }
-            if let Ok(browser) = PresetBrowser::new(dir.join(&name).join(PRESETS)) {
-                packs.push(Collection {
-                    label,
-                    browser: Some(browser),
-                });
-            }
+        let path = base.join(CONFIG_PATH);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
+            return Some((dir, text));
         }
     }
-    packs
+    None
 }
 
-/// A pack directory is named `<author>-<machines>`, and it is the machines the
-/// dialog is naming: `TheNamec-Commodore` -> `Commodore`. A name with no author
-/// half is already the name.
-fn pack_label(dir: &str) -> String {
-    let name = dir.rsplit_once('-').map_or(dir, |(_, name)| name);
-    name.replace('_', " ")
+/// One collection per table of the config, in the order it writes them. A
+/// pattern nothing on disk matches is left out.
+fn parse_collections(root: &Path, text: &str) -> Vec<Collection> {
+    let table: toml::Table = match text.parse() {
+        Ok(table) => table,
+        Err(err) => {
+            warn!("{CONFIG_PATH}: {err}");
+            return Vec::new();
+        }
+    };
+    table
+        .iter()
+        .filter_map(|(label, entry)| {
+            let pattern = entry.get("pattern")?.as_str()?;
+            match PresetBrowser::new(root.to_path_buf(), pattern) {
+                Ok(browser) => Some(Collection {
+                    label: label.clone(),
+                    browser: Some(browser),
+                }),
+                Err(err) => {
+                    warn!("shader collection {label}: {err}");
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -501,13 +521,13 @@ pub struct ShaderDialog {
     /// Filled on the first open: the trees are on disk, and reading them once
     /// per session is enough.
     collections: Vec<Collection>,
-    /// Index into `collections`; [`DEFAULT`] until a pack is picked.
+    /// Index into `collections`; [`DEFAULT`] until another is picked.
     selected: usize,
 }
 
 impl ShaderDialog {
     /// The selected collection's tree, or `None` on the default collection --
-    /// which is what greys the level rows out.
+    /// which is what leaves it with no level rows.
     fn browser(&self) -> Option<&PresetBrowser> {
         self.collections.get(self.selected)?.browser.as_ref()
     }
@@ -663,8 +683,8 @@ fn shader_dialog_ui(
     Ok(())
 }
 
-/// Puts the selection on screen. A pack preset is a filter chain to run; the
-/// default collection is whatever shader the command line chose, with the
+/// Puts the selection on screen. A collection's preset is a filter chain to run;
+/// the default collection is whatever shader the command line chose, with the
 /// effect switched on unless that is `--shader none`.
 fn apply(
     dialog: &ShaderDialog,
@@ -702,7 +722,6 @@ fn composed_path(dialog: &ShaderDialog, default: ShaderArg) -> String {
 /// was picked this frame, if anything.
 fn dialog_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
     let mut picked = None;
-    let browser = dialog.browser();
     egui::Grid::new("shader_grid")
         .num_columns(2)
         .spacing(ROW_SPACING)
@@ -712,18 +731,19 @@ fn dialog_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
                 .iter()
                 .map(|c| c.label.as_str())
                 .collect();
-            if let Some(index) = row(ui, "Collection", true, |ui| {
+            if let Some(index) = row(ui, "Collection", |ui| {
                 combo(ui, "Collection", &labels, dialog.selected)
             }) {
                 picked = Some(Picked::Collection(index));
             }
-            // The levels of the selected collection, or -- on the default
-            // collection, which has none -- greyed-out rows in their place, so
-            // the dialog keeps its shape as the top box is switched.
-            for (level, spec) in LEVELS.iter().enumerate() {
-                let state = browser.map(|browser| &browser.levels[level]);
-                if let Some(index) = row(ui, spec.label, browser.is_some(), |ui| {
-                    draw_level(ui, level, state)
+            // The levels of the selected collection, named after its pattern's
+            // tags. The default collection has none, and shows this row alone.
+            let Some(browser) = dialog.browser() else {
+                return;
+            };
+            for (level, name) in browser.names.iter().enumerate() {
+                if let Some(index) = row(ui, name, |ui| {
+                    draw_level(ui, level, &browser.levels[level])
                 }) {
                     picked = Some(Picked::Level(level, index));
                 }
@@ -733,40 +753,36 @@ fn dialog_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
 }
 
 /// One row of the grid: its label on the left, whatever `widget` draws on the
-/// right, the pair greyed out and unclickable when `enabled` is false.
-fn row<R>(ui: &mut Ui, label: &str, enabled: bool, widget: impl FnOnce(&mut Ui) -> R) -> R {
+/// right.
+fn row<R>(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui) -> R) -> R {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let text = egui::RichText::new(label).size(LABEL_SIZE);
-        ui.label(if enabled {
-            text
-        } else {
-            text.color(DISABLED_COLOR)
-        });
+        ui.label(egui::RichText::new(label).size(LABEL_SIZE));
     });
     let inner = ui
         .scope(|ui| {
             ui.set_min_width(WIDGET_WIDTH);
-            ui.add_enabled_ui(enabled, widget).inner
+            widget(ui)
         })
         .inner;
     ui.end_row();
     inner
 }
 
-/// One level's combo box, or a dash for a level with nothing to offer: the
-/// default collection, a preset name with no lighting half, or a directory the
-/// pack left empty.
-fn draw_level(ui: &mut Ui, level: usize, state: Option<&Level>) -> Option<usize> {
-    let Some(state) = state.filter(|state| state.raw().is_some()) else {
+/// One level's combo box, or a dash for a level with nothing to offer: a
+/// directory holding no preset of the collection's shape.
+fn draw_level(ui: &mut Ui, level: usize, state: &Level) -> Option<usize> {
+    if state.raw().is_none() {
         ui.label(
             egui::RichText::new("—")
                 .size(BODY_SIZE)
                 .color(DISABLED_COLOR),
         );
         return None;
-    };
+    }
     let labels: Vec<&str> = state.choices.iter().map(|c| c.label.as_str()).collect();
-    combo(ui, LEVELS[level].label, &labels, state.index)
+    // Salted by position rather than by tag name, which two collections may
+    // share.
+    combo(ui, &format!("level{level}"), &labels, state.index)
 }
 
 /// One combo box, showing `selected` of `labels`. Returns the index picked this

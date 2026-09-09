@@ -105,12 +105,39 @@ Presets are named `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting
 the pack's `README.md` explains what each one does.
 
 The shader dialog (RightAlt+Shift+E, `src/shader_dialog.rs`) picks one of those
-without the command line: its top combo box lists `Default` -- whatever
-`--shader` chose -- and one entry per pack found under `Mega_Bezel_Packs`, with
-a combo box per level below it. A pack is offered as soon as it is unpacked
-there, named after the machines half of its directory (`TheNamec-Commodore` ->
-`Commodore`), as long as its presets sit under `<pack>/presets` in the five-level
-layout above.
+without the command line, from what `shaders/shaders.toml` describes.
+
+### `shaders.toml`
+
+Each table is one *collection* -- one entry of the dialog's top combo box -- and
+its `pattern` says where that collection's presets are and how their paths read.
+Paths are relative to the file's own directory (`shaders/`):
+
+```toml
+[Commodore]
+pattern = "Mega_Bezel_Packs/TheNamec-Commodore/presets/<System>/<Monitor>/<Shader>/<Type>_<Time>.slangp"
+
+[Handheld]
+pattern = "shaders_slang/handheld/console-border/<Type>.slangp"
+
+[MegaBezel]
+pattern = "shaders_slang/bezel/Mega_Bezel/Presets/Base_CRT_Presets/MBZ__<Level>__<Type>.slangp"
+```
+
+Every `<Tag>` is a wildcard and becomes one combo box under the collection,
+named after the tag, in the order the tags appear. A box offers the strings that
+matched at its position under everything picked above it, and picking one
+re-fills the boxes below -- so the tree is read one `read_dir` at a time, which
+is what makes a 72k-preset pack browsable. A wildcard never crosses `/`, and
+takes as little as it can except when it is the last one of a path component:
+`MBZ__<Level>__<Type>.slangp` reads `MBZ__0__SMOOTH-ADV__GDV.slangp` as `0` and
+`SMOOTH-ADV__GDV`, and `<Type>_<Time>.slangp` reads `NEAR_CURVED_NIGHT.slangp`
+as `NEAR` and `CURVED_NIGHT` (write three tags to split it three ways).
+
+`Default` -- whatever `--shader` chose -- is always the first collection and has
+no boxes under it. A collection whose pattern matches nothing on disk is left
+out, so a checkout with no `shaders.toml`, or one pack of three unpacked, simply
+offers less.
 
 ### Pack fixups
 
