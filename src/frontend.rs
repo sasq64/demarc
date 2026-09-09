@@ -11,7 +11,7 @@ use bevy::{
 };
 
 use crate::backend::ViewFocus;
-use crate::config::{AppSettings, Args, RenderSettings, SoundWait};
+use crate::config::{AppSettings, Args, RenderSettings};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::mouse_cursor::HideMouse;
@@ -41,11 +41,6 @@ struct EmuView {
 
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
-
-/// How many emulators `--cross-fade` runs: one showing a release, one booting
-/// the next off screen. They swap roles at the end of every fade, so two is
-/// all it ever needs.
-const CROSS_FADE_EMUS: usize = 2;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
@@ -83,7 +78,6 @@ fn setup_frontend(world: &mut World) {
     let select = args.select;
 
     let cells = grid_layout(args);
-    let cross_fade = args.cross_fade.is_some();
 
     world.spawn((
         Camera2d,
@@ -98,25 +92,6 @@ fn setup_frontend(world: &mut World) {
     if !cells.is_empty() {
         for (i, cell) in cells.into_iter().enumerate() {
             spawn_emulator(world, color_cycle, max_time, speed_test, i, Some(cell));
-        }
-    } else if cross_fade {
-        // `--cross-fade` runs two emulators like a 2x1 grid whose cells sit on
-        // top of each other: no `GridCell`, so both views fill the window, and
-        // `update_cross_fade` blends one over the other. `--grid` is rejected
-        // by clap for the same reason — a cell each is exactly what they can't
-        // have.
-        for i in 0..CROSS_FADE_EMUS {
-            spawn_emulator(world, color_cycle, max_time, speed_test, i, None);
-        }
-        world
-            .get_resource_mut::<HideMouse>()
-            .map(|mut h| h.0 = true);
-        // Only the first emulator starts a load. The second stays idle until
-        // whatever is on screen asks to advance, which is what hands it the
-        // next release (see `run_retro`).
-        let mut emus = world.query::<&mut Emulator>();
-        for mut emu in emus.iter_mut(world).skip(1) {
-            emu.run_next = false;
         }
     } else {
         spawn_emulator(world, color_cycle, max_time, speed_test, 0, None);
@@ -145,10 +120,9 @@ fn setup_frontend(world: &mut World) {
 ///
 /// `cell`, when `Some`, places this emulator in one cell of a grid: the view
 /// gets a [`GridCell`] marker so [`update_view_rects`] keeps its [`ViewRect`]
-/// sized to that cell. Without one the view fills the whole window — which is
-/// also how the two `--cross-fade` emulators end up drawn in the same place.
-/// The views are *not* cameras — they are all composited by the single
-/// [`EmuCamera`] spawned in [`setup_retro`].
+/// sized to that cell. Without one the view fills the whole window. The views
+/// are *not* cameras — they are all composited by the single [`EmuCamera`]
+/// spawned in [`setup_retro`].
 fn spawn_emulator(
     world: &mut World,
     color_cycle: bool,
@@ -170,8 +144,6 @@ fn spawn_emulator(
             source: handle,
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
-            // Fully opaque; only `update_cross_fade` ever moves it.
-            alpha: 1.0,
         },
         // The actual rectangle is set from the live window size by
         // `update_view_rects`, before anything reads it.
@@ -269,10 +241,8 @@ fn draw_current_emu_outline(
     views: Query<(&EmuView, Option<&GridCell>)>,
 ) {
     // A single (or maximized) emulator fills the window, so an outline would
-    // just frame the whole screen — not useful. Cross-fading is two emulators
-    // sharing the whole window, which is the same story.
+    // just frame the whole screen — not useful.
     if settings.maximized
-        || settings.cross_fade.is_some()
         || views.iter().count() < 2
         || time.elapsed_secs_f64() - settings.select_box_drawn_at > 2.0
     {
@@ -398,78 +368,19 @@ fn run_frontend(
 
     let now = time.elapsed_secs_f64();
 
-    // `--cross-fade` hands the release on screen's request to advance to the
-    // other emulator; picked up after the loop, where both are reachable again.
-    let mut hand_over: Option<(bool, bool)> = None;
-    // ...unless the next release is already loaded and only waiting to fade in,
-    // in which case the request cuts the wait short instead. Also settled after
-    // the loop, where the incoming emulator can be asked for its info text.
-    let mut skip_wait = false;
-
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
         if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
             continue;
         }
-        // Cross-fading, both emulators keep a stream open for the whole
-        // transition — the gain below is what fades them — so the one waiting
-        // off screen goes on pacing itself off its own audio buffer instead of
-        // switching to the wall clock half way through the fade.
-        let audible = if settings.cross_fade.is_some() {
-            emu.core.is_some()
-        } else {
-            settings.all_emus || i == settings.current_emu
-        };
         // Drop audio entirely in the speed-test benchmark.
-        emu.audio_active(!settings.speed_test && audible);
-        // Mixes the two sides of a cross-fade together; 1.0 for everything else.
-        emu.sink.volume = settings.audio_gain(i);
+        emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
         // Exactly one view is focused; the others are on screen as grid tiles
         // unless the focused one is maximized over them.
-        emu.focus(if i == settings.current_emu {
-            ViewFocus::Focus
-        } else if settings.fade.incoming == Some(i) {
-            // Off screen, but about to be on it: it has to go on producing a
-            // picture and sound, so it counts as visible.
-            ViewFocus::Visible
-        } else if settings.maximized {
-            ViewFocus::Invisible
-        } else {
-            ViewFocus::Visible
+        emu.focus(match (i == settings.current_emu, settings.maximized) {
+            (true, _) => ViewFocus::Focus,
+            (false, true) => ViewFocus::Invisible,
+            (false, false) => ViewFocus::Visible,
         });
-
-        // Under `--cross-fade` the release on screen is never reloaded in
-        // place: its request to advance goes to the other emulator, which boots
-        // the next release off screen and then fades in over it. Everything
-        // else — the file picker, tv mode, `--max-time` — reaches the playlist
-        // through exactly the same `run_next`/`run_prev` flags, so intercepting
-        // them here is all it takes.
-        if settings.cross_fade.is_some() {
-            if i == settings.current_emu {
-                // The next release is loaded and running off screen, just
-                // sitting out `--cross-fade-delay` (or a `--cross-wait-sound`
-                // hold). "Next" here means "get on with it", not "skip that one
-                // and fetch another": start the fade now rather than handing
-                // over and throwing away a release that is ready to show.
-                if emu.run_next && settings.fade.is_waiting(now) {
-                    skip_wait = true;
-                    emu.run_next = false;
-                    emu.run_prev = false;
-                }
-                // ...except the very first load, which has nothing to fade
-                // from and so runs in place.
-                else if emu.core.is_some() && (emu.run_next || emu.run_prev) {
-                    hand_over = Some((emu.run_next, emu.run_prev));
-                    emu.run_next = false;
-                    emu.run_prev = false;
-                }
-            } else if settings.fade.incoming != Some(i) {
-                // Parked in the background between fades: it has no say over
-                // the playlist (and, being paused, would otherwise look idle
-                // and ask for the next release itself).
-                emu.run_next = false;
-                emu.run_prev = false;
-            }
-        }
 
         let flen = settings.files.len() as isize;
 
@@ -495,15 +406,6 @@ fn run_frontend(
             continue;
         }
 
-        // Handed an advance the playlist can't honour — the last file, without
-        // `--tv-mode` to wrap around. Nothing is coming in after all, so drop
-        // the fade and let this emulator go back to being parked.
-        if settings.fade.incoming == Some(i) && (emu.run_next || emu.run_prev) {
-            emu.run_next = false;
-            emu.run_prev = false;
-            settings.fade.clear();
-        }
-
         // Completes whichever load `load_async` started, on the frame its
         // download finishes. Until then the previously loaded core keeps
         // running, so a slow mirror no longer freezes the picture.
@@ -527,12 +429,6 @@ fn run_frontend(
                     if !settings.tv_mode {
                         emu.run_next = false;
                         emu.run_prev = false;
-                        // Nothing is coming in after all: drop the fade so the
-                        // release on screen keeps the window and the next
-                        // request can hand this emulator another file.
-                        if settings.fade.incoming == Some(i) {
-                            settings.fade.clear();
-                        }
                         writer.write(SetHudText {
                             text,
                             delay: Duration::from_secs(0),
@@ -547,47 +443,13 @@ fn run_frontend(
                 LoadStatus::Done { result: Ok(()), .. } => {
                     emu.run_next = false;
                     emu.run_prev = false;
-                    // The release is running now, off screen. Give it
-                    // `--cross-fade-delay` to get past its loading screen
-                    // before it starts fading in over the one on show.
-                    // Nothing yet on screen for this release: the info text
-                    // has to wait out the fade delay too, or it announces a
-                    // release the viewer is still seconds away from seeing.
-                    let mut info_delay = Duration::from_secs(settings.info_delay);
-                    // `--cross-wait-sound` can't date the fade here, so the
-                    // info text can't be dated either: it is handed to
-                    // `update_cross_fade` to write once the fade does start.
-                    let mut defer_info = false;
-                    if settings.fade.incoming == Some(i) {
-                        // Unparked only now, so the release this emulator was
-                        // showing before doesn't run on (silent and invisible)
-                        // for however long the download takes.
-                        emu.paused = false;
-                        if settings.cross_wait_sound {
-                            // `--cross-fade-delay` still applies, but it is
-                            // counted from the first sound (see `SoundWait`),
-                            // so neither the fade nor the info text can be
-                            // dated until then.
-                            settings.fade.start = f64::MAX;
-                            settings.fade.wait_sound = Some(SoundWait::starting_at(now));
-                            defer_info = true;
-                        } else {
-                            settings.fade.start = now + settings.cross_fade_delay;
-                            info_delay += Duration::from_secs_f64(settings.cross_fade_delay);
-                        }
-                    }
                     if settings.show_info && settings.maximized {
-                        let text = emu.get_info();
-                        if defer_info {
-                            settings.fade.pending_info = Some(text);
-                        } else {
-                            writer.write(SetHudText {
-                                text,
-                                delay: info_delay,
-                                duration: Duration::from_secs(settings.info_duration),
-                                location: HudLocation::InfoText,
-                            });
-                        }
+                        writer.write(SetHudText {
+                            text: emu.get_info(),
+                            delay: Duration::from_secs(settings.info_delay),
+                            duration: Duration::from_secs(settings.info_duration),
+                            location: HudLocation::InfoText,
+                        });
                     }
                     emu.load_delay_until = now + LOAD_SETTLE_SECS;
                     continue;
@@ -604,10 +466,7 @@ fn run_frontend(
             });
         }
 
-        let drives_playlist = drives_playlist(&settings, i);
-
         if let Some(mt) = emu.max_time
-            && drives_playlist
             && now > emu.start_time + (mt as f64)
             && (now - settings.select_box_drawn_at) > 1.0
         {
@@ -625,14 +484,13 @@ fn run_frontend(
             // }
         }
 
-        if max_idle > 0 && drives_playlist && emu.idle_time > max_idle as f32 {
+        if max_idle > 0 && emu.idle_time > max_idle as f32 {
             debug!("Idle for {max_idle}, running next");
             emu.run_next = true;
             // Re-arm the timeout along with the request. A core that has gone
             // idle stays idle while the next release downloads, so leaving the
-            // baseline where it is would set `run_next` again on every frame —
-            // starting a fresh load (and, cross-fading, a fresh hand-over) each
-            // time until the download finally lands.
+            // baseline where it is would set `run_next` again on every frame,
+            // starting a fresh load each time until the download finally lands.
             emu.reset_idle(&time);
         }
 
@@ -728,150 +586,6 @@ fn run_frontend(
             }
         }
     }
-
-    // Cut short the wait before a fade that is ready to run: it starts here
-    // and now. The info text goes out again with it — whether it was held back
-    // by a `--cross-wait-sound` hold or queued behind the delay this just
-    // dropped, the time it was dated for is no longer when the release appears.
-    if skip_wait {
-        settings.fade.wait_sound = None;
-        settings.fade.start = now;
-        let mut text = settings.fade.pending_info.take();
-        if text.is_none()
-            && settings.show_info
-            && settings.maximized
-            && let Some(incoming) = settings.fade.incoming
-        {
-            text = emus.iter().nth(incoming).map(|e| e.get_info());
-        }
-        if let Some(text) = text {
-            writer.write(SetHudText {
-                text,
-                delay: Duration::from_secs(settings.info_delay),
-                duration: Duration::from_secs(settings.info_duration),
-                location: HudLocation::InfoText,
-            });
-        }
-    }
-
-    // Hand the advance over to the emulator that is off screen and let the
-    // ordinary load path above pick it up on the next pass. Starting a load
-    // restarts the fade from nothing: it begins when the load lands (see the
-    // `LoadStatus::Done` arm), not now.
-    if let Some((next, prev)) = hand_over {
-        let target = (settings.current_emu + 1) % CROSS_FADE_EMUS;
-        if let Some(mut emu) = emus.iter_mut().nth(target) {
-            emu.run_next = next;
-            emu.run_prev = prev;
-            // Still parked: it is woken when its release has actually loaded,
-            // so the one it was showing before doesn't run on behind the
-            // download (see the `LoadStatus::Done` arm above).
-            settings.fade.clear();
-            settings.fade.incoming = Some(target);
-            settings.fade.start = f64::MAX;
-        }
-    }
-}
-
-/// Advance a `--cross-fade` and publish how far it has got: the alpha each view
-/// is drawn at (`run_retro` reads the same numbers back out of
-/// [`AppSettings`] for the audio gains).
-///
-/// The fade runs on wall-clock time from [`FadeState::start`], which
-/// `run_retro` sets once the incoming release is actually running. When it
-/// reaches 1 the two emulators swap roles: the one that faded in becomes
-/// [`AppSettings::current_emu`], and the one it covered is paused so it stops
-/// eating a core in the background until it is handed the next release.
-///
-/// Under `--cross-wait-sound` `run_retro` leaves `start` at `f64::MAX` and
-/// hands over a [`SoundWait`] instead: the fade is dated here, on the first
-/// frame the incoming release is heard from, and only then does
-/// `--cross-fade-delay` start running (see [`SoundWait`]).
-fn update_cross_fade(
-    time: Res<Time>,
-    mut settings: ResMut<AppSettings>,
-    mut emus: Query<&mut Emulator>,
-    mut views: Query<(&EmuView, &mut PostProcess)>,
-    mut writer: MessageWriter<SetHudText>,
-) {
-    let Some(secs) = settings.cross_fade else {
-        return;
-    };
-    let now = time.elapsed_secs_f64();
-
-    if let Some(incoming) = settings.fade.incoming {
-        // Waiting on the incoming release to make a sound rather than on the
-        // clock. `start` stays at `f64::MAX` until it does, so the fade below
-        // sits at zero in the meantime exactly as it does during a download.
-        if let Some(wait) = settings.fade.wait_sound {
-            let silent = emus.iter().nth(incoming).is_none_or(Emulator::is_silent);
-            if wait.is_over(now, silent) {
-                settings.fade.wait_sound = None;
-                // The release has got going; `--cross-fade-delay` is the
-                // breathing space between that and the fade over it.
-                settings.fade.start = now + settings.cross_fade_delay;
-                // Held back at load time because the fade had no date yet; now
-                // it has, and the release is that much off being on screen.
-                if let Some(text) = settings.fade.pending_info.take() {
-                    writer.write(SetHudText {
-                        text,
-                        delay: Duration::from_secs(settings.info_delay)
-                            + Duration::from_secs_f64(settings.cross_fade_delay),
-                        duration: Duration::from_secs(settings.info_duration),
-                        location: HudLocation::InfoText,
-                    });
-                }
-            }
-        }
-        // `start` is `f64::MAX` while the release is still loading, which keeps
-        // `elapsed` firmly negative and the fade at zero.
-        let elapsed = now - settings.fade.start;
-        settings.fade.alpha = if elapsed <= 0.0 {
-            0.0
-        } else if secs <= 0.0 {
-            1.0
-        } else {
-            (elapsed as f32 / secs).min(1.0)
-        };
-        if settings.fade.alpha >= 1.0 {
-            let outgoing = settings.current_emu;
-            settings.current_emu = incoming;
-            settings.fade.clear();
-            if let Some(mut emu) = emus.iter_mut().nth(outgoing) {
-                emu.paused = true;
-            }
-            // `--max-time` should measure the time a release is *watched*, not
-            // the time since it booted off screen behind the previous one.
-            if let Some(mut emu) = emus.iter_mut().nth(incoming) {
-                emu.start_time = now;
-            }
-        }
-    }
-
-    for (view, mut pp) in &mut views {
-        let alpha = settings.view_alpha(view.index);
-        if pp.alpha != alpha {
-            // Will flag Bevy resource as changed
-            pp.alpha = alpha;
-        }
-    }
-}
-
-/// Whether view `i` is the one whose `--max-time` and idle timers may end the
-/// slot being watched and ask for the next release.
-///
-/// Cross-fading, that is only the release actually on screen: the one booting
-/// off screen has barely started, and the one parked in the background is
-/// paused and so permanently "idle". And once an advance *has* been handed over
-/// nobody drives the playlist until the fade is done — the release on screen
-/// goes on looking idle for the whole download plus fade, and would otherwise
-/// ask for the next release again on every frame, each request restarting the
-/// fade from nothing (see the `hand_over` block at the end of [`run_retro`]).
-fn drives_playlist(settings: &AppSettings, i: usize) -> bool {
-    if settings.cross_fade.is_none() {
-        return true;
-    }
-    i == settings.current_emu && settings.fade.incoming.is_none()
 }
 
 impl Plugin for FrontendPlugin {
@@ -879,16 +593,7 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (
-                run_frontend,
-                update_cross_fade.after(run_frontend),
-                update_view_rects,
-                draw_current_emu_outline,
-            ),
+            (run_frontend, update_view_rects, draw_current_emu_outline),
         );
     }
 }
-
-#[cfg(test)]
-#[path = "tests/frontend_tests.rs"]
-mod tests;

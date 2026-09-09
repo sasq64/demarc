@@ -149,7 +149,7 @@ pub fn describe(value: &dyn PartialReflect) -> Vec<Field> {
         .collect()
 }
 
-/// `cross_fade_delay` -> `Cross Fade Delay`. Field names are the only labels we
+/// `idle_timeout` -> `Idle Timeout`. Field names are the only labels we
 /// have: doc comments would be better, but `NamedField::docs` sits behind
 /// bevy's `reflect_documentation` feature.
 fn title_case(name: &str) -> String {

@@ -72,7 +72,7 @@ nothing else set → `create` the backend. **Order matters** — specific system
 It is split in two so the frontend can run the halves in different places: `newsys::unpack_release`
 (unpack + m3u tags) needs nothing but the file, so `Emulator::load_async` runs it on the I/O pool
 along with the download, and only `NewSys::load_prepared` (everything from the override onwards)
-runs on the main thread — unpacking there was a dropped frame in the middle of a `--cross-fade`.
+runs on the main thread — unpacking there cost a dropped frame.
 `load_file` is still the two called in order, and is what the tests use.
 
 To add a machine: new file under `src/newsys/`, implement `System`, register it in `get_systems()`.

@@ -530,7 +530,7 @@ impl Emulator {
     /// [`update_load`](Self::update_load) call finds the job finished — so the
     /// core currently running keeps running (and playing) until then, rather
     /// than the frontend stalling for the transfer or for an archive big
-    /// enough to be felt as a dropped frame mid-cross-fade.
+    /// enough to be felt as a dropped frame.
     ///
     /// A load already in flight is abandoned; its result is discarded (and with
     /// it the temp dir it unpacked into). That is what makes a fresh request
@@ -797,14 +797,6 @@ impl Emulator {
         }
         self.warp_shown = false;
         true
-    }
-
-    /// Whether the backend is making no sound at all right now — see
-    /// [`Backend::is_silent`]. An emulator between loads has no backend to ask
-    /// and counts as silent, which is what `--cross-wait-sound` wants: nothing
-    /// is running yet, so nothing is audible yet.
-    pub fn is_silent(&self) -> bool {
-        self.core.as_ref().is_none_or(|core| core.is_silent())
     }
 
     /// Restart the idle timer, as if the core had just produced something new.

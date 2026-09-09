@@ -164,9 +164,8 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
 /// shared state at all: it reads `path` and writes into a temp dir of its own,
 /// so the frontend runs it on the I/O pool while the release currently on
 /// screen keeps playing (see `Emulator::load_async`). On the main thread it
-/// cost a visible stutter right where it is least wanted — a double-packed
-/// release is unpacked twice, and that landed on the very frame a cross-fade
-/// was starting. What is left for the main thread (detection, conversion,
+/// cost a visible stutter — a double-packed release is unpacked twice, and
+/// that landed on a single frame. What is left for the main thread (detection, conversion,
 /// building the backend) either needs the system table or is the core itself.
 ///
 /// Archives are unpacked one level deep and then once more, because scene

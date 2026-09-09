@@ -62,7 +62,7 @@ struct WithIgnored {
 
 #[derive(Reflect, Clone, Debug, Default)]
 struct Named {
-    cross_fade_delay: f32,
+    idle_timeout: f32,
     aga: bool,
     a: bool,
 }
@@ -181,7 +181,7 @@ fn ignored_fields_do_not_appear() {
 fn labels_are_field_names_in_title_case() {
     let fields = describe(Named::default().as_partial_reflect());
     let labels: Vec<&str> = fields.iter().map(|f| f.label.as_str()).collect();
-    assert_eq!(labels, vec!["Cross Fade Delay", "Aga", "A"]);
+    assert_eq!(labels, vec!["Idle Timeout", "Aga", "A"]);
 }
 
 #[test]

@@ -16,9 +16,6 @@ struct PostProcessUniform {
     uv_scale: vec2<f32>,
     uv_offset: vec2<f32>,
     crt_enabled: u32,
-    // Opacity of this view, blended against the view target. Only
-    // `--cross-fade` sets it below 1, to fade one emulator over another.
-    alpha: f32,
 }
 @group(0) @binding(2) var<uniform> settings: PostProcessUniform;
 
@@ -224,7 +221,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // letterbox/pillarbox bars.
     if settings.crt_enabled == 0u {
         let c = textureSampleLevel(screen_texture, texture_sampler, mapped_uv, 0.0).rgb;
-        return vec4<f32>(to_linear(c), settings.alpha);
+        return vec4<f32>(to_linear(c), 1.0);
     }
 
     let source_size = vec2<f32>(textureDimensions(screen_texture));
@@ -239,5 +236,5 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
 
     // `out_color` is linear; the sRGB render target encodes on write.
-    return vec4<f32>(out_color, settings.alpha);
+    return vec4<f32>(out_color, 1.0);
 }

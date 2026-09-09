@@ -54,22 +54,15 @@ librashader. `--shader none` starts with shaders disabled, but an explicit `--sl
 
 ## `config.rs`
 
-clap `Args` (every doc comment is the `--help` text), plus `AppSettings`/`RenderSettings` and the
-cross-fade state machine.
+clap `Args` (every doc comment is the `--help` text), plus `AppSettings`/`RenderSettings`.
 
 - clap 4 drops the version from the help header, hence the hand-written `help_template`.
-- `--cross-fade` uses `require_equals = true`: only `--cross-fade=SECS` gives a value, so a bare
-  `--cross-fade` can't swallow the file that follows it on the command line.
 - `-I`/`-X` db filters are matched against **each field of the db line on its own**, so a pattern can
   pick on any one field but never spans two. `-I` repeatable and all must match; `-X` excludes on any.
 - `--boot-file` is the command-line spelling of an override's `boot` key, for a local archive or
   directory with no db entry. Matched on file name alone (case-insensitive) anywhere in the release.
 - `--scale` accepts `stretch`/`fit`/`zoom` or a factor (`2`, `2x`, `2.5`); whole numbers keep pixels
   integer-sized, fractional factors are applied exactly.
-- `apply_implications()` fills in flags that other flags imply — clap's `requires`/`conflicts_with`
-  can say which combinations are legal but not derive one from another. Currently:
-  `--cross-wait-sound` turns on `--silent-drive`, because an Amiga drive clicking through a loading
-  screen *is* a sound, and it is exactly the part of the boot the wait exists to sit through.
 - `ShaderArg` is `Reflect` (the settings dialog reads its variant list off the type) and `PartialEq`
   (only a shader that actually changed re-points the render world, so an unrelated Apply cannot throw
   away a `--slangp`).
@@ -89,41 +82,6 @@ db from elsewhere can in principle collide. `--boot-file` is keyed on nothing, a
 release loaded this run (which is what makes it work on a local archive/dir), and being asked for by
 hand it beats the file.
 
-### Cross-fade (`FadeState`, `SoundWait`)
-
-The release on screen is **never reloaded in place**: its request to advance is handed to the *other*
-emulator, which boots the next release off screen and then fades in over it. `AppSettings::current_emu`
-still names the emulator that is (fully) on screen; `FadeState::incoming` names the other one from
-the moment the load is handed over until the fade finishes.
-
-- `start` is `f64::MAX` while the release is still loading — the fade only begins once it is running,
-  plus `--cross-fade-delay`.
-- `is_waiting()` is "loaded and running off screen, fade not started" (sitting out the delay or a
-  sound hold). A release still *loading* does not count.
-- `clear()` leaves `start` alone: it means nothing with no incoming emulator and is re-dated by
-  whatever starts the next fade.
-- `pending_info` holds the info text announcing the incoming release until the fade actually starts.
-  Only needed under a sound hold, where the load has no idea yet *when* that will be.
-
-`--cross-wait-sound` (`SoundWait`): holds the fade until the incoming release is audible.
-- `SOUND_GRACE_SECS = 0.5` — cores routinely emit a burst of static, a click, or the tail of the
-  previous buffer as they come up; that is not the release starting.
-- `SOUND_TIMEOUT_SECS = 30.0` — plenty of releases are silent (and a backend that can't report its
-  audio always reads as audible, so this only bites on a core that really does stay quiet), but
-  without a cap one would park the playlist for good.
-- The hold *moves* `--cross-fade-delay` rather than replacing it: the delay is counted from first
-  sound instead of from boot. With `--cross-fade-delay 0` the fade starts on the sound itself.
-
-**`view_alpha(i)`** — always 1 outside a fade. During one, the outgoing view stays opaque and the
-incoming is alpha-blended over it, which composites to exactly `outgoing*(1-a) + incoming*a` with no
-dependence on the clear colour showing through. Any other emulator (parked in the background between
-fades) is fully transparent and skipped by the render pass.
-
-**`audio_gain(i)`** — unlike the picture, *both* sides are attenuated: each emulator has its own
-stream and the device sums them, so the outgoing must ramp down as the incoming ramps up. The ramps
-are equal-power (`sqrt`), not linear, because two uncorrelated signals add in power, not amplitude —
-linear ramps would dip audibly at the half-way point.
-
 **`file_source`** — the picker's trigram search index, built lazily on first open and reused via a
 cheap `Arc` clone; building it over the whole list is the picker's expensive step.
 
@@ -139,11 +97,6 @@ into its pass, so the HUD lands over the emulators.
 keeps `ViewRect` sized to it as the window changes. Each edge is rounded to a whole pixel, and
 because adjacent cells share an edge fraction they round to the same pixel — so cells always tile the
 window with no gap or overlap. A view *without* a `GridCell` fills the whole window.
-
-**`--cross-fade` runs `CROSS_FADE_EMUS = 2` emulators** like a 2x1 grid whose cells sit on top of each
-other: no `GridCell`, so both fill the window, and `update_cross_fade` blends one over the other.
-`--grid` is rejected by clap for exactly that reason — a cell each is what they can't have. Only the
-first emulator starts a load; the second stays idle until whatever is on screen asks to advance.
 
 With `--select`, the default `run_next` is cleared so nothing auto-loads, and the selector opens on
 the first frame.
@@ -187,61 +140,16 @@ letterbox bars are ignored.
 - Aspect is written through a guard (`PostProcess` is extracted to the render world; the aspect only
   moves on a video-mode change). There is a fudge: "for some reason we need to compensate the hatari
   aspect".
-- `audio_active`: dropped entirely under `--speed-test`. When cross-fading, *both* emulators keep a
-  stream open for the whole transition (the gain is what fades them), so the one waiting off screen
-  goes on pacing itself off its own audio buffer instead of switching to the wall clock mid-fade.
+- `audio_active`: dropped entirely under `--speed-test`.
 - Idle detection: when a timeout fires, `reset_idle` re-arms it along with the request. A core that
   has gone idle stays idle while the next release downloads, so leaving the baseline alone would set
-  `run_next` again every frame — starting a fresh load (and a fresh hand-over) each time until the
-  download lands.
+  `run_next` again every frame — starting a fresh load each time until the download lands.
 - `load_async` takes `run_next`/`run_prev` as it starts, so a load fires once per request rather than
   every frame of a long download — and a request arriving *during* one (selector, hotkey) still gets
   through and replaces the load in flight. The previously loaded core keeps running until the new one
   lands, so a slow mirror no longer freezes the picture.
 - The warp/skip indicator is taken down the moment the skip is over rather than on a fixed timeout;
   an empty toast text retires whatever is in that corner (see `spawn_toast`).
-
-### Cross-fade handling inside `run_retro`
-
-Everything that advances the playlist — the file picker, tv mode, `--max-time`, idle — goes through
-the same `run_next`/`run_prev` flags, so intercepting them in one place is all it takes.
-
-- If the next release is already loaded and just sitting out the delay/sound hold, `run_next` means
-  "get on with it": start the fade now, rather than handing over and throwing away a release that is
-  ready to show (`skip_wait`).
-- Otherwise the advance is handed to the off-screen emulator (`hand_over`), settled after the loop
-  where both are reachable again. Starting a load restarts the fade from nothing: it begins when the
-  load lands, not at hand-over.
-- The very first load has nothing to fade from, so it runs in place.
-- The emulator parked in the background between fades has no say over the playlist — being paused it
-  would otherwise look idle and ask for the next release itself.
-- An advance the playlist can't honour (last file, no `--tv-mode`) drops the fade so the release on
-  screen keeps the window.
-- The incoming emulator is unparked only once its release has actually loaded, so the release it was
-  showing before doesn't run on (silent and invisible) for the whole download.
-- Info text: with no cross-fade it is dated with `info_delay`; with a fade it must also wait out the
-  fade delay or it announces a release the viewer is seconds away from seeing. Under
-  `--cross-wait-sound` the fade has no date yet, so the text can't be dated either — it is handed to
-  `update_cross_fade` as `pending_info` to write once the fade starts.
-
-### `update_cross_fade`
-
-Runs after `run_frontend`: reads the fade state `run_retro` just moved and writes the alphas that are
-read back next frame (`run_retro` derives the audio gains from the same numbers). The fade runs on
-wall-clock time from `FadeState::start`; `f64::MAX` while loading keeps `elapsed` negative and the
-fade at zero. Under `--cross-wait-sound` the fade is *dated here*, on the first frame the incoming
-release is heard, and only then does `--cross-fade-delay` start running.
-
-When alpha reaches 1 the two swap roles: the one that faded in becomes `current_emu`, the covered one
-is paused so it stops eating a core in the background. `--max-time` is re-dated at that point, so it
-measures the time a release is *watched*, not the time since it booted off screen.
-
-**`drives_playlist(settings, i)`** — which view's `--max-time`/idle timers may ask for the next
-release. Cross-fading, that is only the release actually on screen: the one booting off screen has
-barely started, and the parked one is paused and so permanently "idle". Once an advance *has* been
-handed over, nobody drives the playlist until the fade is done — the on-screen release goes on
-looking idle for the whole download plus fade and would otherwise re-request every frame, each
-request restarting the fade from nothing.
 
 ## `emulator.rs`
 
@@ -333,9 +241,6 @@ needed; every other backend finishes its skip inside `skip()` and so reads as do
 is right. `warp_shown` is latched even with no core to skip, so the indicator comes down next frame
 instead of sitting out its timeout.
 
-**`is_silent`** — an emulator between loads has no backend to ask and counts as silent, which is what
-`--cross-wait-sound` wants: nothing running yet, so nothing audible yet.
-
 ## `backend.rs`
 
 The `Backend` trait — the only thing the frontend knows about a "core" — and the shared frame
@@ -351,10 +256,6 @@ alongside image, music, Flash and Wine backends.
 - `frame_hash()` has **no default implementation on purpose**: the frontend re-uploads the texture
   only when it moves, so a backend leaving it constant is never redrawn. Any monotonic counter or
   content hash will do — it only has to differ, not increase.
-- `is_silent()` defaults to `false` ("assume it is making sound"): a backend that doesn't track its
-  audio cannot answer, and `--cross-wait-sound` must not wait on it forever. It is the audio half of
-  `is_idle` on its own — a demo on its loading screen is silent but far from idle; a still image is
-  the other way round.
 - `set_mouse_position` is normalized frame coords, origin top-left. libretro cores driven by relative
   mouse motion ignore it; Flash needs it so Ruffle's internal cursor tracks the visible OS cursor for
   hit-testing buttons.
@@ -397,13 +298,6 @@ cell. Now a grid is a single camera and each view is a plain entity contributing
 `ViewRect` is what that per-cell camera viewport used to be, written from the window size by the
 frontend. `ViewRect::active == false` means another view is maximized over this one — the quad is
 skipped, exactly as an inactive camera used to be.
-
-**Draw order.** Quads are sorted by descending alpha before the pass: a cross-fade only composites to
-`outgoing*(1-a) + incoming*a` if the translucent view is drawn over the opaque one. The sort is
-stable and everything is opaque outside a fade, so the normal case keeps query order. Alpha ≤ 0 (an
-emulator parked in the background between cross-fades) skips the view before any chain work.
-`BlendState::ALPHA_BLENDING` is only meaningful for `--cross-fade`; for opaque views it is identical
-to no blending.
 
 **Scale modes.** `scale_offset()` returns `(uv_scale, uv_offset)`; the shader (and the pointer mapping
 in `retro.rs`) map screen-uv to source with `(screen_uv - uv_offset) / uv_scale`. `Stretch`, a
@@ -561,7 +455,7 @@ same disks and programs; it stands aside unless `--cbm-variant` asked for it. `M
 no shared state — it reads the path and writes into a temp dir of its own — so the frontend runs it
 on the I/O pool while the release on screen keeps playing. On the main thread it cost a visible
 stutter exactly where it is least wanted: a double-packed release is unpacked twice, and that landed
-on the very frame a cross-fade was starting. What is left for the main thread (detection, conversion,
+on a single frame. What is left for the main thread (detection, conversion,
 building the backend) either needs the system table or *is* the core. Archives are unpacked one level
 deep and then once more, because scene releases are routinely packed inside another archive. An m3u
 is not unpacked at all: its tags become meta and the directory it names is what gets loaded.
@@ -2101,9 +1995,8 @@ A URL still too long once every component is gone is cut out of the **middle** i
 (`middle_cut`), keeping its head and the end of the file name including the extension. The path search
 starts after `://` so the scheme's own slashes don't count as the first one.
 
-**Multi-emulator hotkeys** (cycle, maximize, select all) are gated on `count > 1 && cross_fade.is_none()`:
-they are about a *grid*, and although `--cross-fade` also runs two emulators, they share one screen
-and swap between themselves so there is nothing to offer.
+**Multi-emulator hotkeys** (cycle, maximize, select all) are gated on `count > 1`: they are about a
+*grid*.
 
 Other notes: the fixed integer scales are CLI-only — the keyboard cycle returns to the
 aspect-preserving modes. The fullscreen hotkey also writes `demo_settings.fullscreen`, so the settings
@@ -2182,7 +2075,7 @@ with no egui and no `App` in sight, and the tests exercise those.
   losslessly, `u64`/`i64` bounds must be written as `f64` literals (no worse than the precision
   `DragValue` works in anyway). Floats default to 0.1 per pixel — fine for the 0..1-ish factors this
   app is full of, without making a large value take a mile of dragging.
-- Labels come from field names (`cross_fade_delay` → `Cross Fade Delay`) because doc comments would
+- Labels come from field names (`idle_timeout` → `Idle Timeout`) because doc comments would
   be better but `NamedField::docs` sits behind bevy's `reflect_documentation` feature.
 - Colour: read out as sRGB bytes whatever the field's colour type, edited by egui, written back in
   the field's own colour space.
@@ -2217,8 +2110,7 @@ while it was open — RightAlt+F moving the window, say.
 `latency` is the frames a core's worker may run ahead; it takes effect on the *next* release loaded
 (`NewSys::set_meta`), so the change is announced in the HUD because there is nothing to see. `0`
 would be a rendezvous channel (worker blocked until the frontend takes each frame), so the range
-starts at 1. `volume` is TBD — nothing reads it yet; per-emulator gain exists
-(`AppSettings::audio_gain`), what is missing is a master volume for it to scale.
+starts at 1. `volume` is TBD — nothing reads it yet.
 
 ## `shader_dialog.rs`
 
@@ -2320,10 +2212,6 @@ what keeps macOS happy.
 the handle to stay on its creating thread. Nothing is ever called on it — the SAFETY argument is that
 the stream handle is safe to move and drop across threads and is never accessed after
 `init_audio_stream` returns it.
-
-`volume` is applied on the way into the ring buffer; only `--cross-fade` moves it off 1. The change
-lands as soon as the buffer this side of it drains — a few tens of milliseconds, inaudible against a
-fade measured in seconds.
 
 ## `media_keys.rs`
 

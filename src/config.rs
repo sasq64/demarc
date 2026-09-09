@@ -202,40 +202,6 @@ pub struct Args {
     #[arg(long)]
     pub focus_first: bool,
 
-    /// Cross-fade between demos.
-    /// Optionally takes the length of the fade in seconds, e.g. `--cross-fade=4`.
-    /// Not usable with `--grid`
-    #[arg(
-        long,
-        value_name = "SECS",
-        num_args = 0..=1,
-        // Only `--cross-fade=SECS` gives a value, so a bare `--cross-fade`
-        // can't swallow the file that follows it on the command line.
-        require_equals = true,
-        default_missing_value = "2",
-        conflicts_with = "grid"
-    )]
-    pub cross_fade: Option<f32>,
-
-    /// Seconds a cross-faded release runs off screen before it starts fading
-    /// in, so the fade doesn't start on its loading screen. Asking for the next
-    /// release during the wait cuts it short and fades that one in straight
-    /// away, rather than skipping past it to the one after.
-    #[arg(
-        long,
-        value_name = "SECS",
-        default_value_t = 2.0,
-        requires = "cross_fade"
-    )]
-    pub cross_fade_delay: f32,
-
-    /// Hold each cross-fade until the release coming in is making
-    /// sound, instead of fading it in a fixed time after it booted.
-    /// Implies `--silent-drive`, so a clicking disk
-    /// drive can't pass for the release having started.
-    #[arg(long, requires = "cross_fade")]
-    pub cross_wait_sound: bool,
-
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000033")]
     pub clear_color: Color,
@@ -288,22 +254,6 @@ pub struct Args {
     // Max threads in bevy thread pool. Probably don't touch this.
     #[arg(long, default_value_t = 4)]
     pub max_threads: u32,
-}
-
-impl Args {
-    /// Turn on the flags other flags imply. Called once, right after parsing —
-    /// clap's `requires`/`conflicts_with` can say which combinations are legal
-    /// but not fill one in from another.
-    pub fn apply_implications(&mut self) {
-        // `--cross-wait-sound` waits for the release coming in to make a sound
-        // before it fades it in, and an Amiga drive clicking its way through a
-        // loading screen is a sound — the very part of the boot the wait exists
-        // to sit through. Silence the drive so only the release itself can end
-        // the wait.
-        if self.cross_wait_sound {
-            self.silent_drive = true;
-        }
-    }
 }
 
 /// Parse a hex color string like `#003`, `#000080`, or `000080` into a [`Color`].
@@ -511,107 +461,6 @@ pub struct RenderSettings {
     pub crt_effect: bool,
 }
 
-/// Progress of a `--cross-fade` transition between the two emulators
-/// [`RetroPlugin`](crate::frontend::RetroPlugin) spawns for it.
-///
-/// The release on screen is never reloaded in place: its request to advance is
-/// handed to the other emulator, which boots the next release off screen and
-/// then fades in over it. Everything the fade needs is here; `AppSettings::
-/// current_emu` still names the emulator that is (fully) on screen.
-/// How long a `--cross-wait-sound` hold ignores whatever the incoming release
-/// is playing. Cores routinely emit a burst of static, a click or the tail of
-/// the previous buffer as they come up, and that is not the release starting.
-pub(crate) const SOUND_GRACE_SECS: f64 = 0.5;
-
-/// How long a `--cross-wait-sound` hold waits for a sound before fading in
-/// regardless. Plenty of releases are silent — and a backend that can't report
-/// its audio always reads as audible, so this only bites on a core that really
-/// does stay quiet — but without a cap one of them would park the playlist for
-/// good.
-pub(crate) const SOUND_TIMEOUT_SECS: f64 = 30.0;
-
-/// A `--cross-wait-sound` hold: the next release is loaded and running off
-/// screen, but the fade over the one on show waits until it is audible.
-///
-/// The hold does not replace `--cross-fade-delay`, it moves it: the delay is
-/// counted from the moment the release is first heard rather than from the
-/// moment it started loading, so it goes on being the breathing space between
-/// "this has got going" and the fade — the sound is just a far better mark for
-/// that than a fixed wait after the boot. With `--cross-fade-delay 0` the fade
-/// starts on the sound itself.
-#[derive(Copy, Clone, Debug)]
-pub struct SoundWait {
-    /// Sound before this is ignored — see [`SOUND_GRACE_SECS`].
-    pub not_before: f64,
-    /// When the hold gives up waiting for a sound that isn't coming.
-    pub deadline: f64,
-}
-
-impl SoundWait {
-    /// Start a hold on a release that began running at `now`.
-    pub fn starting_at(now: f64) -> Self {
-        Self {
-            not_before: now + SOUND_GRACE_SECS,
-            deadline: now + SOUND_TIMEOUT_SECS,
-        }
-    }
-
-    /// Whether the hold is over at `now`, given whether the incoming emulator
-    /// is silent right this frame. `--cross-fade-delay` is counted from here.
-    pub fn is_over(&self, now: f64, silent: bool) -> bool {
-        now >= self.deadline || (now >= self.not_before && !silent)
-    }
-}
-
-#[derive(Default)]
-pub struct FadeState {
-    /// The emulator the next release was loaded into, from the moment the load
-    /// is handed to it until its fade has finished. `None` when nothing is on
-    /// its way in.
-    pub incoming: Option<usize>,
-    /// When the fade starts. `f64::MAX` while the release is still loading —
-    /// the fade only begins once it is actually running (plus
-    /// [`AppSettings::cross_fade_delay`]).
-    pub start: f64,
-    /// How far the incoming emulator has faded in, `0..=1`.
-    pub alpha: f32,
-    /// `--cross-wait-sound`: the hold keeping [`Self::start`] at `f64::MAX`
-    /// until the incoming release makes a sound. `None` whenever the fade runs
-    /// on the fixed `--cross-fade-delay` instead, which is the default.
-    pub wait_sound: Option<SoundWait>,
-    /// The info text announcing the incoming release, held until the fade
-    /// actually starts. Only used under a [`Self::wait_sound`] hold, where the
-    /// load has no idea yet *when* that will be — everywhere else the text is
-    /// written with a delay that says it.
-    pub pending_info: Option<String>,
-}
-
-impl FadeState {
-    /// Whether the incoming release is loaded and running off screen with its
-    /// fade not started yet — it is sitting out `--cross-fade-delay`, or a
-    /// `--cross-wait-sound` hold.
-    ///
-    /// A release that is still *loading* does not count: [`Self::start`] is
-    /// `f64::MAX` and [`Self::wait_sound`] `None` for the whole download, and
-    /// there is nothing to switch to until it lands.
-    pub fn is_waiting(&self, now: f64) -> bool {
-        self.incoming.is_some()
-            && (self.wait_sound.is_some() || (self.start < f64::MAX && now < self.start))
-    }
-
-    /// Drop the fade in flight: nothing is on its way in any more, so the
-    /// emulator on screen keeps the window and the next request can hand this
-    /// one another release. [`Self::start`] is left alone — it means nothing
-    /// with no incoming emulator, and is dated afresh by whatever starts the
-    /// next fade.
-    pub fn clear(&mut self) {
-        self.incoming = None;
-        self.alpha = 0.0;
-        self.wait_sound = None;
-        self.pending_info = None;
-    }
-}
-
 #[derive(Resource, Default)]
 pub struct AppSettings {
     pub system: NewSys,
@@ -653,66 +502,9 @@ pub struct AppSettings {
     /// An overrides file can only name one per demozoo id, so this is how a
     /// local archive or directory — which has no id — gets the same treatment.
     pub boot_file: Option<&'static str>,
-
-    /// `--cross-fade`: how long a fade between two releases takes, in seconds.
-    /// `None` (the default) plays one release at a time and cuts between them.
-    pub cross_fade: Option<f32>,
-    /// `--cross-fade-delay`: seconds between the next release starting off
-    /// screen and its fade beginning. Under [`Self::cross_wait_sound`] it is
-    /// counted from the moment that release is first heard instead.
-    pub cross_fade_delay: f64,
-    /// `--cross-wait-sound`: hold each fade until the incoming release is
-    /// audible (see [`SoundWait`]).
-    pub cross_wait_sound: bool,
-    /// The cross-fade in progress, if any. Only ever non-default when
-    /// `cross_fade` is set.
-    pub fade: FadeState,
 }
 
 impl AppSettings {
-    /// How opaque emulator `i`'s view is drawn, `0..=1`.
-    ///
-    /// Always `1` unless a cross-fade is running, where the emulator on screen
-    /// stays opaque and the incoming one is alpha-blended over it — which
-    /// composites to exactly `outgoing * (1 - a) + incoming * a`, with no
-    /// dependence on the clear colour showing through. Anything else (the
-    /// emulator parked in the background between fades) is fully transparent
-    /// and skipped by the render pass.
-    pub fn view_alpha(&self, i: usize) -> f32 {
-        if self.cross_fade.is_none() {
-            return 1.0;
-        }
-        if i == self.current_emu {
-            1.0
-        } else if self.fade.incoming == Some(i) {
-            self.fade.alpha
-        } else {
-            0.0
-        }
-    }
-
-    /// Gain emulator `i`'s audio is mixed at, `0..=1`.
-    ///
-    /// Unlike the picture, both sides of a cross-fade are attenuated: the two
-    /// emulators have a stream each and the device sums them, so the outgoing
-    /// one has to ramp *down* as the incoming ramps up. The ramps are
-    /// equal-power (`sqrt`) rather than linear, because two uncorrelated
-    /// signals add in power, not amplitude — linear ramps would dip audibly at
-    /// the half-way point.
-    pub fn audio_gain(&self, i: usize) -> f32 {
-        if self.cross_fade.is_none() {
-            return 1.0;
-        }
-        let alpha = self.fade.incoming.map_or(0.0, |_| self.fade.alpha);
-        if i == self.current_emu {
-            (1.0 - alpha).max(0.0).sqrt()
-        } else if self.fade.incoming == Some(i) {
-            alpha.sqrt()
-        } else {
-            0.0
-        }
-    }
-
     /// The override to load `file` with: whatever `overrides.toml` said about
     /// the release it is, with `--boot-file` written over the top.
     ///

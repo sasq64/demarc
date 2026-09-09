@@ -179,8 +179,7 @@ queued behind the ones they clicked past.
 The obvious next steps, in order of payoff:
 
 * **Reuse retired chains.** `SlangChains::sources` is keyed by source image, so
-  every new emulator — each `--cross-fade` transition, each grid reshuffle —
-  builds its own copy of the same preset from scratch and the old one is never
+  every new emulator — each grid reshuffle — builds its own copy of the same preset from scratch and the old one is never
   dropped. Pruning sources that no longer exist and handing their chains to a new
   source wanting the same preset would make a demo switch instant.
 * Do **not** reach for `FilterChainOptions::enable_cache`. It only wraps the

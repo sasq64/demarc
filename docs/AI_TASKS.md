@@ -23,7 +23,7 @@ gamescope audio streaming (but why though)
 
 Audio filters
 
-Android build (single instance, no grid or cross-fade, no wine)
+Android build (single instance, no grid, no wine)
 
 Document & cleanup autodlg
 

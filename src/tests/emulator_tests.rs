@@ -110,7 +110,7 @@ fn a_local_path_reaches_load_unchanged() {
 }
 
 /// A packed release comes through the async path unpacked — the job now
-/// does that (which is what keeps a cross-fade from stuttering on it), and
+/// does that (which is what keeps the frontend from stuttering on it), and
 /// what reaches the main thread is the directory it was unpacked into.
 ///
 /// Observed through the failure message, which lists the archive's contents

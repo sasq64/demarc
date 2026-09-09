@@ -94,7 +94,7 @@ JIT: WARNING: Disabling JIT and falling back to the interpreter.
 Amiberry reserves 4GB of "natmem" for the emulated address space and never
 unmaps it: standalone, the process is on its way out anyway and the OS reclaims
 it. The libretro core gets no such exit. demarc `dlopen`s a private copy of the
-core per emulator instance (so two can overlap for a cross-fade, see
+core per emulator instance (so two can coexist in a grid, see
 `retro_emu.rs`) and `dlclose`s it on unload — and the fresh copy that starts the
 next demo has its own `natmem_reserved`, null, knowing nothing of the 4GB the
 last one left mapped.
