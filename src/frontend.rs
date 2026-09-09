@@ -14,6 +14,7 @@ use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
+use crate::headless::{HeadlessTarget, camera_target};
 use crate::mouse_cursor::HideMouse;
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
 
@@ -69,6 +70,21 @@ fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::Windowed;
 }
 
+/// The area views are laid out in: the window, or the offscreen target when
+/// `--headless` left us without one.
+fn screen_size(window: Option<&Window>, headless: Option<&HeadlessTarget>) -> Option<UVec2> {
+    match window {
+        Some(window) => Some(window.physical_size()),
+        None => headless.map(|h| h.size),
+    }
+}
+
+/// The OS cursor in physical pixels. Headless there is none.
+fn cursor_pos(window: Option<&Window>) -> Option<Vec2> {
+    let window = window?;
+    Some(window.cursor_position()? * window.scale_factor())
+}
+
 fn setup_frontend(world: &mut World) {
     let args = world.resource::<Args>();
 
@@ -79,12 +95,15 @@ fn setup_frontend(world: &mut World) {
 
     let cells = grid_layout(args);
 
+    let target = camera_target(world.get_resource::<HeadlessTarget>());
+
     world.spawn((
         Camera2d,
         Camera {
             order: 0,
             ..default()
         },
+        target,
         EmuCamera,
         RenderLayers::layer(1),
     ));
@@ -168,16 +187,21 @@ fn spawn_emulator(
 /// cells share an edge fraction they round to the same pixel, so the cells
 /// always tile the full window with no gap or overlap.
 fn update_view_rects(
-    window: Single<&Window, With<PrimaryWindow>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    headless: Option<Res<HeadlessTarget>>,
     mut settings: ResMut<AppSettings>,
     mut views: Query<(&EmuView, Option<&GridCell>, &mut ViewRect)>,
 ) {
-    let size = window.physical_size();
+    let window = window.as_deref().copied();
+    let Some(size) = screen_size(window, headless.as_deref()) else {
+        return;
+    };
     if size.x == 0 || size.y == 0 {
         return;
     }
 
-    let pos = window.cursor_position().unwrap_or_default() * window.scale_factor();
+    // Headless the cursor is nowhere, which must not read as the top-left cell.
+    let pos = cursor_pos(window).unwrap_or(Vec2::splat(-1.0));
     settings.mouse_index = None;
 
     let fsize = size.as_vec2();
@@ -376,13 +400,13 @@ fn handle_loading(
 /// `None` when there is no cursor, the view has no rectangle yet, or the cursor
 /// sits outside it — including in the letterbox bars, where it is off-image.
 fn cursor_frame_uv(
-    window: &Window,
+    pos: Option<Vec2>,
     view_rect: &ViewRect,
     pp: &PostProcess,
     images: &Assets<Image>,
     scale_mode: ScaleMode,
 ) -> Option<Vec2> {
-    let pos = window.cursor_position()? * window.scale_factor();
+    let pos = pos?;
     let rect = view_rect.rect()?;
     let vp_min = rect.min.as_vec2();
     let vp_size = rect.size().as_vec2();
@@ -413,9 +437,11 @@ fn run_frontend(
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
     mut images: ResMut<Assets<Image>>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    headless: Option<Res<HeadlessTarget>>,
     hud: Res<HudState>,
 ) {
+    let cursor = cursor_pos(window.as_deref().copied());
     let mut no_input =
         input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
     let mut show_info = false;
@@ -444,8 +470,12 @@ fn run_frontend(
         if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
             continue;
         }
-        // Drop audio entirely in the speed-test benchmark.
-        emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
+        // Drop audio entirely in the speed-test benchmark and when headless.
+        emu.audio_active(
+            !settings.speed_test
+                && headless.is_none()
+                && (settings.all_emus || i == settings.current_emu),
+        );
         // Exactly one view is focused; the others are on screen as grid tiles
         // unless the focused one is maximized over them.
         emu.focus(match (i == settings.current_emu, settings.maximized) {
@@ -487,7 +517,7 @@ fn run_frontend(
         }
 
         if (settings.all_emus || i == settings.current_emu) && !no_input && settings.maximized {
-            let abs = cursor_frame_uv(*window, view_rect, &pp, &images, render.scale_mode);
+            let abs = cursor_frame_uv(cursor, view_rect, &pp, &images, render.scale_mode);
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         emu.run(&time);

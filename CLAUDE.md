@@ -16,26 +16,31 @@ a grid. Single Rust binary, Bevy 0.19 for the app/render loop, edition 2024.
 
 ## Commands
 
+Standard cargo commands
+
+Good profile for testing:
 ```sh
-cargo build --release                 # ship build (lto, stripped)
-cargo build --profile release-fast    # what you want while iterating (opt-level 2, no LTO, incremental)
-cargo run --profile release-fast -- --window demos/rebels.adf
-cargo test                            # ~320 unit tests
-cargo test <name>                     # single test / substring filter
-cargo test -- --ignored               # network, GPU and locally-built-core tests
-cargo clippy
+cargo build --profile release-fast    
 ```
 
-`--speed-test` runs emulation unthrottled for a fixed window and prints a frame count; it's the
-benchmark to quote when changing anything in the emulation or upload path.
+## Testing changes
+
+Run headless with
+
+`<files> --headless --remote-control <lua_script>`
+
+See `scripts/remote_example.lua`
+
+*NOTE* Avoid running normally since it opens windows and plays audio.
+
 
 ## Architecture
 
 ### Layers
 
 ```
-main.rs            CLI (clap, src/config.rs) → Bevy App + plugins; stdout muzzling; rlimit/malloc tuning
-  frontend.rs      RetroPlugin: spawns one Emulator entity per view, grid layout, run_retro main system
+main.rs            CLI (clap, src/config.rs) → Bevy App + plugins;
+  frontend.rs      FrontendPlugin: spawns one Emulator entity per view, grid layout, run_retro main system
     emulator.rs    Emulator component: pacing, input routing, audio sink, frame → Handle<Image> upload
       backend.rs   `trait Backend` — the only thing the frontend knows about a "core"
   post_process.rs  librashader/wgpu compositing of every view into one camera

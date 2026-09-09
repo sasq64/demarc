@@ -7,6 +7,7 @@ use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
+use crate::headless::{HeadlessTarget, camera_target};
 
 /// What the pickers in this app are lists *of*. Every source handed to
 /// [`ShowFuzzyList`] agrees on this one type, so a caller holding the `item` of
@@ -865,7 +866,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
     }
 }
 
-fn setup_ui_camera(mut commands: Commands) {
+fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>) {
     // Camera for full res UI on top of screen.
     commands.spawn((
         Camera2d,
@@ -874,6 +875,7 @@ fn setup_ui_camera(mut commands: Commands) {
             clear_color: ClearColorConfig::None,
             ..default()
         },
+        camera_target(headless.as_deref()),
         RenderLayers::layer(2),
         // egui draws into this camera's pass too, so its output lands on top of
         // the emulators as well (see `crate::egui_ui`).

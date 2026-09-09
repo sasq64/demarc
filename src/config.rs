@@ -181,6 +181,10 @@ pub struct Args {
     #[arg(short, long)]
     pub window: bool,
 
+    /// Open no window and play no audio; render offscreen instead
+    #[arg(long)]
+    pub headless: bool,
+
     /// Max number of seconds to play a file before skipping
     #[arg(long)]
     pub max_time: Option<usize>,

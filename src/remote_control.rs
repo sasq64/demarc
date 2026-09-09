@@ -23,6 +23,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib};
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::Args;
 use crate::emulator::Emulator;
+use crate::headless::HeadlessTarget;
 
 /// What a Lua call asks the app to do, applied on the next `PreUpdate`.
 pub enum Action {
@@ -326,6 +327,7 @@ fn run_script(
     mut cmds: MessageWriter<CmdMessage>,
     mut exit: MessageWriter<AppExit>,
     windows: Query<Entity, With<PrimaryWindow>>,
+    headless: Option<Res<HeadlessTarget>>,
 ) {
     let Some(mut remote) = remote else { return };
     let window = windows.single().unwrap_or(Entity::PLACEHOLDER);
@@ -344,9 +346,11 @@ fn run_script(
                 // Asynchronous: the file lands a frame or two later. Written
                 // through the `image` crate, whose `png` feature this crate
                 // enables even though Bevy's own is off -- don't trim it.
-                commands
-                    .spawn(Screenshot::primary_window())
-                    .observe(save_to_disk(path));
+                let shot = match headless.as_deref() {
+                    Some(h) => Screenshot::image(h.image.clone()),
+                    None => Screenshot::primary_window(),
+                };
+                commands.spawn(shot).observe(save_to_disk(path));
             }
             Action::Quit => {
                 exit.write(AppExit::Success);

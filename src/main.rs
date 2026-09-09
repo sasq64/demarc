@@ -27,6 +27,7 @@ mod fetch;
 mod files;
 mod frontend;
 mod fuzzy_list;
+mod headless;
 mod ilbm;
 mod image_emu;
 mod jobs;
@@ -368,7 +369,9 @@ fn main() {
     if args.window {
         window.resolution = (720, 540).into();
     }
-    let primary_window = Some(window);
+    // `--headless` opens no window at all; everything renders into the
+    // offscreen image `HeadlessTarget` holds instead.
+    let primary_window = (!args.headless).then_some(window);
 
     let shader = args.shader.unwrap_or(ShaderArg::Lottes);
 
@@ -412,10 +415,11 @@ fn main() {
     };
 
     let win = args.window;
+    let headless = args.headless;
     let clear_color = args.clear_color;
 
     let demo_settings = demarc_settings::DemarcSettings {
-        fullscreen: !win,
+        fullscreen: !win && !headless,
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
@@ -432,7 +436,17 @@ fn main() {
 
     // `main` installs its own tracing subscriber above, so the default one is
     // dropped.
-    let default_plugins = DefaultPlugins.build().disable::<bevy::log::LogPlugin>();
+    let mut default_plugins = DefaultPlugins.build().disable::<bevy::log::LogPlugin>();
+    if headless {
+        default_plugins = default_plugins
+            // Nothing here uses Bevy's own audio, but its plugin opens the
+            // output device on startup.
+            .disable::<bevy::audio::AudioPlugin>()
+            // No window, so no event loop either -- which also means demarc
+            // runs where there is no display at all. `ScheduleRunnerPlugin`
+            // below takes over driving the app.
+            .disable::<bevy::winit::WinitPlugin>();
+    }
 
     let max_threads = args.max_threads as usize;
     app.insert_resource(args)
@@ -462,6 +476,12 @@ fn main() {
                 })
                 .set(WindowPlugin {
                     primary_window,
+                    // Without this, having no window is "all windows closed".
+                    exit_condition: if headless {
+                        bevy::window::ExitCondition::DontExit
+                    } else {
+                        bevy::window::ExitCondition::OnAllClosed
+                    },
                     ..Default::default()
                 })
                 // Load assets from the extracted `system` dir so they can ship
@@ -484,6 +504,21 @@ fn main() {
             jobs::JobsPlugin,
             shader_dialog::ShaderDialogPlugin,
         ));
+    if headless {
+        // Nothing drives the loop with winit gone. Emulation paces itself, so
+        // this only needs to update about as often as a display would.
+        let wait = if speed_test {
+            std::time::Duration::ZERO
+        } else {
+            std::time::Duration::from_secs_f64(1.0 / 60.0)
+        };
+        app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(wait));
+        let target = {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            headless::HeadlessTarget::new(&mut images)
+        };
+        app.insert_resource(target);
+    }
     // The settings dialog, registered per settings type. `DemarcSettings` is
     // the one the RightAlt+E hotkey opens.
     app.insert_resource(demo_settings)
@@ -492,7 +527,7 @@ fn main() {
     // `RetroPlugin::fix_window` unconditionally forces `Windowed` at Startup
     // (so early setup systems see a stable, non-transitional window size);
     // this restores the actually-requested fullscreen mode afterward.
-    if !win {
+    if !win && !headless {
         app.add_systems(PostStartup, enter_fullscreen);
     }
     app.run();
