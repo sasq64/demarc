@@ -31,6 +31,12 @@ run inside the session — the dialog driver, the resolution, a virtual desktop 
 asked for one. So does `src/newsys/web.rs` for a page, which claims `.html`/`.htm`
 outright since nothing else here could ever run one.
 
+Run-time prerequisites for the Windows half are `wine`, `bwrap` and the provisioned
+`~/.wine-demarc` prefix (`just wine-prefix`). `demarc --check-wine` says which of the
+three are there and exits — 0 when all of them are. Without all three `WindowsSystem` is
+left out of the system list at startup (`check_wine` in `src/wine.rs`), so a `.exe` falls
+through to whatever else can claim it rather than opening an empty session.
+
 Build prerequisites beyond demarc's own: `meson`, `vulkan-headers`, `glslang`, and the
 wlroots build dependencies (`wayland-protocols`, `libseat`, the `xcb-*` set, `gbm`,
 `libinput`, `libudev`, `pixman`, `libdecor`, `luajit`, `hwdata`). wlroots, libliftoff and

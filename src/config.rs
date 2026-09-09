@@ -185,6 +185,12 @@ pub struct Args {
     #[arg(long)]
     pub speed_test: bool,
 
+    /// Report whether Windows releases can be run here — wine, bwrap and the
+    /// ~/.wine-demarc prefix — then exit. Without all three, .exe releases are
+    /// left to whatever else can claim them.
+    #[arg(long)]
+    pub check_wine: bool,
+
     /// Max queued frames. Lower values = better input response
     #[arg(long, default_value_t = 2)]
     pub latency: u32,

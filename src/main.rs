@@ -120,6 +120,24 @@ pub(crate) fn println(text: impl std::fmt::Display) {
     let _ = std::io::stdout().write_all(line.as_bytes());
 }
 
+/// Print what `--check-wine` found and give back the exit code for it: 0 when
+/// a Windows release could be run here, 1 when one of the three pieces
+/// [`wine::check_wine`] looks for is missing.
+#[cfg(target_os = "linux")]
+fn check_wine_and_report() -> i32 {
+    let check = wine::check_wine();
+    println(check.report());
+    if check.ok() { 0 } else { 1 }
+}
+
+/// Elsewhere there is nothing to check: the Windows backend is the gamescope
+/// core's, and that is Linux only.
+#[cfg(not(target_os = "linux"))]
+fn check_wine_and_report() -> i32 {
+    println("Windows releases are Linux only.");
+    1
+}
+
 /// Raise the process's soft open-file limit to the hard limit
 #[cfg(unix)]
 fn raise_fd_limit() {
@@ -262,6 +280,13 @@ fn main() {
     }
     #[cfg(not(unix))]
     builder.init();
+
+    // Asked and answered before anything else happens: nothing is loaded, no
+    // window opens, and the exit code says whether Windows releases would run,
+    // so this is usable from a script.
+    if args.check_wine {
+        std::process::exit(check_wine_and_report());
+    }
 
     // Trim the caches before anything writes into them, so this run's own
     // downloads and built discs can't be evicted out from under it.
