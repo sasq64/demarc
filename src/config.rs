@@ -621,12 +621,12 @@ pub struct AppSettings {
     pub current_emu: usize,
     pub maximized: bool,
     pub all_emus: bool,
-    pub last_draw: f64,
+    pub select_box_drawn_at: f64,
     /// The file picker's search index, built lazily from `files` on first open
     /// and reused (cheap `Arc` clone) on every open after that — building the
     /// trigram index over the whole list is the picker's expensive step.
     pub file_source: Option<FilePickerSource>,
-    pub hotkey_pressed: f32,
+    pub hotkey_pressed_at: f32,
     pub mouse_index: Option<usize>,
     pub speed_test: bool,
     pub tv_mode: bool,

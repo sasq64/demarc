@@ -153,6 +153,23 @@ pub fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
         .map(|m| m.cmd)
 }
 
+fn handle_hotkey(
+    mut settings: ResMut<AppSettings>,
+    input: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    hud: Res<HudState>,
+    mut writer: MessageWriter<CmdMessage>,
+) {
+    let hot_key_pressed = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
+    if hot_key_pressed && !hud.modal() {
+        settings.select_box_drawn_at = time.elapsed_secs_f64();
+        if let Some(cmd) = check_hotkey(&input) {
+            settings.hotkey_pressed_at = 0.0;
+            writer.write(CmdMessage(cmd));
+        }
+    }
+}
+
 fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
@@ -223,14 +240,14 @@ fn handle_textlist(
         input.just_released(KeyCode::AltRight) || input.just_released(KeyCode::ControlRight);
 
     if hot_key_pressed {
-        settings.hotkey_pressed = time.elapsed_secs();
+        settings.hotkey_pressed_at = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
         let modal = hud.modal();
         if modal {
             return;
         }
-        if time.elapsed_secs() - settings.hotkey_pressed < 0.35 {
+        if time.elapsed_secs() - settings.hotkey_pressed_at < 0.35 {
             let lines = HOTKEYS
                 .iter()
                 .map(|m| {
@@ -837,6 +854,7 @@ impl Plugin for CommandPlugin {
         app.add_systems(
             Update,
             (
+                handle_hotkey,
                 open_select_menu,
                 handle_textlist,
                 handle_media_keys,

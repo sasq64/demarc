@@ -1,4 +1,4 @@
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{camera::visibility::RenderLayers, prelude::*, window::PrimaryWindow};
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
     egui::{self, Ui, scroll_area::ScrollAreaOutput},
@@ -865,6 +865,22 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
     }
 }
 
+fn setup_ui_camera(mut commands: Commands) {
+    // Camera for full res UI on top of screen.
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        RenderLayers::layer(2),
+        // egui draws into this camera's pass too, so its output lands on top of
+        // the emulators as well (see `crate::egui_ui`).
+        bevy_egui::PrimaryEguiContext,
+    ));
+}
+
 impl Plugin for EguiUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default());
@@ -878,6 +894,7 @@ impl Plugin for EguiUiPlugin {
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
             .add_message::<FuzzyListSelect>()
+            .add_systems(Startup, setup_ui_camera)
             .add_systems(
                 Update,
                 (

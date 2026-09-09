@@ -11,11 +11,10 @@ use bevy::{
 };
 
 use crate::backend::ViewFocus;
-use crate::commands::{CmdMessage, check_hotkey};
 use crate::config::{AppSettings, Args, RenderSettings, SoundWait};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
-use crate::mouse_cursor::HideMouse;
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
+use crate::mouse_cursor::HideMouse;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 
 pub struct FrontendPlugin {}
@@ -71,22 +70,6 @@ fn grid_layout(args: &Args) -> Vec<GridCell> {
     }
 }
 
-fn setup_ui_camera(mut commands: Commands) {
-    // Camera for full res UI on top of screen.
-    commands.spawn((
-        Camera2d,
-        Camera {
-            order: 1,
-            clear_color: ClearColorConfig::None,
-            ..default()
-        },
-        RenderLayers::layer(2),
-        // egui draws into this camera's pass too, so its output lands on top of
-        // the emulators as well (see `crate::egui_ui`).
-        bevy_egui::PrimaryEguiContext,
-    ));
-}
-
 fn fix_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::Windowed;
 }
@@ -125,7 +108,9 @@ fn setup_frontend(world: &mut World) {
         for i in 0..CROSS_FADE_EMUS {
             spawn_emulator(world, color_cycle, max_time, speed_test, i, None);
         }
-        world.resource_mut::<HideMouse>().0 = true;
+        world
+            .get_resource_mut::<HideMouse>()
+            .map(|mut h| h.0 = true);
         // Only the first emulator starts a load. The second stays idle until
         // whatever is on screen asks to advance, which is what hands it the
         // next release (see `run_retro`).
@@ -135,7 +120,9 @@ fn setup_frontend(world: &mut World) {
         }
     } else {
         spawn_emulator(world, color_cycle, max_time, speed_test, 0, None);
-        world.resource_mut::<HideMouse>().0 = true;
+        world
+            .get_resource_mut::<HideMouse>()
+            .map(|mut h| h.0 = true);
     }
 
     // With `--select` the user picks a file from the selector before anything
@@ -287,7 +274,7 @@ fn draw_current_emu_outline(
     if settings.maximized
         || settings.cross_fade.is_some()
         || views.iter().count() < 2
-        || time.elapsed_secs_f64() - settings.last_draw > 2.0
+        || time.elapsed_secs_f64() - settings.select_box_drawn_at > 2.0
     {
         return;
     }
@@ -343,51 +330,30 @@ fn run_frontend(
     mouse_motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
-    mut cmd_writer: MessageWriter<CmdMessage>,
     mut images: ResMut<Assets<Image>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut views: Query<(&EmuView, &ViewRect, &mut PostProcess)>,
     hud: Res<HudState>,
 ) {
-    // The file picker or a controlled TextList is capturing keyboard
-    // navigation; while one is open, swallow all keys so they don't also reach
-    // the emulated machine.
-    let modal = hud.modal();
-    let cmd = if !modal {
-        let hot_key = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
-        if hot_key {
-            settings.last_draw = time.elapsed_secs_f64();
-        }
-        if hot_key { check_hotkey(&input) } else { None }
-    } else {
-        None
-    };
-
+    let mut no_input =
+        input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
     let mut show_info = false;
-    let mut stop_input = false;
-    // `!modal` for the same reason the keys above are swallowed: the settings
-    // dialog is driven by the mouse, so a click on its Ok button would otherwise
-    // also pick an emulator -- and, as the second of two quick clicks, maximize
-    // it. The picker never ran into this because it is keyboard-only.
-    if !modal
+
+    // Handle double click maximize/unmaximize
+    if !no_input
         && mouse_buttons.just_pressed(MouseButton::Left)
         && let Some(i) = settings.mouse_index
     {
-        stop_input = true;
+        no_input = true;
         let t = time.elapsed_secs_f64();
-        if t - settings.last_draw < 0.35 {
+        if t - settings.select_box_drawn_at < 0.35 {
             settings.maximized = !settings.maximized;
         }
         if i < 999 {
             settings.current_emu = i;
             show_info = true;
         }
-        settings.last_draw = t;
-    }
-
-    if let Some(cmd) = cmd {
-        settings.hotkey_pressed = 0.0;
-        cmd_writer.write(CmdMessage(cmd));
+        settings.select_box_drawn_at = t;
     }
 
     // Map the OS cursor to normalized frame coordinates of the emulator it is
@@ -441,10 +407,6 @@ fn run_frontend(
     let mut skip_wait = false;
 
     for (i, mut emu) in &mut emus.iter_mut().enumerate() {
-        // Read-only probe. The mutable borrow that the frame copy needs is taken
-        // further down, only when the core has something new: `get_mut` marks the
-        // asset modified when it drops, and Bevy answers that by re-uploading the
-        // whole texture.
         if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
             continue;
         }
@@ -647,7 +609,7 @@ fn run_frontend(
         if let Some(mt) = emu.max_time
             && drives_playlist
             && now > emu.start_time + (mt as f64)
-            && (now - settings.last_draw) > 1.0
+            && (now - settings.select_box_drawn_at) > 1.0
         {
             emu.start_time = now + 100.0;
             emu.run_next = true;
@@ -678,12 +640,7 @@ fn run_frontend(
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu)
-            && cmd.is_none()
-            && !modal
-            && settings.maximized
-            && !stop_input
-        {
+        if (settings.all_emus || i == settings.current_emu) && !no_input && settings.maximized {
             let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
@@ -893,9 +850,8 @@ fn update_cross_fade(
 
     for (view, mut pp) in &mut views {
         let alpha = settings.view_alpha(view.index);
-        // Guarded: `PostProcess` is extracted into the render world, and the
-        // alpha only moves during a fade.
         if pp.alpha != alpha {
+            // Will flag Bevy resource as changed
             pp.alpha = alpha;
         }
     }
@@ -920,16 +876,11 @@ fn drives_playlist(settings: &AppSettings, i: usize) -> bool {
 
 impl Plugin for FrontendPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Startup,
-            (setup_frontend, setup_ui_camera, fix_window, setup_gizmos),
-        );
+        app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
             (
                 run_frontend,
-                // Reads the fade state `run_retro` just moved on, and writes
-                // the alphas it reads back next frame.
                 update_cross_fade.after(run_frontend),
                 update_view_rects,
                 draw_current_emu_outline,
