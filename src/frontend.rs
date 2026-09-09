@@ -15,7 +15,7 @@ use crate::config::{AppSettings, Args, RenderSettings};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::mouse_cursor::HideMouse;
-use crate::post_process::{EmuCamera, PostProcess, ViewRect};
+use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
 
 pub struct FrontendPlugin {}
 
@@ -112,17 +112,20 @@ fn setup_frontend(world: &mut World) {
 }
 
 /// Create a single emulator entity: its own audio stream + ring buffer, its own
-/// render-target texture, and a view entity holding the [`PostProcess`] state
-/// that samples that texture. Call this once per emulator you want on screen.
+/// render-target texture, and the [`PostProcess`] state that samples that
+/// texture. Call this once per emulator you want on screen.
 ///
-/// `index` is the emulator's stable index — its position in the query order
-/// `run_retro` enumerates, and what [`AppSettings::current_emu`] names.
+/// The view lives on the *same* entity as the emulator it shows, so the
+/// frontend can walk an emulator and its view with one query.
 ///
-/// `cell`, when `Some`, places this emulator in one cell of a grid: the view
-/// gets a [`GridCell`] marker so [`update_view_rects`] keeps its [`ViewRect`]
-/// sized to that cell. Without one the view fills the whole window. The views
-/// are *not* cameras — they are all composited by the single [`EmuCamera`]
-/// spawned in [`setup_retro`].
+/// `index` is the emulator's stable index — what [`AppSettings::current_emu`]
+/// names.
+///
+/// `cell`, when `Some`, places this emulator in one cell of a grid: it gets a
+/// [`GridCell`] marker so [`update_view_rects`] keeps its [`ViewRect`] sized to
+/// that cell. Without one the view fills the whole window. The views are *not*
+/// cameras — they are all composited by the single [`EmuCamera`] spawned in
+/// [`setup_retro`].
 fn spawn_emulator(
     world: &mut World,
     color_cycle: bool,
@@ -134,12 +137,12 @@ fn spawn_emulator(
     let mut res = world.resource_mut::<Assets<Image>>();
     let emu = Emulator::new(&mut res, max_time, color_cycle, speed_test);
     let handle = emu.image.clone();
-    world.spawn(emu);
 
-    // Samples this emulator's texture directly and draws it to the screen,
-    // letting the post-process shader handle scaling to its rectangle of the
-    // window.
+    // The view samples this emulator's texture directly and draws it to the
+    // screen, letting the post-process shader handle scaling to its rectangle
+    // of the window.
     let mut view = world.spawn((
+        emu,
         PostProcess {
             source: handle,
             aspect: 0.0, // updated each frame from the core's reported aspect
@@ -291,103 +294,16 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
-fn run_frontend(
+fn handle_loading(
     mut emus: Query<&mut Emulator>,
-    input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
-    render: Res<RenderSettings>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
-    mouse_motion: Res<AccumulatedMouseMotion>,
-    time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
-    mut images: ResMut<Assets<Image>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut views: Query<(&EmuView, &ViewRect, &mut PostProcess)>,
-    hud: Res<HudState>,
+    time: Res<Time>,
 ) {
-    let mut no_input =
-        input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
-    let mut show_info = false;
-
-    // Handle double click maximize/unmaximize
-    if !no_input
-        && mouse_buttons.just_pressed(MouseButton::Left)
-        && let Some(i) = settings.mouse_index
-    {
-        no_input = true;
-        let t = time.elapsed_secs_f64();
-        if t - settings.select_box_drawn_at < 0.35 {
-            settings.maximized = !settings.maximized;
-        }
-        if i < 999 {
-            settings.current_emu = i;
-            show_info = true;
-        }
-        settings.select_box_drawn_at = t;
-    }
-
-    // Map the OS cursor to normalized frame coordinates of the emulator it is
-    // over, inverting the same letterbox transform the post-process shader uses
-    // (`source_uv = (screen_uv - uv_offset) / uv_scale`). Pointer-driven cores
-    // (Flash) need this so the emulator's cursor tracks the visible OS cursor.
-    let cursor = window.cursor_position().map(|c| c * window.scale_factor());
-    let mut pointer: Option<(usize, Vec2)> = None;
-    if let Some(pos) = cursor {
-        for (view, view_rect, pp) in &views {
-            let Some(rect) = view_rect.rect() else {
-                continue;
-            };
-            let vp_min = rect.min.as_vec2();
-            let vp_size = rect.size().as_vec2();
-            if vp_size.x <= 0.0 || vp_size.y <= 0.0 {
-                continue;
-            }
-            if !Rect::from_corners(vp_min, vp_min + vp_size).contains(pos) {
-                continue;
-            }
-            let screen_uv = (pos - vp_min) / vp_size;
-            let src = images
-                .get(&pp.source)
-                .map(|i| i.size())
-                .unwrap_or(UVec2::ONE);
-            let (uv_scale, uv_offset) = crate::post_process::scale_offset(
-                rect.size(),
-                src,
-                pp.aspect,
-                pp.aspect_tweak,
-                render.scale_mode,
-            );
-            let frame_uv = (screen_uv - uv_offset) / uv_scale;
-            // Ignore hits in the letterbox bars, where the cursor is off-image.
-            if (0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y) {
-                pointer = Some((view.index, frame_uv));
-                break;
-            }
-        }
-    }
-
     let now = time.elapsed_secs_f64();
-
-    for (i, mut emu) in &mut emus.iter_mut().enumerate() {
-        if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
-            continue;
-        }
-        // Drop audio entirely in the speed-test benchmark.
-        emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
-        // Exactly one view is focused; the others are on screen as grid tiles
-        // unless the focused one is maximized over them.
-        emu.focus(match (i == settings.current_emu, settings.maximized) {
-            (true, _) => ViewFocus::Focus,
-            (false, true) => ViewFocus::Invisible,
-            (false, false) => ViewFocus::Visible,
-        });
-
+    for mut emu in &mut emus.iter_mut() {
         let flen = settings.files.len() as isize;
 
-        // `load_async` takes `run_next`/`run_prev` as it starts, so this fires
-        // once per request rather than on every frame of a long download — and
-        // a request that arrives *during* one (the file selector, a hotkey)
-        // still gets through and replaces the load in flight.
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
             1
         } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
@@ -406,13 +322,6 @@ fn run_frontend(
             continue;
         }
 
-        // Completes whichever load `load_async` started, on the frame its
-        // download finishes. Until then the previously loaded core keeps
-        // running, so a slow mirror no longer freezes the picture.
-        //
-        // Bound rather than matched in place: the scrutinee's borrows of `emu`
-        // and `settings` would otherwise last the whole match, which the arms
-        // below write to.
         if now >= emu.load_delay_until {
             let status = emu.update_load(&time, &settings.system);
             match status {
@@ -456,6 +365,94 @@ fn run_frontend(
                 }
             }
         }
+    }
+}
+
+/// Map the OS cursor to normalized frame coordinates of one view, inverting the
+/// same letterbox transform the post-process shader uses
+/// (`source_uv = (screen_uv - uv_offset) / uv_scale`). Pointer-driven cores
+/// (Flash) need this so the emulator's cursor tracks the visible OS cursor.
+///
+/// `None` when there is no cursor, the view has no rectangle yet, or the cursor
+/// sits outside it — including in the letterbox bars, where it is off-image.
+fn cursor_frame_uv(
+    window: &Window,
+    view_rect: &ViewRect,
+    pp: &PostProcess,
+    images: &Assets<Image>,
+    scale_mode: ScaleMode,
+) -> Option<Vec2> {
+    let pos = window.cursor_position()? * window.scale_factor();
+    let rect = view_rect.rect()?;
+    let vp_min = rect.min.as_vec2();
+    let vp_size = rect.size().as_vec2();
+    if vp_size.x <= 0.0 || vp_size.y <= 0.0 {
+        return None;
+    }
+    if !Rect::from_corners(vp_min, vp_min + vp_size).contains(pos) {
+        return None;
+    }
+    let screen_uv = (pos - vp_min) / vp_size;
+    let src = images
+        .get(&pp.source)
+        .map(|i| i.size())
+        .unwrap_or(UVec2::ONE);
+    let (uv_scale, uv_offset) =
+        crate::post_process::scale_offset(rect.size(), src, pp.aspect, pp.aspect_tweak, scale_mode);
+    let frame_uv = (screen_uv - uv_offset) / uv_scale;
+    ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
+}
+
+fn run_frontend(
+    mut emus: Query<(&mut Emulator, &EmuView, &ViewRect, &mut PostProcess)>,
+    input: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<AppSettings>,
+    render: Res<RenderSettings>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    time: Res<Time>,
+    mut writer: MessageWriter<SetHudText>,
+    mut images: ResMut<Assets<Image>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    hud: Res<HudState>,
+) {
+    let mut no_input =
+        input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
+    let mut show_info = false;
+
+    // Handle double click maximize/unmaximize
+    if !no_input
+        && mouse_buttons.just_pressed(MouseButton::Left)
+        && let Some(i) = settings.mouse_index
+    {
+        no_input = true;
+        let t = time.elapsed_secs_f64();
+        if t - settings.select_box_drawn_at < 0.35 {
+            settings.maximized = !settings.maximized;
+        }
+        if i < 999 {
+            settings.current_emu = i;
+            show_info = true;
+        }
+        settings.select_box_drawn_at = t;
+    }
+
+    let now = time.elapsed_secs_f64();
+
+    for (mut emu, view, view_rect, mut pp) in &mut emus {
+        let i = view.index;
+        if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
+            continue;
+        }
+        // Drop audio entirely in the speed-test benchmark.
+        emu.audio_active(!settings.speed_test && (settings.all_emus || i == settings.current_emu));
+        // Exactly one view is focused; the others are on screen as grid tiles
+        // unless the focused one is maximized over them.
+        emu.focus(match (i == settings.current_emu, settings.maximized) {
+            (true, _) => ViewFocus::Focus,
+            (false, true) => ViewFocus::Invisible,
+            (false, false) => ViewFocus::Visible,
+        });
 
         if show_info && i == settings.current_emu {
             writer.write(SetHudText {
@@ -474,23 +471,14 @@ fn run_frontend(
             emu.run_next = true;
         };
 
+        // Idle handling
         let mut max_idle = settings.idle_timeout;
         if max_idle == 0 && settings.tv_mode {
             max_idle = 20;
-            // if emu.work_file.system_type == SystemType::Ilbm
-            //     || emu.work_file.system_type == SystemType::Gfx
-            // {
-            //     max_idle = 10;
-            // }
         }
-
         if max_idle > 0 && emu.idle_time > max_idle as f32 {
             debug!("Idle for {max_idle}, running next");
             emu.run_next = true;
-            // Re-arm the timeout along with the request. A core that has gone
-            // idle stays idle while the next release downloads, so leaving the
-            // baseline where it is would set `run_next` again on every frame,
-            // starting a fresh load each time until the download finally lands.
             emu.reset_idle(&time);
         }
 
@@ -499,16 +487,13 @@ fn run_frontend(
         }
 
         if (settings.all_emus || i == settings.current_emu) && !no_input && settings.maximized {
-            let abs = pointer.and_then(|(idx, p)| (idx == i).then_some(p));
+            let abs = cursor_frame_uv(*window, view_rect, &pp, &images, render.scale_mode);
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         emu.run(&time);
 
-        // Take the warp indicator down the moment the skip it announced is
-        // over, rather than after a fixed timeout that has nothing to do with
-        // how long the core takes to fast-forward. An empty text retires
-        // whatever is showing in that corner — see `spawn_toast`.
         if emu.skip_finished() {
+            // Remove warp indicator
             writer.write(SetHudText {
                 text: String::new(),
                 location: HudLocation::TopRight,
@@ -520,14 +505,9 @@ fn run_frontend(
         let bg_h = emu.height as usize;
 
         // Only copy (and so re-upload) when the backend has different pixels
-        // than the last copy. The screen refreshes at 60-165Hz while a core
-        // produces 50-60 frames a second — and the threaded backend often has no
-        // update ready at all — so most passes through here have nothing new.
         let hash = emu.core.as_ref().unwrap().frame_hash();
         if hash != emu.frame_hash {
             emu.frame_hash = hash;
-            // Scoped so the `AssetMut` (whose destructor fires change detection)
-            // releases the `images` borrow before it is taken again below.
             if let Some(mut image) = images.get_mut(&emu.image)
                 && let Some(dst) = image.data.as_mut()
             {
@@ -546,15 +526,10 @@ fn run_frontend(
                 });
             }
         }
-        // For some reason we need to compensate the hatari aspect
-        let aspect = emu.core.as_mut().unwrap().aspect_ratio();
 
-        // Guarded: `PostProcess` is extracted into the render world, and the
-        // aspect only moves when the core changes video mode.
-        for (_, _, mut pp) in &mut views {
-            if pp.source == emu.image && pp.aspect != aspect {
-                pp.aspect = aspect;
-            }
+        let aspect = emu.core.as_mut().unwrap().aspect_ratio();
+        if pp.aspect != aspect {
+            pp.aspect = aspect;
         }
 
         let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
@@ -563,10 +538,6 @@ fn run_frontend(
             debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
-            // The texture below is replaced with a blank one, so whatever was
-            // copied in for this hash is gone: forget it, or a backend that
-            // isn't producing new frames (a still image, a paused core) would
-            // never refill it and stay black.
             emu.frame_hash = 0;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
@@ -593,7 +564,12 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (run_frontend, update_view_rects, draw_current_emu_outline),
+            (
+                run_frontend,
+                handle_loading,
+                update_view_rects,
+                draw_current_emu_outline,
+            ),
         );
     }
 }
