@@ -1,0 +1,457 @@
+diff --git i/source/Audio.cpp w/source/Audio.cpp
+index 6a41fef..3ecbd41 100644
+--- i/source/Audio.cpp
++++ w/source/Audio.cpp
+@@ -5,6 +5,7 @@
+ #include "mathhelpers.h"
+ 
+ #include <cstdint>
++#include <cstring>
+ #include <string>
+ #include <sstream>
+ #include <algorithm>
+@@ -18,10 +19,61 @@
+ Audio::Audio(PicoRam* memory){
+     _memory = memory;
+     _paused = false;
+-    
++
++    memset(_serialSoundBuffer, 128, sizeof(_serialSoundBuffer));
++    _serialSoundWrite = 0;
++    _serialSoundRead = 0;
++    _serialSoundValue = 128;
++    _serialSoundPhase = 0;
++
+     resetAudioState();
+ }
+ 
++//Called from the cart thread by serial(0x808, ...). Samples past the end of the
++//ring are dropped, as they are on PICO-8.
++void Audio::pushSerialSoundSamples(const uint8_t* samples, int len) {
++    uint32_t write = _serialSoundWrite.load(std::memory_order_relaxed);
++    uint32_t read = _serialSoundRead.load(std::memory_order_acquire);
++
++    for (int i = 0; i < len; i++) {
++        if (write - read >= (uint32_t)SERIAL_SOUND_BUFFER_SIZE) {
++            break;
++        }
++        _serialSoundBuffer[write % SERIAL_SOUND_BUFFER_SIZE] = samples[i];
++        write++;
++    }
++
++    _serialSoundWrite.store(write, std::memory_order_release);
++}
++
++//What stat(108) reports: samples pushed but not yet played.
++int Audio::getSerialSoundBufferLen() {
++    uint32_t write = _serialSoundWrite.load(std::memory_order_acquire);
++    uint32_t read = _serialSoundRead.load(std::memory_order_relaxed);
++
++    return (int)(write - read);
++}
++
++//One buffered sample spans four output samples; an empty ring plays silence
++//without losing the four-sample cadence.
++int16_t Audio::nextSerialSoundSample() {
++    if (_serialSoundPhase == 0) {
++        uint32_t read = _serialSoundRead.load(std::memory_order_relaxed);
++
++        if (_serialSoundWrite.load(std::memory_order_acquire) == read) {
++            _serialSoundValue = 128;
++        }
++        else {
++            _serialSoundValue = _serialSoundBuffer[read % SERIAL_SOUND_BUFFER_SIZE];
++            _serialSoundRead.store(read + 1, std::memory_order_release);
++        }
++    }
++
++    _serialSoundPhase = (_serialSoundPhase + 1) & 3;
++
++    return (int16_t)((_serialSoundValue - 128) * 256);
++}
++
+ void Audio::setPaused(bool paused) {
+     _paused = paused;
+ }
+@@ -788,6 +840,8 @@ void Audio::FillAudioBuffer(void *audioBuffer, size_t offset, size_t size){
+             channel_mix += chan_sample;
+         }
+ 
++        channel_mix += nextSerialSoundSample();
++
+         sample = (int32_t)std::clamp(channel_mix, -32767.9f, 32767.9f);
+ 
+         //buffer is stereo, so just send the mono sample to both channels
+@@ -999,6 +1053,8 @@ void Audio::FillMonoAudioBuffer(void *audioBuffer, size_t offset, size_t size){
+             channel_mix += chan_sample;
+         }
+ 
++        channel_mix += nextSerialSoundSample();
++
+         buffer[i] = (int16_t)std::clamp(channel_mix, -32767.9f, 32767.9f);
+     }
+ }
+diff --git i/source/Audio.h w/source/Audio.h
+index fa382be..2cb483a 100644
+--- i/source/Audio.h
++++ w/source/Audio.h
+@@ -3,6 +3,7 @@
+ #include "PicoRam.h"
+ #include "synth.h"
+ 
++#include <atomic>
+ #include <string>
+ 
+ #define MAX_SFX = 64
+@@ -92,6 +93,22 @@ class Audio {
+     audioState_t _audioState;
+     bool _paused;
+ 
++    //PICO-8's serial channel 0x808 takes 8-bit unsigned PCM and plays it back
++    //at a quarter of the mixing rate, one sample held over four output samples.
++    //The ring is the same 2048 samples PICO-8 keeps, so a cart that watches
++    //stat(108) to pace its own mixer sees the same headroom.
++    static const int SERIAL_SOUND_BUFFER_SIZE = 2048;
++    uint8_t _serialSoundBuffer[SERIAL_SOUND_BUFFER_SIZE];
++    //Free-running counters: the cart thread only writes _serialSoundWrite and
++    //the audio thread only writes _serialSoundRead, so their difference is the
++    //queue length without either side needing a lock.
++    std::atomic<uint32_t> _serialSoundWrite;
++    std::atomic<uint32_t> _serialSoundRead;
++    uint8_t _serialSoundValue;
++    uint8_t _serialSoundPhase;
++
++    int16_t nextSerialSoundSample();
++
+     void set_music_pattern(int pattern);
+     void update_sfx_state(sfx_state& cur_sfx, z8::synth_param& new_synth, 
+                           float freq_factor, float length, bool is_music, 
+@@ -118,4 +135,7 @@ class Audio {
+     void FillMonoAudioBuffer(void *audioBuffer,size_t offset, size_t size);
+ 
+     void setPaused(bool paused);
++
++    void pushSerialSoundSamples(const uint8_t* samples, int len);
++    int getSerialSoundBufferLen();
+ };
+diff --git i/source/cart.cpp w/source/cart.cpp
+index db7be29..fdc4a0f 100644
+--- i/source/cart.cpp
++++ w/source/cart.cpp
+@@ -326,6 +326,34 @@ bool Cart::loadCartFromPng(std::string filename){
+     return loadCartFromPng(image);
+ }
+ 
++//PICO-8's `#include` of a `.p8` cart pulls in that cart's code and nothing
++//else: the `pico-8 cartridge ...` banner, the `version` line and any data
++//sections after the code are not Lua and must not reach the compiler. A plain
++//`.lua` file has no section markers at all, so it is taken whole.
++static std::string extractIncludedLua(const std::string& contents) {
++    if (contents.find("__lua__") == std::string::npos) {
++        return contents;
++    }
++
++    std::istringstream s(contents);
++    std::string line;
++    std::string lua;
++    bool inLua = false;
++
++    while (std::getline(s, line)) {
++        auto trimmed = utils::trimright(line, " \n\r");
++        if (trimmed.length() > 2 && trimmed[0] == '_' && trimmed[1] == '_') {
++            inLua = trimmed == "__lua__";
++            continue;
++        }
++        if (inLua) {
++            lua += line + "\n";
++        }
++    }
++
++    return lua;
++}
++
+ bool Cart::loadCartFromString(std::string cartStr) {
+     fullCartText = cartStr;
+ 
+@@ -344,13 +372,18 @@ bool Cart::loadCartFromString(std::string cartStr) {
+         }
+         else if (currSec == "__lua__"){
+             if (std::regex_match(line, sm, _includeRegex)) {
++                //Fall back to the host's cart directory for a cart that came
++                //in as bytes and so has no path to take a directory from.
+                 auto dir = getDirectory(FullCartPath);
++                if (dir.length() == 0) {
++                    dir = includeDirectory;
++                }
+                 auto fullPath = dir + "/" + sm[1].str();
+ 
+                 auto includeContents = get_file_contents(fullPath);
+                 if (includeContents.length() > 0){
+                     includeContents = charset::utf8_to_pico8(includeContents);
+-                    LuaString += includeContents + "\n";
++                    LuaString += extractIncludedLua(includeContents) + "\n";
+                 }
+                 else{
+                     //todo: report error
+@@ -395,7 +428,9 @@ bool Cart::loadCartFromString(std::string cartStr) {
+     return true;
+ }
+ 
+-Cart::Cart (const unsigned char* cartData, size_t size){
++Cart::Cart (const unsigned char* cartData, size_t size, std::string cartDir){
++    includeDirectory = cartDir;
++
+     if (size < 5) {
+         LoadError = "Invalid cart. Less than 5 bytes";
+         return;
+diff --git i/source/cart.h w/source/cart.h
+index 9561e87..008f835 100644
+--- i/source/cart.h
++++ w/source/cart.h
+@@ -25,6 +25,8 @@ struct CartRomData
+ 
+ class Cart {
+     std::string fullCartText;
++    //Where this cart's `#include`s resolve from when it has no path of its own.
++    std::string includeDirectory;
+ 
+     void initCartRom();
+ 
+@@ -43,7 +45,9 @@ class Cart {
+ 	
+     public:
+     Cart (std::string filename, std::string cartDirectory);
+-    Cart (const unsigned char* cartData, size_t size);
++    //A cart handed over as bytes has no path of its own, so the directory its
++    //`#include`s resolve against has to come from the host.
++    Cart (const unsigned char* cartData, size_t size, std::string cartDirectory = "");
+     ~Cart();
+ 
+     std::string FullCartPath;
+diff --git i/source/p8GlobalLuaFunctions.h w/source/p8GlobalLuaFunctions.h
+index 3158b96..cc9347c 100644
+--- i/source/p8GlobalLuaFunctions.h
++++ w/source/p8GlobalLuaFunctions.h
+@@ -97,11 +97,6 @@ function deli(c,i)
+     end
+ end
+ 
+-function serial(chan, address, len)
+-    --stubbed out
+-    --return len
+-end
+-
+ 
+ local error = error
+ local tonumber = tonumber
+diff --git i/source/picoluaapi.cpp w/source/picoluaapi.cpp
+index 721abb7..82be9de 100644
+--- i/source/picoluaapi.cpp
++++ w/source/picoluaapi.cpp
+@@ -1003,9 +1003,15 @@ int stat(lua_State *L) {
+         case 102:
+             lua_pushnumber(L, 0);
+             return 1;
+-        //unknown? used by serial carts
++        //samples queued on serial channel 0x808 and not yet played
+         case 108:
+-            lua_pushnumber(L, 32);
++            lua_pushnumber(L, _audioForLuaApi->getSerialSoundBufferLen());
++            return 1;
++        break;
++        //PICO-8 reports its mix buffer size in 0x808 samples, i.e. a quarter of
++        //the 1024-sample default. Carts pace their own mixer against it.
++        case 109:
++            lua_pushnumber(L, 256);
+             return 1;
+         break;
+         //bytestream availability (dropped file or image. not supported)
+@@ -1143,14 +1149,32 @@ int poke(lua_State *L) {
+     return 0;
+ }
+ 
++//The optional second argument is a count: PICO-8 returns that many consecutive
++//values, each one word further along, and clamps the count the way peek() does.
++static int peekCount(lua_State *L) {
++    if (lua_gettop(L) < 2) {
++        return 1;
++    }
++    int count = (int)lua_tonumber(L,2);
++    if (count <= 0) {
++        return 1;
++    }
++    return count > 8192 ? 8192 : count;
++}
++
+ int peek2(lua_State *L) {
+     uint16_t addr = (uint16_t)lua_tointeger(L,1);
++    int numToReturn = peekCount(L);
+ 
+-    int16_t val = _vmForLuaApi->vm_peek2(addr);
++    lua_checkstack(L, numToReturn);
+ 
+-    lua_pushinteger(L, val);
++    for(int i = 0; i < numToReturn; i++) {
++        int16_t val = _vmForLuaApi->vm_peek2(addr + i * 2);
+ 
+-    return 1;
++        lua_pushinteger(L, val);
++    }
++
++    return numToReturn;
+ }
+ 
+ int poke2(lua_State *L) {
+@@ -1168,7 +1192,7 @@ int poke2(lua_State *L) {
+     if (numArgs > 2) {
+         for(int i = 1; i <= (numArgs - 2); i++) {
+             val = lua_tonumber(L, 2 + i);
+-            _vmForLuaApi->vm_poke2(dest + i, (int16_t)val);
++            _vmForLuaApi->vm_poke2(dest + i * 2, (int16_t)val);
+         }
+     }
+ 
+@@ -1177,12 +1201,17 @@ int poke2(lua_State *L) {
+ 
+ int peek4(lua_State *L) {
+     uint16_t addr = (uint16_t)lua_tointeger(L,1);
++    int numToReturn = peekCount(L);
+ 
+-    fix32 val = _vmForLuaApi->vm_peek4(addr);
++    lua_checkstack(L, numToReturn);
+ 
+-    lua_pushnumber(L, val);
++    for(int i = 0; i < numToReturn; i++) {
++        fix32 val = _vmForLuaApi->vm_peek4(addr + i * 4);
+ 
+-    return 1;
++        lua_pushnumber(L, val);
++    }
++
++    return numToReturn;
+ }
+ 
+ int poke4(lua_State *L) {
+@@ -1200,13 +1229,46 @@ int poke4(lua_State *L) {
+     if (numArgs > 2) {
+         for(int i = 1; i <= (numArgs - 2); i++) {
+             val = lua_tonumber(L, 2 + i);
+-            _vmForLuaApi->vm_poke4(dest + i, val);
++            _vmForLuaApi->vm_poke4(dest + i * 4, val);
+         }
+     }
+ 
+     return 0;
+ }
+ 
++//PICO-8 channel 0x808 is an audio sink: `len` bytes of 8-bit unsigned PCM read
++//from pico memory and queued for playback at 5512.5 Hz. Every other channel is
++//still a no-op here, and each returns the byte count as PICO-8 does.
++int serial(lua_State *L) {
++    int channel = (int)lua_tonumber(L,1);
++    int address = (int)lua_tonumber(L,2);
++    int len = (int)lua_tonumber(L,3);
++
++    if (len < 0) {
++        len = 0;
++    }
++
++    if (channel == 0x808) {
++        //Reading through vm_peek keeps the draw-state memory mapping honoured,
++        //the same way peek() would see it.
++        uint8_t samples[256];
++        for (int i = 0; i < len; i += (int)sizeof(samples)) {
++            int count = len - i;
++            if (count > (int)sizeof(samples)) {
++                count = (int)sizeof(samples);
++            }
++            for (int j = 0; j < count; j++) {
++                samples[j] = _vmForLuaApi->vm_peek(address + i + j);
++            }
++            _audioForLuaApi->pushSerialSoundSamples(samples, count);
++        }
++    }
++
++    lua_pushinteger(L, len);
++
++    return 1;
++}
++
+ int reload(lua_State *L) {
+     uint16_t dest = 0;
+     uint16_t src = 0;
+diff --git i/source/picoluaapi.h w/source/picoluaapi.h
+index d012fe9..d585f3c 100644
+--- i/source/picoluaapi.h
++++ w/source/picoluaapi.h
+@@ -84,6 +84,7 @@ int poke2(lua_State *L);
+ int peek4(lua_State *L);
+ int poke4(lua_State *L);
+ int reload(lua_State *L);
++int serial(lua_State *L);
+ 
+ //cart data
+ int cartdata(lua_State *L);
+diff --git i/source/vm.cpp w/source/vm.cpp
+index 63a6a63..5de73ba 100644
+--- i/source/vm.cpp
++++ w/source/vm.cpp
+@@ -131,6 +131,7 @@ bool _initializeLuaState(lua_State* luaState) {
+     lua_register(luaState, "peek4", peek4);
+     lua_register(luaState, "poke4", poke4); 
+     lua_register(luaState, "reload", reload);
++    lua_register(luaState, "serial", serial);
+     lua_register(luaState, "reset", reset);
+ 
+     //cart data
+@@ -497,7 +498,7 @@ bool Vm::LoadCart(const unsigned char* cartData, size_t size, bool loadBiosOnFai
+     CloseCart();
+ 
+     Logger_Write("Calling Cart Constructor\n");
+-    Cart *cart = new Cart(cartData, size);
++    Cart *cart = new Cart(cartData, size, _host->getCartDirectory());
+ 
+     _cartLoadError = cart->LoadError;
+ 
+@@ -643,7 +644,7 @@ bool Vm::Step(){
+         Logger_Write("Processing cart change, _pauseMenu = %s\n", _pauseMenu ? "true" : "false");
+         _prevCartKey = CurrentCartFilename();
+         if (_nextCartSize > 0){
+-            LoadCart(_nextCartData, _nextCartSize);
++            LoadCart(_nextCartData.data(), _nextCartSize);
+         }
+         else {
+             LoadCart(_nextCartKey);
+@@ -771,7 +772,7 @@ void Vm::CloseCart() {
+ 
+ void Vm::QueueCartChange(std::string filename){
+     _nextCartKey = filename;
+-    _nextCartData = nullptr;
++    _nextCartData.clear();
+     _nextCartSize = 0;
+     _cartChangeQueued = true;
+     _pauseMenu = false;
+@@ -781,7 +782,7 @@ void Vm::QueueCartChange(std::string filename){
+ 
+ void Vm::QueueCartChange(const unsigned char* cartData, size_t size){
+     _nextCartKey = "";
+-    _nextCartData = cartData;
++    _nextCartData.assign(cartData, cartData + size);
+     _nextCartSize = size;
+     _cartChangeQueued = true;
+     _pauseMenu = false;
+diff --git i/source/vm.h w/source/vm.h
+index 7206d7f..5381197 100644
+--- i/source/vm.h
++++ w/source/vm.h
+@@ -43,7 +43,9 @@ class Vm {
+     bool _clearInputOnResume;
+     string _prevCartKey;
+     string _nextCartKey;
+-    const unsigned char* _nextCartData;
++    //The bytes libretro hands to retro_load_game are only valid for that call,
++    //and the queued change is not acted on until the next frame, so keep a copy.
++    std::vector<unsigned char> _nextCartData;
+     size_t _nextCartSize;
+ 
+     string _cartLoadError;
