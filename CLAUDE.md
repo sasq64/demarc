@@ -5,9 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `demarc` is a command-line emulator frontend for watching demoscene productions: it takes files,
-URLs or a demo database, figures out which machine each one belongs to, downloads/loads the right
+or a demo database, figures out which machine each one belongs to, downloads/loads the right
 libretro core, and plays them full screen through a CRT/LCD shader — optionally several at once in
 a grid. Single Rust binary, Bevy 0.19 for the app/render loop, edition 2024.
+
+## Important Notes
+
+- Avoid long comments, and comments that describe current behaviour, even though there are many comments like that in the code.
+- When given a coding task, prefer simple small changes. Fix problems if needed, but don't embellish (don't add information to the UI unless told).
 
 ## Commands
 
@@ -20,14 +25,6 @@ cargo test <name>                     # single test / substring filter
 cargo test -- --ignored               # network, GPU and locally-built-core tests
 cargo clippy
 ```
-
-Handy `just` recipes: `just run|ami|c64|gb|iff|royale` (launch a sample), `just test`, `just clippy`,
-`just coverage`, `just win` (cross-build the Windows exe with cargo-xwin), `just pcem-core` / `just pc <cfg>`,
-`just release-check` / `release-local`, `just pal|ntsc|native` (flip the Hyprland monitor to 50/60Hz —
-demos want 50Hz).
-
-Ignored tests are ignored for a reason: they hit the network, need a GPU adapter, or need a locally
-built PCem core plus BIOS ROMs. Don't un-ignore them to "fix" a red run.
 
 `--speed-test` runs emulation unthrottled for a fixed window and prints a frame count; it's the
 benchmark to quote when changing anything in the emulation or upload path.
@@ -128,12 +125,7 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 - Unit tests live beside the code as a `mod tests` declared out of line: a `tests/` directory next
   to the source file, holding one `<module>_tests.rs` per module, pulled in with
-  `#[cfg(test)] #[path = "tests/<module>_tests.rs"] mod tests;` at the bottom of the file (see
-  `src/emu_file.rs` → `src/tests/emu_file_tests.rs`). They are still inner modules, so `use super::*`
-  and access to private items work as before.
-- Bevy systems: `#![allow(clippy::too_many_arguments, clippy::type_complexity)]` is set in `main.rs`.
-- Prefer `set_if_neq` in per-frame systems — change detection drives real work in `post_process.rs`.
-- Backends must not block the frontend; anything slow goes on a worker thread or through `jobs.rs`.
+  `#[cfg(test)] #[path = "tests/<module>_tests.rs"] mod tests;` at the bottom of the file
 
 ## Docs worth reading before touching those areas
 
