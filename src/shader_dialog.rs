@@ -28,6 +28,12 @@
 //! The first collection is always `Default`: whatever shader `--shader` names,
 //! which is one preset with nothing to browse, so it has no rows under it.
 //!
+//! Under the combo boxes, folded away, come the selected preset's own
+//! `#pragma parameter` declarations, one editor each ([`preset_params`]),
+//! drawn with the settings dialog's widgets and written straight to the filter
+//! chain. A description ending in `A | B | C` that covers the parameter's whole
+//! range is drawn as a combo box instead ([`split_options`]).
+//!
 //! Like the settings dialog, a pick takes effect the moment it is made: the
 //! selection is composed back into a path and written straight to
 //! [`ShaderPath`], which the render world extracts.
@@ -38,7 +44,9 @@
 //! that logic and knows nothing about egui; the tests exercise it against a
 //! tree they build.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy_egui::{
@@ -55,7 +63,7 @@ use crate::post_process::{ShaderEffect, ShaderPath};
 // is the settings dialog's, so the two look like one dialog with two contents.
 use crate::egui_settings::{
     BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
-    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+    TITLE_SIZE, WIDGET_WIDTH, close_button, draw_number, scale_widgets,
 };
 
 /// The file the collections are read from, relative to a search root. Its own
@@ -256,7 +264,11 @@ impl PresetBrowser {
             return false;
         };
         for (level, want) in wanted.iter().enumerate() {
-            let Some(index) = self.levels[level].choices.iter().position(|c| c.raw == *want) else {
+            let Some(index) = self.levels[level]
+                .choices
+                .iter()
+                .position(|c| c.raw == *want)
+            else {
                 // Everything above matched and is selected; the levels below are
                 // whatever that leaves, which is a valid preset either way.
                 return false;
@@ -508,6 +520,112 @@ fn parse_collections(root: &Path, text: &str) -> Vec<Collection> {
 }
 
 // ---------------------------------------------------------------------------
+// Preset parameters
+// ---------------------------------------------------------------------------
+
+/// One `#pragma parameter` of the selected preset, as the shader declares it
+/// and with whatever value is in force.
+struct ShaderParam {
+    /// The uniform name, which is what the filter chain is set by.
+    name: String,
+    /// The description the pragma gives, which is what the row is labelled
+    /// with, with any option list taken off it.
+    label: String,
+    /// The choices the description listed, empty for a plain number.
+    options: Vec<String>,
+    value: f32,
+    /// What "Reset" puts the parameter back to.
+    default: f32,
+    min: f32,
+    max: f32,
+    step: f32,
+}
+
+/// The option list a description ends in, if the parameter is a choice of
+/// exactly those: `"Compare Area:  LEFT | RIGHT | TOP | BOTTOM"` over `0..3`
+/// step `1` is four options, and reads as a combo box rather than a number.
+/// Returns the description without the list, and the options.
+fn split_options(description: &str, min: f32, max: f32, step: f32) -> (String, Vec<String>) {
+    let plain = || (description.to_owned(), Vec::new());
+    let text = description.trim_end();
+    let Some(colon) = text.rfind(':') else {
+        return plain();
+    };
+    let list = &text[colon + 1..];
+    if !list.contains('|') {
+        return plain();
+    }
+    let options: Vec<String> = list.split('|').map(|o| o.trim().to_owned()).collect();
+    if options.iter().any(String::is_empty) {
+        return plain();
+    }
+    // Only when the options are exactly the values the parameter can take.
+    let whole = step >= 1.0 && step.fract() == 0.0;
+    if !whole || (max - min) / step + 1.0 != options.len() as f32 {
+        return plain();
+    }
+    (text[..colon].to_owned(), options)
+}
+
+/// Every parameter the preset's passes declare, deduplicated (a parameter
+/// shared by several passes is one row) and ordered by pass, then by label.
+///
+/// The values are the ones the chain starts with: the shader's initial value,
+/// overridden by the preset's own `#parameter` lines -- the same precedence
+/// librashader's `RuntimeParameters` applies when it builds the chain.
+fn preset_params(path: &Path) -> Vec<ShaderParam> {
+    use librashader::preprocess::ShaderSource;
+    use librashader::presets::{ShaderFeatures, ShaderPreset};
+
+    let preset = match ShaderPreset::try_parse(path, ShaderFeatures::NONE) {
+        Ok(preset) => preset,
+        Err(err) => {
+            warn!("{}: {err}", path.display());
+            return Vec::new();
+        }
+    };
+    let mut params: Vec<ShaderParam> = Vec::new();
+    for pass in &preset.passes {
+        let Ok(source) = ShaderSource::load(&pass.path, preset.features) else {
+            continue;
+        };
+        let mut declared: Vec<ShaderParam> = source
+            .parameters
+            .values()
+            // A pragma with a blank description is one of the spacers the Mega
+            // Bezel packs lay their RetroArch menu out with; there is nothing
+            // to label a row with.
+            .filter(|p| !p.description.trim().is_empty())
+            .filter(|p| !params.iter().any(|old| old.name == p.id.as_ref()))
+            .map(|p| {
+                let (label, options) = split_options(&p.description, p.minimum, p.maximum, p.step);
+                ShaderParam {
+                    name: p.id.to_string(),
+                    label,
+                    options,
+                    value: p.initial,
+                    default: p.initial,
+                    min: p.minimum,
+                    max: p.maximum,
+                    step: p.step,
+                }
+            })
+            .collect();
+        // The source hands them over in a hash map, so a pass's parameters have
+        // no order of their own to keep.
+        declared.sort_by(|a, b| a.label.cmp(&b.label));
+        params.extend(declared);
+    }
+    for over in &preset.parameters {
+        if let Some(param) = params.iter_mut().find(|p| p.name == over.name.as_ref()) {
+            param.value = over.value;
+            param.default = over.value;
+        }
+    }
+    params
+}
+
+// ---------------------------------------------------------------------------
 // The dialog
 // ---------------------------------------------------------------------------
 
@@ -525,6 +643,12 @@ pub struct ShaderDialog {
     collections: Vec<Collection>,
     /// Index into `collections`; [`DEFAULT`] until another is picked.
     selected: usize,
+    /// The parameters of the preset now on screen, one row each under the
+    /// combo boxes.
+    params: Vec<ShaderParam>,
+    /// The preset `params` was read from, so it is re-read once per preset
+    /// rather than once per frame.
+    params_for: Option<PathBuf>,
 }
 
 impl ShaderDialog {
@@ -558,6 +682,10 @@ enum Picked {
     Collection(usize),
     /// `(level, index)` of one of the level combo boxes below it.
     Level(usize, usize),
+    /// `(parameter, value)` of one of the preset's parameter editors.
+    Param(usize, f32),
+    /// The "Reset" button: every parameter back to the preset's own value.
+    Reset,
 }
 
 pub struct ShaderDialogPlugin;
@@ -626,6 +754,7 @@ fn shader_dialog_ui(
     let mut picked = None;
     let default = args.shader.unwrap_or_default();
     let composed = composed_path(&dialog, default);
+    refresh_params(&mut dialog, &shader_path);
 
     egui::Area::new(egui::Id::new("shader_dialog"))
         .order(egui::Order::Foreground)
@@ -666,6 +795,7 @@ fn shader_dialog_ui(
         Some(Picked::Collection(index)) => {
             dialog.selected = index;
             apply(&dialog, &mut shader_path, &mut render, default);
+            refresh_params(&mut dialog, &shader_path);
         }
         Some(Picked::Level(level, index)) => {
             let selected = dialog.selected;
@@ -675,6 +805,19 @@ fn shader_dialog_ui(
                 browser.select(level, index);
             }
             apply(&dialog, &mut shader_path, &mut render, default);
+            refresh_params(&mut dialog, &shader_path);
+        }
+        Some(Picked::Param(index, value)) => {
+            if let Some(param) = dialog.params.get_mut(index) {
+                param.value = value;
+                Arc::make_mut(&mut shader_path.params).insert(param.name.clone(), value);
+            }
+        }
+        Some(Picked::Reset) => {
+            for param in &mut dialog.params {
+                param.value = param.default;
+            }
+            shader_path.params = Arc::new(HashMap::new());
         }
         None => {}
     }
@@ -694,6 +837,8 @@ fn apply(
     render: &mut RenderSettings,
     default: ShaderArg,
 ) {
+    // The overrides named the old preset's parameters.
+    shader_path.params = Arc::new(HashMap::new());
     match dialog.browser().and_then(PresetBrowser::path) {
         Some(path) => {
             shader_path.effect = ShaderEffect::Slangp(path);
@@ -705,6 +850,21 @@ fn apply(
             render.crt_effect = default != ShaderArg::None;
         }
     }
+}
+
+/// Re-reads the parameter rows when the preset on screen has changed, which is
+/// a preset pick and (once) the open. Reading them means parsing the preset and
+/// preprocessing every pass it names, so it is kept off the per-frame path.
+fn refresh_params(dialog: &mut ShaderDialog, shader_path: &ShaderPath) {
+    let preset = match &shader_path.effect {
+        ShaderEffect::Slangp(path) => Some(path.clone()),
+        ShaderEffect::Wgsl(_) => None,
+    };
+    if preset == dialog.params_for {
+        return;
+    }
+    dialog.params = preset.as_deref().map(preset_params).unwrap_or_default();
+    dialog.params_for = preset;
 }
 
 /// What the dialog prints under the combo boxes: the preset the selection
@@ -740,18 +900,69 @@ fn dialog_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
             }
             // The levels of the selected collection, named after its pattern's
             // tags. The default collection has none, and shows this row alone.
-            let Some(browser) = dialog.browser() else {
-                return;
-            };
-            for (level, name) in browser.names.iter().enumerate() {
-                if let Some(index) = row(ui, name, |ui| {
-                    draw_level(ui, level, &browser.levels[level])
-                }) {
-                    picked = Some(Picked::Level(level, index));
+            if let Some(browser) = dialog.browser() {
+                for (level, name) in browser.names.iter().enumerate() {
+                    if let Some(index) =
+                        row(ui, name, |ui| draw_level(ui, level, &browser.levels[level]))
+                    {
+                        picked = Some(Picked::Level(level, index));
+                    }
                 }
             }
         });
+    if !dialog.params.is_empty() {
+        ui.add_space(ROW_SPACING.y);
+        picked = params_body(ui, dialog).or(picked);
+    }
     picked
+}
+
+/// The parameters the preset itself declares, folded away because a Mega Bezel
+/// preset declares hundreds of them.
+fn params_body(ui: &mut Ui, dialog: &ShaderDialog) -> Option<Picked> {
+    let mut picked = None;
+    egui::CollapsingHeader::new(egui::RichText::new("Parameters").size(LABEL_SIZE))
+        .id_salt("shader_params")
+        .show(ui, |ui| {
+            if ui
+                .button(egui::RichText::new("Reset").size(BODY_SIZE))
+                .clicked()
+            {
+                picked = Some(Picked::Reset);
+            }
+            egui::Grid::new("shader_param_grid")
+                .num_columns(2)
+                .spacing(ROW_SPACING)
+                .show(ui, |ui| {
+                    for (index, param) in dialog.params.iter().enumerate() {
+                        // Edited on a copy and reported back, because the dialog
+                        // is borrowed for as long as the panel is being drawn.
+                        let mut value = param.value;
+                        let changed = row(ui, &param.label, |ui| {
+                            draw_param(ui, index, param, &mut value)
+                        });
+                        if changed {
+                            picked = Some(Picked::Param(index, value));
+                        }
+                    }
+                });
+        });
+    picked
+}
+
+/// One parameter editor: the combo box its description listed the options of,
+/// or the settings dialog's number widget.
+fn draw_param(ui: &mut Ui, index: usize, param: &ShaderParam, value: &mut f32) -> bool {
+    if param.options.is_empty() {
+        return draw_number(ui, value, param.min, param.max, param.step);
+    }
+    let labels: Vec<&str> = param.options.iter().map(String::as_str).collect();
+    let selected = ((*value - param.min) / param.step).round().max(0.0) as usize;
+    let Some(index) = combo(ui, &format!("param{index}"), &labels, selected) else {
+        return false;
+    };
+    *value = param.min + index as f32 * param.step;
+    true
 }
 
 /// One row of the grid: its label on the left, whatever `widget` draws on the

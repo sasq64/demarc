@@ -113,6 +113,10 @@ pub struct ShaderPath {
     /// kicks in exactly when the view shows the source *smaller* than its
     /// native resolution; `0` disables the downsampler entirely.
     pub downsample_limit: f32,
+    /// Effect-preset parameter values the shader dialog has changed, applied to
+    /// the chain before each frame it draws. Behind an `Arc` because the whole
+    /// resource is cloned into the render world once a frame.
+    pub params: Arc<HashMap<String, f32>>,
 }
 
 pub struct PostProcessPlugin {
@@ -711,6 +715,17 @@ fn post_process_pass(
                     chain
                         .parameters()
                         .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
+                    // What the shader dialog has changed, applied after the
+                    // nudge so an explicit triad size still wins.
+                    if !shader_path.params.is_empty() {
+                        chain.parameters().update_parameters(|values| {
+                            for (name, value) in shader_path.params.iter() {
+                                if let Some(slot) = values.get_mut::<str>(name) {
+                                    *slot = *value;
+                                }
+                            }
+                        });
+                    }
                 }
                 let lr_size = Size::new(inter_size.x, inter_size.y);
                 let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);

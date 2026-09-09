@@ -64,7 +64,10 @@ fn labels(level: &Level) -> Vec<&str> {
 fn the_tags_name_the_levels() {
     let pack = Pack::new("tags", SAMPLE);
     let browser = pack.browser();
-    assert_eq!(browser.names, ["System", "Monitor", "Shader", "Type", "Time"]);
+    assert_eq!(
+        browser.names,
+        ["System", "Monitor", "Shader", "Type", "Time"]
+    );
 }
 
 /// A fresh browser reads only the top level's directory and picks the first of
@@ -191,10 +194,7 @@ fn a_single_wildcard_is_a_single_level() {
     let browser = pack.browse("border/<Type>.slangp");
     assert_eq!(browser.names, ["Type"]);
     assert_eq!(raws(&browser.levels[0]), ["gb-pocket", "gg"]);
-    assert_eq!(
-        browser.path(),
-        Some(pack.0.join("border/gb-pocket.slangp"))
-    );
+    assert_eq!(browser.path(), Some(pack.0.join("border/gb-pocket.slangp")));
 }
 
 /// Opening the dialog over a running preset selects every level of it.
@@ -419,4 +419,62 @@ fn hidden_directories_are_skipped() {
     );
     let browser = pack.browser();
     assert_eq!(raws(&browser.levels[0]), ["Machine"]);
+}
+
+/// The parameter rows of a real preset, which is also where the cost of reading
+/// them shows: a Mega Bezel preset is ~40 passes to preprocess.
+///
+/// `cargo test reads_preset_parameters -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs the shaders/ working checkout"]
+fn reads_preset_parameters() {
+    let preset = Path::new(
+        "shaders/shaders_slang/bezel/Mega_Bezel/Presets/Base_CRT_Presets/MBZ__0__SMOOTH-ADV__GDV.slangp",
+    );
+    let start = std::time::Instant::now();
+    let params = preset_params(preset);
+    println!("{} parameters in {:.2?}", params.len(), start.elapsed());
+    assert!(!params.is_empty());
+    for param in params.iter().take(5) {
+        println!(
+            "{} [{}..{} /{}]",
+            param.name, param.min, param.max, param.step
+        );
+    }
+    assert!(params.iter().all(|p| p.min <= p.max));
+    // Every name is a row of its own.
+    let mut names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+    names.sort_unstable();
+    let count = names.len();
+    names.dedup();
+    assert_eq!(names.len(), count);
+}
+
+/// A description whose tail lists exactly the values the parameter can take is
+/// a combo box, and the list is not part of the row's label.
+#[test]
+fn an_option_list_becomes_choices() {
+    let (label, options) = split_options(
+        "          Compare Area:  LEFT | RIGHT | TOP | BOTTOM",
+        0.0,
+        3.0,
+        1.0,
+    );
+    assert_eq!(label, "          Compare Area");
+    assert_eq!(options, ["LEFT", "RIGHT", "TOP", "BOTTOM"]);
+
+    // A list that does not cover the range, a fractional step and a plain
+    // description are all left as numbers.
+    assert_eq!(
+        split_options("Mode: A | B", 0.0, 3.0, 1.0).1,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        split_options("Mode: A | B", 0.0, 1.0, 0.5).1,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        split_options("Brightness", 0.0, 1.0, 0.01).1,
+        Vec::<String>::new()
+    );
 }

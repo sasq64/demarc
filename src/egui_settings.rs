@@ -449,6 +449,36 @@ macro_rules! drag_arms {
     }};
 }
 
+/// The editor for a bare `f32` that carries its own bounds and step: a checkbox
+/// for a 0/1 flag, a whole-number drag for an integral step, a fractional drag
+/// otherwise.
+///
+/// Shared with the shader dialog, whose slangp parameters are all `f32` with
+/// exactly this metadata -- there is no type to derive a widget from there, so
+/// the step is what stands in for one.
+pub(crate) fn draw_number(ui: &mut Ui, value: &mut f32, min: f32, max: f32, step: f32) -> bool {
+    let whole = step >= 1.0 && step.fract() == 0.0;
+    if whole && min == 0.0 && max == 1.0 {
+        let mut on = *value >= 0.5;
+        if !ui.checkbox(&mut on, "").changed() {
+            return false;
+        }
+        *value = f32::from(u8::from(on));
+        return true;
+    }
+    let speed = f64::from(max - min).abs() / 300.0;
+    let range = Some(Range::with_speed(min, max, speed.max(f64::from(step))));
+    if !whole {
+        return drag(ui, value, range, speed);
+    }
+    let mut whole_value = value.round() as i64;
+    if !drag(ui, &mut whole_value, range, speed) {
+        return false;
+    }
+    *value = whole_value as f32;
+    true
+}
+
 fn draw_int(ui: &mut Ui, value: &mut dyn PartialReflect, range: Option<Range>) -> bool {
     drag_arms!(
         ui, value, range, 1.0, i8, i16, i32, i64, isize, u8, u16, u32, u64, usize

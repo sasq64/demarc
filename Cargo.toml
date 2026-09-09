@@ -70,6 +70,7 @@ librashader = {
   default-features = false,
   features = [
     "presets",
+    "preprocess",
     "reflect-naga",
     "runtime-wgpu",
   ]

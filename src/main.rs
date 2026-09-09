@@ -380,6 +380,7 @@ fn main() {
         },
         downsample: system_dir().join(DOWNSAMPLE_PRESET),
         downsample_limit: args.downsample,
+        params: Default::default(),
     };
 
     let render_settings = RenderSettings {
