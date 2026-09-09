@@ -362,6 +362,8 @@ impl PresetBrowser {
             .flatten()
             .filter(|e| e.path().is_dir() != file)
             .filter_map(|e| e.file_name().into_string().ok())
+            // A checkout's `.git` sorts first and holds no presets.
+            .filter(|name| !name.starts_with('.'))
             .collect();
         names.sort();
         names

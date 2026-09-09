@@ -405,3 +405,18 @@ fn the_installed_collections_browse() {
     );
     assert_eq!(browser.path(), Some(wanted));
 }
+
+/// A dot directory sorts before every name and holds no presets, so a `.git` in
+/// a shader checkout must not become the first choice of its level.
+#[test]
+fn hidden_directories_are_skipped() {
+    let pack = Pack::new(
+        "hidden",
+        &[
+            ".git/objects/Monitor/Flavour/NEAR_DAY.slangp",
+            "Machine/Monitor/Flavour/NEAR_DAY.slangp",
+        ],
+    );
+    let browser = pack.browser();
+    assert_eq!(raws(&browser.levels[0]), ["Machine"]);
+}
