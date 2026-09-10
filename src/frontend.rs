@@ -168,13 +168,14 @@ fn spawn_emulator(
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
             used: UVec2::ZERO,
-        },
-        // The actual rectangle is set from the live window size by
-        // `update_view_rects`, before anything reads it.
-        ViewRect {
-            position: UVec2::ZERO,
-            size: UVec2::ZERO,
-            active: true,
+            // The actual rectangle is set from the live window size by
+            // `update_view_rects`, before anything reads it.
+            view: ViewRect {
+                position: UVec2::ZERO,
+                size: UVec2::ZERO,
+                active: true,
+            },
+            alpha: 1.0,
         },
         EmuView { index },
     ));
@@ -192,7 +193,7 @@ fn update_view_rects(
     window: Option<Single<&Window, With<PrimaryWindow>>>,
     headless: Option<Res<HeadlessTarget>>,
     mut settings: ResMut<AppSettings>,
-    mut views: Query<(&EmuView, Option<&GridCell>, &mut ViewRect)>,
+    mut views: Query<(&EmuView, Option<&GridCell>, &mut PostProcess)>,
 ) {
     let window = window.as_deref().copied();
     let Some(size) = screen_size(window, headless.as_deref()) else {
@@ -207,14 +208,14 @@ fn update_view_rects(
     settings.mouse_index = None;
 
     let fsize = size.as_vec2();
-    for (view, cell, mut rect) in &mut views {
+    for (view, cell, mut pp) in &mut views {
         let Some(cell) = cell else {
             // No grid: this view owns the whole window, always.
-            rect.set_if_neq(ViewRect {
+            pp.view = ViewRect {
                 position: UVec2::ZERO,
                 size,
                 active: true,
-            });
+            };
             continue;
         };
         // When maximized, the focused emulator fills the whole window and the
@@ -240,13 +241,11 @@ fn update_view_rects(
             settings.mouse_index = Some(99999);
         }
 
-        // Guarded so we don't retrigger change detection (and a re-extract)
-        // every frame when nothing moved.
-        rect.set_if_neq(ViewRect {
+        pp.view = ViewRect {
             position,
             size: vp_size,
             active,
-        });
+        };
     }
 }
 
@@ -450,13 +449,12 @@ fn handle_loading(
 /// sits outside it — including in the letterbox bars, where it is off-image.
 fn cursor_frame_uv(
     pos: Option<Vec2>,
-    view_rect: &ViewRect,
     pp: &PostProcess,
     images: &Assets<Image>,
     scale_mode: ScaleMode,
 ) -> Option<Vec2> {
     let pos = pos?;
-    let rect = view_rect.rect()?;
+    let rect = pp.view.rect()?;
     let vp_min = rect.min.as_vec2();
     let vp_size = rect.size().as_vec2();
     if vp_size.x <= 0.0 || vp_size.y <= 0.0 {
@@ -483,7 +481,7 @@ fn cursor_frame_uv(
 }
 
 fn run_frontend(
-    mut emus: Query<(&mut Emulator, &EmuView, &ViewRect, &mut PostProcess)>,
+    mut emus: Query<(&mut Emulator, &EmuView, &mut PostProcess)>,
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
     render: Res<RenderSettings>,
@@ -520,7 +518,7 @@ fn run_frontend(
 
     let now = time.elapsed_secs_f64();
 
-    for (mut emu, view, view_rect, mut pp) in &mut emus {
+    for (mut emu, view, mut pp) in &mut emus {
         let i = view.index;
         if images.get(&emu.image).is_none_or(|i| i.data.is_none()) {
             continue;
@@ -572,7 +570,7 @@ fn run_frontend(
         }
 
         if (settings.all_emus || i == settings.current_emu) && !no_input && settings.maximized {
-            let abs = cursor_frame_uv(cursor, view_rect, &pp, &images, render.scale_mode);
+            let abs = cursor_frame_uv(cursor, &pp, &images, render.scale_mode);
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         emu.run(&time);

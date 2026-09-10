@@ -20,7 +20,8 @@ use bevy::{
         render_asset::RenderAssets,
         render_resource::{
             AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+            BindGroupLayoutEntries, BlendComponent, BlendFactor, BlendOperation, BlendState,
+            CachedRenderPipelineId, ColorTargetState, ColorWrites,
             Extent3d, FragmentState, PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor,
             Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType,
             TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
@@ -133,7 +134,6 @@ impl Plugin for PostProcessPlugin {
                 ExtractComponentPlugin::<PostProcess>::default(),
                 ExtractComponentPlugin::<PostProcessUniform>::default(),
                 ExtractComponentPlugin::<BorderScissor>::default(),
-                ExtractComponentPlugin::<ViewRect>::default(),
                 ExtractComponentPlugin::<EmuCamera>::default(),
                 UniformComponentPlugin::<PostProcessUniform>::default(),
             ))
@@ -204,6 +204,9 @@ pub struct PostProcess {
     /// [`Backend::get_used_frame_size`](crate::backend::Backend::get_used_frame_size).
     /// Zero, or the whole texture, means there is no border to crop.
     pub used: UVec2,
+    pub view: ViewRect,
+    /// Opacity of the view over the clear color: `0` skips it, `1` draws it unblended.
+    pub alpha: f32,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -237,9 +240,9 @@ pub struct BorderScissor(pub Option<URect>);
 /// the entire 2D pipeline — extraction, view uniforms, main pass, tonemapping,
 /// upscaling, one render pass each — ran once per cell. A grid now has a single
 /// camera and every view is a plain entity contributing one quad to
-/// [`post_process_pass`]; this component is what that camera viewport used to
-/// be, and is written from the window size by the frontend.
-#[derive(Component, Clone, Copy, PartialEq, Eq, ExtractComponent)]
+/// [`post_process_pass`]; this is what that camera viewport used to be, and is
+/// written from the window size by the frontend.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ViewRect {
     /// Top-left corner in physical pixels.
     pub position: UVec2,
@@ -280,15 +283,13 @@ fn update_post_process_uniform(
     mut query: Query<(
         Entity,
         &PostProcess,
-        &ViewRect,
         Option<&mut PostProcessUniform>,
         Option<&mut BorderScissor>,
     )>,
 ) {
-    for (entity, pp, view_rect, existing, existing_scissor) in &mut query {
-        let (uniform, image) =
-            compute_uniform(pp, &settings, app_settings.crt_limit, view_rect, &images);
-        let scissor = BorderScissor(compute_scissor(image, &settings, view_rect));
+    for (entity, pp, existing, existing_scissor) in &mut query {
+        let (uniform, image) = compute_uniform(pp, &settings, app_settings.crt_limit, &images);
+        let scissor = BorderScissor(compute_scissor(image, &settings, &pp.view));
         match existing {
             Some(mut u) => {
                 u.set_if_neq(uniform);
@@ -343,13 +344,12 @@ fn compute_uniform(
     pp: &PostProcess,
     settings: &RenderSettings,
     crt_limit: f32,
-    view_rect: &ViewRect,
     images: &Assets<Image>,
 ) -> (PostProcessUniform, (Vec2, Vec2)) {
     // Use this view's rectangle, not the whole window: in grid mode every cell
     // gets its own sub-rect of the one camera, so aspect must be computed
     // against that quadrant. A single emulator's rect is the whole window.
-    let viewport = view_rect.rect().map(|r| r.size());
+    let viewport = pp.view.rect().map(|r| r.size());
     let src = images.get(&pp.source).map(|source| source.size());
     let (mut uv_scale, mut uv_offset) = match (viewport, src) {
         (Some(target), Some(src)) => view_transform(
@@ -593,7 +593,6 @@ fn post_process_pass(
         &PostProcessUniform,
         &DynamicUniformIndex<PostProcessUniform>,
         &BorderScissor,
-        &ViewRect,
     )>,
     mut pipeline_resource: ResMut<PostProcessPipeline>,
     pipeline_cache: Res<PipelineCache>,
@@ -611,15 +610,18 @@ fn post_process_pass(
     // Both of these are no-ops unless the settings dialog has just changed the
     // shader: the pipeline is already in the map, and the chains already point
     // at this preset.
-    let pipeline_id = pipeline_resource.pipeline(
-        &pipeline_cache,
-        &asset_server,
-        shader_path.effect.composite_shader(),
-    );
+    let composite_shader = shader_path.effect.composite_shader();
+    let opaque_id =
+        pipeline_resource.pipeline(&pipeline_cache, &asset_server, composite_shader, false);
+    let blended_id =
+        pipeline_resource.pipeline(&pipeline_cache, &asset_server, composite_shader, true);
     chains.set_effect(shader_path.effect.slangp());
 
     // Not compiled yet — the first frames of a run, and of a shader change.
-    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_id) else {
+    let (Some(opaque), Some(blended)) = (
+        pipeline_cache.get_render_pipeline(opaque_id),
+        pipeline_cache.get_render_pipeline(blended_id),
+    ) else {
         return;
     };
 
@@ -640,9 +642,13 @@ fn post_process_pass(
         .map(|size| URect::from_corners(UVec2::ZERO, size));
 
     let mut quads: Vec<Quad> = Vec::with_capacity(views.iter().len());
-    'views: for (post_process, uniform, uniform_index, border_scissor, view_rect) in &views {
+    'views: for (post_process, uniform, uniform_index, border_scissor) in &views {
+        let alpha = post_process.alpha.min(1.0);
+        if alpha <= 0.0 {
+            continue;
+        }
         // Inactive (another view is maximized over this one) or not sized yet.
-        let Some(mut rect) = view_rect.rect() else {
+        let Some(mut rect) = post_process.view.rect() else {
             continue;
         };
         if let Some(framebuffer) = framebuffer {
@@ -826,6 +832,7 @@ fn post_process_pass(
             uniform_index: uniform_index.index(),
             rect,
             scissor,
+            alpha,
         });
     }
 
@@ -842,8 +849,14 @@ fn post_process_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    render_pass.set_render_pipeline(pipeline);
     for quad in &quads {
+        if quad.alpha < 1.0 {
+            render_pass.set_render_pipeline(blended);
+            let a = quad.alpha;
+            render_pass.set_blend_constant(LinearRgba::new(a, a, a, a));
+        } else {
+            render_pass.set_render_pipeline(opaque);
+        }
         // The viewport maps the fullscreen triangle onto this view's rectangle
         // (clip-space clipping keeps it there), the scissor trims it to the
         // image when the bars are meant to keep the clear color.
@@ -867,6 +880,8 @@ struct Quad {
     rect: URect,
     /// Sub-rect of `rect` the draw is clipped to (see [`BorderScissor`]).
     scissor: URect,
+    /// In `(0, 1]`; below `1` the quad is drawn with the blended pipeline.
+    alpha: f32,
 }
 
 #[derive(Resource)]
@@ -880,11 +895,9 @@ struct PostProcessPipeline {
     /// The vertex half of every composite pipeline; only the fragment shader
     /// differs between them.
     fullscreen: FullscreenShader,
-    /// Composite pipelines by shader asset path, queued the first time that
-    /// shader is selected. Normally holds exactly one entry — the only way to
-    /// gain another is to pick a different backend in the settings dialog, and
-    /// there are three shaders in total to pick from.
-    pipelines: HashMap<String, CachedRenderPipelineId>,
+    /// Composite pipelines by shader asset path and whether they blend by the
+    /// blend constant, queued the first time that shader is selected.
+    pipelines: HashMap<(String, bool), CachedRenderPipelineId>,
 }
 
 impl PostProcessPipeline {
@@ -897,12 +910,21 @@ impl PostProcessPipeline {
         cache: &PipelineCache,
         assets: &AssetServer,
         asset_path: &str,
+        blended: bool,
     ) -> CachedRenderPipelineId {
-        if let Some(id) = self.pipelines.get(asset_path) {
+        let key = (asset_path.to_owned(), blended);
+        if let Some(id) = self.pipelines.get(&key) {
             return *id;
         }
+        // The blend constant carries the view's alpha, so any composite shader
+        // (and whatever a filter chain rendered) fades without knowing about it.
+        let fade = BlendComponent {
+            src_factor: BlendFactor::Constant,
+            dst_factor: BlendFactor::OneMinusConstant,
+            operation: BlendOperation::Add,
+        };
         let id = cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some(format!("composite:{asset_path}").into()),
+            label: Some(format!("composite:{asset_path}:{blended}").into()),
             layout: vec![self.layout.clone()],
             vertex: self.fullscreen.to_vertex_state(),
             fragment: Some(FragmentState {
@@ -911,14 +933,17 @@ impl PostProcessPipeline {
                     // Matches the view target's main texture format (Bevy's former
                     // `TextureFormat::bevy_default()`, now deprecated).
                     format: TARGET_FORMAT,
-                    blend: None,
+                    blend: blended.then_some(BlendState {
+                        color: fade,
+                        alpha: fade,
+                    }),
                     write_mask: ColorWrites::ALL,
                 })],
                 ..default()
             }),
             ..default()
         });
-        self.pipelines.insert(asset_path.to_owned(), id);
+        self.pipelines.insert(key, id);
         id
     }
 }

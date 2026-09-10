@@ -202,3 +202,17 @@ desktop), the faithful alternative is what hatari does internally, in `tos.c`:
 write the boot drive's INF file — `NEWDESK.INF` for TOS >= 2.00, `DESKTOP.INF`
 below — with a `#Z 01 C:\PROG.PRG@` line, and the desktop launches it from its
 own directory.
+
+
+
+# FADE / CROSS-FADE
+
+Emu 0 main, Emu 1 next
+
+load into 1, wait done
+fade 0 and 1
+OR
+scroll 0 and 1
+...
+crossfade-shader ?
+

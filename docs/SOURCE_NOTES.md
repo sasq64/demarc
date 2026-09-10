@@ -90,7 +90,7 @@ cheap `Arc` clone; building it over the whole list is the picker's expensive ste
 `RetroPlugin`: spawns one `Emulator` entity per view, lays out the grid, runs `run_retro`.
 
 **Views are not cameras.** One `EmuCamera` composites everything (see `post_process.rs`); a view is
-an entity holding `PostProcess` + `ViewRect`. A separate full-res UI camera sits on top — egui draws
+an entity holding a `PostProcess`, whose `ViewRect` is its rectangle of the window. A separate full-res UI camera sits on top — egui draws
 into its pass, so the HUD lands over the emulators.
 
 **`GridCell`** holds the view's rect as normalized `[0,1]` window fractions; `update_view_rects`
