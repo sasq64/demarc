@@ -180,7 +180,7 @@ const HOTKEYS: &[KeyMapping] = &[
 
 /// Returns the [`Cmd`] bound to whichever hotkey was just pressed this frame,
 /// or `None` if no hotkey was pressed.
-pub fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
+fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
     HOTKEYS
         .iter()
@@ -646,16 +646,9 @@ fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                // Build the trigram index once, on first open, and reuse it on
-                // every open after that — `files` never changes, and indexing
-                // the whole list is what made reopening the picker slow. The
-                // clone below is a cheap `Arc` bump, not a re-index.
                 if settings.file_source.is_none() {
                     settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
-                // The info field wraps to the width of the list box, which is
-                // as wide as the window is tall; this is what the source
-                // truncates the (unwrappable) URL line to.
                 let size = window.resolution.size();
                 settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
 
@@ -665,15 +658,9 @@ fn handle_cmd(
                 });
             }
             Cmd::Settings => {
-                // Opens over a copy of the last-applied values; the dialog
-                // sends a `SettingsApplied` back on every edit, which is what
-                // puts it into effect — see `demarc_settings::apply_settings`.
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
             }
             Cmd::ShaderDialog => {
-                // Its own dialog rather than a field of `DemoSettings`: the
-                // choices are directories, not an enum's variants — see
-                // `crate::shader_dialog`.
                 show_shader.write(ShowShaderDialog);
             }
             _ => {}
