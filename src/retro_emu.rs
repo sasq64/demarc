@@ -96,6 +96,10 @@ pub struct RetroState {
     pub frame_height: usize,
     /// Display aspect ratio reported by the core (0.0 if unknown).
     pub aspect_ratio: f32,
+    /// Base geometry the core last announced: the part of the frame it actually
+    /// fills. 0 until a core says otherwise.
+    pub used_width: usize,
+    pub used_height: usize,
     /// Audio sample rate reported by the core, in Hz (0.0 if unknown).
     pub sample_rate: f64,
     pixel_format: c_int,
@@ -104,6 +108,13 @@ pub struct RetroState {
     /// Joypad button state as a bitmask per port (index 0 = Joystick #1,
     /// 1 = Joystick #2). Bit `n` corresponds to `RETRO_DEVICE_ID_JOYPAD_*`.
     joypad: [u16; 2],
+}
+
+impl RetroState {
+    fn set_used_size(&mut self, geom: &retro_game_geometry) {
+        self.used_width = geom.base_width as usize;
+        self.used_height = geom.base_height as usize;
+    }
 }
 
 pub struct RetroCoreDirect {
@@ -389,6 +400,7 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO => {
                     let avinfo = &(*(data as *mut retro_system_av_info));
                     self.state.aspect_ratio = geometry_aspect(&avinfo.geometry);
+                    self.state.set_used_size(&avinfo.geometry);
                     self.state.sample_rate = avinfo.timing.sample_rate;
                     self.state.fps = avinfo.timing.fps;
                     info!(
@@ -399,6 +411,7 @@ impl RetroCoreDirect {
                 RETRO_ENVIRONMENT_SET_GEOMETRY => {
                     let geom = &(*(data as *mut retro_game_geometry));
                     self.state.aspect_ratio = geometry_aspect(geom);
+                    self.state.set_used_size(geom);
                     info!(
                         "Got GEOMETRY {}x{} ASPECT {}",
                         geom.base_width, geom.base_height, self.state.aspect_ratio
@@ -692,6 +705,7 @@ impl RetroCoreDirect {
             let mut av_info = retro_system_av_info::default();
             retro_get_avinfo_fn(&mut av_info);
             retro_emu.state.aspect_ratio = geometry_aspect(&av_info.geometry);
+            retro_emu.state.set_used_size(&av_info.geometry);
             retro_emu.state.sample_rate = av_info.timing.sample_rate;
             retro_emu.state.fps = av_info.timing.fps;
             CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
@@ -812,6 +826,19 @@ impl RetroCoreDirect {
         (self.state.frame_width, self.state.frame_height)
     }
 
+    /// The part of the frame the core is really filling. Usually the whole of it,
+    /// but the gamescope core hands over a session sized frame with the client
+    /// letterboxed inside it, and says how much of it is the client.
+    pub(crate) fn get_used_frame_size(&self) -> (usize, usize) {
+        let (w, h) = self.get_frame_size();
+        let (used_w, used_h) = (self.state.used_width, self.state.used_height);
+        if used_w > 0 && used_h > 0 && used_w <= w && used_h <= h {
+            (used_w, used_h)
+        } else {
+            (w, h)
+        }
+    }
+
     pub(crate) fn fps(&self) -> f64 {
         self.state.fps
     }
@@ -855,6 +882,9 @@ impl Backend for RetroCoreDirect {
     }
     fn get_frame_size(&self) -> (usize, usize) {
         RetroCoreDirect::get_frame_size(self)
+    }
+    fn get_used_frame_size(&self) -> (usize, usize) {
+        RetroCoreDirect::get_used_frame_size(self)
     }
     fn aspect_ratio(&self) -> f32 {
         RetroCoreDirect::aspect_ratio(self)

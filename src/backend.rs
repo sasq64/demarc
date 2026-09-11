@@ -46,6 +46,11 @@ pub trait Backend {
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32]));
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
     fn get_frame_size(&self) -> (usize, usize);
+
+    fn get_used_frame_size(&self) -> (usize, usize) {
+        self.get_frame_size()
+    }
+
     fn aspect_ratio(&self) -> f32;
     fn sample_rate(&self) -> f64;
     fn fps(&self) -> f64;

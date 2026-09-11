@@ -66,7 +66,7 @@ demarc                                    │  gamescope (child process)
       retro_load_game  ── fork/exec ──────┼──▶   paint_all()
       socketpair(SEQPACKET)  ◀── HELLO ───┼──      └─ CLibretroConnector::Present()
         + 3 dmabuf fds (SCM_RIGHTS)       │             vulkan_screenshot() ─▶ ring[slot]
-      retro_run        ◀── FRAME{slot} ───┼──          vulkan_wait()
+      retro_run        ◀── FRAME{slot,used}┼──          vulkan_wait()
         video_refresh(map[slot], pitch)   │
                        ─── RELEASE ──────▶┼──      ring slot free again
       keyboard/mouse   ─── INPUT ────────▶┼──▶   backend thread: wlserver_key() &c.
@@ -114,6 +114,15 @@ point only because pipewire allocates its shm separately from the texture.
 
 `DRM_FORMAT_XRGB8888` *is* `RETRO_PIXEL_FORMAT_XRGB8888` on a little-endian machine, so no
 pixel conversion happens anywhere.
+
+### What the client covers
+
+A client does not have to fill the session: a 4:3 release in a 16:9 one is scaled to fit
+and centred, and the border is part of the frame demarc is handed. So each `FRAME` carries
+the output rect the focused window covers (`FrameInfo_t::focusedWindowCoverage`), and the
+core restates it as the geometry's base size with `SET_GEOMETRY` whenever it changes — the
+display aspect stays the session's, because the frame still arrives whole. That is what
+`Backend::get_used_frame_size` reports.
 
 ### Pacing
 
@@ -274,6 +283,8 @@ Kept as small as possible, so the tree stays diffable:
 - `src/main.hpp` — declares `ShutdownGamescope()`, which was defined in `main.cpp` and
   declared nowhere, so nothing outside it could ask for a clean shutdown.
 - `src/meson.build`, `meson_options.txt` — a `libretro_backend` feature.
+- `src/steamcompmgr.cpp`, `src/rendervulkan.hpp` — `FrameInfo_t::focusedWindowCoverage`,
+  beside the focused window transform that was already there.
 - `src/wlserver.cpp` — one `#include <float.h>`. Upstream uses `DBL_MAX` without it and no
   longer compiles under GCC 16. Not related to any of the above.
 

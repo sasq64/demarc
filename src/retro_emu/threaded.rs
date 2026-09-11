@@ -68,6 +68,8 @@ enum RetroCmd {
 struct RetroUpdate {
     width: usize,
     height: usize,
+    used_width: usize,
+    used_height: usize,
     frame: Vec<u32>,
     audio: Vec<i16>,
     aspect_ratio: f32,
@@ -91,6 +93,8 @@ pub struct RetroCoreThreaded {
     last_sum: i32,
     frame_width: usize,
     frame_height: usize,
+    used_width: usize,
+    used_height: usize,
     audio: Vec<i16>,
     aspect_ratio: f32,
     aspect_tweak: f32,
@@ -118,6 +122,7 @@ struct SetupResult {
     fps: f64,
     width: usize,
     height: usize,
+    used: (usize, usize),
     disks: u32,
 }
 
@@ -161,6 +166,7 @@ impl RetroCoreThreaded {
                                 fps: core.fps(),
                                 width: core.get_frame_size().0,
                                 height: core.get_frame_size().1,
+                                used: core.get_used_frame_size(),
                                 disks: core.get_number_of_disks(),
                             }));
                             core
@@ -186,6 +192,7 @@ impl RetroCoreThreaded {
                 fps,
                 width,
                 height,
+                used,
                 disks,
             })) => Ok(Self {
                 cmd_tx,
@@ -198,6 +205,8 @@ impl RetroCoreThreaded {
                 last_sum: 0,
                 frame_width: width,
                 frame_height: height,
+                used_width: used.0,
+                used_height: used.1,
                 audio: Vec::new(),
                 aspect_ratio: 0.0,
                 aspect_tweak: 1.0,
@@ -275,6 +284,7 @@ fn worker_loop(
             }
 
             let (width, height) = core.get_frame_size();
+            let (used_width, used_height) = core.get_used_frame_size();
             let mut frame = Vec::new();
             core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
 
@@ -286,6 +296,8 @@ fn worker_loop(
             let update = RetroUpdate {
                 width,
                 height,
+                used_width,
+                used_height,
                 frame,
                 audio,
                 aspect_ratio: core.aspect_ratio(),
@@ -376,6 +388,8 @@ impl Backend for RetroCoreThreaded {
             self.frame_hash = update.frame_hash;
             self.frame_width = update.width;
             self.frame_height = update.height;
+            self.used_width = update.used_width;
+            self.used_height = update.used_height;
             self.last_sum = self.audio_sum;
             self.audio_sum = update.audio.iter().map(|a| (*a as i32).abs()).sum();
             self.audio.extend_from_slice(&update.audio);
@@ -440,6 +454,9 @@ impl Backend for RetroCoreThreaded {
     }
     fn get_frame_size(&self) -> (usize, usize) {
         (self.frame_width, self.frame_height)
+    }
+    fn get_used_frame_size(&self) -> (usize, usize) {
+        (self.used_width, self.used_height)
     }
     fn aspect_ratio(&self) -> f32 {
         self.aspect_ratio * self.aspect_tweak
