@@ -87,9 +87,9 @@ fn claims_a_windows_release_for_wine() {
     assert!(sys.load(&mut wf).unwrap());
     assert!(wf.path.ends_with("kotpg.exe"), "picked {:?}", wf.path);
 
-    // The size the dialog driver is told to pick, unless an entry says
-    // otherwise - see `crate::wine`.
-    assert_eq!(sys.default_meta().get(META_RES), Some(&"800x600"));
+    // The size of the session, unless an entry says otherwise - see
+    // `crate::wine`.
+    assert_eq!(sys.default_meta().get(META_RES), Some(&DEFAULT_RES));
 }
 
 /// A Windows release often names the size it was built for, and that name
@@ -230,16 +230,19 @@ fn restates_wine_settings_as_core_options() {
     }
 }
 
-/// `wine_res=pick` is not a size — it means "let whoever is watching answer the
-/// dialog" — so the size the session gets is the backend's own, big enough to
-/// hold whatever they pick, and the driver is told to press nothing.
+/// `wine_dialog_res=pick` means "let whoever is watching answer the dialog", so
+/// the driver is told to press nothing while the session keeps the size
+/// `wine_res` asked for.
 #[test]
-fn a_picked_dialog_gets_a_session_big_enough_for_it() {
+fn a_picked_dialog_leaves_the_session_size_alone() {
     let dir = tempfile::tempdir().unwrap();
     let exe = windows_exe(dir.path(), "thing.exe");
     let file = WorkFile::new_with_meta(
         exe,
-        HashMap::from([(META_RES.to_string(), crate::wine::PICK.to_string())]),
+        HashMap::from([
+            (META_RES.to_string(), "1920x1200".to_string()),
+            (META_DIALOG_RES.to_string(), crate::wine::PICK.to_string()),
+        ]),
     );
 
     let meta = capture_meta(&file, None);

@@ -13,9 +13,9 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine::{
-    DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE, META_DESKTOP,
-    META_GL_COMPAT, META_RES, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
-    wine_prefix,
+    DEFAULT_DESKTOP, DEFAULT_DIALOG_RES, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE,
+    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_RES, close_prefix, dll_overrides,
+    gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
@@ -187,14 +187,14 @@ impl System for WindowsSystem {
         Ok(true)
     }
 
-    /// The size a Windows demo is asked to run at, and the size demarc gives
-    /// the gamescope it runs in, plus whether it gets a wine virtual desktop to
-    /// run in and whether Mesa is asked for a compatibility profile. Spelled out
-    /// here rather than left to the backend so they show up with the rest of an
-    /// entry's settings.
+    /// The size of the session, the modes to ask the setup dialog for, whether
+    /// the demo gets a wine virtual desktop to run in and whether Mesa is asked
+    /// for a compatibility profile. Spelled out here rather than left to the
+    /// backend so they show up with the rest of an entry's settings.
     fn default_meta(&self) -> HashMap<&str, &str> {
         HashMap::from([
             (META_RES, DEFAULT_RES),
+            (META_DIALOG_RES, DEFAULT_DIALOG_RES),
             (META_DESKTOP, if DEFAULT_DESKTOP { "true" } else { "false" }),
             (
                 META_GL_COMPAT,
@@ -276,8 +276,8 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
 
 /// Restate a Windows entry's settings as the gamescope core's options.
 ///
-/// The two name the same things differently: an entry has always said `wine_res`
-/// and `wine_desktop`, and the core — which also runs Chrome, and whatever else
+/// The two name the same things differently: an entry says `wine_res` and
+/// `wine_desktop`, and the core — which also runs Chrome, and whatever else
 /// a session can hold — says `gamescope_resolution` and `gamescope_command`.
 /// Translating here keeps the entry vocabulary the one people already write, and
 /// keeps `overrides.toml` working unchanged whichever backend runs the release.
@@ -301,10 +301,7 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
 
     match wine_command(&path.path, &meta) {
         Ok(cmd) => {
-            // The size the driver is about to ask the dialog for, which is the
-            // size the session has to be. Not read from `wine_res` directly:
-            // `pick` is not a size, and the one it stands for is the backend's
-            // to decide.
+            // The size of the session, as `wine_res` asked for it.
             meta.entry("gamescope_resolution".into())
                 .or_insert_with(|| format!("{}x{}", cmd.width, cmd.height));
             let argv = match sandbox {

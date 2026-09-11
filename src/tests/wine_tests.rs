@@ -85,7 +85,7 @@ fn reads_a_resolution_or_falls_back_to_the_default() {
     assert_eq!(parse_res(" 1280 X 720 "), Some((1280, 720)));
     assert_eq!(parse_res("640"), None);
     assert_eq!(parse_res("wide x tall"), None);
-    assert_eq!(parse_res(DEFAULT_RES), Some((800, 600)));
+    assert_eq!(parse_res(DEFAULT_RES), Some((1280, 1024)));
 }
 
 /// The config has to survive whatever the metadata says, since it comes
@@ -95,7 +95,7 @@ fn a_broken_resolution_still_gives_a_usable_config() {
     let exe = std::env::current_exe().expect("this test binary");
     let meta = HashMap::from([(META_RES.to_string(), "huge".to_string())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
-    assert_eq!((cfg.width, cfg.height), (800, 600));
+    assert_eq!((cfg.width, cfg.height), (1280, 1024));
 
     let meta = HashMap::from([(META_RES.to_string(), "1024x768".to_string())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
@@ -104,20 +104,51 @@ fn a_broken_resolution_still_gives_a_usable_config() {
     // An empty value is nothing said, not a broken resolution.
     let meta = HashMap::from([(META_RES.to_string(), String::new())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
-    assert_eq!((cfg.width, cfg.height), (800, 600));
-    assert_eq!(cfg.dialog, Dialog::Drive);
+    assert_eq!((cfg.width, cfg.height), (1280, 1024));
+    assert_eq!(cfg.dialog, Dialog::Drive("1280x1024".to_string()));
 }
 
-/// `wine_res=pick` hands the dialog to whoever is watching: nothing pressed
-/// at all, and a session big enough for whatever they choose.
+/// `wine_res` is the size of the session and nothing else; what the dialog is
+/// asked for is `wine_dialog_res`, a list tried best first, and only when
+/// nothing says otherwise is that the session's own size.
+#[test]
+fn the_dialog_is_asked_for_its_own_list_of_modes() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let driver = Path::new("/sys/win/autodlg.exe");
+
+    let meta = HashMap::from([
+        (META_RES.to_string(), "1280x1024".to_string()),
+        (META_DIALOG_RES.to_string(), " 640x480 , 800x600 ".to_string()),
+    ]);
+    let cfg = Config::from_meta(&exe, &meta).unwrap();
+    // The list does not touch the session, which stays what `wine_res` said.
+    assert_eq!((cfg.width, cfg.height), (1280, 1024));
+    let args = cfg.wine_args(Some(driver));
+    let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
+    assert_eq!(args[prefer + 1], "640x480,800x600");
+
+    // An empty list is nothing said: the session's size is what is asked for.
+    let meta = HashMap::from([
+        (META_RES.to_string(), "640x480".to_string()),
+        (META_DIALOG_RES.to_string(), String::new()),
+    ]);
+    let cfg = Config::from_meta(&exe, &meta).unwrap();
+    assert_eq!(cfg.dialog, Dialog::Drive("640x480".to_string()));
+}
+
+/// `wine_dialog_res=pick` hands the dialog to whoever is watching: nothing
+/// pressed at all, and the session keeps the size `wine_res` asked for.
 #[test]
 fn pick_leaves_the_dialog_alone() {
     let exe = std::env::current_exe().expect("this test binary");
     for spelling in ["pick", "PICK", "  Pick  "] {
-        let meta = HashMap::from([(META_RES.to_string(), spelling.to_string())]);
+        let meta = HashMap::from([
+            (META_RES.to_string(), "1024x768".to_string()),
+            (META_DIALOG_RES.to_string(), spelling.to_string()),
+        ]);
         let cfg = Config::from_meta(&exe, &meta).unwrap();
         assert_eq!(cfg.dialog, Dialog::Pick, "{spelling:?}");
-        assert_eq!((cfg.width, cfg.height), (1920, 1200), "{spelling:?}");
+        assert_eq!((cfg.width, cfg.height), (1024, 768), "{spelling:?}");
 
         // The driver is still the command - it is what starts the demo
         // and what reports its end - but it is told to press nothing and
@@ -133,10 +164,10 @@ fn pick_leaves_the_dialog_alone() {
         assert_eq!(args[launch + 1], cfg.exe.to_string_lossy(), "{spelling:?}");
     }
 
-    // Any other value is still a resolution, and still driven.
+    // `pick` is not a size either, so `wine_res` still says what it always did.
     let meta = HashMap::from([(META_RES.to_string(), "1024x768".to_string())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
-    assert_eq!(cfg.dialog, Dialog::Drive);
+    assert_eq!(cfg.dialog, Dialog::Drive("1024x768".to_string()));
     let args = cfg.wine_args(Some(Path::new("/a.exe")));
     assert!(args.contains(&"--prefer".to_string()));
     assert!(!args.contains(&"--no-go".to_string()));
@@ -158,7 +189,7 @@ fn the_driver_launches_the_demo() {
     assert_eq!(args[launch + 1], cfg.exe.to_string_lossy());
     // The size demarc runs at is the size the dialog gets told to pick.
     let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
-    assert_eq!(args[prefer + 1], "800x600");
+    assert_eq!(args[prefer + 1], DEFAULT_RES);
 
     // Without a driver the demo is the one command.
     let bare = cfg.wine_args(None);
@@ -175,7 +206,10 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
     let driver = Path::new("/sys/win/autodlg.exe");
 
     for spelling in ["true", "1", "YES", " on "] {
-        let meta = HashMap::from([(META_DESKTOP.to_string(), spelling.to_string())]);
+        let meta = HashMap::from([
+            (META_DESKTOP.to_string(), spelling.to_string()),
+            (META_RES.to_string(), "800x600".to_string()),
+        ]);
         let cfg = Config::from_meta(&exe, &meta).unwrap();
         assert!(cfg.desktop, "{spelling:?}");
 
@@ -187,11 +221,11 @@ fn a_virtual_desktop_wraps_the_command_when_asked_for() {
         assert_eq!(args[2], "/sys/win/autodlg.exe", "{spelling:?}");
     }
 
-    // The desktop is the size of the session, whatever that turned out to
-    // be - including a `pick` session, which is why it is big.
+    // The desktop is the size of the session whatever is done with the dialog.
     let meta = HashMap::from([
         (META_DESKTOP.to_string(), "true".to_string()),
-        (META_RES.to_string(), PICK.to_string()),
+        (META_RES.to_string(), "1920x1200".to_string()),
+        (META_DIALOG_RES.to_string(), PICK.to_string()),
     ]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
     let args = cfg.wine_args(Some(driver));

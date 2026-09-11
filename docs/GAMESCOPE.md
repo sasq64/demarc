@@ -148,7 +148,7 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
-(`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_desktop`,
+(`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_dialog_res`, `wine_desktop`,
 `wine_dll_overrides` and `wine_gl_compat`, and an `overrides.toml` written before any of
 this existed means the same thing here.
 
@@ -157,9 +157,10 @@ The command is the substantial half of that translation. Left to itself the core
 it; what it is given instead is the argv `crate::wine::wine_command` builds, dialog driver
 and all — everything demarc knows about starting a Windows release lives in `src/wine.rs`,
 and the core is handed the result. `wine_desktop` rides along inside it as
-`explorer /desktop=`, which is why the core has no option of its own for it. `wine_res=pick`
-is not a size, so the resolution passed is the stand-in for it (1920x1200, big enough to
-hold whatever the person watching chooses).
+`explorer /desktop=`, which is why the core has no option of its own for it. `wine_res` is
+only ever the size of the session; what the dialog is asked for is `wine_dialog_res`, a
+comma-separated list tried best first, defaulting to the session's own size.
+`wine_dialog_res=pick` presses nothing at all, leaving the dialog to whoever is watching.
 
 ### The prefix each session runs in
 

@@ -30,7 +30,7 @@ value. Unknown arguments print a warning and are skipped.
 | `--uncheck <label>` | The same in reverse: untick it if it is ticked — repeatable. |
 | `--go <a,b,c>` | Comma-separated labels that count as the start button. Default: `RUN,OK,START,GO,LAUNCH,PLAY,YES,DEMO`. Replaces the default list rather than adding to it. |
 | `--no-fallback` | When no button matches `--go`, do nothing. By default the driver posts Return to the dialog to press its default button. |
-| `--no-go` | Touch no dialog at all — just launch the demo and watch it. What `wine_res=pick` uses, so a person can answer the dialog themselves. |
+| `--no-go` | Touch no dialog at all — just launch the demo and watch it. What `wine_dialog_res=pick` uses, so a person can answer the dialog themselves. |
 | `--no-fill` | Leave the demo's window as it is. By default, once the demo's render window appears, its frame (title bar, borders) is stripped and its client area moved to the desktop origin, so the captured frame is the demo and nothing else. The client area keeps the size the demo picked; it is never resized. |
 | `--list` | Print the dialog's control tree — class, kind, text, checked state, combo/list items and selection — and change nothing. This is how you work out what to pass to `--prefer` for a demo that needs a per-release override. |
 | `--timeout <secs>` | How long to wait for a dialog to appear, and afterwards how long to wait for the render window to undecorate. Default `20`. Generous on purpose: a cold wine prefix spends a while building itself before showing its first window. |

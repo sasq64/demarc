@@ -453,7 +453,7 @@ struct Args {
     no_fill: bool,
     /// Touch no dialog at all: launch the demo, then only watch it.
     ///
-    /// What `wine_res=pick` asks for. The driver is still here — it is what
+    /// What `wine_dialog_res=pick` asks for. The driver is still here — it is what
     /// starts the demo, and what tells demarc when the demo is over — but the
     /// dialog belongs to whoever is sitting in front of it.
     no_go: bool,

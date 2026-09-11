@@ -9,13 +9,20 @@ use tracing::{debug, warn};
 
 use crate::system_dir;
 
-/// Meta key holding the resolution to run at, as `WIDTHxHEIGHT`.
+/// Meta key holding the size of the session, as `WIDTHxHEIGHT`.
 pub const META_RES: &str = "wine_res";
 
-pub const DEFAULT_RES: &str = "1280x1024";
+pub const DEFAULT_RES: &str = "1920x1080";
 
-/// The `wine_res` value that means "leave the dialog to me".
+/// Meta key holding the resolutions to ask the setup dialog for, best first,
+/// comma separated. Unset means "whatever [`META_RES`] says".
+pub const META_DIALOG_RES: &str = "wine_dialog_res";
+
+/// The [`META_DIALOG_RES`] value that means "leave the dialog to me".
 pub const PICK: &str = "pick";
+
+/// What [`META_DIALOG_RES`] is when nothing says otherwise.
+pub const DEFAULT_DIALOG_RES: &str = "1920x1080,1280x720,1024x576,1280x1024,1024x768,800x600";
 
 /// Meta key asking for the demo to be run inside a wine virtual desktop.
 pub const META_DESKTOP: &str = "wine_desktop";
@@ -35,10 +42,6 @@ pub const DEFAULT_GL_COMPAT: bool = false;
 /// What [`META_GL_COMPAT`] sets `MESA_GL_VERSION_OVERRIDE` to.
 pub const GL_COMPAT_OVERRIDE: &str = "4.6COMPAT";
 
-/// What a `pick` session runs at, since the size is not known until the person
-/// watching has chosen one.
-const PICK_RES: &str = "1920x1200";
-
 /// The wine prefix demos are run in, under the user's home directory.
 const PREFIX_DIR: &str = ".wine-demarc";
 
@@ -49,6 +52,15 @@ const AUTODLG: &str = "win/demarc-autodlg.exe";
 const DIALOG_TIMEOUT: f64 = 20.0;
 
 const DEFAULT_CHECK: &str = "Fullscreen";
+
+/// A comma separated list with the blanks taken out, as `--prefer` wants it.
+fn clean_list(text: &str) -> String {
+    text.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 /// `WIDTHxHEIGHT`, or nothing.
 fn parse_res(text: &str) -> Option<(u32, u32)> {
@@ -180,11 +192,12 @@ pub(crate) fn check_wine() -> WineCheck {
 }
 
 /// What to do about the setup dialog nearly every PC demo opens with.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 enum Dialog {
-    /// Answer it: choose the `wine_res` mode and press Start.
-    Drive,
-    /// Leave it alone. `wine_res=pick` asks for this
+    /// Answer it: choose the first of these modes the dialog offers, and press
+    /// Start.
+    Drive(String),
+    /// Leave it alone. `wine_dialog_res=pick` asks for this
     Pick,
 }
 
@@ -202,28 +215,29 @@ struct Config {
 
 impl Config {
     fn from_meta(exe: &Path, meta: &HashMap<String, String>) -> Result<Self> {
-        let res = meta
-            .get(META_RES)
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-            .unwrap_or(DEFAULT_RES);
-        let dialog = if res.eq_ignore_ascii_case(PICK) {
-            Dialog::Pick
-        } else {
-            Dialog::Drive
+        let said = |key: &str| {
+            meta.get(key)
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
         };
-        // A pick session's size is not a choice anyone made, so it is not the
-        // one to warn about when it cannot be parsed.
-        let wanted = if dialog == Dialog::Pick {
-            PICK_RES
-        } else {
-            res
-        };
-
-        let (width, height) = parse_res(wanted).unwrap_or_else(|| {
-            warn!("{META_RES}={res:?} is neither {PICK:?} nor a WIDTHxHEIGHT; using {DEFAULT_RES}");
+        let res = said(META_RES).unwrap_or_else(|| DEFAULT_RES.to_string());
+        let (width, height) = parse_res(&res).unwrap_or_else(|| {
+            warn!("{META_RES}={res:?} is not a WIDTHxHEIGHT; using {DEFAULT_RES}");
             parse_res(DEFAULT_RES).expect("the default is a valid resolution")
         });
+
+        // The dialog is asked for the session's own size unless an entry names
+        // the modes to try itself — a demo whose dialog offers nothing like the
+        // size we want still has to be given something it does offer.
+        let dialog = match said(META_DIALOG_RES) {
+            Some(list) if list.eq_ignore_ascii_case(PICK) => Dialog::Pick,
+            list => Dialog::Drive(
+                list.map(|list| clean_list(&list))
+                    .filter(|modes| !modes.is_empty())
+                    .unwrap_or_else(|| format!("{width}x{height}")),
+            ),
+        };
         Ok(Self {
             // wine takes a Unix path fine, but it has to be absolute: the demo
             // is started from its own directory, not from demarc's.
@@ -263,10 +277,10 @@ impl Config {
             "--timeout".into(),
             DIALOG_TIMEOUT.to_string(),
         ]);
-        match self.dialog {
-            Dialog::Drive => args.extend([
+        match &self.dialog {
+            Dialog::Drive(modes) => args.extend([
                 "--prefer".into(),
-                format!("{}x{}", self.width, self.height),
+                modes.clone(),
                 "--check".into(),
                 DEFAULT_CHECK.into(),
             ]),
@@ -302,9 +316,7 @@ pub(crate) struct WineCommand {
     /// spawned as it stands — no shell is involved, so nothing is quoted and
     /// nothing may be re-split on spaces.
     pub argv: Vec<String>,
-    /// The size the session has to be, which is not always the size an entry
-    /// asked for: `wine_res=pick` has no size of its own and gets one big
-    /// enough to hold whatever the dialog is asked for.
+    /// The size the session has to be.
     pub width: u32,
     pub height: u32,
 }
