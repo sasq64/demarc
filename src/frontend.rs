@@ -166,6 +166,7 @@ fn spawn_emulator(
             source: handle,
             aspect: 0.0, // updated each frame from the core's reported aspect
             aspect_tweak: 1.0,
+            used: UVec2::ZERO,
         },
         // The actual rectangle is set from the live window size by
         // `update_view_rects`, before anything reads it.
@@ -421,8 +422,14 @@ fn cursor_frame_uv(
         .get(&pp.source)
         .map(|i| i.size())
         .unwrap_or(UVec2::ONE);
-    let (uv_scale, uv_offset) =
-        crate::post_process::scale_offset(rect.size(), src, pp.aspect, pp.aspect_tweak, scale_mode);
+    let (uv_scale, uv_offset) = crate::post_process::view_transform(
+        rect.size(),
+        src,
+        pp.used,
+        pp.aspect,
+        pp.aspect_tweak,
+        scale_mode,
+    );
     let frame_uv = (screen_uv - uv_offset) / uv_scale;
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
 }
@@ -560,6 +567,12 @@ fn run_frontend(
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
+        }
+
+        let (used_w, used_h) = emu.core.as_mut().unwrap().get_used_frame_size();
+        let used = UVec2::new(used_w as u32, used_h as u32);
+        if pp.used != used {
+            pp.used = used;
         }
 
         let (w, h) = emu.core.as_mut().unwrap().get_frame_size();

@@ -239,3 +239,66 @@ fn a_failed_preset_is_not_retried() {
     assert!(!should_start(Some(a), None, broken, true));
     assert!(!should_start(None, None, broken, true));
 }
+
+/// A 4:3 wine release in a 1280x1024 gamescope session: the frame is the whole
+/// session, with the picture scaled into the middle of it.
+const LETTERBOX: (UVec2, UVec2) = (UVec2::new(1280, 1024), UVec2::new(1280, 960));
+
+/// The screen-uv range the shader samples from the source, per axis.
+fn sampled(target: UVec2, mode: ScaleMode) -> (Vec2, Vec2) {
+    let (src, used) = LETTERBOX;
+    let (scale, offset) = view_transform(target, src, used, 1.25, 1.0, mode);
+    (-offset / scale, (Vec2::ONE - offset) / scale)
+}
+
+/// Whatever the mode, the border is never on screen: Stretch and Fit sample the
+/// picture exactly, and Zoom crops into it.
+#[test]
+fn the_border_is_cropped_away() {
+    const TOP: f32 = 0.031_25;
+    const BOTTOM: f32 = 0.968_75;
+
+    for mode in [ScaleMode::Stretch, ScaleMode::Fit] {
+        let (min, max) = sampled(UVec2::new(1920, 1080), mode);
+        assert!((min.y - TOP).abs() < 1e-4, "{mode:?} top {}", min.y);
+        assert!((max.y - BOTTOM).abs() < 1e-4, "{mode:?} bottom {}", max.y);
+    }
+
+    // 4:3 zoomed to fill 16:9 throws away the top and bottom of the picture —
+    // of the picture, not of the frame.
+    let (min, max) = sampled(UVec2::new(1920, 1080), ScaleMode::Zoom);
+    assert!(min.y > TOP && max.y < BOTTOM, "{min:?} {max:?}");
+}
+
+/// Fit works on the picture's 4:3, not on the frame's 5:4: in a 16:9 window the
+/// picture is 4/3 / (16/9) of the width and fills the height.
+#[test]
+fn fit_uses_the_picture_aspect() {
+    let (src, used) = LETTERBOX;
+    let (scale, offset) =
+        view_transform(UVec2::new(1920, 1080), src, used, 1.25, 1.0, ScaleMode::Fit);
+    let f = used_fraction(src, used);
+    // Where the picture itself lands, the way `compute_uniform` takes it back.
+    let size = scale * f;
+    let corner = offset + scale * (Vec2::ONE - f) * 0.5;
+    assert!((size.x - 0.75).abs() < 1e-4, "{size:?}");
+    assert!((size.y - 1.0).abs() < 1e-4, "{size:?}");
+    // Centred, so the pillarbox bars are equal.
+    assert!((corner.x - 0.125).abs() < 1e-4, "{corner:?}");
+}
+
+/// A source with no border is left exactly as `scale_offset` had it.
+#[test]
+fn no_border_is_the_plain_transform() {
+    let target = UVec2::new(1920, 1080);
+    let src = UVec2::new(320, 240);
+    for used in [UVec2::ZERO, src] {
+        for mode in [ScaleMode::Fit, ScaleMode::Zoom, ScaleMode::Fixed(2.0)] {
+            assert_eq!(
+                view_transform(target, src, used, 0.0, 1.0, mode),
+                scale_offset(target, src, 0.0, 1.0, mode),
+                "{used:?} {mode:?}"
+            );
+        }
+    }
+}

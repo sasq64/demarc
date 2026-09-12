@@ -200,6 +200,10 @@ pub struct PostProcess {
     pub aspect: f32,
     /// Manual multiplier applied on top of `aspect` for fine correction (1.0 = none).
     pub aspect_tweak: f32,
+    /// The centred part of the source texture that holds the picture, from
+    /// [`Backend::get_used_frame_size`](crate::backend::Backend::get_used_frame_size).
+    /// Zero, or the whole texture, means there is no border to crop.
+    pub used: UVec2,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -282,8 +286,9 @@ fn update_post_process_uniform(
     )>,
 ) {
     for (entity, pp, view_rect, existing, existing_scissor) in &mut query {
-        let uniform = compute_uniform(pp, &settings, app_settings.crt_limit, view_rect, &images);
-        let scissor = BorderScissor(compute_scissor(&uniform, &settings, view_rect));
+        let (uniform, image) =
+            compute_uniform(pp, &settings, app_settings.crt_limit, view_rect, &images);
+        let scissor = BorderScissor(compute_scissor(image, &settings, view_rect));
         match existing {
             Some(mut u) => {
                 u.set_if_neq(uniform);
@@ -307,10 +312,11 @@ fn update_post_process_uniform(
 /// (no clipping) for [`BorderMode::Stretch`], or when the image fills the whole
 /// viewport (`Stretch`/`Zoom` scaling), so we never scissor away visible pixels.
 fn compute_scissor(
-    u: &PostProcessUniform,
+    image: (Vec2, Vec2),
     settings: &RenderSettings,
     view_rect: &ViewRect,
 ) -> Option<URect> {
+    let (image_scale, image_offset) = image;
     if !matches!(settings.border_mode, BorderMode::Black) {
         return None;
     }
@@ -320,8 +326,8 @@ fn compute_scissor(
     // The image occupies screen-uv `[uv_offset, uv_offset + uv_scale]` within the
     // viewport; the bars are whatever falls outside that. Clamp to the viewport so
     // Zoom/Stretch (which push the image past the edges) just yield the full rect.
-    let img_min = (vp_min + u.uv_offset * vp_size).max(vp_min);
-    let img_max = (vp_min + (u.uv_offset + u.uv_scale) * vp_size).min(vp_min + vp_size);
+    let img_min = (vp_min + image_offset * vp_size).max(vp_min);
+    let img_max = (vp_min + (image_offset + image_scale) * vp_size).min(vp_min + vp_size);
     if img_max.x <= img_min.x || img_max.y <= img_min.y {
         return None;
     }
@@ -331,22 +337,29 @@ fn compute_scissor(
     ))
 }
 
+/// The uniform for one view, and where the picture itself lands in screen-uv —
+/// which is only the same thing when there is no border to crop.
 fn compute_uniform(
     pp: &PostProcess,
     settings: &RenderSettings,
     crt_limit: f32,
     view_rect: &ViewRect,
     images: &Assets<Image>,
-) -> PostProcessUniform {
+) -> (PostProcessUniform, (Vec2, Vec2)) {
     // Use this view's rectangle, not the whole window: in grid mode every cell
     // gets its own sub-rect of the one camera, so aspect must be computed
     // against that quadrant. A single emulator's rect is the whole window.
     let viewport = view_rect.rect().map(|r| r.size());
     let src = images.get(&pp.source).map(|source| source.size());
     let (mut uv_scale, mut uv_offset) = match (viewport, src) {
-        (Some(target), Some(src)) => {
-            scale_offset(target, src, pp.aspect, pp.aspect_tweak, settings.scale_mode)
-        }
+        (Some(target), Some(src)) => view_transform(
+            target,
+            src,
+            pp.used,
+            pp.aspect,
+            pp.aspect_tweak,
+            settings.scale_mode,
+        ),
         _ => (Vec2::ONE, Vec2::ZERO),
     };
     // Snap the composite transform to the intermediate's integer pixel grid so
@@ -378,11 +391,59 @@ fn compute_uniform(
             // flickering the effect off for a frame.
             _ => true,
         };
-    PostProcessUniform {
-        uv_scale,
-        uv_offset,
-        crt_enabled: crt_enabled as u32,
+    // Undo the crop, on the snapped values so the bars line up with the pixels
+    // actually drawn: what is left is the picture's own rectangle.
+    let used = used_fraction(src.unwrap_or(UVec2::ONE), pp.used);
+    let image = (uv_scale * used, uv_offset + uv_scale * (1.0 - used) * 0.5);
+    (
+        PostProcessUniform {
+            uv_scale,
+            uv_offset,
+            crt_enabled: crt_enabled as u32,
+        },
+        image,
+    )
+}
+
+/// How much of the source texture is picture rather than border, per axis.
+fn used_fraction(src: UVec2, used: UVec2) -> Vec2 {
+    if src.x == 0 || src.y == 0 || used.x == 0 || used.y == 0 {
+        return Vec2::ONE;
     }
+    (used.as_vec2() / src.as_vec2()).clamp(Vec2::splat(f32::EPSILON), Vec2::ONE)
+}
+
+/// [`scale_offset`] for a source that carries a border: a wine release running
+/// 4:3 inside a 16:9 gamescope session arrives as a session sized frame with the
+/// picture scaled into the middle of it, and the scale modes have to work on the
+/// picture rather than on the frame.
+///
+/// So the modes are given the picture's size and display aspect, and the
+/// transform they return is then widened to sample only the picture — screen-uv
+/// `[0,1]` over the image maps to the centred `used` sub-range of the texture
+/// instead of all of it. With no border this is exactly [`scale_offset`].
+pub fn view_transform(
+    target: UVec2,
+    src: UVec2,
+    used: UVec2,
+    aspect: f32,
+    aspect_tweak: f32,
+    scale_mode: ScaleMode,
+) -> (Vec2, Vec2) {
+    let f = used_fraction(src, used);
+    if f == Vec2::ONE {
+        return scale_offset(target, src, aspect, aspect_tweak, scale_mode);
+    }
+    // `aspect` is the whole frame's; cropping to the picture changes it by the
+    // same ratio the crop does.
+    let aspect = if aspect > 0.0 {
+        aspect * f.x / f.y
+    } else {
+        0.0
+    };
+    let (scale, offset) = scale_offset(target, used, aspect, aspect_tweak, scale_mode);
+    let scale = scale / f;
+    (scale, offset - scale * (1.0 - f) * 0.5)
 }
 
 /// How many screen pixels the source gets per source pixel in this view, taken
@@ -633,9 +694,10 @@ fn post_process_pass(
                 let source_id = post_process.source.id();
                 let src_size =
                     UVec2::new(source_image.texture.width(), source_image.texture.height());
-                let (image_scale, _) = scale_offset(
+                let (image_scale, _) = view_transform(
                     rect.size(),
                     src_size,
+                    post_process.used,
                     post_process.aspect,
                     post_process.aspect_tweak,
                     settings.scale_mode,
