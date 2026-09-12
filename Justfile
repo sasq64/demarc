@@ -142,7 +142,10 @@ native:
 
 PRE := HOME / ".wine-demarc"
 
-wine-prefix:
+wma-audio:
+    sudo pacman -S gst-plugins-ugly
+
+wine-prefix: wma-audio
     #curl -fsSL -o winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
     #chmod +x winetricks
     rm -rf {{PRE}}
