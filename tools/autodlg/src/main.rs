@@ -608,16 +608,11 @@ fn select_preferred(kids: &[Ctl], want: &str) -> bool {
 fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     unsafe { SetForegroundWindow(top.hwnd) };
 
-    // Options first — resolution, and switches like Fullscreen — so they are
-    // all in place before anything starts the demo. Each `--prefer` is a list
-    // of alternatives: the first one this dialog offers is taken and the rest
-    // are left alone, so the caller can name the mode it wants and then the
-    // ones it would settle for.
-    for chain in &args.prefer {
-        if !chain.iter().any(|want| select_preferred(kids, want)) {
-            println!("nothing here matches {chain:?}");
-        }
-    }
+    // Switches first, because one of them can rewrite the very lists the
+    // resolution is then chosen from: *Finally Inside* offers twenty display
+    // modes while `FullScreen` is ticked and five windowed sizes when it is
+    // not, rebuilding the list — and resetting its selection — the moment the
+    // box is clicked. A mode chosen before that is silently thrown away.
     for (wanted, labels) in [(true, &args.check), (false, &args.uncheck)] {
         for want in labels.iter().map(|l| norm(l)) {
             for c in kids {
@@ -626,6 +621,15 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
                     c.click();
                 }
             }
+        }
+    }
+    // Then the resolution, against whatever the dialog offers now. Each
+    // `--prefer` is a list of alternatives: the first one this dialog offers is
+    // taken and the rest are left alone, so the caller can name the mode it
+    // wants and then the ones it would settle for.
+    for chain in &args.prefer {
+        if !chain.iter().any(|want| select_preferred(kids, want)) {
+            println!("nothing here matches {chain:?}");
         }
     }
 
