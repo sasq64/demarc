@@ -534,12 +534,16 @@ pub(crate) fn run_frontend(
             && (settings.all_emus || i == settings.current_emu);
         emu.audio_active(audio);
         // Exactly one view is focused; the others are on screen as grid tiles
-        // unless the focused one is maximized over them.
-        emu.focus(match (i == settings.current_emu, settings.maximized) {
+        // unless the focused one is maximized over them. The cross fade spare
+        // matches no view index but still has to keep running: a core told it
+        // is invisible stops, and the fade would blend in the frame it stopped
+        // on rather than the release it just loaded.
+        let focus = match (i == settings.current_emu, settings.maximized) {
             (true, _) => ViewFocus::Focus,
-            (false, true) => ViewFocus::Invisible,
-            (false, false) => ViewFocus::Visible,
-        });
+            (false, true) if !emu.is_crossfade => ViewFocus::Invisible,
+            (false, _) => ViewFocus::Visible,
+        };
+        emu.focus(focus);
 
         if show_info && i == settings.current_emu {
             writer.write(SetHudText {
