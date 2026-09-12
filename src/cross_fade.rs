@@ -1,13 +1,13 @@
-//! Loading the next release into a spare, off-screen emulator and swapping it
-//! onto the screen once it is ready — the plumbing a cross fade needs, without
-//! the fade itself.
+//! Loading the next release into a spare, off-screen emulator and fading it in
+//! over the one it replaces.
 //!
 //! `load_prepared` drops the running core before it builds the new one, so an
 //! emulator that loads cannot keep showing what it was showing. With
-//! `--cross-fade` an extra emulator entity (the *spare*) is spawned, every
-//! advance is diverted into it, and when the load lands the two entities trade
-//! roles: the spare takes the origin's view index and alpha, the origin becomes
-//! the new spare.
+//! `--cross-fade` an extra emulator entity (the *spare*) is spawned and every
+//! advance is diverted into it. Once the load lands the spare keeps running off
+//! screen for [`DELAY_TIME`], fades up over [`FADE_TIME`], and then the two
+//! entities trade roles: the spare takes the origin's view index, the origin
+//! becomes the new spare.
 //!
 //! There is one spare, so under `--grid` only the first emulator asking to
 //! advance in a frame is diverted; while that load runs the others load into
@@ -24,6 +24,13 @@ use crate::post_process::PostProcess;
 /// `current_emu` or `mouse_index` is ever compared against.
 pub(crate) const CROSSFADE_INDEX: usize = usize::MAX;
 
+/// Seconds the loaded release runs off screen before the fade starts, so what
+/// fades up is the demo running rather than its first black frames.
+const DELAY_TIME: f32 = 5.0;
+
+/// Seconds the fade itself takes.
+const FADE_TIME: f32 = 1.5;
+
 /// One emulator finished a load this frame.
 #[derive(Message)]
 pub struct LoadFinished(pub Entity);
@@ -33,7 +40,22 @@ struct CrossFade {
     spare: Option<Entity>,
     /// The view the load in flight was taken from.
     origin: Option<Entity>,
+    /// When the spare's load finished; `DELAY_TIME` then `FADE_TIME` run from
+    /// here. `Some` exactly while the fade is pending or running.
+    loaded_at: Option<f64>,
 }
+
+type Views<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut Emulator,
+        &'static mut EmuView,
+        &'static mut PostProcess,
+        Option<&'static mut GridCell>,
+    ),
+>;
 
 pub struct CrossFadePlugin;
 
@@ -69,35 +91,84 @@ fn spawn_spare(world: &mut World) {
     world.resource_mut::<CrossFade>().spare = Some(entity);
 }
 
+/// Trade roles: the spare becomes the view it loaded for, at full opacity, and
+/// the origin drops its core and goes off screen as the new spare.
+fn swap_roles(state: &mut CrossFade, views: &mut Views) {
+    let (Some(spare), Some(origin)) = (state.spare, state.origin) else {
+        return;
+    };
+    let Ok(
+        [
+            (_, mut o_emu, mut o_view, mut o_pp, _),
+            (_, mut s_emu, mut s_view, mut s_pp, _),
+        ],
+    ) = views.get_many_mut([origin, spare])
+    else {
+        return;
+    };
+
+    s_view.index = o_view.index;
+    o_view.index = CROSSFADE_INDEX;
+    s_pp.alpha = 1.0;
+    o_pp.alpha = 0.0;
+    o_emu.is_crossfade = true;
+    s_emu.is_crossfade = false;
+    o_emu.core = None;
+
+    debug!("Cross fade emulator took over view {}", s_view.index);
+    state.spare = Some(origin);
+    state.origin = None;
+    state.loaded_at = None;
+}
+
 /// Move a pending advance off the view that asked for it and onto the spare, so
 /// `handle_loading` drives the load there instead.
-fn hijack_load(
-    mut state: ResMut<CrossFade>,
-    mut emus: Query<(Entity, &mut Emulator, &EmuView, Option<&mut GridCell>)>,
-) {
+fn hijack_load(mut state: ResMut<CrossFade>, mut views: Views) {
+    // An advance asked for while the fade is still running ends it early; the
+    // request moves to the view that just took over and is hijacked below.
+    if state.loaded_at.is_some() {
+        let (Some(origin), Some(takes_over)) = (state.origin, state.spare) else {
+            return;
+        };
+        let Ok((_, mut emu, ..)) = views.get_mut(origin) else {
+            return;
+        };
+        let advance = (emu.run_next, emu.run_prev);
+        if !(advance.0 || advance.1) {
+            return;
+        }
+        (emu.run_next, emu.run_prev) = (false, false);
+        swap_roles(&mut state, &mut views);
+        if let Ok((_, mut emu, ..)) = views.get_mut(takes_over) {
+            (emu.run_next, emu.run_prev) = advance;
+        }
+    }
+
     let Some(spare) = state.spare else {
         return;
     };
-    let Ok((_, emu, ..)) = emus.get(spare) else {
+    let Ok((_, emu, ..)) = views.get(spare) else {
         return;
     };
     if emu.is_loading() || emu.run_next || emu.run_prev {
         return;
     }
 
-    let Some((origin, advance, index, cell)) = emus
+    let Some((origin, advance, index, cell)) = views
         .iter()
         .find(|(_, emu, ..)| !emu.is_crossfade && (emu.run_next || emu.run_prev))
-        .map(|(e, emu, view, cell)| (e, (emu.run_next, emu.run_prev), view.index, cell.copied()))
+        .map(|(e, emu, view, _, cell)| {
+            (e, (emu.run_next, emu.run_prev), view.index, cell.copied())
+        })
     else {
         return;
     };
 
-    if let Ok((_, mut emu, ..)) = emus.get_mut(origin) {
+    if let Ok((_, mut emu, ..)) = views.get_mut(origin) {
         emu.run_next = false;
         emu.run_prev = false;
     }
-    let Ok((_, mut emu, _, spare_cell)) = emus.get_mut(spare) else {
+    let Ok((_, mut emu, _, _, spare_cell)) = views.get_mut(spare) else {
         return;
     };
     (emu.run_next, emu.run_prev) = advance;
@@ -109,39 +180,35 @@ fn hijack_load(
     state.origin = Some(origin);
 }
 
-/// The spare finished loading: trade roles with the view it loaded for.
-fn finish_crossfade(
+/// The spare finished loading: start the clock the delay and the fade run on.
+fn start_fade(
     mut finished: MessageReader<LoadFinished>,
     mut state: ResMut<CrossFade>,
-    mut emus: Query<(&mut Emulator, &mut EmuView, &mut PostProcess)>,
+    time: Res<Time>,
 ) {
     for LoadFinished(entity) in finished.read() {
-        let (Some(spare), Some(origin)) = (state.spare, state.origin) else {
-            continue;
-        };
-        if *entity != spare {
-            continue;
+        if state.spare == Some(*entity) && state.origin.is_some() {
+            state.loaded_at = Some(time.elapsed_secs_f64());
         }
-        let Ok(
-            [
-                (mut o_emu, mut o_view, mut o_pp),
-                (mut s_emu, mut s_view, mut s_pp),
-            ],
-        ) = emus.get_many_mut([origin, spare])
-        else {
-            continue;
-        };
+    }
+}
 
-        s_view.index = o_view.index;
-        o_view.index = CROSSFADE_INDEX;
-        std::mem::swap(&mut o_pp.alpha, &mut s_pp.alpha);
-        o_emu.is_crossfade = true;
-        s_emu.is_crossfade = false;
-        o_emu.core = None;
-
-        debug!("Cross fade emulator took over view {}", s_view.index);
-        state.spare = Some(origin);
-        state.origin = None;
+/// Hold the spare hidden for `DELAY_TIME`, fade it up over `FADE_TIME`, then
+/// hand it the view.
+fn run_fade(mut state: ResMut<CrossFade>, mut views: Views, time: Res<Time>) {
+    let (Some(loaded_at), Some(spare)) = (state.loaded_at, state.spare) else {
+        return;
+    };
+    let fading = (time.elapsed_secs_f64() - loaded_at) as f32 - DELAY_TIME;
+    if fading < 0.0 {
+        return;
+    }
+    if fading >= FADE_TIME {
+        swap_roles(&mut state, &mut views);
+        return;
+    }
+    if let Ok((_, _, _, mut pp, _)) = views.get_mut(spare) {
+        pp.alpha = fading / FADE_TIME;
     }
 }
 
@@ -160,7 +227,8 @@ impl Plugin for CrossFadePlugin {
                         .after(crate::commands::handle_cmd)
                         .after(crate::frontend::run_frontend)
                         .before(crate::frontend::handle_loading),
-                    finish_crossfade.after(crate::frontend::handle_loading),
+                    start_fade.after(crate::frontend::handle_loading),
+                    run_fade.after(start_fade),
                 ),
             );
     }

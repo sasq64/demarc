@@ -840,6 +840,11 @@ fn post_process_pass(
         return;
     }
 
+    // A blended view reads what is already in the target, so it has to be drawn
+    // over the opaque ones, not under them — that is what makes a cross fade
+    // visible whichever entity happens to hold the view.
+    quads.sort_by(|a, b| b.alpha.total_cmp(&a.alpha));
+
     // --- Stage 2: composite every view into the view target ---
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("lottes_pass"),
