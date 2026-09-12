@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::window::{PrimaryWindow, WindowMode};
+use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
@@ -329,16 +329,35 @@ const WIDE_ASPECT: f32 = 1.55;
 ///
 /// Only when nothing has said already, which is what leaves `-x widescreen=` to
 /// whoever typed it.
+///
+/// The monitor rather than the window, because this is settled once and then
+/// kept: on the first frame the window is still the 800x600 winit starts every
+/// window as, and latching that shape asked every 16:9 screen for 5:4 modes.
+/// A monitor is the right size from the moment it exists, and until one does
+/// there is nothing to answer with — so nothing is set and the default stands.
 fn detect_widescreen(
-    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     headless: Option<Res<HeadlessTarget>>,
     mut settings: ResMut<AppSettings>,
 ) {
     if settings.system.has_meta(META_WIDESCREEN) {
         return;
     }
-    let Some(size) = screen_size(window.as_deref().copied(), headless.as_deref()) else {
-        return;
+    let size = match headless.as_deref() {
+        Some(headless) => headless.size,
+        // Whichever monitor is the primary one, or the first there is: Wayland
+        // has no notion of a primary display, so waiting for one marked that
+        // way would be waiting forever.
+        None => {
+            let monitor = monitors
+                .iter()
+                .find(|(_, primary)| *primary)
+                .or_else(|| monitors.iter().next());
+            let Some((monitor, _)) = monitor else {
+                return;
+            };
+            monitor.physical_size()
+        }
     };
     if size.x == 0 || size.y == 0 {
         return;
