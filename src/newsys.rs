@@ -69,6 +69,12 @@ mod web;
 #[cfg(target_os = "linux")]
 mod windows;
 
+/// Meta key saying whether the screen demarc is drawing to is a widescreen one.
+/// Set by the frontend from the window, since nothing further down knows the
+/// shape of the screen — see `crate::wine::default_dialog_res`, which is what
+/// asks.
+pub const META_WIDESCREEN: &str = "widescreen";
+
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
 /// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and
@@ -500,6 +506,12 @@ impl NewSys {
     /// meta once, as it is built.
     pub fn set_meta(&mut self, key: &str, value: String) {
         self.meta.insert(key.into(), value);
+    }
+
+    /// Has one of them been set already? What `-x` said is in here too, so this
+    /// is how the frontend leaves a value someone typed alone.
+    pub fn has_meta(&self, key: &str) -> bool {
+        self.meta.contains_key(key)
     }
 
     /// Load a release, with `over` carrying whatever `overrides.toml` had to

@@ -7,15 +7,15 @@ use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
 use super::dos::{ExeKind, exe_kind};
-use super::{System, get_ext, walk_dir};
+use super::{META_WIDESCREEN, System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine::{
-    DEFAULT_DESKTOP, DEFAULT_DIALOG_RES, DEFAULT_GL_COMPAT, DEFAULT_RES, GL_COMPAT_OVERRIDE,
-    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_RES, close_prefix, dll_overrides,
-    gl_compat, has_tool, wine_command, wine_prefix,
+    DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, DEFAULT_WIDESCREEN, GL_COMPAT_OVERRIDE,
+    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_RES, close_prefix, default_dialog_res,
+    dll_overrides, gl_compat, has_tool, is_yes, wine_command, wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
@@ -183,18 +183,27 @@ impl System for WindowsSystem {
             file.set_meta(META_RES, res);
         }
 
+        // Which modes to ask the dialog for depends on the shape of the screen,
+        // which only the frontend knows; set here rather than in `default_meta`
+        // because that one can only hand back a fixed string.
+        if !file.has_meta(META_DIALOG_RES) {
+            let widescreen =
+                is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
+            file.set_meta(META_DIALOG_RES, default_dialog_res(widescreen));
+        }
+
         file.path = target;
         Ok(true)
     }
 
-    /// The size of the session, the modes to ask the setup dialog for, whether
-    /// the demo gets a wine virtual desktop to run in and whether Mesa is asked
-    /// for a compatibility profile. Spelled out here rather than left to the
-    /// backend so they show up with the rest of an entry's settings.
+    /// The size of the session, whether the demo gets a wine virtual desktop to
+    /// run in and whether Mesa is asked for a compatibility profile. The modes
+    /// to ask the setup dialog for are set in [`load`](Self::load), which is
+    /// where the screen's shape can be read. Spelled out here rather than left
+    /// to the backend so they show up with the rest of an entry's settings.
     fn default_meta(&self) -> HashMap<&str, &str> {
         HashMap::from([
             (META_RES, DEFAULT_RES),
-            (META_DIALOG_RES, DEFAULT_DIALOG_RES),
             (META_DESKTOP, if DEFAULT_DESKTOP { "true" } else { "false" }),
             (
                 META_GL_COMPAT,

@@ -21,8 +21,24 @@ pub const META_DIALOG_RES: &str = "wine_dialog_res";
 /// The [`META_DIALOG_RES`] value that means "leave the dialog to me".
 pub const PICK: &str = "pick";
 
-/// What [`META_DIALOG_RES`] is when nothing says otherwise.
-pub const DEFAULT_DIALOG_RES: &str = "1920x1080,1280x720,1024x576,1280x1024,1024x768,800x600";
+/// What the screen is taken to be when `widescreen` — the key the frontend sets
+/// from the window, see [`crate::newsys::META_WIDESCREEN`] — says nothing.
+pub const DEFAULT_WIDESCREEN: bool = true;
+
+/// The 16:9 modes, and the 4:3 ones worth trying whatever the screen is: plenty
+/// of demos offer nothing else.
+const WIDE_DIALOG_RES: &str = "1920x1080,1280x720,1024x576";
+const NARROW_DIALOG_RES: &str = "1280x1024,1024x768,800x600";
+
+/// What [`META_DIALOG_RES`] is when nothing says otherwise: the widescreen modes
+/// first, and only on a screen shaped for them.
+pub fn default_dialog_res(widescreen: bool) -> String {
+    if widescreen {
+        format!("{WIDE_DIALOG_RES},{NARROW_DIALOG_RES}")
+    } else {
+        NARROW_DIALOG_RES.to_string()
+    }
+}
 
 /// Meta key asking for the demo to be run inside a wine virtual desktop.
 pub const META_DESKTOP: &str = "wine_desktop";

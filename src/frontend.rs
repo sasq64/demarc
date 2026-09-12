@@ -16,6 +16,7 @@ use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::mouse_cursor::HideMouse;
+use crate::newsys::META_WIDESCREEN;
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
 
 pub struct FrontendPlugin {}
@@ -319,6 +320,34 @@ const fn config_line_width() -> f32 {
     4.0
 }
 
+/// Wider than this and the screen counts as a widescreen one — 16:10 and 16:9
+/// do, 3:2, 4:3 and 5:4 don't.
+const WIDE_ASPECT: f32 = 1.55;
+
+/// Tell the loading pipeline what shape the screen is, so a release that has to
+/// choose a resolution can choose one that fits it — see [`META_WIDESCREEN`].
+///
+/// Only when nothing has said already, which is what leaves `-x widescreen=` to
+/// whoever typed it.
+fn detect_widescreen(
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    headless: Option<Res<HeadlessTarget>>,
+    mut settings: ResMut<AppSettings>,
+) {
+    if settings.system.has_meta(META_WIDESCREEN) {
+        return;
+    }
+    let Some(size) = screen_size(window.as_deref().copied(), headless.as_deref()) else {
+        return;
+    };
+    if size.x == 0 || size.y == 0 {
+        return;
+    }
+    let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
+    debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
+    settings.system.set_meta(META_WIDESCREEN, wide.to_string());
+}
+
 fn handle_loading(
     mut emus: Query<&mut Emulator>,
     mut settings: ResMut<AppSettings>,
@@ -609,6 +638,7 @@ impl Plugin for FrontendPlugin {
             Update,
             (
                 run_frontend,
+                detect_widescreen.before(handle_loading),
                 handle_loading,
                 update_view_rects,
                 draw_current_emu_outline,

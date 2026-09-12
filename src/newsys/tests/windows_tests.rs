@@ -92,6 +92,49 @@ fn claims_a_windows_release_for_wine() {
     assert_eq!(sys.default_meta().get(META_RES), Some(&DEFAULT_RES));
 }
 
+/// The modes the setup dialog is asked for follow the shape of the screen the
+/// frontend found, unless an entry names its own list.
+#[test]
+fn the_dialog_list_follows_the_shape_of_the_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+    let release = dir.path().join("thing");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "thing.exe");
+
+    let load = |meta: HashMap<String, String>| {
+        let mut wf = WorkFile::new_with_meta(release.clone(), meta);
+        assert!(sys.load(&mut wf).unwrap());
+        wf.get_meta_or(META_DIALOG_RES, "")
+    };
+
+    let wide = load(HashMap::from([(
+        META_WIDESCREEN.to_string(),
+        "true".to_string(),
+    )]));
+    assert!(wide.starts_with("1920x1080"), "{wide}");
+    assert!(wide.contains("1024x768"), "{wide}");
+
+    let narrow = load(HashMap::from([(
+        META_WIDESCREEN.to_string(),
+        "false".to_string(),
+    )]));
+    assert!(!narrow.contains("1920x1080"), "{narrow}");
+    assert!(narrow.contains("1024x768"), "{narrow}");
+
+    // Nothing said: a widescreen, which is what most screens are.
+    assert_eq!(load(HashMap::new()), wide);
+
+    // An entry's own list is not touched.
+    assert_eq!(
+        load(HashMap::from([(
+            META_DIALOG_RES.to_string(),
+            "640x480".to_string()
+        )])),
+        "640x480"
+    );
+}
+
 /// A Windows release often names the size it was built for, and that name
 /// is the only place the size is written down.
 #[test]

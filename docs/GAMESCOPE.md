@@ -168,8 +168,11 @@ and all — everything demarc knows about starting a Windows release lives in `s
 and the core is handed the result. `wine_desktop` rides along inside it as
 `explorer /desktop=`, which is why the core has no option of its own for it. `wine_res` is
 only ever the size of the session; what the dialog is asked for is `wine_dialog_res`, a
-comma-separated list tried best first, defaulting to the session's own size.
-`wine_dialog_res=pick` presses nothing at all, leaving the dialog to whoever is watching.
+comma-separated list tried best first. Unset, `WindowsSystem` fills it in with a list built
+for the shape of the screen: the 16:9 modes in front of the 4:3 ones on a widescreen, and
+only the 4:3 ones otherwise — the frontend reads the window and says which in the
+`widescreen` meta. `wine_dialog_res=pick` presses nothing at all, leaving the dialog to
+whoever is watching.
 
 ### The prefix each session runs in
 

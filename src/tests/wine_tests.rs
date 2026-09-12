@@ -85,7 +85,7 @@ fn reads_a_resolution_or_falls_back_to_the_default() {
     assert_eq!(parse_res(" 1280 X 720 "), Some((1280, 720)));
     assert_eq!(parse_res("640"), None);
     assert_eq!(parse_res("wide x tall"), None);
-    assert_eq!(parse_res(DEFAULT_RES), Some((1280, 1024)));
+    assert_eq!(parse_res(DEFAULT_RES), Some((1920, 1080)));
 }
 
 /// The config has to survive whatever the metadata says, since it comes
@@ -95,7 +95,7 @@ fn a_broken_resolution_still_gives_a_usable_config() {
     let exe = std::env::current_exe().expect("this test binary");
     let meta = HashMap::from([(META_RES.to_string(), "huge".to_string())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
-    assert_eq!((cfg.width, cfg.height), (1280, 1024));
+    assert_eq!((cfg.width, cfg.height), (1920, 1080));
 
     let meta = HashMap::from([(META_RES.to_string(), "1024x768".to_string())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
@@ -104,8 +104,8 @@ fn a_broken_resolution_still_gives_a_usable_config() {
     // An empty value is nothing said, not a broken resolution.
     let meta = HashMap::from([(META_RES.to_string(), String::new())]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
-    assert_eq!((cfg.width, cfg.height), (1280, 1024));
-    assert_eq!(cfg.dialog, Dialog::Drive("1280x1024".to_string()));
+    assert_eq!((cfg.width, cfg.height), (1920, 1080));
+    assert_eq!(cfg.dialog, Dialog::Drive("1920x1080".to_string()));
 }
 
 /// `wine_res` is the size of the session and nothing else; what the dialog is
