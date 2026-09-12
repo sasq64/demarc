@@ -133,6 +133,10 @@ pub struct Emulator {
     pub last_active_time: f32,
     pub idle_time: f32,
     pub title_info: GameInfo,
+    /// This is the spare emulator loads are diverted into, not a view the user
+    /// sees. Travels with the role, not the entity: the swap at the end of a
+    /// cross-faded load moves it to the emulator that just left the screen.
+    pub is_crossfade: bool,
     /// Download in flight for the next game, driven by [`Emulator::update_load`].
     pending_load: Option<PendingLoad>,
     pub load_delay_until: f64,
@@ -669,7 +673,6 @@ impl Emulator {
     // [`FileSource::resolve_with_progress`] forwards).
 
     /// True while a [`load_async`](Self::load_async) download is outstanding.
-    #[allow(dead_code)]
     pub fn is_loading(&self) -> bool {
         self.pending_load.is_some()
     }
