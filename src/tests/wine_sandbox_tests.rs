@@ -63,6 +63,16 @@ fn starts_the_demo_in_its_own_directory() {
     assert!(!without.iter().any(|a| a == "--chdir"));
 }
 
+/// `bwrap` chdirs inside the new mount namespace, so a relative directory —
+/// which is what `demarc inside/demo.exe` hands us — would fail the whole
+/// sandbox and the demo would never start.
+#[test]
+fn the_working_directory_is_made_absolute() {
+    let here = std::env::current_dir().expect("a working directory");
+    let args = args("/base", "/session", Some("."));
+    assert!(follows(&args, "--chdir", &here.to_string_lossy()));
+}
+
 /// The sandbox says which prefix it is itself, so it and whoever spawns it
 /// cannot disagree about that.
 #[test]

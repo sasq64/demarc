@@ -203,7 +203,9 @@ fn bwrap_args(base: &Path, prefix: &Path, workdir: Option<&Path>) -> Vec<String>
     // from anywhere else. bwrap keeps the working directory when it can, but
     // saying it outright costs nothing and survives being spawned from a core
     // that chose its own.
-    if let Some(dir) = workdir {
+    // Absolute, because `bwrap` chdirs inside the new mount namespace, where a
+    // relative path means nothing and the sandbox refuses to start at all.
+    if let Some(dir) = workdir.map(|dir| dir.canonicalize().unwrap_or(dir.to_owned())) {
         args.extend(["--chdir".into(), dir.to_string_lossy().into_owned()]);
     }
     args.push("--".into());
