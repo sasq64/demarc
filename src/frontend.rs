@@ -12,6 +12,7 @@ use bevy::{
 
 use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
+use crate::cross_fade::LoadFinished;
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::headless::{HeadlessTarget, camera_target};
@@ -25,11 +26,11 @@ pub struct FrontendPlugin {}
 /// expressed in normalized `[0, 1]` coordinates. [`update_view_rects`] keeps
 /// the view's [`ViewRect`] sized to this cell as the window changes.
 #[derive(Component, Clone, Copy)]
-struct GridCell {
+pub(crate) struct GridCell {
     /// Top-left corner as a fraction of the window size.
-    offset: Vec2,
+    pub offset: Vec2,
     /// Size as a fraction of the window size.
-    size: Vec2,
+    pub size: Vec2,
 }
 
 /// Identifies an emulator's on-screen view and its stable index, so the
@@ -37,8 +38,8 @@ struct GridCell {
 /// output area outlined. The rect itself comes from the optional [`GridCell`];
 /// a view without one fills the whole window.
 #[derive(Component, Clone, Copy)]
-struct EmuView {
-    index: usize,
+pub(crate) struct EmuView {
+    pub index: usize,
 }
 
 /// Color of the outline drawn around the currently-focused emulator.
@@ -46,7 +47,7 @@ const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
-fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
+pub(crate) fn grid_cells(cols: u32, rows: u32) -> Vec<GridCell> {
     let mut cells = Vec::with_capacity((cols * rows) as usize);
     for row in 0..rows {
         for col in 0..cols {
@@ -86,7 +87,7 @@ fn cursor_pos(window: Option<&Window>) -> Option<Vec2> {
     Some(window.cursor_position()? * window.scale_factor())
 }
 
-fn setup_frontend(world: &mut World) {
+pub(crate) fn setup_frontend(world: &mut World) {
     let args = world.resource::<Args>();
 
     let color_cycle = args.color_cycle;
@@ -146,14 +147,14 @@ fn setup_frontend(world: &mut World) {
 /// that cell. Without one the view fills the whole window. The views are *not*
 /// cameras — they are all composited by the single [`EmuCamera`] spawned in
 /// [`setup_retro`].
-fn spawn_emulator(
+pub(crate) fn spawn_emulator(
     world: &mut World,
     color_cycle: bool,
     max_time: Option<usize>,
     speed_test: bool,
     index: usize,
     cell: Option<GridCell>,
-) {
+) -> Entity {
     let mut res = world.resource_mut::<Assets<Image>>();
     let emu = Emulator::new(&mut res, max_time, color_cycle, speed_test);
     let handle = emu.image.clone();
@@ -183,6 +184,7 @@ fn spawn_emulator(
         // Which fraction of the window this view fills.
         view.insert(cell);
     }
+    view.id()
 }
 
 /// Keep every emulator view's [`ViewRect`] sized to its slice of the window as
@@ -193,7 +195,7 @@ fn update_view_rects(
     window: Option<Single<&Window, With<PrimaryWindow>>>,
     headless: Option<Res<HeadlessTarget>>,
     mut settings: ResMut<AppSettings>,
-    mut views: Query<(&EmuView, Option<&GridCell>, &mut PostProcess)>,
+    mut views: Query<(&EmuView, &Emulator, Option<&GridCell>, &mut PostProcess)>,
 ) {
     let window = window.as_deref().copied();
     let Some(size) = screen_size(window, headless.as_deref()) else {
@@ -208,7 +210,7 @@ fn update_view_rects(
     settings.mouse_index = None;
 
     let fsize = size.as_vec2();
-    for (view, cell, mut pp) in &mut views {
+    for (view, emu, cell, mut pp) in &mut views {
         let Some(cell) = cell else {
             // No grid: this view owns the whole window, always.
             pp.view = ViewRect {
@@ -230,14 +232,14 @@ fn update_view_rects(
             (position, far - position)
         };
 
-        if !settings.maximized {
+        if !settings.maximized && !emu.is_crossfade {
             let p0 = cell.offset * fsize;
             let p1 = (cell.offset + cell.size) * fsize;
             let r = Rect::from_corners(p0, p1);
             if r.contains(pos) {
                 settings.mouse_index = Some(view.index);
             }
-        } else {
+        } else if settings.maximized {
             settings.mouse_index = Some(99999);
         }
 
@@ -266,12 +268,12 @@ fn draw_current_emu_outline(
     settings: Res<AppSettings>,
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
-    views: Query<(&EmuView, Option<&GridCell>)>,
+    views: Query<(&EmuView, &Emulator, Option<&GridCell>)>,
 ) {
     // A single (or maximized) emulator fills the window, so an outline would
     // just frame the whole screen — not useful.
     if settings.maximized
-        || views.iter().count() < 2
+        || views.iter().filter(|(_, emu, _)| !emu.is_crossfade).count() < 2
         || time.elapsed_secs_f64() - settings.select_box_drawn_at > 2.0
     {
         return;
@@ -289,8 +291,8 @@ fn draw_current_emu_outline(
         gizmos.rect_2d(Isometry2d::IDENTITY, rect, CURRENT_OUTLINE_COLOR);
         return;
     }
-    for (view, cell) in &views {
-        if view.index != settings.current_emu {
+    for (view, emu, cell) in &views {
+        if view.index != settings.current_emu || emu.is_crossfade {
             continue;
         }
         let (offset, size) = cell.map_or((Vec2::ZERO, Vec2::ONE), |c| (c.offset, c.size));
@@ -366,14 +368,15 @@ fn detect_widescreen(
     settings.system.set_meta(META_WIDESCREEN, wide.to_string());
 }
 
-fn handle_loading(
-    mut emus: Query<&mut Emulator>,
+pub(crate) fn handle_loading(
+    mut emus: Query<(Entity, &mut Emulator)>,
     mut settings: ResMut<AppSettings>,
     mut writer: MessageWriter<SetHudText>,
+    mut loaded: MessageWriter<LoadFinished>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for mut emu in &mut emus.iter_mut() {
+    for (entity, mut emu) in &mut emus.iter_mut() {
         let flen = settings.files.len() as isize;
 
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
@@ -424,6 +427,7 @@ fn handle_loading(
                 LoadStatus::Done { result: Ok(()), .. } => {
                     emu.run_next = false;
                     emu.run_prev = false;
+                    loaded.write(LoadFinished(entity));
                     if settings.show_info && settings.maximized {
                         writer.write(SetHudText {
                             text: emu.get_info(),
@@ -480,7 +484,7 @@ fn cursor_frame_uv(
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
 }
 
-fn run_frontend(
+pub(crate) fn run_frontend(
     mut emus: Query<(&mut Emulator, &EmuView, &mut PostProcess)>,
     input: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<AppSettings>,
@@ -524,11 +528,11 @@ fn run_frontend(
             continue;
         }
         // Drop audio entirely in the speed-test benchmark and when headless.
-        emu.audio_active(
-            !settings.speed_test
-                && headless.is_none()
-                && (settings.all_emus || i == settings.current_emu),
-        );
+        let audio = !settings.speed_test
+            && headless.is_none()
+            && !emu.is_crossfade
+            && (settings.all_emus || i == settings.current_emu);
+        emu.audio_active(audio);
         // Exactly one view is focused; the others are on screen as grid tiles
         // unless the focused one is maximized over them.
         emu.focus(match (i == settings.current_emu, settings.maximized) {
@@ -546,30 +550,36 @@ fn run_frontend(
             });
         }
 
-        if let Some(mt) = emu.max_time
-            && now > emu.start_time + (mt as f64)
-            && (now - settings.select_box_drawn_at) > 1.0
-        {
-            emu.start_time = now + 100.0;
-            emu.run_next = true;
-        };
+        if !emu.is_crossfade {
+            if let Some(mt) = emu.max_time
+                && now > emu.start_time + (mt as f64)
+                && (now - settings.select_box_drawn_at) > 1.0
+            {
+                emu.start_time = now + 100.0;
+                emu.run_next = true;
+            };
 
-        // Idle handling
-        let mut max_idle = settings.idle_timeout;
-        if max_idle == 0 && settings.tv_mode {
-            max_idle = 20;
-        }
-        if max_idle > 0 && emu.idle_time > max_idle as f32 {
-            debug!("Idle for {max_idle}, running next");
-            emu.run_next = true;
-            emu.reset_idle(&time);
+            // Idle handling
+            let mut max_idle = settings.idle_timeout;
+            if max_idle == 0 && settings.tv_mode {
+                max_idle = 20;
+            }
+            if max_idle > 0 && emu.idle_time > max_idle as f32 {
+                debug!("Idle for {max_idle}, running next");
+                emu.run_next = true;
+                emu.reset_idle(&time);
+            }
         }
 
         if emu.core.is_none() {
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu) && !no_input && settings.maximized {
+        if (settings.all_emus || i == settings.current_emu)
+            && !no_input
+            && !emu.is_crossfade
+            && settings.maximized
+        {
             let abs = cursor_frame_uv(cursor, &pp, &images, render.scale_mode);
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }

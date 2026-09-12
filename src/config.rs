@@ -217,6 +217,11 @@ pub struct Args {
     #[arg(long)]
     pub focus_first: bool,
 
+    /// Load the next release into a second, hidden emulator and swap it in
+    /// when it is ready.
+    #[arg(long)]
+    pub cross_fade: bool,
+
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000033")]
     pub clear_color: Color,

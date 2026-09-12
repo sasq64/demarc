@@ -15,6 +15,7 @@ use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
+use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
@@ -549,12 +550,14 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     lines.join("\n")
 }
 
-fn handle_cmd(
+pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
-    mut emus: Query<&mut Emulator>,
+    mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    // Optional: `--headless` has no window, and a bare `Single` would skip the
+    // whole system, dropping every command a remote-control script sends.
+    mut window: Option<Single<&mut Window, With<PrimaryWindow>>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
     mut show_list: MessageWriter<ShowFuzzyList>,
@@ -563,7 +566,7 @@ fn handle_cmd(
     mut demo_settings: ResMut<DemarcSettings>,
 ) {
     let mut show_info = false;
-    let count = emus.iter().count();
+    let count = emus.iter().filter(|(emu, _)| !emu.is_crossfade).count();
     let multi = count > 1;
     for cmd in cmds.read() {
         debug!("Received command: {:?}", cmd.0);
@@ -606,17 +609,19 @@ fn handle_cmd(
                 });
             }
             Cmd::Fullscreen => {
-                window.mode = match window.mode {
-                    WindowMode::Windowed => {
-                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-                    }
-                    _ => WindowMode::Windowed,
-                };
-                // So the settings dialog opens showing where the window
-                // actually is, and doesn't undo this the next time it is
-                // applied. This is the only hotkey that moves a field the
-                // dialog also owns.
-                demo_settings.fullscreen = window.mode != WindowMode::Windowed;
+                if let Some(window) = window.as_mut() {
+                    window.mode = match window.mode {
+                        WindowMode::Windowed => {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        }
+                        _ => WindowMode::Windowed,
+                    };
+                    // So the settings dialog opens showing where the window
+                    // actually is, and doesn't undo this the next time it is
+                    // applied. This is the only hotkey that moves a field the
+                    // dialog also owns.
+                    demo_settings.fullscreen = window.mode != WindowMode::Windowed;
+                }
             }
             Cmd::ToggleAll if multi => {
                 settings.all_emus = !settings.all_emus;
@@ -649,8 +654,8 @@ fn handle_cmd(
                 if settings.file_source.is_none() {
                     settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
-                let size = window.resolution.size();
-                settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
+                let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
+                settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
 
                 show_list.write(ShowFuzzyList {
                     id: FILE_PICKER_ID,
@@ -665,7 +670,11 @@ fn handle_cmd(
             }
             _ => {}
         }
-        for (i, mut emu) in &mut emus.iter_mut().enumerate() {
+        for (mut emu, view) in &mut emus {
+            if emu.is_crossfade {
+                continue;
+            }
+            let i = view.index;
             if show_info && i == settings.current_emu {
                 writer.write(SetHudText {
                     text: emu.get_info(),

@@ -17,6 +17,7 @@ mod cache;
 mod cbmconvert;
 mod commands;
 mod config;
+mod cross_fade;
 mod degas;
 mod demarc_settings;
 mod egui_settings;
@@ -61,6 +62,7 @@ mod wine;
 mod wine_sandbox;
 
 use commands::CommandPlugin;
+use cross_fade::CrossFadePlugin;
 use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::FrontendPlugin;
@@ -492,6 +494,7 @@ fn main() {
                     ..Default::default()
                 }),
             FrontendPlugin {},
+            CrossFadePlugin,
             CommandPlugin,
             PostProcessPlugin {
                 shader: shader_path,
