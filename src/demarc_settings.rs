@@ -13,7 +13,6 @@ use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
 use crate::config::AppSettings;
 use crate::egui_settings::{Range, ReflectDisplay, SettingsApplied};
-use crate::egui_ui::SetHudText;
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
 #[cfg(target_os = "linux")]
@@ -84,7 +83,6 @@ pub struct DemarcSettings {
     pub background: Color,
 
     pub fast_load: bool,
-    pub resolution: Resolution,
 
     /// Frames a core's worker thread may run ahead. Takes effect on the next
     /// release loaded -- see [`crate::newsys::NewSys::set_meta`]. `0` would be
@@ -98,6 +96,7 @@ pub struct DemarcSettings {
     #[reflect(@Range::new(0.0, 100.0))]
     pub volume: f32,
 
+    #[cfg(target_os = "linux")]
     pub wine: WineSettings,
 }
 
@@ -113,7 +112,6 @@ pub fn apply_settings(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     mut clear_color: ResMut<ClearColor>,
     mut app_settings: ResMut<AppSettings>,
-    mut hud: MessageWriter<SetHudText>,
 ) {
     for SettingsApplied(new) in reader.read() {
         if new.fullscreen != current.fullscreen {
@@ -130,21 +128,10 @@ pub fn apply_settings(
             app_settings
                 .system
                 .set_meta("latency", new.latency.to_string());
-            // The only change here with nothing to see, and it doesn't take
-            // hold until the next release, so say so.
-            hud.write(SetHudText {
-                text: format!("Latency {} from next release", new.latency),
-                duration: std::time::Duration::from_secs(3),
-                ..default()
-            });
         }
+        #[cfg(target_os = "linux")]
         if new.wine != current.wine {
             apply_wine(&new.wine, &current.wine, app_settings.system.meta_mut());
-            hud.write(SetHudText {
-                text: "Wine settings from next release".to_owned(),
-                duration: std::time::Duration::from_secs(3),
-                ..default()
-            });
         }
         *current = new.clone();
     }
