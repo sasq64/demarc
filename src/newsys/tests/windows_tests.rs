@@ -135,6 +135,45 @@ fn the_dialog_list_follows_the_shape_of_the_screen() {
     );
 }
 
+/// The session is paced at the screen, not at the core's own 60: a demo held to
+/// 60Hz on a faster display runs slower than it was built to and lands unevenly
+/// on the refreshes it does get.
+#[test]
+fn the_session_is_paced_at_the_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+    let release = dir.path().join("thing");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "thing.exe");
+
+    let load = |meta: HashMap<String, String>| {
+        let mut wf = WorkFile::new_with_meta(release.clone(), meta);
+        assert!(sys.load(&mut wf).unwrap());
+        wf.get_meta_or(META_GAMESCOPE_REFRESH, "")
+    };
+
+    assert_eq!(
+        load(HashMap::from([(
+            META_REFRESH.to_string(),
+            "165".to_string()
+        )])),
+        "165"
+    );
+
+    // No screen to read — headless, or a monitor that will not say — leaves the
+    // core's own default standing.
+    assert_eq!(load(HashMap::new()), "");
+
+    // A rate someone typed is the answer, whatever the screen does.
+    assert_eq!(
+        load(HashMap::from([
+            (META_REFRESH.to_string(), "165".to_string()),
+            (META_GAMESCOPE_REFRESH.to_string(), "50".to_string()),
+        ])),
+        "50"
+    );
+}
+
 /// A Windows release often names the size it was built for, and that name
 /// is the only place the size is written down.
 #[test]

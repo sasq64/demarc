@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
 use super::dos::{ExeKind, exe_kind};
-use super::{META_WIDESCREEN, System, get_ext, walk_dir};
+use super::{META_REFRESH, META_WIDESCREEN, System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
@@ -21,6 +21,9 @@ use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
 
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
+
+/// The core option naming the rate a session is composited and paced at.
+const META_GAMESCOPE_REFRESH: &str = "gamescope_refresh";
 
 /// What holds the words of `gamescope_command` apart.
 const ARG_SEPARATOR: &str = "\u{1f}";
@@ -190,6 +193,17 @@ impl System for WindowsSystem {
             let widescreen =
                 is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
             file.set_meta(META_DIALOG_RES, default_dialog_res(widescreen));
+        }
+
+        // Pace the session at the screen rather than at the core's own 60: a
+        // demo held to 60Hz on a 165Hz display is both slower than it was built
+        // to be and unevenly spread over the refreshes it does get. Same reason
+        // the dialog modes are settled here — only the frontend knows the
+        // screen. Without one (headless, or a monitor that will not say) the
+        // core's default stands.
+        let hz = file.get_meta_or(META_REFRESH, "");
+        if !file.has_meta(META_GAMESCOPE_REFRESH) && !hz.is_empty() {
+            file.set_meta(META_GAMESCOPE_REFRESH, hz);
         }
 
         file.path = target;
