@@ -416,8 +416,12 @@ impl Backend for RetroCoreThreaded {
         });
     }
 
-    fn is_idle(&self) -> bool {
-        self.last_hash == self.frame_hash && self.audio_sum.abs() < 1000
+    fn is_silent(&self) -> bool {
+        self.audio_sum.abs() < 1000
+    }
+
+    fn screen_changed(&self) -> bool {
+        self.last_hash == self.frame_hash
     }
 
     fn get_number_of_disks(&mut self) -> u32 {

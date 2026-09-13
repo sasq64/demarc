@@ -86,6 +86,21 @@ pub(crate) enum LoadStatus {
     Done { title: String, result: Result<()> },
 }
 
+#[derive(Default)]
+pub enum EmuState {
+    #[default]
+    Stopped,
+    Loading,
+
+    PreDelay,
+    WaitNonIdle,
+    CrossFadeDelay,
+    CrossFade,
+
+    InfoDelay,
+    Running,
+}
+
 /// One libretro emulator instance, rendered into its own [`Self::image`]
 /// texture. Stored as a component so several can coexist as separate entities,
 /// each driven independently by `run_retro` and presented by its own
@@ -140,6 +155,8 @@ pub struct Emulator {
     /// Download in flight for the next game, driven by [`Emulator::update_load`].
     pending_load: Option<PendingLoad>,
     pub load_delay_until: f64,
+    pub state: EmuState,
+    pub state_change_time: f64,
 }
 
 /// How long [`Emulator::load_delay_until`] holds off the next poll. Roughly the
@@ -548,6 +565,7 @@ impl Emulator {
             download_finished();
         }
         download_started();
+        self.state = EmuState::Loading;
 
         // Taken, not just read: leaving them set would have the frontend ask
         // for this same load again on the very next frame.

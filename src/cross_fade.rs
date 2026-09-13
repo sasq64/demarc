@@ -93,7 +93,16 @@ fn spawn_spare(world: &mut World) {
 
 /// Trade roles: the spare becomes the view it loaded for, at full opacity, and
 /// the origin drops its core and goes off screen as the new spare.
-fn swap_roles(state: &mut CrossFade, views: &mut Views) {
+fn swap_roles(
+    state: &mut CrossFade,
+    views: &mut Query<(
+        Entity,
+        &mut Emulator,
+        &mut EmuView,
+        &mut PostProcess,
+        Option<&mut GridCell>,
+    )>,
+) {
     let (Some(spare), Some(origin)) = (state.spare, state.origin) else {
         return;
     };
