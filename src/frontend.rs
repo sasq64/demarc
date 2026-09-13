@@ -17,7 +17,7 @@ use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::mouse_cursor::HideMouse;
-use crate::newsys::META_WIDESCREEN;
+use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
 
 pub struct FrontendPlugin {}
@@ -325,8 +325,10 @@ const fn config_line_width() -> f32 {
 /// do, 3:2, 4:3 and 5:4 don't.
 const WIDE_ASPECT: f32 = 1.55;
 
-/// Tell the loading pipeline what shape the screen is, so a release that has to
-/// choose a resolution can choose one that fits it — see [`META_WIDESCREEN`].
+/// Tell the loading pipeline what shape the screen is and how fast it refreshes,
+/// so a release that has to choose a resolution can choose one that fits it and
+/// a backend that paces itself to the display can — see [`META_WIDESCREEN`] and
+/// [`META_REFRESH`].
 ///
 /// Only when nothing has said already, which is what leaves `-x widescreen=` to
 /// whoever typed it.
@@ -336,36 +338,44 @@ const WIDE_ASPECT: f32 = 1.55;
 /// window as, and latching that shape asked every 16:9 screen for 5:4 modes.
 /// A monitor is the right size from the moment it exists, and until one does
 /// there is nothing to answer with — so nothing is set and the default stands.
-fn detect_widescreen(
+fn detect_screen(
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     headless: Option<Res<HeadlessTarget>>,
     mut settings: ResMut<AppSettings>,
 ) {
-    if settings.system.has_meta(META_WIDESCREEN) {
+    if settings.system.has_meta(META_WIDESCREEN) && settings.system.has_meta(META_REFRESH) {
         return;
     }
+    // Whichever monitor is the primary one, or the first there is: Wayland
+    // has no notion of a primary display, so waiting for one marked that
+    // way would be waiting forever.
+    let monitor = monitors
+        .iter()
+        .find(|(_, primary)| *primary)
+        .or_else(|| monitors.iter().next())
+        .map(|(monitor, _)| monitor);
     let size = match headless.as_deref() {
         Some(headless) => headless.size,
-        // Whichever monitor is the primary one, or the first there is: Wayland
-        // has no notion of a primary display, so waiting for one marked that
-        // way would be waiting forever.
-        None => {
-            let monitor = monitors
-                .iter()
-                .find(|(_, primary)| *primary)
-                .or_else(|| monitors.iter().next());
-            let Some((monitor, _)) = monitor else {
-                return;
-            };
-            monitor.physical_size()
-        }
+        None => match monitor {
+            Some(monitor) => monitor.physical_size(),
+            None => return,
+        },
     };
-    if size.x == 0 || size.y == 0 {
-        return;
+    if !settings.system.has_meta(META_WIDESCREEN) && size.x != 0 && size.y != 0 {
+        let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
+        debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
+        settings.system.set_meta(META_WIDESCREEN, wide.to_string());
     }
-    let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
-    debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
-    settings.system.set_meta(META_WIDESCREEN, wide.to_string());
+    // Nothing to answer with when headless, and nothing that wants an answer
+    // either: there is no display to be out of step with.
+    if !settings.system.has_meta(META_REFRESH)
+        && let Some(mhz) = monitor.and_then(|monitor| monitor.refresh_rate_millihertz)
+        && mhz > 0
+    {
+        let hz = (mhz + 500) / 1000;
+        debug!("Screen refreshes at {hz}Hz");
+        settings.system.set_meta(META_REFRESH, hz.to_string());
+    }
 }
 
 pub(crate) fn handle_loading(
@@ -669,7 +679,7 @@ impl Plugin for FrontendPlugin {
             Update,
             (
                 run_frontend,
-                detect_widescreen.before(handle_loading),
+                detect_screen.before(handle_loading),
                 handle_loading,
                 update_view_rects,
                 draw_current_emu_outline,

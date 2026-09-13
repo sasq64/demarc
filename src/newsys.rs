@@ -75,6 +75,12 @@ mod windows;
 /// asks.
 pub const META_WIDESCREEN: &str = "widescreen";
 
+/// Meta key holding the refresh rate, in whole Hz, of the screen demarc is
+/// drawing to. Set by the frontend from the monitor, for the same reason as
+/// [`META_WIDESCREEN`] — see `crate::newsys::windows`, which turns it into the
+/// rate a gamescope session is paced at.
+pub const META_REFRESH: &str = "screen_refresh";
+
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
 /// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and

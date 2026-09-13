@@ -148,7 +148,7 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | key | default | |
 |---|---|---|
 | `gamescope_resolution` | `800x600` | session size; both the output captured and what the client is told it has |
-| `gamescope_refresh` | `60` | Hz. `50` for demos that want it |
+| `gamescope_refresh` | `60` | Hz. demarc sends the screen's own refresh rate for a Windows release, so a demo is not held to 60 on a faster display; `-x gamescope_refresh=50` for demos that want that |
 | `gamescope_command` | — | `wine`, `chrome`, or a literal command to run instead. Split on ASCII US (`\x1f`) when it holds one — which is how demarc sends a whole argv whose paths have spaces in them — and on whitespace otherwise, which is what a hand-typed `-x gamescope_command="vkcube --gpu 0"` wants |
 | `gamescope_wineprefix` | — | `WINEPREFIX` for a wine client. Sandboxed, this is the session's own throwaway overlay rather than `~/.wine-demarc` itself |
 | `gamescope_close_prefix` | `true` | run `wineserver -k` on that prefix at unload. demarc sends `false` for a sandboxed session, which has nothing out here to close |
