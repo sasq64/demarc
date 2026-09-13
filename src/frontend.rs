@@ -14,7 +14,7 @@ use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
 use crate::cross_fade::LoadFinished;
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
-use crate::emulator::{Emulator, LOAD_SETTLE_SECS, LoadStatus};
+use crate::emulator::{EmuState, Emulator, LOAD_SETTLE_SECS, LoadStatus};
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
@@ -419,6 +419,7 @@ pub(crate) fn handle_loading(
                         "Could not load {title}: {}",
                         crate::load_error::classify(&e).reason()
                     );
+                    emu.state = EmuState::Stopped;
 
                     if !settings.tv_mode {
                         emu.run_next = false;
@@ -438,13 +439,19 @@ pub(crate) fn handle_loading(
                     emu.run_next = false;
                     emu.run_prev = false;
                     loaded.write(LoadFinished(entity));
-                    if settings.show_info && settings.maximized {
-                        writer.write(SetHudText {
-                            text: emu.get_info(),
-                            delay: Duration::from_secs(settings.info_delay),
-                            duration: Duration::from_secs(settings.info_duration),
-                            location: HudLocation::InfoText,
-                        });
+                    if emu.is_crossfade {
+                        emu.state = EmuState::PreDelay;
+                        emu.state_change_time = now + 1.0;
+                    } else {
+                        emu.state = EmuState::Running;
+                        if settings.show_info && settings.maximized {
+                            writer.write(SetHudText {
+                                text: emu.get_info(),
+                                delay: Duration::from_secs(settings.info_delay),
+                                duration: Duration::from_secs(settings.info_duration),
+                                location: HudLocation::InfoText,
+                            });
+                        }
                     }
                     emu.load_delay_until = now + LOAD_SETTLE_SECS;
                     continue;

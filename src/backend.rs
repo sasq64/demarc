@@ -80,7 +80,15 @@ pub trait Backend {
     /// it only has to differ, not to increase.
     fn frame_hash(&self) -> u64;
     fn is_idle(&self) -> bool {
+        self.is_silent() && !self.screen_changed()
+    }
+
+    fn is_silent(&self) -> bool {
         false
+    }
+
+    fn screen_changed(&self) -> bool {
+        true
     }
 
     /// Tell the backend how much the user is looking at it — see [`ViewFocus`].
