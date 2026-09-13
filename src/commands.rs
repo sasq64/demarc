@@ -4,6 +4,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::render::view::screenshot::Screenshot;
+use bevy::render::view::screenshot::save_to_disk;
 use bevy::window::{PrimaryWindow, WindowMode};
 use percent_encoding::percent_decode_str;
 use url::Url;
@@ -38,6 +40,7 @@ pub enum Cmd {
     ToggleInfo,
     Reset,
     Screenshot,
+    ScreenshotAll,
     Warp10,
     Warp30,
     Fullscreen,
@@ -161,7 +164,16 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
-    KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
+    KeyMapping::new(
+        KeyCode::KeyT,
+        "Screenshot: Current Emulator",
+        Cmd::Screenshot,
+    ),
+    KeyMapping::shifted(
+        KeyCode::KeyT,
+        "Screenshot: Whole Screen",
+        Cmd::ScreenshotAll,
+    ),
     KeyMapping::new(KeyCode::KeyW, "Warp 10s forward", Cmd::Warp10),
     KeyMapping::shifted(KeyCode::KeyW, "Warp 30s forward", Cmd::Warp30),
     KeyMapping::new(
@@ -564,6 +576,7 @@ pub(crate) fn handle_cmd(
     mut show_settings: MessageWriter<ShowSettings<DemarcSettings>>,
     mut show_shader: MessageWriter<ShowShaderDialog>,
     mut demo_settings: ResMut<DemarcSettings>,
+    mut commands: Commands,
 ) {
     let mut show_info = false;
     let count = emus.iter().filter(|(emu, _)| !emu.is_crossfade).count();
@@ -794,6 +807,12 @@ pub(crate) fn handle_cmd(
                             text,
                             ..Default::default()
                         });
+                    }
+                    Cmd::ScreenshotAll => {
+                        let name = format!("screenshot-{}.png", time.elapsed_secs() as i32);
+                        commands
+                            .spawn(Screenshot::primary_window())
+                            .observe(save_to_disk(name));
                     }
                     Cmd::Screenshot => {
                         let title = emu.work_file.get_meta_or("title", "shot");
