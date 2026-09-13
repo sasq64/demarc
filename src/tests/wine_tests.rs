@@ -124,7 +124,7 @@ fn the_dialog_is_asked_for_its_own_list_of_modes() {
     // The list does not touch the session, which stays what `wine_res` said.
     assert_eq!((cfg.width, cfg.height), (1280, 1024));
     let args = cfg.wine_args(Some(driver));
-    let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
+    let prefer = args.iter().rposition(|a| a == "--prefer").expect("--prefer");
     assert_eq!(args[prefer + 1], "640x480,800x600");
 
     // An empty list is nothing said: the session's size is what is asked for.
@@ -134,6 +134,26 @@ fn the_dialog_is_asked_for_its_own_list_of_modes() {
     ]);
     let cfg = Config::from_meta(&exe, &meta).unwrap();
     assert_eq!(cfg.dialog, Dialog::Drive("640x480".to_string()));
+}
+
+/// On a widescreen the dialog is first asked for a 16:9 aspect, before the modes.
+#[test]
+fn widescreen_asks_for_the_aspect_first() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let driver = Path::new("/sys/win/autodlg.exe");
+    let prefers = |wide: &str| {
+        let meta = HashMap::from([(
+            crate::newsys::META_WIDESCREEN.to_string(),
+            wide.to_string(),
+        )]);
+        let args = Config::from_meta(&exe, &meta).unwrap().wine_args(Some(driver));
+        args.windows(2)
+            .filter(|w| w[0] == "--prefer")
+            .map(|w| w[1].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(prefers("true"), vec!["16:9".to_string(), DEFAULT_RES.to_string()]);
+    assert_eq!(prefers("false"), vec![DEFAULT_RES.to_string()]);
 }
 
 /// `wine_dialog_res=pick` hands the dialog to whoever is watching: nothing
@@ -188,7 +208,7 @@ fn the_driver_launches_the_demo() {
     let launch = args.iter().position(|a| a == "--launch").expect("--launch");
     assert_eq!(args[launch + 1], cfg.exe.to_string_lossy());
     // The size demarc runs at is the size the dialog gets told to pick.
-    let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
+    let prefer = args.iter().rposition(|a| a == "--prefer").expect("--prefer");
     assert_eq!(args[prefer + 1], DEFAULT_RES);
 
     // Without a driver the demo is the one command.

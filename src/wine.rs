@@ -69,6 +69,8 @@ const DIALOG_TIMEOUT: f64 = 20.0;
 
 const DEFAULT_CHECK: &str = "Fullscreen";
 
+const WIDE_ASPECT: &str = "16:9";
+
 /// A comma separated list with the blanks taken out, as `--prefer` wants it.
 fn clean_list(text: &str) -> String {
     text.split(',')
@@ -224,6 +226,7 @@ struct Config {
     width: u32,
     height: u32,
     dialog: Dialog,
+    widescreen: bool,
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
     desktop: bool,
@@ -263,6 +266,10 @@ impl Config {
             width,
             height,
             dialog,
+            widescreen: meta
+                .get(crate::newsys::META_WIDESCREEN)
+                .map(|v| is_yes(v))
+                .unwrap_or(DEFAULT_WIDESCREEN),
             desktop: meta
                 .get(META_DESKTOP)
                 .map(|v| is_yes(v))
@@ -294,12 +301,18 @@ impl Config {
             DIALOG_TIMEOUT.to_string(),
         ]);
         match &self.dialog {
-            Dialog::Drive(modes) => args.extend([
-                "--prefer".into(),
-                modes.clone(),
-                "--check".into(),
-                DEFAULT_CHECK.into(),
-            ]),
+            Dialog::Drive(modes) => {
+                // Before the modes, since picking an aspect can change the list.
+                if self.widescreen {
+                    args.extend(["--prefer".into(), WIDE_ASPECT.into()]);
+                }
+                args.extend([
+                    "--prefer".into(),
+                    modes.clone(),
+                    "--check".into(),
+                    DEFAULT_CHECK.into(),
+                ]);
+            }
             // Nothing pressed and nothing rearranged: the dialog is being
             // answered by a person, and the window they end up with is theirs
             // rather than a captured frame that has to start at the origin.
