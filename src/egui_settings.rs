@@ -16,7 +16,7 @@
 //!     fps_cap: u32,
 //!     title: String,
 //!     tint: Color,
-//!     shader: ShaderArg,   // a unit-only enum -> ComboBox
+//!     scale: Resolution,   // a unit-only enum -> ComboBox
 //! }
 //!
 //! app.add_settings_type::<MySettings>();
@@ -28,7 +28,9 @@
 //! compiled into the binary (a non-optional dependency of `bevy_ecs`), and it is
 //! the only one of the three that hands over an enum's *variant list*
 //! ([`EnumInfo::variant_names`]) -- which is exactly what a ComboBox needs and
-//! what a `Serialize` pass cannot see.
+//! what a `Serialize` pass cannot see. Variant *identifiers* rarely read well in
+//! a combo box, so an enum that says `#[reflect(Display)]` gets its own
+//! [`std::fmt::Display`] output as the label instead -- see [`ReflectDisplay`].
 //!
 //! This module knows nothing about what it is editing -- the app's own settings
 //! struct, and what applying it does, live in [`crate::demarc_settings`].
@@ -39,7 +41,10 @@
 
 use bevy::prelude::*;
 use bevy::reflect::enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo};
-use bevy::reflect::{NamedField, PartialReflect, ReflectMut, ReflectRef, TypeInfo};
+use bevy::reflect::{
+    FromType, GetTypeRegistration, NamedField, PartialReflect, ReflectMut, ReflectRef, TypeInfo,
+    TypeRegistry,
+};
 use bevy_egui::{
     EguiContexts, EguiPrimaryContextPass,
     egui::{self, Ui},
@@ -94,6 +99,41 @@ impl Range {
     }
 }
 
+/// Reflected access to a type's [`std::fmt::Display`] impl, so the dialog can
+/// label a combo box's entries with what the enum prints rather than with the
+/// identifiers its variants happen to be spelled with:
+///
+/// ```ignore
+/// #[derive(Reflect)]
+/// #[reflect(Display)]      // -> `ReflectDisplay`, which has to be in scope
+/// enum Resolution { Res640x480, /* ... */ }
+/// ```
+///
+/// Registered as type data by the `Reflect` derive, which is why [`describe`]
+/// needs a [`TypeRegistry`] to find it.
+#[derive(Clone)]
+pub struct ReflectDisplay(fn(&dyn PartialReflect) -> Option<String>);
+
+impl ReflectDisplay {
+    fn label(&self, value: &dyn PartialReflect) -> Option<String> {
+        (self.0)(value)
+    }
+}
+
+impl<T: PartialReflect + std::fmt::Display> FromType<T> for ReflectDisplay {
+    fn from_type() -> Self {
+        Self(|value| Some(value.try_downcast_ref::<T>()?.to_string()))
+    }
+}
+
+/// One entry of a combo box: the name reflection knows the variant by, which is
+/// what [`set_variant`] switches to, and the text shown in its place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Variant {
+    pub name: &'static str,
+    pub label: String,
+}
+
 /// The editor one field gets, chosen from its type by [`describe`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Widget {
@@ -108,7 +148,10 @@ pub enum Widget {
     /// `f32`/`f64` -- a drag value stepping fractionally.
     Float { range: Option<Range> },
     /// An enum whose variants all carry no data -- a combo box.
-    Enum { variants: Vec<&'static str> },
+    Enum { variants: Vec<Variant> },
+    /// A nested struct. Not a row: [`sections`] lifts it out into a group of
+    /// rows of its own under a heading.
+    Section,
     /// A type this dialog has no editor for. Drawn as a greyed-out row rather
     /// than skipped, so a field that silently cannot be edited is still visible.
     Unsupported,
@@ -128,8 +171,11 @@ pub struct Field {
 ///
 /// Called once when the dialog opens, not per frame. Anything that is not a
 /// struct -- and any field the derive was told to `#[reflect(ignore)]`, which
-/// never reaches us -- yields nothing.
-pub fn describe(value: &dyn PartialReflect) -> Vec<Field> {
+/// never reaches us -- yields nothing. A field that is itself a struct comes
+/// back as [`Widget::Section`].
+///
+/// `registry` is only consulted for [`ReflectDisplay`].
+pub fn describe(value: &dyn PartialReflect, registry: &TypeRegistry) -> Vec<Field> {
     let ReflectRef::Struct(s) = value.reflect_ref() else {
         return Vec::new();
     };
@@ -143,7 +189,7 @@ pub fn describe(value: &dyn PartialReflect) -> Vec<Field> {
             Some(Field {
                 name: field.name(),
                 label: title_case(field.name()),
-                widget: widget_for(field, value),
+                widget: widget_for(field, value, registry),
             })
         })
         .collect()
@@ -173,7 +219,7 @@ fn title_case(name: &str) -> String {
 /// spaces) and `Option<T>` is an enum with a payload-carrying `Some`, so the
 /// concrete types have to be recognised before the generic enum arm, and that
 /// arm has to insist every variant is a unit variant.
-fn widget_for(field: &NamedField, value: &dyn PartialReflect) -> Widget {
+fn widget_for(field: &NamedField, value: &dyn PartialReflect, registry: &TypeRegistry) -> Widget {
     let range = field.get_attribute::<Range>().copied();
     let Some(info) = field.type_info() else {
         return Widget::Unsupported;
@@ -195,6 +241,10 @@ fn widget_for(field: &NamedField, value: &dyn PartialReflect) -> Widget {
     if is_float(id) {
         return Widget::Float { range };
     }
+    // Below the colour check, because `Srgba` and `LinearRgba` are structs too.
+    if matches!(value.reflect_ref(), ReflectRef::Struct(_)) {
+        return Widget::Section;
+    }
     // The type info is the authority on the variant list; the value only tells
     // us which one is live. Fall back to the value's own info for a field typed
     // as something dynamic.
@@ -207,10 +257,34 @@ fn widget_for(field: &NamedField, value: &dyn PartialReflect) -> Widget {
     };
     match enum_info {
         Some(e) if all_unit_variants(e) => Widget::Enum {
-            variants: e.variant_names().to_vec(),
+            variants: variants(e, value, registry),
         },
         _ => Widget::Unsupported,
     }
+}
+
+/// Labels every variant of a unit enum: with the type's `Display` impl if it
+/// registered one, and with the variant identifiers otherwise.
+fn variants(info: &EnumInfo, value: &dyn PartialReflect, registry: &TypeRegistry) -> Vec<Variant> {
+    let display = registry.get_type_data::<ReflectDisplay>(info.type_id());
+    info.variant_names()
+        .iter()
+        .map(|&name| Variant {
+            name,
+            label: display
+                .and_then(|d| displayed(d, value, name))
+                .unwrap_or_else(|| name.to_owned()),
+        })
+        .collect()
+}
+
+/// What the enum would print in variant `name`. `Display` is implemented on the
+/// concrete type, so this needs a real value of it rather than a `DynamicEnum`,
+/// which [`PartialReflect::reflect_clone`] gives.
+fn displayed(display: &ReflectDisplay, value: &dyn PartialReflect, name: &str) -> Option<String> {
+    let mut value = value.reflect_clone().ok()?;
+    set_variant(value.as_partial_reflect_mut(), name);
+    display.label(value.as_partial_reflect())
 }
 
 /// Whether every variant carries no data, which is what makes an enum a plain
@@ -263,6 +337,77 @@ pub fn set_variant(field: &mut dyn PartialReflect, variant: &str) -> bool {
     field.try_apply(&new).is_ok()
 }
 
+/// A run of rows drawn together under one heading: the fields of the root
+/// struct (the first section, whose `title` is empty), then one section per
+/// nested struct.
+#[derive(Clone, Debug)]
+pub struct Section {
+    pub title: String,
+    /// Field indices leading from the root struct down to the struct these rows
+    /// edit; empty for the root itself. [`field_at_path`] walks it.
+    pub path: Vec<usize>,
+    /// Every field of that struct, so an index here is the field index there.
+    pub fields: Vec<Field>,
+}
+
+/// Groups a reflected struct into sections: its own fields first, then one
+/// section per nested struct, depth first in declaration order. Deeper nesting
+/// joins the labels (`Wine / Prefix`).
+pub fn sections(value: &dyn PartialReflect, registry: &TypeRegistry) -> Vec<Section> {
+    let mut out = Vec::new();
+    collect_sections(value, "", &[], registry, &mut out);
+    out
+}
+
+fn collect_sections(
+    value: &dyn PartialReflect,
+    title: &str,
+    path: &[usize],
+    registry: &TypeRegistry,
+    out: &mut Vec<Section>,
+) {
+    let ReflectRef::Struct(s) = value.reflect_ref() else {
+        return;
+    };
+    let fields = describe(value, registry);
+    let nested: Vec<(usize, String)> = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.widget == Widget::Section)
+        .map(|(i, f)| (i, f.label.clone()))
+        .collect();
+    out.push(Section {
+        title: title.to_owned(),
+        path: path.to_vec(),
+        fields,
+    });
+    for (i, label) in nested {
+        let Some(child) = s.field_at(i) else { continue };
+        let title = if title.is_empty() {
+            label
+        } else {
+            format!("{title} / {label}")
+        };
+        let mut child_path = path.to_vec();
+        child_path.push(i);
+        collect_sections(child, &title, &child_path, registry, out);
+    }
+}
+
+/// Follows a [`Section::path`] from the root struct to the struct it names.
+pub fn field_at_path<'a>(
+    root: &'a mut dyn PartialReflect,
+    path: &[usize],
+) -> Option<&'a mut dyn PartialReflect> {
+    let Some((&index, rest)) = path.split_first() else {
+        return Some(root);
+    };
+    let ReflectMut::Struct(s) = root.reflect_mut() else {
+        return None;
+    };
+    field_at_path(s.field_at_mut(index)?, rest)
+}
+
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
@@ -273,14 +418,20 @@ pub(crate) const TITLE_SIZE: f32 = 40.0;
 /// Side of the square close button in the panel's top-right corner.
 pub(crate) const CLOSE_SIZE: f32 = 40.0;
 pub(crate) const LABEL_SIZE: f32 = 28.0;
+/// Heading over a group of rows coming from one nested struct.
+pub(crate) const SECTION_SIZE: f32 = 32.0;
 pub(crate) const BODY_SIZE: f32 = 26.0;
 /// Width of the editor column. Fixed, so the rows line up and the panel does not
 /// resize as a combo box's text changes.
 pub(crate) const WIDGET_WIDTH: f32 = 320.0;
 pub(crate) const ROW_SPACING: egui::Vec2 = egui::vec2(24.0, 12.0);
 /// Fraction of the screen height the field grid may take before it scrolls.
-pub(crate) const GRID_HEIGHT_FRACTION: f32 = 0.6;
+pub(crate) const GRID_HEIGHT_FRACTION: f32 = 0.85;
+/// Fraction of the screen the panel is at least as wide and tall as.
+pub(crate) const PANEL_MIN_FRACTION: egui::Vec2 = egui::vec2(0.45, 0.5);
 pub(crate) const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
+/// How much of the close button's side the painted cross spans.
+const CROSS_FRACTION: f32 = 0.45;
 
 /// Scales the widgets that size themselves from the *style* rather than from a
 /// font we hand them -- checkboxes, drag values, colour swatches, buttons.
@@ -303,30 +454,62 @@ pub(crate) fn scale_widgets(ui: &mut Ui) {
     style.spacing.icon_spacing = BODY_SIZE * 0.3;
 }
 
-/// Draws one row per field into a two-column grid -- label right-aligned on the
-/// left, editor on the right -- and returns whether any of them was edited this
+/// Draws every section -- the root struct's own rows first, then one heading
+/// and grid per nested struct -- and returns whether anything was edited this
 /// frame.
 ///
 /// Deliberately not generic: it works through `dyn PartialReflect`, so a dozen
 /// settings types share one copy of this code and only the thin ECS wrapper
 /// around it is monomorphised.
-fn settings_body(ui: &mut Ui, value: &mut dyn PartialReflect, fields: &[Field]) -> bool {
+fn settings_body(ui: &mut Ui, value: &mut dyn PartialReflect, sections: &[Section]) -> bool {
+    let mut changed = false;
+    for (i, section) in sections.iter().enumerate() {
+        let Some(target) = field_at_path(value, &section.path) else {
+            continue;
+        };
+        if !section.title.is_empty() {
+            if i > 0 {
+                ui.add_space(ROW_SPACING.y * 2.0);
+            }
+            ui.label(
+                egui::RichText::new(&section.title)
+                    .size(SECTION_SIZE)
+                    .strong(),
+            );
+            ui.add_space(ROW_SPACING.y);
+        }
+        changed |= section_rows(ui, i, target, &section.fields);
+    }
+    changed
+}
+
+/// One section's rows, in a two-column grid -- label right-aligned on the left,
+/// editor on the right. `section` keeps egui ids unique across the panel.
+fn section_rows(
+    ui: &mut Ui,
+    section: usize,
+    value: &mut dyn PartialReflect,
+    fields: &[Field],
+) -> bool {
     let ReflectMut::Struct(target) = value.reflect_mut() else {
         return false;
     };
     let mut changed = false;
-    egui::Grid::new("settings_grid")
+    egui::Grid::new(("settings_grid", section))
         .num_columns(2)
         .spacing(ROW_SPACING)
         .show(ui, |ui| {
             for (i, field) in fields.iter().enumerate() {
+                if field.widget == Widget::Section {
+                    continue;
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(&field.label).size(LABEL_SIZE));
                 });
                 ui.scope(|ui| {
                     ui.set_min_width(WIDGET_WIDTH);
                     match target.field_at_mut(i) {
-                        Some(value) => changed |= draw_widget(ui, field, value),
+                        Some(value) => changed |= draw_widget(ui, section, field, value),
                         // `describe` and the value came from the same struct, so
                         // this cannot fire; draw something rather than panic.
                         None => {
@@ -351,7 +534,7 @@ fn unsupported(ui: &mut Ui) {
 
 /// Draws the editor for one field. `value` is that field, already narrowed out
 /// of the struct.
-fn draw_widget(ui: &mut Ui, field: &Field, value: &mut dyn PartialReflect) -> bool {
+fn draw_widget(ui: &mut Ui, section: usize, field: &Field, value: &mut dyn PartialReflect) -> bool {
     match &field.widget {
         Widget::Bool => match value.try_downcast_mut::<bool>() {
             Some(v) => ui.checkbox(v, "").changed(),
@@ -370,8 +553,8 @@ fn draw_widget(ui: &mut Ui, field: &Field, value: &mut dyn PartialReflect) -> bo
         Widget::Color => draw_color(ui, value),
         Widget::Int { range } => draw_int(ui, value, *range),
         Widget::Float { range } => draw_float(ui, value, *range),
-        Widget::Enum { variants } => draw_enum(ui, field.name, variants, value),
-        Widget::Unsupported => {
+        Widget::Enum { variants } => draw_enum(ui, (section, field.name), variants, value),
+        Widget::Section | Widget::Unsupported => {
             unsupported(ui);
             false
         }
@@ -497,8 +680,8 @@ fn draw_float(ui: &mut Ui, value: &mut dyn PartialReflect, range: Option<Range>)
 
 fn draw_enum(
     ui: &mut Ui,
-    name: &str,
-    variants: &[&'static str],
+    salt: (usize, &str),
+    variants: &[Variant],
     value: &mut dyn PartialReflect,
 ) -> bool {
     let ReflectRef::Enum(current) = value.reflect_ref() else {
@@ -506,23 +689,30 @@ fn draw_enum(
         return false;
     };
     let current = current.variant_name().to_owned();
+    let selected_text = variants
+        .iter()
+        .find(|v| v.name == current)
+        .map_or(current.as_str(), |v| v.label.as_str());
     // Picked inside the closure and applied after it, because the combo box
     // holds `value`'s borrow for as long as it is open.
     let mut picked = None;
-    egui::ComboBox::from_id_salt(name)
-        .selected_text(egui::RichText::new(&current).size(BODY_SIZE))
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(egui::RichText::new(selected_text).size(BODY_SIZE))
         .width(WIDGET_WIDTH)
         .show_ui(ui, |ui| {
             for variant in variants {
                 // `selectable_label` rather than `selectable_value`, which would
                 // force `PartialEq` on every settings enum. Three of the ones in
                 // `crate::config` do not derive it.
-                let selected = *variant == current;
+                let selected = variant.name == current;
                 if ui
-                    .selectable_label(selected, egui::RichText::new(*variant).size(BODY_SIZE))
+                    .selectable_label(
+                        selected,
+                        egui::RichText::new(&variant.label).size(BODY_SIZE),
+                    )
                     .clicked()
                 {
-                    picked = Some(*variant);
+                    picked = Some(variant.name);
                 }
             }
         });
@@ -570,7 +760,7 @@ struct SettingsState<T> {
     /// What the widgets edit.
     draft: T,
     /// Described once when the dialog opens, not per frame.
-    fields: Vec<Field>,
+    sections: Vec<Section>,
     title: String,
 }
 
@@ -579,7 +769,7 @@ impl<T: Default> Default for SettingsState<T> {
         Self {
             open: false,
             draft: T::default(),
-            fields: Vec::new(),
+            sections: Vec::new(),
             title: String::new(),
         }
     }
@@ -594,15 +784,25 @@ pub trait AppSettingsExt {
 }
 
 /// What a struct must be to get a dialog: reflected (that is where the fields,
-/// their types and an enum's variants come from), clonable (the draft is a plain
-/// copy, which is what saves us needing `FromReflect`) and
+/// their types and an enum's variants come from), registrable (which is how the
+/// `#[reflect(Display)]` of a nested enum reaches [`describe`]), clonable (the
+/// draft is a plain copy, which is what saves us needing `FromReflect`) and
 /// default-constructible (the resource exists before the first open).
-pub trait SettingsType: Reflect + Clone + Default + Send + Sync + 'static {}
-impl<T: Reflect + Clone + Default + Send + Sync + 'static> SettingsType for T {}
+pub trait SettingsType:
+    Reflect + GetTypeRegistration + Clone + Default + Send + Sync + 'static
+{
+}
+impl<T: Reflect + GetTypeRegistration + Clone + Default + Send + Sync + 'static> SettingsType
+    for T
+{
+}
 
 impl AppSettingsExt for App {
     fn add_settings_type<T: SettingsType>(&mut self) -> &mut Self {
-        self.init_resource::<SettingsState<T>>()
+        // Registers the field types too, so a nested enum's `ReflectDisplay`
+        // lands in the registry.
+        self.register_type::<T>()
+            .init_resource::<SettingsState<T>>()
             .add_message::<ShowSettings<T>>()
             .add_message::<SettingsApplied<T>>()
             .add_systems(
@@ -618,12 +818,14 @@ impl AppSettingsExt for App {
 fn open_settings<T: SettingsType>(
     mut state: ResMut<SettingsState<T>>,
     mut hud: ResMut<HudState>,
+    registry: Res<AppTypeRegistry>,
     mut reader: MessageReader<ShowSettings<T>>,
 ) {
+    let registry = registry.read();
     // Last writer this frame wins; opening two dialogs over one type is a
     // caller bug, not something to queue up.
     for msg in reader.read() {
-        state.fields = describe(msg.value.as_partial_reflect());
+        state.sections = sections(msg.value.as_partial_reflect(), &registry);
         state.draft = msg.value.clone();
         state.title = msg.title.clone();
         // Reported once per transition: `HudState` counts open dialogs, so
@@ -662,8 +864,10 @@ fn settings_ui<T: SettingsType>(
         .show(ctx, |ui| {
             panel_frame().show(ui, |ui| {
                 scale_widgets(ui);
+                let min = ctx.content_rect().size() * PANEL_MIN_FRACTION;
                 let panel = ui
                     .vertical(|ui| {
+                        ui.set_min_size(min);
                         ui.horizontal(|ui| {
                             if !state.title.is_empty() {
                                 ui.label(
@@ -680,8 +884,11 @@ fn settings_ui<T: SettingsType>(
                             .max_height(max_height)
                             .auto_shrink([true, true])
                             .show(ui, |ui| {
-                                let SettingsState { draft, fields, .. } = &mut *state;
-                                edited = settings_body(ui, draft.as_partial_reflect_mut(), fields);
+                                let SettingsState {
+                                    draft, sections, ..
+                                } = &mut *state;
+                                edited =
+                                    settings_body(ui, draft.as_partial_reflect_mut(), sections);
                             });
                     })
                     .response
@@ -708,21 +915,32 @@ fn settings_ui<T: SettingsType>(
 /// because the panel is only as wide as its widest row, which is not known until
 /// they are drawn. The title row has already reserved [`CLOSE_SIZE`] for it, so
 /// the two cannot collide.
+///
+/// The cross is painted rather than written: the app's bitmap font has nothing
+/// above Latin-1, so a `U+2715` glyph came out as a missing-character box.
 pub(crate) fn close_button(ui: &mut Ui, panel: egui::Rect) -> bool {
     let rect = egui::Rect::from_min_size(
         egui::pos2(panel.right() - CLOSE_SIZE, panel.top()),
         egui::Vec2::splat(CLOSE_SIZE),
     );
-    ui.put(
-        rect,
-        egui::Button::new(egui::RichText::new("✕").size(BODY_SIZE)),
-    )
-    .clicked()
+    // `min_size`, because an empty button otherwise shrinks to its padding.
+    let response = ui.put(rect, egui::Button::new("").min_size(rect.size()));
+    let arm = response.rect.size().min_elem() * CROSS_FRACTION * 0.5;
+    let center = response.rect.center();
+    let stroke = egui::Stroke::new(
+        (arm * 0.22).max(1.0),
+        ui.style().interact(&response).fg_stroke.color,
+    );
+    let painter = ui.painter();
+    for dir in [egui::vec2(arm, arm), egui::vec2(arm, -arm)] {
+        painter.line_segment([center - dir, center + dir], stroke);
+    }
+    response.clicked()
 }
 
 fn close<T: SettingsType>(state: &mut SettingsState<T>, hud: &mut HudState) {
     state.open = false;
-    state.fields.clear();
+    state.sections.clear();
     hud.set_settings_open(false);
 }
 

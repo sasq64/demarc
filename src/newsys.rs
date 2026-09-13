@@ -508,6 +508,10 @@ impl NewSys {
         self.meta.insert(key.into(), value);
     }
 
+    pub fn meta_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.meta
+    }
+
     /// Has one of them been set already? What `-x` said is in here too, so this
     /// is how the frontend leaves a value someone typed alone.
     pub fn has_meta(&self, key: &str) -> bool {

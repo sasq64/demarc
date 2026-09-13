@@ -3,6 +3,28 @@ use super::*;
 use bevy::color::{LinearRgba, Srgba};
 use std::path::PathBuf;
 
+/// A registry holding `T` and everything it is built out of, as
+/// `add_settings_type` sets up at runtime.
+fn registry<T: GetTypeRegistration>() -> TypeRegistry {
+    let mut registry = TypeRegistry::new();
+    registry.register::<T>();
+    registry
+}
+
+fn fields_of<T: Reflect + GetTypeRegistration + Default>() -> Vec<Field> {
+    describe(T::default().as_partial_reflect(), &registry::<T>())
+}
+
+fn plain(names: &[&'static str]) -> Vec<Variant> {
+    names
+        .iter()
+        .map(|&name| Variant {
+            name,
+            label: name.to_owned(),
+        })
+        .collect()
+}
+
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
 enum Mode {
     #[default]
@@ -82,7 +104,7 @@ fn widget_of(fields: &[Field], name: &str) -> Widget {
 
 #[test]
 fn every_supported_type_maps_to_its_widget() {
-    let fields = describe(Every::default().as_partial_reflect());
+    let fields = fields_of::<Every>();
     assert_eq!(
         widgets(&fields),
         vec![
@@ -99,7 +121,7 @@ fn every_supported_type_maps_to_its_widget() {
             (
                 "mode",
                 &Widget::Enum {
-                    variants: vec!["Stretch", "Fit", "Zoom"],
+                    variants: plain(&["Stretch", "Fit", "Zoom"]),
                 },
             ),
         ]
@@ -111,7 +133,7 @@ fn every_supported_type_maps_to_its_widget() {
 /// combo box of `Srgba`/`Hsla`/... instead of a colour picker.
 #[test]
 fn colors_are_not_mistaken_for_enums() {
-    let fields = describe(Every::default().as_partial_reflect());
+    let fields = fields_of::<Every>();
     for name in ["tint", "plain", "linear"] {
         assert_eq!(widget_of(&fields, name), Widget::Color, "{name}");
     }
@@ -119,7 +141,7 @@ fn colors_are_not_mistaken_for_enums() {
 
 #[test]
 fn unsupported_types_are_rows_not_panics() {
-    let fields = describe(Unsupported::default().as_partial_reflect());
+    let fields = fields_of::<Unsupported>();
     assert_eq!(
         widgets(&fields),
         vec![
@@ -134,7 +156,7 @@ fn unsupported_types_are_rows_not_panics() {
 
 #[test]
 fn ranges_come_from_field_attributes() {
-    let fields = describe(Ranged::default().as_partial_reflect());
+    let fields = fields_of::<Ranged>();
     assert_eq!(
         widget_of(&fields, "capped"),
         Widget::Int {
@@ -173,22 +195,23 @@ fn range_takes_integer_bounds() {
 
 #[test]
 fn ignored_fields_do_not_appear() {
-    let fields = describe(WithIgnored::default().as_partial_reflect());
+    let fields = fields_of::<WithIgnored>();
     assert_eq!(widgets(&fields), vec![("kept", &Widget::Bool)]);
 }
 
 #[test]
 fn labels_are_field_names_in_title_case() {
-    let fields = describe(Named::default().as_partial_reflect());
+    let fields = fields_of::<Named>();
     let labels: Vec<&str> = fields.iter().map(|f| f.label.as_str()).collect();
     assert_eq!(labels, vec!["Idle Timeout", "Aga", "A"]);
 }
 
 #[test]
 fn non_structs_describe_to_nothing() {
-    assert!(describe(true.as_partial_reflect()).is_empty());
-    assert!(describe(Mode::Fit.as_partial_reflect()).is_empty());
-    assert!(describe(vec![1u32, 2].as_partial_reflect()).is_empty());
+    let registry = registry::<Mode>();
+    assert!(describe(true.as_partial_reflect(), &registry).is_empty());
+    assert!(describe(Mode::Fit.as_partial_reflect(), &registry).is_empty());
+    assert!(describe(vec![1u32, 2].as_partial_reflect(), &registry).is_empty());
 }
 
 #[test]
@@ -216,10 +239,114 @@ fn set_variant_reaches_a_field_through_the_struct() {
     let ReflectMut::Struct(s) = every.reflect_mut() else {
         panic!("not a struct");
     };
-    let index = describe(Every::default().as_partial_reflect())
+    let index = fields_of::<Every>()
         .iter()
         .position(|f| f.name == "mode")
         .unwrap();
     assert!(set_variant(s.field_at_mut(index).unwrap(), "Fit"));
     assert_eq!(every.mode, Mode::Fit);
+}
+
+#[derive(Reflect, Clone, Copy, Debug, Default)]
+#[reflect(Display)]
+enum Size {
+    #[default]
+    Small,
+    Large,
+}
+
+impl std::fmt::Display for Size {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Size::Small => "small size",
+            Size::Large => "large size",
+        })
+    }
+}
+
+#[derive(Reflect, Clone, Debug, Default)]
+struct Sized {
+    size: Size,
+}
+
+#[test]
+fn display_impl_labels_an_enums_variants() {
+    let fields = fields_of::<Sized>();
+    assert_eq!(
+        widget_of(&fields, "size"),
+        Widget::Enum {
+            variants: vec![
+                Variant {
+                    name: "Small",
+                    label: "small size".to_owned()
+                },
+                Variant {
+                    name: "Large",
+                    label: "large size".to_owned()
+                },
+            ],
+        }
+    );
+    // Without the type in the registry, the identifiers are the labels.
+    let fields = describe(
+        Sized::default().as_partial_reflect(),
+        &TypeRegistry::empty(),
+    );
+    assert_eq!(
+        widget_of(&fields, "size"),
+        Widget::Enum {
+            variants: plain(&["Small", "Large"]),
+        }
+    );
+}
+
+/// Sections are depth first, and a section deeper than one carries the labels
+/// of the fields it came through.
+#[test]
+fn sections_nest_and_name_their_path() {
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Inner {
+        deep: bool,
+    }
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Middle {
+        mid: u32,
+        inner: Inner,
+    }
+    #[derive(Reflect, Clone, Debug, Default)]
+    struct Outer {
+        top: bool,
+        first: Middle,
+        tint: Color,
+    }
+
+    let sections = sections(Outer::default().as_partial_reflect(), &registry::<Outer>());
+    let found: Vec<(&str, &[usize])> = sections
+        .iter()
+        .map(|s| (s.title.as_str(), s.path.as_slice()))
+        .collect();
+    // `tint` is a struct under the hood and must stay a colour row.
+    assert_eq!(
+        found,
+        vec![
+            ("", &[][..]),
+            ("First", &[1][..]),
+            ("First / Inner", &[1, 1][..]),
+        ]
+    );
+    assert_eq!(widget_of(&sections[0].fields, "first"), Widget::Section);
+
+    let mut outer = Outer::default();
+    let deep = field_at_path(outer.as_partial_reflect_mut(), &[1, 1]).expect("no such path");
+    let ReflectMut::Struct(deep) = deep.reflect_mut() else {
+        panic!("not a struct");
+    };
+    *deep
+        .field_mut("deep")
+        .unwrap()
+        .try_downcast_mut::<bool>()
+        .unwrap() = true;
+    assert!(outer.first.inner.deep);
+    // A path through something that is not a struct resolves to nothing.
+    assert!(field_at_path(outer.as_partial_reflect_mut(), &[0, 0]).is_none());
 }
