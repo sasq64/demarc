@@ -60,6 +60,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -119,6 +120,37 @@ impl Sandbox {
 fn uid() -> u32 {
     // SAFETY: `getuid` reads no memory of ours and cannot fail.
     unsafe { libc::getuid() }
+}
+
+/// wine's socket directory on the *host*, made 0700 before `bwrap` can make it
+/// itself.
+///
+/// `--perms 0700 --tmpfs` sets the mode of the mount, not of the mount point:
+/// `/` is bind-mounted from the host, so the directory bwrap creates to mount
+/// on is a real one in the host's `/tmp`, and bwrap creates it 0755. It outlives
+/// the sandbox, and the next wine started outside demarc refuses to run —
+/// "wineserver: /tmp/.wine-<uid> must not be accessible by other users" — until
+/// it is deleted. Making it ourselves, or repairing one already left behind,
+/// gives bwrap nothing to create.
+fn ensure_socket_dir() {
+    make_private(&PathBuf::from(format!("/tmp/.wine-{}", uid())));
+}
+
+/// Make `dir` exist and be ours alone. Best effort: a failure here only means
+/// bwrap is back to creating it itself.
+fn make_private(dir: &Path) {
+    match fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            let mode = meta.permissions().mode();
+            if meta.is_dir() && meta.uid() == uid() && mode & 0o077 != 0 {
+                debug!("Fixing the permissions of {} (was {mode:o})", dir.display());
+                let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+            }
+        }
+        Err(_) => {
+            let _ = fs::DirBuilder::new().mode(0o700).create(dir);
+        }
+    }
 }
 
 /// Where this run keeps its mount points: `<runtime>/demarc-wine-<uid>/<pid>`.
@@ -270,6 +302,7 @@ pub fn prepare(base: &Path, workdir: Option<&Path>) -> Result<Sandbox> {
         // session runs unsandboxed and creates it for all the rest.
         bail!("no wine prefix at {}", base.display());
     }
+    ensure_socket_dir();
     if !usable(base) {
         bail!("`{BWRAP}` cannot make a sandbox here");
     }

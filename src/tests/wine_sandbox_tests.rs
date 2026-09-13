@@ -152,3 +152,28 @@ fn sweeps_dead_runs_and_keeps_live_ones() {
     assert!(!dead.exists(), "a dead run's mount points are swept");
     assert!(other.is_dir(), "only pid-named directories are touched");
 }
+
+/// `--tmpfs` sets the mode of the mount, not of the mount point bwrap makes for
+/// it on the host — and a 0755 one left in `/tmp` is what makes the next wine
+/// outside demarc refuse to start.
+#[test]
+fn keeps_the_socket_directory_to_ourselves() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("a temp dir");
+
+    let missing = tmp.path().join("missing");
+    make_private(&missing);
+    assert_eq!(mode(&missing), 0o700);
+
+    let open = tmp.path().join("open");
+    fs::create_dir(&open).expect("a dir");
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o755)).expect("chmod");
+    make_private(&open);
+    assert_eq!(mode(&open), 0o700);
+}
+
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).expect("a dir").permissions().mode() & 0o777
+}
