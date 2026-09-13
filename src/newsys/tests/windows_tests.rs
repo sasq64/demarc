@@ -264,7 +264,7 @@ fn restates_wine_settings_as_core_options() {
         // and the size demarc asked for is the size it presses for.
         Some(launch) => {
             assert_eq!(args[launch + 1], exe);
-            let prefer = args.iter().position(|a| a == "--prefer").expect("--prefer");
+            let prefer = args.iter().rposition(|a| a == "--prefer").expect("--prefer");
             assert_eq!(args[prefer + 1], "640x480");
         }
         // No driver built into this checkout: the demo is the command, and the
