@@ -426,7 +426,6 @@ fn main() {
         volume: 100.0,
         background: clear_color,
         fast_load: false,
-        resolution: demarc_settings::Resolution::Res800x600,
         wine: Default::default(),
     };
 
