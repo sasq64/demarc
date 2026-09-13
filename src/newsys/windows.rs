@@ -133,18 +133,28 @@ impl WindowsSystem {
     /// The programs are ranked against each other and the best one taken — see
     /// [`launch_rank`]. `dir` names the release, which is how a program named
     /// after it is recognised, and may equally be a single file.
-    fn pick_target(&self, dir: &Path) -> Result<Option<PathBuf>> {
+    ///
+    /// A program named after a resolution in `dialog_res` beats any other, the
+    /// earlier in the list the better.
+    fn pick_target(&self, dir: &Path, dialog_res: &str) -> Result<Option<PathBuf>> {
         let release = dir
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .to_ascii_lowercase();
-        let mut best: Option<(i32, PathBuf)> = None;
+        let modes: Vec<String> = dialog_res
+            .split(',')
+            .map(|mode| mode.trim().to_ascii_lowercase())
+            .collect();
+        let mut best: Option<((usize, i32), PathBuf)> = None;
         walk_dir(dir, 0, |path, _ext, _| {
             if !self.can_load(path) {
                 return Ok(());
             }
-            let rank = launch_rank(path, &release);
+            let res_rank = res_from_name(path)
+                .and_then(|res| modes.iter().position(|mode| *mode == res))
+                .map_or(0, |i| modes.len() - i);
+            let rank = (res_rank, launch_rank(path, &release));
             if best.as_ref().is_none_or(|(top, _)| rank > *top) {
                 best = Some((rank, path.to_owned()));
             }
@@ -164,11 +174,18 @@ impl System for WindowsSystem {
     }
 
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
-        let Some(target) = self.pick_target(file)? else {
+        // Which modes to ask the dialog for depends on the shape of the screen,
+        // which only the frontend knows; set here rather than in `default_meta`
+        // because that one can only hand back a fixed string.
+        let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
+        let dialog_res = file.get_meta_or(META_DIALOG_RES, default_dialog_res(widescreen));
+        let Some(target) = self.pick_target(file, &dialog_res)? else {
             return Ok(false);
         };
 
-        for tag in ["512x384", "320x200", "640x480", "1024x768", "1280x720"] {
+        for tag in [
+            "512x384", "320x200", "640x480", "800x600", "1024x768", "1280x720",
+        ] {
             if file.has_tag(tag) {
                 file.set_meta(META_RES, tag);
                 break;
@@ -186,13 +203,8 @@ impl System for WindowsSystem {
             file.set_meta(META_RES, res);
         }
 
-        // Which modes to ask the dialog for depends on the shape of the screen,
-        // which only the frontend knows; set here rather than in `default_meta`
-        // because that one can only hand back a fixed string.
         if !file.has_meta(META_DIALOG_RES) {
-            let widescreen =
-                is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
-            file.set_meta(META_DIALOG_RES, default_dialog_res(widescreen));
+            file.set_meta(META_DIALOG_RES, dialog_res);
         }
 
         // Pace the session at the screen rather than at the core's own 60: a

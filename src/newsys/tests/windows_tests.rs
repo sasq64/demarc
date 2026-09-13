@@ -219,6 +219,30 @@ fn takes_the_resolution_out_of_a_windows_program_name() {
     assert!(!wf.has_meta(META_RES));
 }
 
+#[test]
+fn prefers_the_program_named_after_an_early_dialog_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+    let release = dir.path().join("demo");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "demo.exe");
+    windows_exe(&release, "640x480.exe");
+    let wanted = windows_exe(&release, "1280_720_demo.exe");
+
+    let found = sys
+        .pick_target(&release, "1280x720,640x480")
+        .unwrap()
+        .unwrap();
+    assert_eq!(found, wanted);
+    let found = sys
+        .pick_target(&release, "640x480,1280x720")
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.file_name().unwrap(), "640x480.exe");
+    let found = sys.pick_target(&release, "800x600").unwrap().unwrap();
+    assert_eq!(found.file_name().unwrap(), "demo.exe");
+}
+
 /// The scan has to tell a screen mode from every other reason two numbers
 /// end up next to each other in a name.
 #[test]
@@ -303,7 +327,10 @@ fn restates_wine_settings_as_core_options() {
         // and the size demarc asked for is the size it presses for.
         Some(launch) => {
             assert_eq!(args[launch + 1], exe);
-            let prefer = args.iter().rposition(|a| a == "--prefer").expect("--prefer");
+            let prefer = args
+                .iter()
+                .rposition(|a| a == "--prefer")
+                .expect("--prefer");
             assert_eq!(args[prefer + 1], "640x480");
         }
         // No driver built into this checkout: the demo is the command, and the
