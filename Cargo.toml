@@ -1,6 +1,6 @@
 [package]
 name = "demarc"
-version = "1.6.0-rc1"
+version = "1.7.0-rc1"
 edition = "2024"
 description = "A command line emulator frontend for the demoscene"
 readme = "README.md"
@@ -69,8 +69,8 @@ librashader = {
   rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
   default-features = false,
   features = [
-    "presets",
     "preprocess",
+    "presets",
     "reflect-naga",
     "runtime-wgpu",
   ]
