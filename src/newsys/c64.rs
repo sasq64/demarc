@@ -139,7 +139,9 @@ impl System for C64System {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
             RetroCoreThreaded::new(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
-        core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+        if self.fast_load {
+            core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+        }
         Ok(Box::new(core))
     }
 }
