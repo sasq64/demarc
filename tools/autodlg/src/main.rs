@@ -293,18 +293,26 @@ impl Ctl {
     fn new(hwnd: Hwnd) -> Self {
         let class = wtext(GetClassNameW, hwnd);
         let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+        // .NET dialogs (Still's *Square*) name their controls
+        // `WindowsForms10.BUTTON.app.0.<hash>`.
+        let base = class
+            .strip_prefix("WindowsForms10.")
+            .and_then(|rest| rest.split('.').next())
+            .unwrap_or(&class);
         // Low nibble of a button's style says which kind it is.
-        let kind = if class.eq_ignore_ascii_case("Button") {
+        let kind = if base.eq_ignore_ascii_case("Button") {
             match style & 0x0F {
-                0 | 1 => Kind::Push,
+                // WinForms owner-draws every button, check boxes included,
+                // so those cannot be told apart.
+                0 | 1 | 0xB => Kind::Push,
                 2 | 3 => Kind::Check,
                 4 | 5 | 8 | 9 => Kind::Radio,
                 7 => Kind::Group,
                 _ => Kind::Other,
             }
-        } else if class.eq_ignore_ascii_case("ComboBox") {
+        } else if base.eq_ignore_ascii_case("ComboBox") {
             Kind::Combo
-        } else if class.eq_ignore_ascii_case("ListBox") {
+        } else if base.eq_ignore_ascii_case("ListBox") {
             Kind::List
         } else {
             Kind::Other
