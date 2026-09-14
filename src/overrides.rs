@@ -29,6 +29,9 @@
 //!
 //! [zoo.7236]
 //! fast = true                        # accelerated A1200 with FPU, Z3 mem and JIT
+//!
+//! [zoo.108]
+//! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -47,6 +50,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::emu_file::{Override, Patch};
+use crate::emulator::Emulator;
 use crate::files::leak;
 use crate::system_dir;
 
@@ -135,6 +139,17 @@ struct RawOverride {
     assign: toml::Table,
     /// One patch, or an array of them.
     patch: Option<Patches>,
+    /// Keys to press, as `events = [{ frame = 50, key = "Enter" }]`.
+    #[serde(default)]
+    events: Vec<RawEvent>,
+}
+
+/// One `events` entry. `key` is a Bevy `KeyCode` name, as in remote scripts.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEvent {
+    frame: u32,
+    key: String,
 }
 
 /// `patch = { … }` for the common single patch, `[[zoo.<id>.patch]]` (or an
@@ -240,12 +255,31 @@ impl RawOverride {
             .map(RawPatch::build)
             .collect::<Result<Vec<Patch>>>()?;
 
+        let mut events = Vec::with_capacity(self.events.len());
+        if !self.events.is_empty() {
+            let keys = Emulator::build_keycode_map();
+            for event in self.events {
+                let name = match event.key.as_str() {
+                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
+                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
+                        format!("Key{}", c.to_ascii_uppercase())
+                    }
+                    name => name.to_string(),
+                };
+                let Some((_, code)) = keys.iter().find(|(k, _)| format!("{k:?}") == name) else {
+                    bail!("unknown key {:?} in events", event.key);
+                };
+                events.push((event.frame, *code));
+            }
+        }
+
         Ok(Override {
             download: self.file.map(leak),
             boot_file: self.boot.map(leak),
             meta,
             patches,
             fast: self.fast,
+            events,
         })
     }
 }

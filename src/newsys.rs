@@ -618,8 +618,14 @@ impl NewSys {
                 wf.set_meta("system", sys.name());
 
                 debug!("Creating {:?} with meta {:?}", &wf.path, wf.get_all_meta());
+                let mut backend = sys.create(&wf)?;
+                if let Some(over) = over
+                    && !over.events.is_empty()
+                {
+                    backend.send_keys(&over.events);
+                }
                 return Ok(LoadResult {
-                    backend: sys.create(&wf)?,
+                    backend,
                     work_file: wf,
                     system: sys.as_ref(),
                 });

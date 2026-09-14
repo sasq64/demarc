@@ -159,3 +159,28 @@ fn patch_from_system_dir_source() {
     assert_eq!(patch.source, Some("overrides.toml"));
     assert!(!patch.bytes().unwrap().is_empty());
 }
+
+/// `events` names keys the way remote scripts do, and arrives as retro keycodes.
+#[test]
+fn parses_key_events() {
+    let overrides = parse(
+        r#"
+        [zoo.108]
+        events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "KeyA" }, { frame = 70, key = "1" }, { frame = 80, key = "b" }]
+
+        [zoo.2]
+        events = [{ frame = 1, key = "NoSuchKey" }]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        overrides[&108].events,
+        [
+            (50, crate::libretro::RETROK_RETURN),
+            (60, crate::libretro::RETROK_a),
+            (70, crate::libretro::RETROK_1),
+            (80, crate::libretro::RETROK_b)
+        ]
+    );
+    assert!(!overrides.contains_key(&2));
+}

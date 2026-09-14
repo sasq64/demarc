@@ -25,6 +25,7 @@ boot = "elevated_1280x720.exe"
 
 [zoo.108]
 file = "2nd_real.zip"
+events = [{ frame = 50, key = "Enter" }]
 meta = { dosbox_pure_cycles = 100000 }
 
 [zoo.138]
@@ -72,6 +73,9 @@ file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
 file = "ninja2.zip"
 patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==" }
 
+[zoo.19162]
+events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }]
+
 [zoo.31384]
 file = "kbd-texas_rel2.zip"
 boot = "texas_safe_1280x720.exe"
@@ -83,6 +87,9 @@ boot = "texas_safe_1280x720.exe"
 [zoo.31427]
 meta = { wine_gl_compat = true }
 file = "gaiamachinafinal.zip"
+
+[zoo.40674]
+events = [{ frame = 450, key = "1" }]
 
 [zoo.68604]
 file = "puls.zip"

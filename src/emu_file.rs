@@ -601,6 +601,8 @@ pub struct Override {
     // Run the release on the fast Amiga configuration (`newsys::amiga::apply_fast`),
     // for the ones that need more machine than their year or tags suggest.
     pub fast: bool,
+    // (frame, retro keycode) pairs passed to `Backend::send_keys` once the backend is created
+    pub events: Vec<(u32, u32)>,
 }
 
 #[cfg(test)]
