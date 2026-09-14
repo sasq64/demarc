@@ -58,6 +58,9 @@ pc file:
     DEMARC_CORE_DIR={{justfile_directory()}}/external/pcem/build-lr/src \
         cargo run --profile release-fast -- {{file}}
 
+
+GAMESCOPE := "libretro/gamescope"
+
 # Needs meson, vulkan-headers, glslang and the wlroots build deps, plus the
 # submodules: git -C external/gamescope submodule update --init --recursive.
 # Point demarc at the result with DEMARC_CORE_DIR; the core finds the compositor
@@ -65,25 +68,25 @@ pc file:
 #
 # Build the gamescope libretro core: the patched compositor and the core that drives it.
 gamescope-core:
-    meson setup --reconfigure external/gamescope/build-lr external/gamescope \
+    meson setup --reconfigure {{GAMESCOPE}}/build-lr {{GAMESCOPE}} \
         -Dbuildtype=release -Denable_openvr_support=false -Denable_tests=false \
         -Denable_gamescope_wsi_layer=false -Dpipewire=disabled \
         -Davif_screenshots=disabled -Dforce_fallback_for=libliftoff,vkroots
-    ninja -C external/gamescope/build-lr src/gamescope src/gamescope_libretro.so
-    @echo "core at external/gamescope/build-lr/src/gamescope_libretro.so"
+    ninja -C {{GAMESCOPE}}/build-lr src/gamescope src/gamescope_libretro.so
+    @echo "core at {{GAMESCOPE}}/build-lr/src/gamescope_libretro.so"
 
 # `--no-silence` matters: without it gamescope's and wine's diagnostics go to
 # /dev/null along with the cores'.
 #
 # Run a Windows demo against a locally built gamescope core.
 gs file:
-    DEMARC_CORE_DIR={{justfile_directory()}}/external/gamescope/build-lr/src \
+    DEMARC_CORE_DIR={{justfile_directory()}}/{{GAMESCOPE}}/build-lr/src \
         cargo run --profile release-fast -- --no-silence {{file}}
 
 # Same, for an HTML/JS release through an undecorated Chrome. WebSystem claims
 # the page, so nothing extra has to be said on the command line.
 gs-web page:
-    DEMARC_CORE_DIR={{justfile_directory()}}/external/gamescope/build-lr/src \
+    DEMARC_CORE_DIR={{justfile_directory()}}/{{GAMESCOPE}}/build-lr/src \
         cargo run --profile release-fast -- --no-silence {{page}}
 
 install:
