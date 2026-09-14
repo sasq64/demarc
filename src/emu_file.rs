@@ -542,17 +542,19 @@ pub struct Patch {
     pub offset: Option<usize>,
     // Data, base64 encoded
     pub data: &'static str,
+    // If Some, data is read from this file in the system dir instead
+    pub source: Option<&'static str>,
     // Info to user
     pub info: &'static str,
 }
 
 impl Patch {
-    /// The bytes to write, decoded from [`Self::data`].
-    ///
-    /// Kept encoded rather than decoded up front because that is the form the
-    /// toml carries and the form the struct is built from; a patch is a config
-    /// file of a few dozen bytes, so decoding it per load costs nothing.
+    /// The bytes to write, read from [`Self::source`] or decoded from [`Self::data`].
     pub fn bytes(&self) -> Result<Vec<u8>> {
+        if let Some(source) = self.source {
+            let path = crate::system_dir().join(source);
+            return std::fs::read(&path).with_context(|| format!("Could not read {path:?}"));
+        }
         use base64::Engine;
         base64::engine::general_purpose::STANDARD
             .decode(self.data.trim())

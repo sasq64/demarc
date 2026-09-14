@@ -126,6 +126,14 @@ fn strip_lha_comment(name: &str) -> &str {
     }
 }
 
+pub fn has_archive_filename(path: &Path) -> Result<bool> {
+    if let Some(fmt) = ArchiveFormat::from_path(path) {
+        Ok(is_supported_archive(fmt))
+    } else {
+        Ok(false)
+    }
+}
+
 pub fn is_archive(path: &Path) -> Result<bool> {
     let mut file = BufReader::new(fs::File::open(path)?);
     let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {

@@ -21,6 +21,9 @@
 //! file = "inside.zip"
 //! patch = { target = "SOUND.CFG", contents = "U0RJR1VT…", info = "GUS 0x240" }
 //!
+//! [zoo.390060]
+//! patch = { target = "d3d11.dll", source = "win/d3d11.dll" }  # file from the system dir
+//!
 //! [zoo.119665]
 //! assign = { Love = "SYS:" }         # AmigaDOS assigns to make before booting
 //!
@@ -159,7 +162,9 @@ struct RawPatch {
     /// Name of the file to write, found anywhere inside the release.
     target: String,
     /// What to write, base64 encoded — these are binary config files.
-    contents: String,
+    contents: Option<String>,
+    /// Or a file in the system dir to write instead.
+    source: Option<String>,
     /// Where in the file it goes. Left out to replace the file entirely,
     /// which is what a config file small enough to write out in full wants.
     offset: Option<usize>,
@@ -247,15 +252,33 @@ impl RawOverride {
 
 impl RawPatch {
     fn build(self) -> Result<Patch> {
+        let patch = match (self.contents, self.source) {
+            (Some(contents), None) => Patch {
+                data: leak(contents),
+                ..Default::default()
+            },
+            (None, Some(source)) => Patch {
+                source: Some(leak(source)),
+                ..Default::default()
+            },
+            _ => bail!("patch for {:?} needs one of contents or source", self.target),
+        };
         let patch = Patch {
             target: leak(self.target),
             offset: self.offset,
-            data: leak(self.contents),
             info: leak(self.info),
+            ..patch
         };
-        // Decoded here and thrown away, so that a mistyped `contents` is
-        // reported at startup rather than by the one load that needs it.
-        patch.bytes()?;
+        if let Some(source) = patch.source {
+            let path = system_dir().join(source);
+            if !path.is_file() {
+                bail!("patch source {path:?} does not exist");
+            }
+        } else {
+            // Decoded here and thrown away, so that a mistyped `contents` is
+            // reported at startup rather than by the one load that needs it.
+            patch.bytes()?;
+        }
         Ok(patch)
     }
 }

@@ -12,7 +12,7 @@ use crate::system_dir;
 use crate::workfile::WorkFile;
 use crate::{Args, libloader};
 
-use crate::utils::{get_ext, has_extension, read_at, sort_disks};
+use crate::utils::{get_ext, has_archive_filename, has_extension, read_at, sort_disks};
 use crate::utils::{is_archive, unpack_into};
 
 use amiga::AmigaSystem;
@@ -193,7 +193,7 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
             debug!("Unpacking {path:?} to {wf:?}");
             unpack_into(path, &wf)?;
             walk_dir(&wf, 4, |f, _, _| {
-                if is_archive(f)? {
+                if has_archive_filename(f)? {
                     debug!("File was double packed");
                     unpack_into(f, &wf)?;
                 }

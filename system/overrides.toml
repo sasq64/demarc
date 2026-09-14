@@ -45,9 +45,15 @@ fast = true
 [zoo.7613]
 assign = { CNCD = "SYS:" }
 
+[zoo.8092]
+file = "odd_wd.zip"
+
 # Klone / DCS
 [zoo.8120]
 meta = { amiga_core = "puae" }
+
+[zoo.8960]
+file = "petroleo_boah.zip"
 
 # Killer / CNCD
 [zoo.19401]
@@ -76,6 +82,7 @@ boot = "texas_safe_1280x720.exe"
 # intro calls without checking. NULL, during FBO setup, every time.
 [zoo.31427]
 meta = { wine_gl_compat = true }
+file = "gaiamachinafinal.zip"
 
 [zoo.68604]
 file = "puls.zip"
@@ -106,6 +113,25 @@ file = "dkg^lmn-neocolora.lha"
 
 [zoo.376675]
 meta = { amiga_core = "puae" }
+
+# Razor demos needing patched d3d11 dll
+[zoo.374116]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.381012]
+patch = { info = "DX11 Hack", target = "Razor1911_-_CMOS_Cosmos/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.390060]
+patch = { info = "DX11 Hack", target = "Razor1911/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.395873]
+patch = { info = "DX11 Hack", target = "RZR_D-Cracktro_02-Madden_NFL_2027/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.397555]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.397556]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
 
 # Debris
 

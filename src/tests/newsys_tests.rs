@@ -115,6 +115,7 @@ fn an_override_patches_the_release_and_picks_what_starts_it() {
             target: "SOUND.CFG",
             offset: None,
             data: "AAEC",
+            source: None,
             info: "GUS 0x240",
         }],
         ..Default::default()

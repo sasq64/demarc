@@ -138,3 +138,24 @@ fn rejects_what_it_cannot_apply() {
     assert!(parse("[zoo.1]\nfil = \"a.zip\"\n").is_err());
     assert!(parse("[zoo.1] file =").is_err());
 }
+
+#[test]
+fn patch_from_system_dir_source() {
+    let overrides = parse(
+        r#"
+        [zoo.1]
+        patch = { target = "overrides.toml", source = "overrides.toml" }
+
+        [zoo.2]
+        patch = { target = "A.DLL", source = "no/such/file.dll" }
+
+        [zoo.3]
+        patch = { target = "A.CFG", contents = "AAEC", source = "overrides.toml" }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(overrides.len(), 1);
+    let patch = &overrides[&1].patches[0];
+    assert_eq!(patch.source, Some("overrides.toml"));
+    assert!(!patch.bytes().unwrap().is_empty());
+}
