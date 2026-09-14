@@ -460,6 +460,8 @@ pub struct LoadResult<'a> {
 impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
+            #[cfg(target_os = "linux")]
+            Box::new(WindowsSystem {}),
             Box::new(Tic80System {}),
             Box::new(Pico8System {}),
             Box::new(AmigaSystem::new(args)),
@@ -479,11 +481,9 @@ impl NewSys {
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
             Box::new(DosSystem {}),
-            #[cfg(target_os = "linux")]
-            Box::new(WindowsSystem {}),
-            Box::new(WebSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
+            Box::new(WebSystem {}),
         ]
     }
     pub fn new(args: &Args) -> Self {
