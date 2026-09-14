@@ -163,8 +163,8 @@ pub struct Emulator {
 /// handful of frames this used to be at 60Hz, but no longer tied to frame rate.
 pub const LOAD_SETTLE_SECS: f64 = 0.1;
 
-const AUDIO_BUF_MIN: usize = 3000;
-const AUDIO_BUF_MAX: usize = 15000;
+const AUDIO_BUF_MIN: usize = 9000;
+const AUDIO_BUF_MAX: usize = 25000;
 
 impl Emulator {
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
