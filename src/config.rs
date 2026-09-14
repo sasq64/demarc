@@ -228,7 +228,7 @@ pub struct Args {
     pub cross_fade: bool,
 
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
-    #[arg(long, value_parser = parse_color, default_value = "000033")]
+    #[arg(long, value_parser = parse_color, default_value = "000000")]
     pub clear_color: Color,
 
     /// C64: Add ram expansion unit (16MB)
