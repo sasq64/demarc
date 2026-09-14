@@ -426,6 +426,7 @@ fn main() {
         volume: 100.0,
         background: clear_color,
         fast_load: false,
+        #[cfg(target_os = "linux")]
         wine: Default::default(),
     };
 

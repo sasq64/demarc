@@ -111,14 +111,11 @@ fn build_adflib() {
     // without them, declared `static` in adf_util.c. On glibc those names are
     // already declared non-static by <string.h>, and the two collide ("static
     // declaration of 'mempcpy' follows non-static declaration"), so tell it the
-    // libc ones are there. MSVC has none of the four, so it keeps its own.
+    // libc ones are there. The MSVC UCRT only has strnlen, and linking our own
+    // copy against it is a duplicate symbol.
+    build.define("HAVE_STRNLEN", Some("1"));
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        for probe in [
-            "HAVE_STRNLEN",
-            "HAVE_STRNDUP",
-            "HAVE_STPNCPY",
-            "HAVE_MEMPCPY",
-        ] {
+        for probe in ["HAVE_STRNDUP", "HAVE_STPNCPY", "HAVE_MEMPCPY"] {
             build.define(probe, Some("1"));
         }
     }
