@@ -303,7 +303,7 @@ impl DosSystem {
 
 impl System for DosSystem {
     fn extensions(&self) -> &'static [&'static str] {
-        &["cfg", "exe", "com", "bat"]
+        &["cfg", "exe", "com"] // TODO: support bat only if there are no windows exes // , "bat"]
     }
 
     fn can_load(&self, path: &Path) -> bool {
