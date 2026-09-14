@@ -35,6 +35,10 @@ fast = true
 [zoo.7613]
 assign = { CNCD = "SYS:" }
 
+[zoo.8039]
+events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }, { frame = 40, key = "Enter" }]
+meta = { dosbox_pure_cycles = 100000 }
+
 [zoo.8092]
 file = "odd_wd.zip"
 
@@ -67,6 +71,9 @@ patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgA
 
 [zoo.19162]
 events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }]
+
+[zoo.28174]
+boot = "Batman Forever (One disk version).dsk"
 
 [zoo.31384]
 file = "kbd-texas_rel2.zip"
