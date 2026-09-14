@@ -609,24 +609,27 @@ const DOWNLOAD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0xff, 0xe0);
 /// texts: it is status, not a title.
 const DOWNLOAD_SIZE: f32 = 32.0;
 
-/// Draws how many downloads are in flight in the top-left corner, and nothing
-/// at all while there are none. A placeholder for a real progress bar -- the
-/// byte counts behind it are already tracked, see
-/// [`Emulator::load_progress`](crate::emulator::Emulator::load_progress).
+/// Draws how many bytes are left to download in the top-left corner, and
+/// nothing at all while there are none.
 fn render_downloads(ctx: &egui::Context, pos: egui::Pos2) {
-    let count = crate::emu_file::downloads_in_progress();
+    let bytes = crate::emu_file::bytes_in_progress();
     let id = egui::Id::new("downloads");
-    let t = ctx.animate_bool_with_time(id, count > 0, 1.0);
-    if count == 0 || t < 0.5 {
+    let t = ctx.animate_bool_with_time(id, bytes > 0, 1.0);
+    if bytes == 0 || t < 0.5 {
         return;
     }
+    let text = if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    };
     egui::Area::new(id)
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             heading_with_shadow(
                 ui,
-                format!("\u{f409} {count}").as_str(),
+                format!("\u{f409} {text}").as_str(),
                 DOWNLOAD_SIZE,
                 DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
                 egui::Align::Min,

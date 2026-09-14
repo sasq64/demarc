@@ -474,6 +474,9 @@ struct CountingWriter<'a, W> {
 
 impl<'a, W: Write> CountingWriter<'a, W> {
     fn new(inner: W, total: Option<u64>, on_progress: OnProgress<'a>) -> Self {
+        if let Some(total) = total {
+            crate::emu_file::download_bytes_expected(total);
+        }
         Self {
             inner,
             done: 0,
@@ -483,9 +486,24 @@ impl<'a, W: Write> CountingWriter<'a, W> {
     }
 }
 
+impl<W> CountingWriter<'_, W> {
+    /// Bytes of `total` not yet received; zero for an unknown total.
+    fn remaining(&self) -> u64 {
+        self.total.map_or(0, |total| total.saturating_sub(self.done))
+    }
+}
+
+impl<W> Drop for CountingWriter<'_, W> {
+    fn drop(&mut self) {
+        // A transfer that failed or came up short gives back what never arrived.
+        crate::emu_file::download_bytes_received(self.remaining());
+    }
+}
+
 impl<W: Write> Write for CountingWriter<'_, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
+        crate::emu_file::download_bytes_received(self.remaining().min(written as u64));
         self.done += written as u64;
         (self.on_progress)(self.done, self.total);
         Ok(written)

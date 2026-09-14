@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 use tracing::warn;
@@ -34,8 +34,27 @@ pub fn download_finished() {
 }
 
 /// Downloads currently in flight; zero when nothing is loading.
+#[allow(dead_code)]
 pub fn downloads_in_progress() -> usize {
     DOWNLOADS_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
+/// Bytes still to arrive, across every download whose size is known.
+static BYTES_IN_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+pub fn download_bytes_expected(bytes: u64) {
+    BYTES_IN_PROGRESS.fetch_add(bytes, Ordering::Relaxed);
+}
+
+/// Saturates at zero, like [`download_finished`].
+pub fn download_bytes_received(bytes: u64) {
+    let _ = BYTES_IN_PROGRESS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(bytes))
+    });
+}
+
+pub fn bytes_in_progress() -> u64 {
+    BYTES_IN_PROGRESS.load(Ordering::Relaxed)
 }
 
 /// The download URLs of one release, kept as the `&'static str` slices they
