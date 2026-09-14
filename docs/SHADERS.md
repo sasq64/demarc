@@ -105,13 +105,15 @@ Presets are named `<machine>/<monitor>/<flavour>/<scaling>_<curvature>_<lighting
 the pack's `README.md` explains what each one does.
 
 The shader dialog (RightAlt+Shift+E, `src/shader_dialog.rs`) picks one of those
-without the command line, from what `shaders/shaders.toml` describes.
+without the command line, from what `shaders.toml` describes. The shader dir is `--shader-dir`, or the
+first of `/usr/share/libretro/shaders` and `./shaders` that exists; `shaders.toml`
+is read from there, or from the system dir if it has none.
 
 ### `shaders.toml`
 
 Each table is one *collection* -- one entry of the dialog's top combo box -- and
 its `pattern` says where that collection's presets are and how their paths read.
-Paths are relative to the file's own directory (`shaders/`):
+Paths are relative to the shader dir:
 
 ```toml
 [Commodore]

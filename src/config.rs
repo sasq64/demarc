@@ -110,6 +110,11 @@ pub struct Args {
     #[arg(long)]
     pub slangp: Option<PathBuf>,
 
+    /// Directory the shader dialog browses. Defaults to the first of
+    /// `/usr/share/libretro/shaders` and `./shaders` that exists.
+    #[arg(long)]
+    pub shader_dir: Option<PathBuf>,
+
     /// Path to lua script used for music visualization
     #[arg(long)]
     pub lua: Option<PathBuf>,

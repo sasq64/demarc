@@ -375,7 +375,7 @@ fn reveal_selects_the_collection_the_preset_came_from() {
 /// which browses nothing.
 #[test]
 fn the_default_collection_is_always_there() {
-    let found = collections();
+    let found = collections(None);
     assert_eq!(found[DEFAULT].label, "Default");
     assert!(found[DEFAULT].browser.is_none());
 }
@@ -386,7 +386,7 @@ fn the_default_collection_is_always_there() {
 #[test]
 #[ignore]
 fn the_installed_collections_browse() {
-    let mut found = collections();
+    let mut found = collections(None);
     assert!(found.len() > 1, "no shaders.toml, or nothing in it matched");
 
     let pack = found

@@ -1,7 +1,7 @@
 //! The shader dialog: the post-process shader picked from a *collection* combo
 //! box and, under it, one combo box per wildcard of that collection's pattern.
 //!
-//! The collections are described by `shaders/shaders.toml`, where each table is
+//! The collections are described by `shaders.toml`, where each table is
 //! one collection and its `pattern` says both where that collection's presets
 //! are and how their paths are read:
 //!
@@ -59,6 +59,7 @@ use tracing::warn;
 use crate::config::{Args, RenderSettings, ShaderArg};
 use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
 use crate::post_process::{ShaderEffect, ShaderPath};
+use crate::system_dir;
 // The dialog chrome -- panel metrics, the widget scaling and the close button --
 // is the settings dialog's, so the two look like one dialog with two contents.
 use crate::egui_settings::{
@@ -66,24 +67,18 @@ use crate::egui_settings::{
     TITLE_SIZE, WIDGET_WIDTH, close_button, draw_number, scale_widgets,
 };
 
-/// The file the collections are read from, relative to a search root. Its own
-/// directory is what every pattern in it is relative to.
-pub const CONFIG_PATH: &str = "shaders/shaders.toml";
+/// The file the collections are read from, in the shader dir or, failing that,
+/// the system dir. Every pattern in it is relative to the shader dir.
+pub const CONFIG_PATH: &str = "shaders.toml";
 
-/// The directories a shader collection is looked for in: the working directory,
-/// which is where the `shaders/` working checkout lives, and next to the
-/// executable, for a copy that ships beside the binary. The working directory
-/// is the empty path, so what is built on it stays relative -- and so stays
-/// copyable into a `--slangp` argument.
-fn search_roots() -> Vec<PathBuf> {
-    let mut roots = vec![PathBuf::new()];
-    if let Some(beside) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-    {
-        roots.push(beside);
+/// Where the shader dir is looked for when `--shader-dir` is not given.
+const SHADER_DIRS: &[&str] = &["/usr/share/libretro/shaders", "shaders"];
+
+fn shader_dir(configured: Option<&Path>) -> Option<PathBuf> {
+    match configured {
+        Some(dir) => Some(dir.to_path_buf()),
+        None => SHADER_DIRS.iter().map(PathBuf::from).find(|dir| dir.is_dir()),
     }
-    roots
 }
 
 // ---------------------------------------------------------------------------
@@ -452,7 +447,7 @@ fn title(raw: &str) -> String {
 ///
 /// The first is always the default collection: whatever `--shader` names, which
 /// is what the app runs when no preset is chosen, and the only entry a checkout
-/// with no `shaders/shaders.toml` has. Every other entry is one table of that
+/// with no `shaders.toml` has. Every other entry is one table of that
 /// file, browsed by a [`PresetBrowser`] over its pattern.
 struct Collection {
     /// What the combo box shows.
@@ -467,28 +462,23 @@ struct Collection {
 const DEFAULT: usize = 0;
 
 /// Everything the dialog can offer, the default collection first.
-fn collections() -> Vec<Collection> {
+fn collections(configured_dir: Option<&Path>) -> Vec<Collection> {
     let mut found = vec![Collection {
         label: "Default".to_owned(),
         browser: None,
     }];
-    if let Some((root, text)) = read_config() {
+    if let Some(root) = shader_dir(configured_dir)
+        && let Some(text) = read_config(&root)
+    {
         found.extend(parse_collections(&root, &text));
     }
     found
 }
 
-/// The first [`CONFIG_PATH`] found under the search roots, with the directory
-/// its patterns are relative to.
-fn read_config() -> Option<(PathBuf, String)> {
-    for base in search_roots() {
-        let path = base.join(CONFIG_PATH);
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
-            return Some((dir, text));
-        }
-    }
-    None
+fn read_config(shader_dir: &Path) -> Option<String> {
+    [shader_dir.join(CONFIG_PATH), system_dir().join(CONFIG_PATH)]
+        .iter()
+        .find_map(|path| std::fs::read_to_string(path).ok())
 }
 
 /// One collection per table of the config, in the order it writes them. A
@@ -706,13 +696,14 @@ fn open_dialog(
     mut dialog: ResMut<ShaderDialog>,
     mut hud_state: ResMut<HudState>,
     shader: Res<ShaderPath>,
+    args: Res<Args>,
 ) {
     // One open however many asked for it this frame.
     if reader.read().count() == 0 {
         return;
     }
     if dialog.collections.is_empty() {
-        dialog.collections = collections();
+        dialog.collections = collections(args.shader_dir.as_deref());
     }
     // Come up showing what is on screen: the collection the preset belongs to,
     // with every level of it selected, or the default collection for anything
