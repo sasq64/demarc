@@ -11,14 +11,15 @@ Emulation is better than youtube!
 
 *Main goal*
 
-Make it easy to watch demos from C64 and Amiga
+Make it easy to watch demos on your PC through emulation
 
+* Runs oldskool demos using emulator cores
+* Runs Windows demos through Wine (Linux only)
 * Runs multiple demos in order or shuffled
+* Indexes Demozoo/Pouet and CSDb
 * Shows demo meta data as overlay
 * CRT filter for "authentic" look (using Timothy Lottes shader)
-* Can run Amiga/Atari/C64 exes & disk images
 * Right-Alt hotkey for disk switch etc
-* Can run multiple files at once in a grid
 
 
 ## INSTALL
@@ -47,15 +48,21 @@ downloading the script first is the reliable route.
 Both install to `%CARGO_HOME%\bin` (or `%USERPROFILE%\.cargo\bin`) and add it to
 your PATH; set `DEMARC_INSTALL_DIR` to install elsewhere.
 
-With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (demarc is
-not on crates.io, so point it at the repo):
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
 
 ```sh
 cargo binstall --git https://github.com/sasq64/demarc demarc
 ```
 
-Emulator cores are downloaded from the libretro buildbot on first use, so the
-binary is all you need.
+Emulator cores are downloaded from the on first use, so the binary is all you need.
+
+## USING WINE
+
+- Install wine (latest version)
+- Install bubblewrap and cabextract (for winetricks)
+- Run wine-prefix setup script [scripts/mk_wine_prefix.sh](scripts/mk_wine_prefix.sh)
+
+Use `demarc --check-wine` to see if requirements are met.
 
 ## BUILD
 
