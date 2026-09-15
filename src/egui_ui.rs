@@ -47,8 +47,8 @@ const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
-static ICON_SVG: &[u8] = include_bytes!("../data/coupdecoeur.svg");
-static STAR_SVG: &[u8] = include_bytes!("../data/viewingtip.svg");
+static ICON_SVG: &[u8] = include_bytes!("../files/coupdecoeur.svg");
+static STAR_SVG: &[u8] = include_bytes!("../files/viewingtip.svg");
 
 /// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
 /// pixel size. `target_size` is in physical pixels.

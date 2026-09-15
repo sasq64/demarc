@@ -40,7 +40,7 @@ fi
 # For Panic Room / FLT (and pobably others)
 
 missing=()
-for f in data/gm.dls data/tssoft32.acm data/tsd32.dll; do
+for f in files/gm.dls files/tssoft32.acm files/tsd32.dll; do
     [ -f "$f" ] || missing+=("$f")
 done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -50,10 +50,10 @@ if [ ${#missing[@]} -gt 0 ]; then
     exit 1
 fi
 
-install -Dm644 data/tssoft32.acm $PREFIX/drive_c/windows/syswow64/tssoft32.acm
-install -Dm644 data/tsd32.dll    $PREFIX/drive_c/windows/syswow64/tsd32.dll
+install -Dm644 files/tssoft32.acm $PREFIX/drive_c/windows/syswow64/tssoft32.acm
+install -Dm644 files/tsd32.dll    $PREFIX/drive_c/windows/syswow64/tsd32.dll
 wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
 wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
-install -Dm644 data/gm.dls $PREFIX/drive_c/windows/syswow64/drivers/gm.dls
-install -Dm644 data/gm.dls $PREFIX/drive_c/windows/system32/drivers/gm.dls
+install -Dm644 files/gm.dls $PREFIX/drive_c/windows/syswow64/drivers/gm.dls
+install -Dm644 files/gm.dls $PREFIX/drive_c/windows/system32/drivers/gm.dls
 wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f

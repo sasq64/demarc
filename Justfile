@@ -163,12 +163,12 @@ wine-prefix: wma-audio
     # Make sure we have 1:1 logical/physical pixel mapping
     WINEPREFIX={{PRE}} wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 96 /f
     # For Panic Room / FLT
-    install -Dm644 data/tssoft32.acm {{PRE}}/drive_c/windows/syswow64/tssoft32.acm
-    install -Dm644 data/tsd32.dll    {{PRE}}/drive_c/windows/syswow64/tsd32.dll
+    install -Dm644 files/tssoft32.acm {{PRE}}/drive_c/windows/syswow64/tssoft32.acm
+    install -Dm644 files/tsd32.dll    {{PRE}}/drive_c/windows/syswow64/tsd32.dll
     WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
     WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
-    install -Dm644 data/gm.dls {{PRE}}/drive_c/windows/syswow64/drivers/gm.dls
-    install -Dm644 data/gm.dls {{PRE}}/drive_c/windows/system32/drivers/gm.dls
+    install -Dm644 files/gm.dls {{PRE}}/drive_c/windows/syswow64/drivers/gm.dls
+    install -Dm644 files/gm.dls {{PRE}}/drive_c/windows/system32/drivers/gm.dls
     WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f
 
 wine32-fix:
