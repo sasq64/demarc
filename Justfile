@@ -22,22 +22,22 @@ cachegrind_debug:
 cachegrind:
   CARGO_MANIFEST_DIR=. valgrind --tool=cachegrind target/release-fast/demarc
 
-run file="demos/rebels.adf":
+run file="testdata/amiga/rebels.adf":
     cargo run --profile release-fast -- --shuffle {{file}}
 
 gb:
-    cargo run --profile release-fast -- --scale 4 demos/nightmode.gb
+    cargo run --profile release-fast -- --scale 4 testdata/gb/nightmode.gb
 
 c64:
-    cargo run --profile release-fast -- demos/quantum_icc2026_v1p.prg
+    cargo run --profile release-fast -- testdata/c64/quantum.prg
 
 ami:
-    cargo run --profile release-fast -- demos/rebels.adf
+    cargo run --profile release-fast -- testdata/amiga/rebels.adf
 
 iff:
     cargo run --profile release-fast -- -C testdata/test.iff
 
-royale file="demos/rebels.adf":
+royale file="testdata/amiga/rebels.adf":
     cargo run --profile release-fast -- --shuffle --slangp slang-shaders/crt/crt-royale.slangp {{file}}
 
 # Build the PCem libretro core out of external/pcem. PCem itself is GPLv2 and

@@ -97,7 +97,7 @@ shaders/
 ```
 
 ```sh
-demarc demos/rebels.adf --slangp \
+demarc testdata/amiga/rebels.adf --slangp \
   shaders/Mega_Bezel_Packs/TheNamec-Commodore/presets/Commodore_Amiga500/Commodore_C1084/NMC_SOFT_RGB/FULLDEVICE_FLAT_NIGHT.slangp
 ```
 

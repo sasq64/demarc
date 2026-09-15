@@ -49,7 +49,7 @@ fn run_until_frame(emu: &mut dyn Backend, timeout: Duration) {
 fn retro_amiga_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
     let system_dir = &root("system/amiga");
-    let game_path = root("demos/rebels.adf");
+    let game_path = root("testdata/amiga/rebels.adf");
 
     let settings = HashMap::new();
 
@@ -69,7 +69,7 @@ fn retro_amiga_works() {
 fn retro_amiga_dir_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
     let system_dir = &root("system/amiga");
-    let game_path = root("demos/o2-intro");
+    let game_path = root("testdata/amiga/o2-intro");
 
     let mut settings = HashMap::new();
     settings.insert("puae_model".into(), "A500".into());
@@ -87,7 +87,7 @@ fn retro_amiga_dir_works() {
 fn retro_threaded_works() {
     let core_path = libloader::get_libretro("puae").unwrap();
     let system_dir = &root("system/amiga");
-    let game_path = root("demos/rebels.adf");
+    let game_path = root("testdata/amiga/rebels.adf");
 
     let mut settings = HashMap::new();
     settings.insert("puae_model".into(), "A500".into());
@@ -117,8 +117,8 @@ fn retro_threaded_multi_works() {
     // it (see `amiga_system_dir()`).
     let uae_system = root("system/amiga");
     let vice_system = root("system");
-    let uae_game = root("demos/rebels.adf");
-    let vice_game = root("demos/quantum_icc2026_v1p.prg");
+    let uae_game = root("testdata/amiga/rebels.adf");
+    let vice_game = root("testdata/c64/quantum.prg");
 
     let uae_settings = || {
         let mut s = HashMap::new();
@@ -200,7 +200,7 @@ fn retro_psx_works() {
         .prefix("demarc-")
         .tempdir()
         .unwrap();
-    let game_path = root("demos/pdx-dlcm.psx");
+    let game_path = root("testdata/psx/pdx-dlcm.psx");
 
     let mut meta = HashMap::new();
     meta.insert("beetle_psx_region".to_string(), "pal".to_string());
@@ -234,7 +234,7 @@ fn retro_psx_works() {
 fn retro_vice_works() {
     let core_path = libloader::get_libretro("vice_x64").unwrap();
     let system_dir = &root("system");
-    let game_path = root("demos/quantum_icc2026_v1p.prg");
+    let game_path = root("testdata/c64/quantum.prg");
 
     let mut retro_emu =
         RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), HashMap::new()).unwrap();
@@ -249,7 +249,7 @@ fn retro_vice_works() {
 fn settings_reach_the_core() {
     let core_path = libloader::get_libretro("puae").unwrap();
     let system_dir = &root("system/amiga");
-    let game_path = root("demos/rebels.adf");
+    let game_path = root("testdata/amiga/rebels.adf");
 
     let mut settings = HashMap::new();
     settings.insert("puae_model".into(), "A1200".into());
