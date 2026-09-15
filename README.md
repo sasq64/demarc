@@ -48,15 +48,15 @@ attached to every [release](https://github.com/sasq64/demarc/releases/latest).
 
 Emulator cores are downloaded from the on first use, so the binary is all you need (except *Wine*, see below).
 
-### Linux/macOS:
+### Linux/macOS
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
 ```
 
-### Windows:
+### Windows
 
-_IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
+*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
 
 `powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
 
@@ -69,18 +69,31 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\demarc-installer.ps1"
 
 Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-x86_64-pc-windows-msvc.zip)
 
+## RUNNING
 
-## USING WINE
+```bash
+demarc Downloads/cool_group-new_demo.lha
+demarc --db demozoo.tzt.gz --sort=rank --select
+```
 
-- Install wine (latest version)
-- Install bubblewrap and cabextract (for winetricks)
-- Run wine-prefix setup script [scripts/mk_wine_prefix.sh](scripts/mk_wine_prefix.sh)
+Database files can be found for each release (Assets)
+
+*Or here:*
+
+* [demozoo](https://minnberg.se/dl/demozoo.txt.gz)
+* [csdb](https://minnberg.se/dl/csdb.txt.gz)
+
+## USING WINE (LINUX ONLY)
+
+* Install wine (latest version)
+* Install bubblewrap and cabextract (for winetricks)
+* Run wine-prefix setup script [scripts/mk_wine_prefix.sh](scripts/mk_wine_prefix.sh)
 
 Use `demarc --check-wine` to see if requirements are met.
 
 ## BUILD
 
-You need _rust_.
+You need *rust*.
 
 `cargo build --release`
 
@@ -97,7 +110,7 @@ or
 
 ## SHORTCUTS
 
-_Right Alt_ / _Right Ctrl_ +
+*Right Alt* / *Right Ctrl* +
 
 ```
 O = Open fuzzy search
