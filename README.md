@@ -2,7 +2,7 @@
 
 An command line emulator frontend for the demoscene
 
-<img width="3160" height="2370" alt="IMG_2029-high" src="https://github.com/user-attachments/assets/ca33d5ce-46a7-4f19-b0d2-a39ec551e05b" />
+![Screenshot](img/c64.png)
 
 *Main goal*
 
@@ -125,3 +125,8 @@ SHIFT+N = Next file in all emulators
 
 ```
 
+## More screenshots
+
+![Screenshot](img/gfx.png)
+
+![Screenshot](img/gba.png)
