@@ -143,3 +143,7 @@ SHIFT+N = Next file in all emulators
 ![Screenshot](img/gfx.png)
 
 ![Screenshot](img/gba.png)
+
+![Screenshot](img/pc1.png)
+
+![Screenshot](img/pc2.png)
