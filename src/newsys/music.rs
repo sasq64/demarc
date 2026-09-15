@@ -7,8 +7,8 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::Args;
+use crate::backend::Backend;
 use crate::music_emu::{self, MusicEmu};
-use crate::retro_emu::Backend;
 use crate::system_dir;
 use crate::workfile::WorkFile;
 
@@ -64,6 +64,7 @@ impl System for MusicSystem {
             "snd", "sndh", "sap", // Atari
             "nsf", "gbs", "spc", "psf", // Console
             "mp3", "flac", // Streaming
+            "v2m",  //
             "emul", "vtx", "pt1", "pt2", "pt3", "asc", "sqt", "stc", "stp", "psc", // Spectrum
             "smod", "dm2", "ahx", "aon", "mt2", "mon", "dw", "fred", "smod", "hip", "cus", "fc",
             "hvl", "cm", "fp", "syn", "ma", "hipc", "ml", "mk2", "bd", "dln", "669", // Amiga

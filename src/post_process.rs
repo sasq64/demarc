@@ -1,5 +1,8 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use bevy::{
     asset::AssetId,
@@ -13,11 +16,12 @@ use bevy::{
             ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
             UniformComponentPlugin,
         },
-        extract_resource::ExtractResourcePlugin,
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_resource::{
             AddressMode, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+            BindGroupLayoutEntries, BlendComponent, BlendFactor, BlendOperation, BlendState,
+            CachedRenderPipelineId, ColorTargetState, ColorWrites,
             Extent3d, FragmentState, PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor,
             Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, ShaderType,
             TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
@@ -29,6 +33,7 @@ use bevy::{
         texture::GpuImage,
         view::ViewTarget,
     },
+    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
 };
 use librashader::presets::ShaderFeatures;
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
@@ -36,7 +41,7 @@ use librashader::runtime::{Size, Viewport};
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use crate::{AppSettings, RenderSettings};
+use crate::config::{AppSettings, RenderSettings};
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
@@ -48,32 +53,71 @@ const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 /// `--downsample` (by default: that minify it).
 pub const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
 
-/// Which post-process backend to run, selected on the command line.
-#[derive(Resource, Clone)]
-pub enum ShaderPath {
-    /// librashader `.slangp` filter chains: the visible effect and a
-    /// downsampler for views that show the source too small. Absolute paths,
-    /// resolved from the `system` dir (or a user-supplied `--slangp`) in
-    /// `main`. With the effect toggled off there is no chain at all — the
-    /// composite blit samples the emulator framebuffer directly (see
-    /// [`post_process_pass`]).
-    Slangp {
-        effect: PathBuf,
-        /// DREZ downsample preset, substituted for `effect` on views below
-        /// `downsample_limit`.
-        downsample: PathBuf,
-        /// Magnification (on-screen pixels per source pixel) below which the
-        /// downsampler replaces the effect, from `--downsample`. Mirrors
-        /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
-        /// kicks in exactly when the view shows the source *smaller* than its
-        /// native resolution; `0` disables the downsampler entirely.
-        downsample_limit: f32,
-    },
+/// Asset path of the passthrough composite shader, used on the
+/// [`ShaderEffect::Slangp`] backend where the filter chain has already applied
+/// the effect into the intermediate this samples.
+const BLIT_SHADER: &str = "shaders/blit.wgsl";
+
+/// Which post-process backend to run.
+#[derive(Clone, Debug)]
+pub enum ShaderEffect {
+    /// librashader `.slangp` filter chain, run into an intermediate texture
+    /// that the (passthrough) composite blit then draws. An absolute path,
+    /// resolved from the `system` dir — or given verbatim by `--slangp`.
+    /// With the effect toggled off there is no chain at all: the composite
+    /// samples the emulator framebuffer directly (see [`post_process_pass`]).
+    Slangp(PathBuf),
     /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
     /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
     /// and applies the effect in the composite pass itself. The
     /// effect/passthrough toggle is handled in-shader via `crt_enabled`.
-    Wgsl { asset_path: String },
+    Wgsl(String),
+}
+
+impl ShaderEffect {
+    /// The `.slangp` preset to build a filter chain from, or `None` on the
+    /// WGSL backend, which runs no chains.
+    fn slangp(&self) -> Option<&Path> {
+        match self {
+            ShaderEffect::Slangp(path) => Some(path),
+            ShaderEffect::Wgsl(_) => None,
+        }
+    }
+
+    /// Asset path of the shader the composite pass runs: the passthrough blit
+    /// behind a filter chain, the effect itself on the WGSL backend.
+    fn composite_shader(&self) -> &str {
+        match self {
+            ShaderEffect::Slangp(_) => BLIT_SHADER,
+            ShaderEffect::Wgsl(asset_path) => asset_path,
+        }
+    }
+}
+
+/// The post-process shader in force, chosen on the command line
+/// (`--shader`/`--slangp`) and changeable at runtime from the settings dialog.
+///
+/// [`ExtractResource`] so a change made in the main world reaches the render
+/// world, which rebuilds whatever it invalidated: the composite pipeline in
+/// [`post_process_pass`] and the filter chains in [`SlangChains::set_effect`].
+/// It is also inserted into the render world directly, so `RenderStartup` — one
+/// extract too early to see it — has it.
+#[derive(Resource, Clone, ExtractResource)]
+pub struct ShaderPath {
+    pub effect: ShaderEffect,
+    /// DREZ downsample preset, substituted for the effect on views below
+    /// `downsample_limit`. Slangp backend only.
+    pub downsample: PathBuf,
+    /// Magnification (on-screen pixels per source pixel) below which the
+    /// downsampler replaces the effect, from `--downsample`. Mirrors
+    /// [`AppSettings::crt_limit`]: at the default `1.0` the substitution
+    /// kicks in exactly when the view shows the source *smaller* than its
+    /// native resolution; `0` disables the downsampler entirely.
+    pub downsample_limit: f32,
+    /// Effect-preset parameter values the shader dialog has changed, applied to
+    /// the chain before each frame it draws. Behind an `Arc` because the whole
+    /// resource is cloned into the render world once a frame.
+    pub params: Arc<HashMap<String, f32>>,
 }
 
 pub struct PostProcessPlugin {
@@ -83,23 +127,26 @@ pub struct PostProcessPlugin {
 
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            ExtractResourcePlugin::<RenderSettings>::default(),
-            ExtractComponentPlugin::<PostProcess>::default(),
-            ExtractComponentPlugin::<PostProcessUniform>::default(),
-            ExtractComponentPlugin::<BorderScissor>::default(),
-            ExtractComponentPlugin::<ViewRect>::default(),
-            ExtractComponentPlugin::<EmuCamera>::default(),
-            UniformComponentPlugin::<PostProcessUniform>::default(),
-        ))
-        .add_systems(PostUpdate, update_post_process_uniform);
+        app.insert_resource(self.shader.clone())
+            .add_plugins((
+                ExtractResourcePlugin::<RenderSettings>::default(),
+                ExtractResourcePlugin::<ShaderPath>::default(),
+                ExtractComponentPlugin::<PostProcess>::default(),
+                ExtractComponentPlugin::<PostProcessUniform>::default(),
+                ExtractComponentPlugin::<BorderScissor>::default(),
+                ExtractComponentPlugin::<EmuCamera>::default(),
+                UniformComponentPlugin::<PostProcessUniform>::default(),
+            ))
+            .add_systems(PostUpdate, update_post_process_uniform);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
-        // Hand the chosen backend/paths to the render world so init can load
-        // them. A plain resource (not extracted) because they never change.
+        // Seed the render world's copy: `RenderStartup` runs before the first
+        // extract, so the systems below would otherwise have nothing to read.
+        // From then on `ExtractResourcePlugin` keeps it in step with the main
+        // world's, which the settings dialog writes to.
         render_app.insert_resource(self.shader.clone());
 
         // Bevy 0.19 replaced the render graph with schedule-driven rendering: a
@@ -153,6 +200,13 @@ pub struct PostProcess {
     pub aspect: f32,
     /// Manual multiplier applied on top of `aspect` for fine correction (1.0 = none).
     pub aspect_tweak: f32,
+    /// The centred part of the source texture that holds the picture, from
+    /// [`Backend::get_used_frame_size`](crate::backend::Backend::get_used_frame_size).
+    /// Zero, or the whole texture, means there is no border to crop.
+    pub used: UVec2,
+    pub view: ViewRect,
+    /// Opacity of the view over the clear color: `0` skips it, `1` draws it unblended.
+    pub alpha: f32,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -186,9 +240,9 @@ pub struct BorderScissor(pub Option<URect>);
 /// the entire 2D pipeline — extraction, view uniforms, main pass, tonemapping,
 /// upscaling, one render pass each — ran once per cell. A grid now has a single
 /// camera and every view is a plain entity contributing one quad to
-/// [`post_process_pass`]; this component is what that camera viewport used to
-/// be, and is written from the window size by the frontend.
-#[derive(Component, Clone, Copy, PartialEq, Eq, ExtractComponent)]
+/// [`post_process_pass`]; this is what that camera viewport used to be, and is
+/// written from the window size by the frontend.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ViewRect {
     /// Top-left corner in physical pixels.
     pub position: UVec2,
@@ -229,14 +283,13 @@ fn update_post_process_uniform(
     mut query: Query<(
         Entity,
         &PostProcess,
-        &ViewRect,
         Option<&mut PostProcessUniform>,
         Option<&mut BorderScissor>,
     )>,
 ) {
-    for (entity, pp, view_rect, existing, existing_scissor) in &mut query {
-        let uniform = compute_uniform(pp, &settings, app_settings.crt_limit, view_rect, &images);
-        let scissor = BorderScissor(compute_scissor(&uniform, &settings, view_rect));
+    for (entity, pp, existing, existing_scissor) in &mut query {
+        let (uniform, image) = compute_uniform(pp, &settings, app_settings.crt_limit, &images);
+        let scissor = BorderScissor(compute_scissor(image, &settings, &pp.view));
         match existing {
             Some(mut u) => {
                 u.set_if_neq(uniform);
@@ -260,10 +313,11 @@ fn update_post_process_uniform(
 /// (no clipping) for [`BorderMode::Stretch`], or when the image fills the whole
 /// viewport (`Stretch`/`Zoom` scaling), so we never scissor away visible pixels.
 fn compute_scissor(
-    u: &PostProcessUniform,
+    image: (Vec2, Vec2),
     settings: &RenderSettings,
     view_rect: &ViewRect,
 ) -> Option<URect> {
+    let (image_scale, image_offset) = image;
     if !matches!(settings.border_mode, BorderMode::Black) {
         return None;
     }
@@ -273,8 +327,8 @@ fn compute_scissor(
     // The image occupies screen-uv `[uv_offset, uv_offset + uv_scale]` within the
     // viewport; the bars are whatever falls outside that. Clamp to the viewport so
     // Zoom/Stretch (which push the image past the edges) just yield the full rect.
-    let img_min = (vp_min + u.uv_offset * vp_size).max(vp_min);
-    let img_max = (vp_min + (u.uv_offset + u.uv_scale) * vp_size).min(vp_min + vp_size);
+    let img_min = (vp_min + image_offset * vp_size).max(vp_min);
+    let img_max = (vp_min + (image_offset + image_scale) * vp_size).min(vp_min + vp_size);
     if img_max.x <= img_min.x || img_max.y <= img_min.y {
         return None;
     }
@@ -284,22 +338,28 @@ fn compute_scissor(
     ))
 }
 
+/// The uniform for one view, and where the picture itself lands in screen-uv —
+/// which is only the same thing when there is no border to crop.
 fn compute_uniform(
     pp: &PostProcess,
     settings: &RenderSettings,
     crt_limit: f32,
-    view_rect: &ViewRect,
     images: &Assets<Image>,
-) -> PostProcessUniform {
+) -> (PostProcessUniform, (Vec2, Vec2)) {
     // Use this view's rectangle, not the whole window: in grid mode every cell
     // gets its own sub-rect of the one camera, so aspect must be computed
     // against that quadrant. A single emulator's rect is the whole window.
-    let viewport = view_rect.rect().map(|r| r.size());
+    let viewport = pp.view.rect().map(|r| r.size());
     let src = images.get(&pp.source).map(|source| source.size());
     let (mut uv_scale, mut uv_offset) = match (viewport, src) {
-        (Some(target), Some(src)) => {
-            scale_offset(target, src, pp.aspect, pp.aspect_tweak, settings.scale_mode)
-        }
+        (Some(target), Some(src)) => view_transform(
+            target,
+            src,
+            pp.used,
+            pp.aspect,
+            pp.aspect_tweak,
+            settings.scale_mode,
+        ),
         _ => (Vec2::ONE, Vec2::ZERO),
     };
     // Snap the composite transform to the intermediate's integer pixel grid so
@@ -331,11 +391,59 @@ fn compute_uniform(
             // flickering the effect off for a frame.
             _ => true,
         };
-    PostProcessUniform {
-        uv_scale,
-        uv_offset,
-        crt_enabled: crt_enabled as u32,
+    // Undo the crop, on the snapped values so the bars line up with the pixels
+    // actually drawn: what is left is the picture's own rectangle.
+    let used = used_fraction(src.unwrap_or(UVec2::ONE), pp.used);
+    let image = (uv_scale * used, uv_offset + uv_scale * (1.0 - used) * 0.5);
+    (
+        PostProcessUniform {
+            uv_scale,
+            uv_offset,
+            crt_enabled: crt_enabled as u32,
+        },
+        image,
+    )
+}
+
+/// How much of the source texture is picture rather than border, per axis.
+fn used_fraction(src: UVec2, used: UVec2) -> Vec2 {
+    if src.x == 0 || src.y == 0 || used.x == 0 || used.y == 0 {
+        return Vec2::ONE;
     }
+    (used.as_vec2() / src.as_vec2()).clamp(Vec2::splat(f32::EPSILON), Vec2::ONE)
+}
+
+/// [`scale_offset`] for a source that carries a border: a wine release running
+/// 4:3 inside a 16:9 gamescope session arrives as a session sized frame with the
+/// picture scaled into the middle of it, and the scale modes have to work on the
+/// picture rather than on the frame.
+///
+/// So the modes are given the picture's size and display aspect, and the
+/// transform they return is then widened to sample only the picture — screen-uv
+/// `[0,1]` over the image maps to the centred `used` sub-range of the texture
+/// instead of all of it. With no border this is exactly [`scale_offset`].
+pub fn view_transform(
+    target: UVec2,
+    src: UVec2,
+    used: UVec2,
+    aspect: f32,
+    aspect_tweak: f32,
+    scale_mode: ScaleMode,
+) -> (Vec2, Vec2) {
+    let f = used_fraction(src, used);
+    if f == Vec2::ONE {
+        return scale_offset(target, src, aspect, aspect_tweak, scale_mode);
+    }
+    // `aspect` is the whole frame's; cropping to the picture changes it by the
+    // same ratio the crop does.
+    let aspect = if aspect > 0.0 {
+        aspect * f.x / f.y
+    } else {
+        0.0
+    };
+    let (scale, offset) = scale_offset(target, used, aspect, aspect_tweak, scale_mode);
+    let scale = scale / f;
+    (scale, offset - scale * (1.0 - f) * 0.5)
 }
 
 /// How many screen pixels the source gets per source pixel in this view, taken
@@ -485,21 +593,35 @@ fn post_process_pass(
         &PostProcessUniform,
         &DynamicUniformIndex<PostProcessUniform>,
         &BorderScissor,
-        &ViewRect,
     )>,
-    pipeline_resource: Res<PostProcessPipeline>,
+    mut pipeline_resource: ResMut<PostProcessPipeline>,
     pipeline_cache: Res<PipelineCache>,
+    asset_server: Res<AssetServer>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     uniforms: Res<ComponentUniforms<PostProcessUniform>>,
     settings: Res<RenderSettings>,
     shader_path: Res<ShaderPath>,
-    mut chains: Option<ResMut<SlangChains>>,
+    mut chains: ResMut<SlangChains>,
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
     let (view_target, camera) = view.into_inner();
 
-    let Some(pipeline) = pipeline_cache.get_render_pipeline(pipeline_resource.pipeline_id) else {
+    // Both of these are no-ops unless the settings dialog has just changed the
+    // shader: the pipeline is already in the map, and the chains already point
+    // at this preset.
+    let composite_shader = shader_path.effect.composite_shader();
+    let opaque_id =
+        pipeline_resource.pipeline(&pipeline_cache, &asset_server, composite_shader, false);
+    let blended_id =
+        pipeline_resource.pipeline(&pipeline_cache, &asset_server, composite_shader, true);
+    chains.set_effect(shader_path.effect.slangp());
+
+    // Not compiled yet — the first frames of a run, and of a shader change.
+    let (Some(opaque), Some(blended)) = (
+        pipeline_cache.get_render_pipeline(opaque_id),
+        pipeline_cache.get_render_pipeline(blended_id),
+    ) else {
         return;
     };
 
@@ -520,9 +642,13 @@ fn post_process_pass(
         .map(|size| URect::from_corners(UVec2::ZERO, size));
 
     let mut quads: Vec<Quad> = Vec::with_capacity(views.iter().len());
-    'views: for (post_process, uniform, uniform_index, border_scissor, view_rect) in &views {
+    'views: for (post_process, uniform, uniform_index, border_scissor) in &views {
+        let alpha = post_process.alpha.min(1.0);
+        if alpha <= 0.0 {
+            continue;
+        }
         // Inactive (another view is maximized over this one) or not sized yet.
-        let Some(mut rect) = view_rect.rect() else {
+        let Some(mut rect) = post_process.view.rect() else {
             continue;
         };
         if let Some(framebuffer) = framebuffer {
@@ -566,21 +692,18 @@ fn post_process_pass(
         // composite's `uv_scale`/`uv_offset` come from `scale_offset` with the same
         // mode and inputs, `(screen_uv - uv_offset) / uv_scale` lands on exact texel
         // centres: one screen pixel per intermediate texel.
-        let composite_input: &TextureView = match &*shader_path {
+        let composite_input: &TextureView = match &shader_path.effect {
             // WGSL backend: the composite shader applies the effect itself while
             // sampling the emulator framebuffer directly — nothing to prepare.
-            ShaderPath::Wgsl { .. } => &source_image.texture_view,
-            ShaderPath::Slangp { .. } => 'slangp: {
-                // Absent if the preset failed to load; skip rendering rather than panic.
-                let Some(chains) = chains.as_mut() else {
-                    return;
-                };
+            ShaderEffect::Wgsl(_) => &source_image.texture_view,
+            ShaderEffect::Slangp(_) => 'slangp: {
                 let source_id = post_process.source.id();
                 let src_size =
                     UVec2::new(source_image.texture.width(), source_image.texture.height());
-                let (image_scale, _) = scale_offset(
+                let (image_scale, _) = view_transform(
                     rect.size(),
                     src_size,
+                    post_process.used,
                     post_process.aspect,
                     post_process.aspect_tweak,
                     settings.scale_mode,
@@ -623,12 +746,15 @@ fn post_process_pass(
                 };
 
                 let device = render_context.render_device().clone();
-                // Each source has its own chains and target, built on first use;
-                // skip the source if its preset failed to load.
+                // Each source has its own chains and target, built in the
+                // background on first use. Nothing to render with yet — the
+                // build is still compiling, or its preset failed to load — so
+                // composite the emulator framebuffer unshaded rather than
+                // dropping the view for a second or two.
                 let Some((chain, target, frame_count)) =
                     chains.chain(&device, &render_queue, source_id, inter_size, kind)
                 else {
-                    continue 'views;
+                    break 'slangp &source_image.texture_view;
                 };
                 // crt-royale tiles its phosphor mask at a fixed triad size (default 3px =>
                 // 24px tiles). When render_width / tile_size is an even integer, a tile
@@ -657,6 +783,17 @@ fn post_process_pass(
                     chain
                         .parameters()
                         .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
+                    // What the shader dialog has changed, applied after the
+                    // nudge so an explicit triad size still wins.
+                    if !shader_path.params.is_empty() {
+                        chain.parameters().update_parameters(|values| {
+                            for (name, value) in shader_path.params.iter() {
+                                if let Some(slot) = values.get_mut::<str>(name) {
+                                    *slot = *value;
+                                }
+                            }
+                        });
+                    }
                 }
                 let lr_size = Size::new(inter_size.x, inter_size.y);
                 let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
@@ -695,12 +832,18 @@ fn post_process_pass(
             uniform_index: uniform_index.index(),
             rect,
             scissor,
+            alpha,
         });
     }
 
     if quads.is_empty() {
         return;
     }
+
+    // A blended view reads what is already in the target, so it has to be drawn
+    // over the opaque ones, not under them — that is what makes a cross fade
+    // visible whichever entity happens to hold the view.
+    quads.sort_by(|a, b| b.alpha.total_cmp(&a.alpha));
 
     // --- Stage 2: composite every view into the view target ---
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -711,8 +854,14 @@ fn post_process_pass(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    render_pass.set_render_pipeline(pipeline);
     for quad in &quads {
+        if quad.alpha < 1.0 {
+            render_pass.set_render_pipeline(blended);
+            let a = quad.alpha;
+            render_pass.set_blend_constant(LinearRgba::new(a, a, a, a));
+        } else {
+            render_pass.set_render_pipeline(opaque);
+        }
         // The viewport maps the fullscreen triangle onto this view's rectangle
         // (clip-space clipping keeps it there), the scissor trims it to the
         // image when the bars are meant to keep the clear color.
@@ -736,6 +885,8 @@ struct Quad {
     rect: URect,
     /// Sub-rect of `rect` the draw is clipped to (see [`BorderScissor`]).
     scissor: URect,
+    /// In `(0, 1]`; below `1` the quad is drawn with the blended pipeline.
+    alpha: f32,
 }
 
 #[derive(Resource)]
@@ -746,7 +897,60 @@ struct PostProcessPipeline {
     /// `ClampToBorder` (black) sampler — used by [`BorderMode::Black`]. Falls
     /// back to a `ClampToEdge` sampler if the adapter lacks the border feature.
     sampler_black: Sampler,
-    pipeline_id: CachedRenderPipelineId,
+    /// The vertex half of every composite pipeline; only the fragment shader
+    /// differs between them.
+    fullscreen: FullscreenShader,
+    /// Composite pipelines by shader asset path and whether they blend by the
+    /// blend constant, queued the first time that shader is selected.
+    pipelines: HashMap<(String, bool), CachedRenderPipelineId>,
+}
+
+impl PostProcessPipeline {
+    /// The composite pipeline that runs `asset_path`, queueing it on first use.
+    ///
+    /// Lazy rather than queued up front so a run that never opens the settings
+    /// dialog — every run, in practice — compiles the one shader it uses.
+    fn pipeline(
+        &mut self,
+        cache: &PipelineCache,
+        assets: &AssetServer,
+        asset_path: &str,
+        blended: bool,
+    ) -> CachedRenderPipelineId {
+        let key = (asset_path.to_owned(), blended);
+        if let Some(id) = self.pipelines.get(&key) {
+            return *id;
+        }
+        // The blend constant carries the view's alpha, so any composite shader
+        // (and whatever a filter chain rendered) fades without knowing about it.
+        let fade = BlendComponent {
+            src_factor: BlendFactor::Constant,
+            dst_factor: BlendFactor::OneMinusConstant,
+            operation: BlendOperation::Add,
+        };
+        let id = cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(format!("composite:{asset_path}:{blended}").into()),
+            layout: vec![self.layout.clone()],
+            vertex: self.fullscreen.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: assets.load(asset_path.to_owned()),
+                targets: vec![Some(ColorTargetState {
+                    // Matches the view target's main texture format (Bevy's former
+                    // `TextureFormat::bevy_default()`, now deprecated).
+                    format: TARGET_FORMAT,
+                    blend: blended.then_some(BlendState {
+                        color: fade,
+                        alpha: fade,
+                    }),
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            ..default()
+        });
+        self.pipelines.insert(key, id);
+        id
+    }
 }
 
 /// A librashader intermediate render target: the emulator framebuffer with the
@@ -791,50 +995,204 @@ enum ChainKind {
     Downsample,
 }
 
-/// A filter chain built the first time a view actually asks for it.
-///
-/// Building one costs on the order of 10–20 ms of glslang/naga/pipeline
-/// compilation, so the ones a view never selects are never paid for — a grid
-/// whose cells all fall below `crt_limit` and above their source resolution
-/// builds none at all.
-enum LazyChain {
-    /// Not built yet; no view has needed it.
-    Pending,
-    /// Boxed only to keep the three variants a similar size — a `FilterChain`
-    /// is several hundred bytes and every source holds one of these per kind.
-    Ready(Box<FilterChain>),
-    /// The preset failed to load. Remembered so it is reported once rather
-    /// than retried (and re-logged) every frame.
+/// What a background build produced.
+enum BuildResult {
+    /// The chain the build was asked for.
+    Built(Box<FilterChain>),
+    /// The preset could not be loaded. Reported by the task; remembered by
+    /// [`SlangChains::failed`] so it is neither retried nor re-logged.
     Failed,
+    /// The selection moved on before the task got to run, so nothing was
+    /// compiled. Distinct from `Failed`: the preset is not blamed for it.
+    Cancelled,
 }
 
-impl LazyChain {
-    /// The chain, building it via `load` on first call. `None` once loading has
-    /// failed, so the caller skips rendering.
-    fn get_or_load(
-        &mut self,
-        load: impl FnOnce() -> Option<FilterChain>,
-    ) -> Option<&mut FilterChain> {
-        if matches!(self, LazyChain::Pending) {
-            *self = match load() {
-                Some(chain) => LazyChain::Ready(Box::new(chain)),
-                None => LazyChain::Failed,
-            };
-        }
-        match self {
-            LazyChain::Ready(chain) => Some(chain),
-            _ => None,
+/// One filter-chain build, running on the async compute pool.
+struct Build {
+    /// Preset being compiled.
+    path: PathBuf,
+    /// Set once the selection has moved on. The task checks it before starting,
+    /// so a build still queued behind other sources' builds costs nothing; once
+    /// glslang has the shaders there is no way to interrupt it (the same caveat
+    /// [`crate::jobs`] documents), so a build already running just finishes and
+    /// has its result dropped.
+    cancelled: Arc<AtomicBool>,
+    task: Task<BuildResult>,
+    /// When the build was spawned, for the debug line it logs on arrival.
+    started: Instant,
+    /// Frames the view drew while this build ran, for that same line: the whole
+    /// point of building off the render thread is that this is not 1.
+    frames: usize,
+}
+
+impl Build {
+    /// Start compiling `path` off the render thread.
+    fn spawn(path: PathBuf, device: &RenderDevice, queue: &RenderQueue) -> Self {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        // wgpu's device and queue are reference-counted handles and creating
+        // resources through them from another thread is supported, so the whole
+        // load — glslang, naga, LUT decode, pipeline creation — runs on the
+        // worker. The `device.poll(Wait)` librashader ends with blocks that
+        // worker only.
+        let device = device.wgpu_device().clone();
+        let queue = queue.clone();
+        debug!("building chain for {}", path.display());
+        let task = {
+            let path = path.clone();
+            let cancelled = Arc::clone(&cancelled);
+            AsyncComputeTaskPool::get().spawn(async move {
+                // Not an async body in any real sense: nothing below awaits,
+                // the blocking compile just occupies one pool thread until it
+                // returns.
+                if cancelled.load(Ordering::Relaxed) {
+                    return BuildResult::Cancelled;
+                }
+                #[allow(clippy::result_large_err)]
+                let loaded =
+                    FilterChain::load_from_path(&path, ShaderFeatures::NONE, &device, &queue, None);
+                match loaded {
+                    Ok(chain) => BuildResult::Built(Box::new(chain)),
+                    Err(err) => {
+                        error!("failed to load preset {}: {err}", path.display());
+                        BuildResult::Failed
+                    }
+                }
+            })
+        };
+        Self {
+            path,
+            cancelled,
+            task,
+            started: Instant::now(),
+            frames: 0,
         }
     }
 }
 
+/// A filter chain, built off the render thread and swapped in when it is ready.
+///
+/// Building one is expensive and unbudgeted: a Mega Bezel preset is 42 GLSL
+/// passes, and glslang alone takes ~1.5 s of CPU to turn them into SPIR-V
+/// (naga and the wgpu pipelines are ~0.1 s on top, and the 32 LUT images ~0.1 s
+/// — the images are not the cost). Running that inline on the render thread is
+/// what made a shader change freeze the whole app for a second or two, so it
+/// runs on [`AsyncComputeTaskPool`] instead and nothing here ever waits on it:
+/// until the new chain lands, the view keeps rendering with the previous one,
+/// or composites the emulator framebuffer unshaded if there is no previous one.
+#[derive(Default)]
+struct AsyncChain {
+    /// The chain in use and the preset it was built from. Deliberately kept —
+    /// and kept rendering — while a build for a *newer* preset is in flight, so
+    /// picking a preset in the shader dialog swaps looks in a single frame
+    /// instead of falling back to an unshaded image for two seconds.
+    ready: Option<(PathBuf, Box<FilterChain>)>,
+    /// The build in flight, at most one per source. Cycling through the dialog
+    /// therefore coalesces: the running build is flagged cancelled and dropped
+    /// on arrival, and only the selection current *at that point* is compiled
+    /// next — intermediate ones are never started. Spawning one build per click
+    /// instead would have them fight over the CPU and make the selection the
+    /// user actually settled on the slowest of the lot.
+    building: Option<Build>,
+}
+
+impl AsyncChain {
+    /// The chain to render this frame, starting or advancing the build of
+    /// `want` as needed. `None` means "nothing to run with yet" — the first
+    /// build for this source has not finished, or `want` failed to load — and
+    /// the caller composites the source unshaded.
+    fn get(
+        &mut self,
+        want: &Path,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        failed: &mut HashSet<PathBuf>,
+    ) -> Option<&mut FilterChain> {
+        // Superseded: tell the task to skip the compile if it has not started.
+        if let Some(build) = &self.building
+            && build.path.as_path() != want
+        {
+            build.cancelled.store(true, Ordering::Relaxed);
+        }
+        // Count the frames this view drew while the build ran — the whole
+        // point of building off the render thread — then collect it if it has
+        // landed. `check_ready` never blocks.
+        let mut finished = None;
+        if let Some(build) = &mut self.building {
+            build.frames += 1;
+            finished = check_ready(&mut build.task);
+        }
+        if let Some(result) = finished {
+            let build = self.building.take().expect("polled above");
+            let name = build.path.display();
+            match result {
+                BuildResult::Built(chain) if build.path.as_path() == want => {
+                    debug!(
+                        "chain for {name} ready in {:.2?}, {} frames drawn meanwhile",
+                        build.started.elapsed(),
+                        build.frames
+                    );
+                    self.ready = Some((build.path.clone(), chain));
+                }
+                // Built something the user has already switched away from, or
+                // skipped because the selection moved on before it started:
+                // either way drop it and let the current selection start
+                // building below.
+                BuildResult::Built(_) => debug!("chain for {name} dropped, selection moved on"),
+                BuildResult::Cancelled => debug!("build for {name} skipped, selection moved on"),
+                // The task logged why.
+                BuildResult::Failed => {
+                    failed.insert(build.path.clone());
+                }
+            }
+        }
+        let known_bad = failed.contains(want);
+        if known_bad {
+            // Show the frame unshaded rather than a preset the user did not
+            // pick; the failure was logged once, by the build itself.
+            self.ready = None;
+        }
+        if should_start(
+            self.ready.as_ref().map(|(path, _)| path.as_path()),
+            self.building.as_ref().map(|build| build.path.as_path()),
+            want,
+            known_bad,
+        ) {
+            self.building = Some(Build::spawn(want.to_path_buf(), device, queue));
+        }
+        self.ready.as_mut().map(|(_, chain)| &mut **chain)
+    }
+}
+
+/// Whether a source should start compiling `want` now, given the preset it has
+/// `ready` and the one it is already `building`.
+///
+/// The `building.is_none()` term is the coalescing rule that keeps rapid
+/// changes in the shader dialog cheap. glslang cannot be interrupted once it
+/// has the shaders, so a superseded build runs to completion whatever we do;
+/// starting the next selection alongside it would just have the two compete for
+/// the CPU, and with a click per preset the one the user settles on ends up
+/// last in a queue of abandoned work. Waiting instead means at most one build
+/// per source is ever in flight, every intermediate selection is skipped
+/// outright, and the selection current when the running build lands is the one
+/// that gets compiled next.
+fn should_start(
+    ready: Option<&Path>,
+    building: Option<&Path>,
+    want: &Path,
+    known_bad: bool,
+) -> bool {
+    !known_bad && building.is_none() && ready != Some(want)
+}
+
 /// One emulator's librashader state: its effect and downsample chains, its
 /// intermediate target, and its frame counter.
+#[derive(Default)]
 struct SourceChains {
-    effect: LazyChain,
-    downsample: LazyChain,
-    /// Intermediate render target, recreated on resize.
-    target: IntermediateTarget,
+    effect: AsyncChain,
+    downsample: AsyncChain,
+    /// Intermediate render target, recreated on resize. `None` until the first
+    /// frame that needs one.
+    target: Option<IntermediateTarget>,
     /// RetroArch-style frame counter fed to the shaders (feedback/animation).
     /// Only ticks on frames that actually run a chain, so an animated preset
     /// resumes where it left off rather than jumping after a spell with the
@@ -850,20 +1208,24 @@ struct SourceChains {
 /// grid of images with different resolutions does) latches the last size and
 /// resamples the next frame's other cells through it — e.g. an 18×18 brush in
 /// the grid blurs every other image. One chain per source keeps that state
-/// isolated. Each chain is built lazily, the first time a view actually selects
-/// it (see [`LazyChain`]).
+/// isolated. Each chain is built in the background, the first time a view
+/// actually selects it (see [`AsyncChain`]).
 ///
 /// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
 /// so this lives as a render-world resource, accessed via `ResMut`.
 #[derive(Resource)]
 struct SlangChains {
     /// Path of the effect preset (`--shader`/`--slangp`), built per source.
-    effect_path: PathBuf,
+    /// `None` on the WGSL backend, which has no chain to build.
+    effect_path: Option<PathBuf>,
     /// Path of the DREZ downsample preset.
     downsample_path: PathBuf,
     /// Magnification below which `downsample_path` replaces the effect;
     /// `0` (from `--downsample 0`) never runs it. See [`wants_downsample`].
     downsample_limit: f32,
+    /// Presets whose build failed, so they are neither retried nor re-logged.
+    /// Shared by every source: a broken preset is broken for all of them.
+    failed: HashSet<PathBuf>,
     /// One set of chains + target per emulator, keyed by its source image.
     /// A source that has never needed a chain has no entry at all.
     sources: HashMap<AssetId<Image>, SourceChains>,
@@ -871,9 +1233,9 @@ struct SlangChains {
 
 impl SlangChains {
     /// The `kind` chain for `source`, plus its intermediate target and frame
-    /// counter. Builds the chain on first use and (re)creates the target at
-    /// `size`. Returns `None` when the preset fails to load, so the caller
-    /// skips rendering that source.
+    /// counter, (re)created at `size`. Returns `None` while the chain is still
+    /// compiling in the background and when its preset failed to load, so the
+    /// caller composites the source unshaded.
     fn chain(
         &mut self,
         device: &RenderDevice,
@@ -887,57 +1249,55 @@ impl SlangChains {
         let Self {
             effect_path,
             downsample_path,
+            failed,
             sources,
             ..
         } = self;
-        let sc = sources.entry(source).or_insert_with(|| SourceChains {
-            effect: LazyChain::Pending,
-            downsample: LazyChain::Pending,
-            target: build_target(device, size),
-            frame_count: 0,
-        });
-        if sc.target.size != size {
-            sc.target = build_target(device, size);
-        }
+        let sc = sources.entry(source).or_default();
         let (slot, path) = match kind {
-            ChainKind::Effect => (&mut sc.effect, Some(&*effect_path)),
-            ChainKind::Downsample => (&mut sc.downsample, Some(&*downsample_path)),
+            ChainKind::Effect => (&mut sc.effect, effect_path.as_deref()?),
+            ChainKind::Downsample => (&mut sc.downsample, downsample_path.as_path()),
         };
-        let chain = slot.get_or_load(|| {
-            #[allow(clippy::result_large_err)]
-            let loaded = FilterChain::load_from_path(
-                path?,
-                ShaderFeatures::NONE,
-                device.wgpu_device(),
-                queue,
-                None,
-            );
-            loaded
-                .inspect_err(|err| error!("failed to load {kind:?} preset: {err}"))
-                .ok()
-        })?;
-        Some((chain, &sc.target, &mut sc.frame_count))
+        let chain = slot.get(path, device, queue, failed)?;
+        // Only now that there is something to render with is the intermediate
+        // worth creating (or resizing, after a window resize or a video mode
+        // change).
+        if sc.target.as_ref().is_none_or(|target| target.size != size) {
+            sc.target = Some(build_target(device, size));
+        }
+        let target = sc.target.as_ref().expect("just created");
+        Some((chain, target, &mut sc.frame_count))
+    }
+
+    /// Point the effect chains at a different preset. Nothing is dropped and
+    /// nothing blocks: each source notices at its next draw, starts building
+    /// the new preset in the background and keeps rendering the old chain until
+    /// that build lands (see [`AsyncChain`]). A no-op while the preset is
+    /// unchanged, which is every frame but the one the settings dialog changes
+    /// it on.
+    ///
+    /// Only the effect is repointed: the downsample preset is `--downsample`,
+    /// so those chains stay valid across a shader change.
+    fn set_effect(&mut self, path: Option<&Path>) {
+        if self.effect_path.as_deref() != path {
+            self.effect_path = path.map(Path::to_path_buf);
+        }
     }
 }
 
 /// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
 /// are built lazily, once per emulator source and only for the presets a view
 /// actually selects (see [`SlangChains::chain`]).
+///
+/// Inserted even on the WGSL backend, which runs no chains: the settings dialog
+/// can switch to a `.slangp` preset later, and there is nothing to build until
+/// it does.
 fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
-    // The WGSL backend runs no filter chains; the single-pass shader loaded by
-    // `init_blit_pipeline` does everything.
-    let ShaderPath::Slangp {
-        effect,
-        downsample,
-        downsample_limit,
-    } = &*shader_path
-    else {
-        return;
-    };
     commands.insert_resource(SlangChains {
-        effect_path: effect.clone(),
-        downsample_path: downsample.clone(),
-        downsample_limit: *downsample_limit,
+        effect_path: shader_path.effect.slangp().map(Path::to_path_buf),
+        downsample_path: shader_path.downsample.clone(),
+        downsample_limit: shader_path.downsample_limit,
+        failed: HashSet::new(),
         sources: HashMap::new(),
     });
 }
@@ -945,10 +1305,7 @@ fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
 fn init_blit_pipeline(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
-    asset_server: Res<AssetServer>,
     fullscreen_shader: Res<FullscreenShader>,
-    pipeline_cache: Res<PipelineCache>,
-    shader_path: Res<ShaderPath>,
 ) {
     let layout = BindGroupLayoutDescriptor::new(
         "lottes_bind_group_layout",
@@ -983,162 +1340,19 @@ fn init_blit_pipeline(
         );
         render_device.create_sampler(&SamplerDescriptor::default())
     };
-    // Slangp backend: passthrough composite blit — the CRT/LCD effect is
-    // applied upstream by the librashader filter chain into an intermediate
-    // texture that this samples. WGSL backend: the single-pass effect shader
-    // itself (same bindings/uniform layout), sampling the emulator framebuffer.
-    let shader = match &*shader_path {
-        ShaderPath::Slangp { .. } => asset_server.load("shaders/blit.wgsl"),
-        ShaderPath::Wgsl { asset_path } => asset_server.load(asset_path.clone()),
-    };
-
-    let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("lottes_pipeline".into()),
-        layout: vec![layout.clone()],
-        vertex: fullscreen_shader.to_vertex_state(),
-        fragment: Some(FragmentState {
-            shader,
-            targets: vec![Some(ColorTargetState {
-                // Matches the view target's main texture format (Bevy's former
-                // `TextureFormat::bevy_default()`, now deprecated).
-                format: TARGET_FORMAT,
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
-            ..default()
-        }),
-        ..default()
-    });
+    // The composite pipeline itself is queued on demand: which shader it runs
+    // (the passthrough blit behind a filter chain, or a single-pass effect)
+    // depends on the backend in force, which the settings dialog can change.
+    // See [`PostProcessPipeline::pipeline`].
     commands.insert_resource(PostProcessPipeline {
         layout,
         sampler_stretch,
         sampler_black,
-        pipeline_id,
+        fullscreen: fullscreen_shader.clone(),
+        pipelines: HashMap::new(),
     });
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The magnification the `crt_limit` check sees for showing `src` in a
-    /// `target`-sized viewport under `mode`, with square source pixels.
-    fn ratio(target: UVec2, src: UVec2, mode: ScaleMode) -> f32 {
-        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
-        pixel_ratio(target, src, uv_scale)
-    }
-
-    #[test]
-    fn ratio_is_the_on_screen_magnification() {
-        let src = UVec2::new(320, 240);
-        // Exactly 2x — the boundary a `crt_limit` of 2.0 tests against.
-        assert!((ratio(UVec2::new(640, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
-        // Pillarboxed in a wider window: the constrained axis still sets it.
-        assert!((ratio(UVec2::new(1280, 480), src, ScaleMode::Fit) - 2.0).abs() < 1e-4);
-        // A grid cell of a 1920x1080 window at 5x4 lands below 2x.
-        assert!(ratio(UVec2::new(384, 270), src, ScaleMode::Fit) < 2.0);
-        // Maximized to the whole window, the same core is above it.
-        assert!(ratio(UVec2::new(1920, 1080), src, ScaleMode::Fit) >= 2.0);
-    }
-
-    #[test]
-    fn fixed_scale_ratio_matches_the_factor() {
-        let r = ratio(
-            UVec2::new(1920, 1080),
-            UVec2::new(320, 240),
-            ScaleMode::Fixed(3.0),
-        );
-        assert!((r - 3.0).abs() < 1e-4);
-    }
-
-    /// Non-square source pixels stretch the axes differently; the check takes
-    /// the tighter one (here vertical, on a half-width Amiga frame).
-    #[test]
-    fn ratio_uses_the_tighter_axis() {
-        let src = UVec2::new(320, 256);
-        let r = ratio(UVec2::new(1280, 512), src, ScaleMode::Fixed(2.0));
-        assert!((r - 2.0).abs() < 1e-4);
-    }
-
-    /// The bundled downsample preset has to parse and reference a shader that
-    /// is actually in the `system` tree — a preset that only fails at
-    /// `FilterChain::load_from_path` time shows up as a log line at runtime and
-    /// silently leaves minified views unfiltered.
-    #[test]
-    fn bundled_downsample_preset_resolves() {
-        use librashader::presets::ShaderPreset;
-        let path = crate::frontend::system_dir().join(DOWNSAMPLE_PRESET);
-        let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
-            .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
-        let pass = preset.passes.first().expect("preset should have a pass");
-        assert!(pass.path.is_file(), "missing shader {:?}", pass.path);
-    }
-
-    /// The on-screen footprint the downsample check sees for showing `src` in a
-    /// `target`-sized viewport under `mode`, with square source pixels.
-    fn footprint(target: UVec2, src: UVec2, mode: ScaleMode) -> UVec2 {
-        let (uv_scale, _) = scale_offset(target, src, 0.0, 1.0, mode);
-        (target.as_vec2() * uv_scale)
-            .round()
-            .as_uvec2()
-            .max(UVec2::ONE)
-    }
-
-    #[test]
-    fn minification_is_detected_per_axis() {
-        let src = UVec2::new(320, 240);
-        // At the default limit, 1:1 and up are not minification — the boundary
-        // is exclusive.
-        assert!(!wants_downsample(
-            footprint(UVec2::new(320, 240), src, ScaleMode::Fit),
-            src,
-            1.0
-        ));
-        assert!(!wants_downsample(
-            footprint(UVec2::new(1920, 1080), src, ScaleMode::Fit),
-            src,
-            1.0
-        ));
-        // A 5x4 grid of a 1920x1080 window still shows it above 1:1 — well
-        // under the 1.5x `crt_limit`, but with nothing to filter away.
-        assert!(!wants_downsample(
-            footprint(UVec2::new(384, 270), src, ScaleMode::Fit),
-            src,
-            1.0
-        ));
-        // An 8x6 grid does squeeze it below its source resolution.
-        assert!(wants_downsample(
-            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
-            src,
-            1.0
-        ));
-        // A half-width Amiga frame stretched to 1:1 vertically is still
-        // squeezed horizontally, and aliases there.
-        let amiga = UVec2::new(640, 256);
-        assert!(wants_downsample(UVec2::new(512, 512), amiga, 1.0));
-    }
-
-    /// The limit is the same kind of threshold as `crt_limit`, from the other
-    /// side: raising it downsamples views that magnify below it, and `0`
-    /// switches the downsampler off however small the view gets.
-    #[test]
-    fn downsample_limit_thresholds_like_crt_limit() {
-        let src = UVec2::new(320, 240);
-        // A 5x4 grid cell shows the source at ~1.2x: untouched at the default,
-        // downsampled once the limit is raised past that.
-        let cell = footprint(UVec2::new(384, 270), src, ScaleMode::Fit);
-        assert!(!wants_downsample(cell, src, 1.0));
-        assert!(wants_downsample(cell, src, 1.5));
-        // Exactly at the limit the effect keeps it — the boundary is exclusive,
-        // mirroring `crt_limit`'s inclusive `>=`.
-        let one_to_one = footprint(UVec2::new(320, 240), src, ScaleMode::Fit);
-        assert!(!wants_downsample(one_to_one, src, 1.0));
-        // `0` never downsamples, however squeezed the view is.
-        assert!(!wants_downsample(
-            footprint(UVec2::new(240, 180), src, ScaleMode::Fit),
-            src,
-            0.0
-        ));
-        assert!(!wants_downsample(UVec2::new(1, 1), src, 0.0));
-    }
-}
+#[path = "tests/post_process_tests.rs"]
+mod tests;

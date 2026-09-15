@@ -1,7 +1,13 @@
 /target
-/system/WHD*
+/system/amiga/WHDSaves
+/system/amiga/WHDLoad*
+/system/amiga/amiberry.ini
+/system/amiga/WHDBoot/save-data/
+/system/amiga/WHDBoot/tmp/
+/system/amiga/Visuals/
 /libretro/
 /slang-shaders/
+/shaders/
 __pycache__/
 /system/vice/*dump*
 /system/*.mcd

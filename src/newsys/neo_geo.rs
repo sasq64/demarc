@@ -32,18 +32,6 @@ const COPYRIGHT_FILE: &str = "CPY.TXT";
 const ABSTRACT_FILE: &str = "ABS.TXT";
 const BIBLIO_FILE: &str = "BIB.TXT";
 
-/// Whether one of `files` is a [`IPL_NAME`] — which is to say, whether the
-/// directory they came from is a Neo Geo CD release rather than a directory of
-/// unrelated ones. [`crate::files::collect_files`] asks before it splits a
-/// directory into one playlist entry per file, since these files are a single
-/// disc and only mean anything together.
-pub fn holds_boot_list(files: &[PathBuf]) -> bool {
-    files.iter().any(|path| {
-        path.file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case(IPL_NAME))
-    })
-}
-
 /// Whether the disc image at `path` is a Neo Geo CD one, judged by [`IPL_NAME`]
 /// in its root directory. Works on a bare `.iso` and on the raw data track a
 /// cue names alike — see [`DiscImage`], which sorts the sector layout out.
@@ -169,12 +157,12 @@ const DISC_CUE: &str = "disc.cue";
 
 /// Built Neo Geo CD images, keyed on the contents of the directory they were
 /// built from. One entry is a single-track ISO of a whole release.
-static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("neocd"));
+static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("neocd", CACHE_LIMIT));
 
 const CACHE_LIMIT: u64 = 500 * 1024 * 1024;
 
 pub fn prune_cache() {
-    CACHE.prune(CACHE_LIMIT);
+    CACHE.prune();
 }
 
 /// What a `.neo` cartridge ROM opens with: the NeoSD container's tag, ahead of
@@ -275,41 +263,5 @@ impl System for NeoGeoSystem {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The loose files a devkit leaves behind have to come back as a disc the
-    /// same detection accepts, or the release would only load the once.
-    #[test]
-    fn builds_a_disc_from_loose_files() {
-        let dir = std::env::temp_dir().join("demarc_neocd_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("IPL.TXT"), "TEST.PRG,0,0\r\nFIX.FIX,0,0\r\n\u{1a}").unwrap();
-        fs::write(dir.join("Test.prg"), vec![1u8; 90_000]).unwrap();
-        fs::write(dir.join("fix.fix"), vec![2u8; 4096]).unwrap();
-        // Neither belongs on the disc: a subdirectory the boot ROM can't reach,
-        // and a name that isn't 8.3.
-        fs::create_dir_all(dir.join("sources")).unwrap();
-        fs::write(dir.join("sources/intro.s"), b"; source").unwrap();
-        fs::write(dir.join("a much longer name.txt"), b"readme").unwrap();
-
-        let cue = create_neocd_disc(&dir.join("IPL.TXT")).unwrap();
-        assert!(is_neogeo_cd_cue(&cue));
-
-        let mut image = DiscImage::open(&cue.with_file_name("disc.iso")).unwrap();
-        assert_eq!(image.root_names(), ["FIX.FIX", "IPL.TXT", "TEST.PRG"]);
-
-        // Same contents, same image — a release unpacked to a new temp
-        // directory each launch must not rebuild it.
-        assert_eq!(create_neocd_disc(&dir.join("IPL.TXT")).unwrap(), cue);
-    }
-
-    /// The boot list is `NAME,BANK,OFFSET` per line, CRLF terminated, and ends
-    /// with a DOS EOF byte that is not part of the last name.
-    #[test]
-    fn reads_the_boot_list() {
-        let text = "TEST.PRG,0,0\r\nFIX.FIX,0,0\r\nSOUND9V3.Z80,0,00\r\n\u{1a}";
-        assert_eq!(ipl_entries(text), ["TEST.PRG", "FIX.FIX", "SOUND9V3.Z80"]);
-    }
-}
+#[path = "tests/neo_geo_tests.rs"]
+mod tests;

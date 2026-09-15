@@ -1,0 +1,11 @@
+[Commodore]
+pattern = "Mega_Bezel_Packs/TheNamec-Commodore/presets/<System>/<Monitor>/<Shader>/<Type>.slangp"
+
+[Handheld]
+pattern = "shaders_slang/handheld/console-border/<Type>.slangp"
+
+[MegaBezel]
+pattern = "shaders_slang/bezel/Mega_Bezel/Presets/Base_CRT_Presets/MBZ__<Level>__<Type>.slangp"
+
+[RetroArch]
+pattern = "shaders_slang/<Group>/<Name>.slangp"

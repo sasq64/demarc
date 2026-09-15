@@ -1,0 +1,335 @@
+//! Per-release fixups, read from `overrides.toml` at startup.
+//!
+//! A db line says where a release can be downloaded and little else, and for a
+//! handful of releases that isn't enough to run them: the listing holds three
+//! files where only one is the demo, the archive holds two programs where only
+//! one is the one to start, or the release needs a config file it was never
+//! packed with. An override is where that knowledge is written down, keyed on
+//! the demozoo id of the release (the `id` field of a demozoo db line).
+//!
+//! The file looks like this:
+//!
+//! ```toml
+//! [zoo.102]
+//! file = "rgba_tbc_elevated.zip"      # which download to fetch
+//! boot = "elevated_1280x720.exe"      # which file inside it to start
+//!
+//! [zoo.68604]
+//! libretro = { dosbox_pure_cycles = "max" }   # core options, as meta
+//!
+//! [zoo.18030]
+//! file = "inside.zip"
+//! patch = { target = "SOUND.CFG", contents = "U0RJR1VT…", info = "GUS 0x240" }
+//!
+//! [zoo.390060]
+//! patch = { target = "d3d11.dll", source = "win/d3d11.dll" }  # file from the system dir
+//!
+//! [zoo.119665]
+//! assign = { Love = "SYS:" }         # AmigaDOS assigns to make before booting
+//!
+//! [zoo.7236]
+//! fast = true                        # accelerated A1200 with FPU, Z3 mem and JIT
+//!
+//! [zoo.108]
+//! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
+//! ```
+//!
+//! Every key is optional, and an entry may carry several patches by writing
+//! `patch` as an array (`[[zoo.18030.patch]]`). What each one does, and when,
+//! is described on [`Override`]; the three are applied at the three stages of a
+//! load — `file` when it is downloaded
+//! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
+//! `patch` once it is unpacked and `boot`/`libretro`/`fast` as it is handed to
+//! a system (both in [`NewSys::load_file`](crate::newsys::NewSys::load_file)).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+use tracing::{info, warn};
+
+use crate::emu_file::{Override, Patch};
+use crate::emulator::Emulator;
+use crate::files::leak;
+use crate::system_dir;
+
+/// What the file is called wherever it is looked for.
+pub const FILE_NAME: &str = "overrides.toml";
+
+/// Where an overrides file is looked for, in order: the directory demarc was
+/// started in, the user's config directory, and finally the system dir the
+/// bundled assets are extracted to. The first one that exists wins, so a file
+/// in the working directory is the way to try a new override out without
+/// touching the installed one.
+fn search_paths() -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from(FILE_NAME)];
+    if let Some(config) = dirs::config_dir() {
+        paths.push(config.join("demarc").join(FILE_NAME));
+    }
+    paths.push(system_dir().join(FILE_NAME));
+    paths
+}
+
+/// The overrides to run with, from the first file [`search_paths`] finds.
+///
+/// Overrides are a convenience, not a requirement: no file at all is the normal
+/// case and gives an empty map, and a file that doesn't parse is reported and
+/// then likewise ignored rather than taking the run down with it.
+pub fn load_default() -> HashMap<usize, Override> {
+    let Some(path) = search_paths().into_iter().find(|p| p.is_file()) else {
+        return HashMap::new();
+    };
+    match load(&path) {
+        Ok(overrides) => {
+            info!("Read {} overrides from {path:?}", overrides.len());
+            overrides
+        }
+        Err(err) => {
+            crate::println(format!("** Error: Can't read {}: {err:#}", path.display()));
+            HashMap::new()
+        }
+    }
+}
+
+/// Read and parse one overrides file.
+pub fn load(path: &Path) -> Result<HashMap<usize, Override>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("Could not read {}", path.display()))?;
+    parse(&text)
+}
+
+/// The whole file: the `zoo` table of overrides, plus whatever else was written
+/// at the top level, which is kept only so it can be warned about — a
+/// mistyped `[zoo_57849]` is a table of its own as far as toml is concerned,
+/// and silently doing nothing is the least helpful thing to do about it.
+#[derive(Deserialize)]
+struct OverrideFile {
+    #[serde(default)]
+    zoo: HashMap<String, RawOverride>,
+    #[serde(flatten)]
+    rest: toml::Table,
+}
+
+/// One `[zoo.<id>]` table, as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverride {
+    /// File name of the download to fetch, out of the several a release lists.
+    file: Option<String>,
+    /// File name inside the release of the program to start.
+    boot: Option<String>,
+    /// Core options, which is what most meta on an entry is.
+    #[serde(default)]
+    libretro: toml::Table,
+    /// Anything else that belongs on the entry, under its own name.
+    #[serde(default)]
+    meta: toml::Table,
+    /// `fast = true` to run the release on the fast Amiga configuration —
+    /// an accelerated A1200 with fast/Z3 memory, an FPU and the JIT. Shorthand
+    /// for the half-dozen core options that spells out, see
+    /// [`apply_fast`](crate::newsys::amiga::apply_fast).
+    #[serde(default)]
+    fast: bool,
+    /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
+    /// They are folded into the single `assign` meta value the Amiga system
+    /// reads when it writes the startup-sequence — see
+    /// [`handle_exe`](crate::newsys::amiga).
+    #[serde(default)]
+    assign: toml::Table,
+    /// One patch, or an array of them.
+    patch: Option<Patches>,
+    /// Keys to press, as `events = [{ frame = 50, key = "Enter" }]`.
+    #[serde(default)]
+    events: Vec<RawEvent>,
+}
+
+/// One `events` entry. `key` is a Bevy `KeyCode` name, as in remote scripts.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEvent {
+    frame: u32,
+    key: String,
+}
+
+/// `patch = { … }` for the common single patch, `[[zoo.<id>.patch]]` (or an
+/// array of inline tables) when a release needs more than one.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Patches {
+    One(RawPatch),
+    Many(Vec<RawPatch>),
+}
+
+impl Patches {
+    fn into_vec(self) -> Vec<RawPatch> {
+        match self {
+            Patches::One(patch) => vec![patch],
+            Patches::Many(patches) => patches,
+        }
+    }
+}
+
+/// One `patch` table, as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPatch {
+    /// Name of the file to write, found anywhere inside the release.
+    target: String,
+    /// What to write, base64 encoded — these are binary config files.
+    contents: Option<String>,
+    /// Or a file in the system dir to write instead.
+    source: Option<String>,
+    /// Where in the file it goes. Left out to replace the file entirely,
+    /// which is what a config file small enough to write out in full wants.
+    offset: Option<usize>,
+    /// What the patch is for, in a few words, for the log.
+    #[serde(default)]
+    info: String,
+}
+
+/// Parse the contents of an overrides file — see the module docs for the shape.
+///
+/// An entry that doesn't make sense (an id that isn't a number, base64 that
+/// doesn't decode) is reported and dropped on its own; the rest of the file
+/// still applies, since one bad entry says nothing about the others.
+pub fn parse(text: &str) -> Result<HashMap<usize, Override>> {
+    let file: OverrideFile = toml::from_str(text).context("Not a valid overrides file")?;
+    for key in file.rest.keys() {
+        warn!("Ignoring unknown section [{key}] — overrides go under [zoo.<id>]");
+    }
+
+    let mut overrides = HashMap::with_capacity(file.zoo.len());
+    for (id, raw) in file.zoo {
+        let Ok(id) = id.parse::<usize>() else {
+            warn!("Ignoring [zoo.{id}]: not a demozoo id");
+            continue;
+        };
+        match raw.build() {
+            Ok(over) => {
+                overrides.insert(id, over);
+            }
+            Err(err) => warn!("Ignoring [zoo.{id}]: {err:#}"),
+        }
+    }
+    Ok(overrides)
+}
+
+impl RawOverride {
+    /// Turn the parsed toml into the [`Override`] the loader uses.
+    ///
+    /// Every string is leaked on the way, because that is what an
+    /// [`Override`] holds and what the entries it is applied to hold — see
+    /// [`crate::files::leak`]. The file is read once at startup and lives for
+    /// the run, so nothing here would ever be freed anyway.
+    fn build(self) -> Result<Override> {
+        let mut meta = HashMap::new();
+        for table in [self.libretro, self.meta] {
+            for (key, value) in table {
+                let Some(value) = meta_value(&value) else {
+                    bail!("meta {key} is a {}, not a value", value.type_str());
+                };
+                meta.insert(leak(key), leak(value));
+            }
+        }
+
+        // `Name=Target;Name2=Target2`, which is the shape
+        // `newsys::amiga::handle_exe` splits back apart. Written out here
+        // rather than kept as a table because meta is strings all the way down.
+        let mut assigns = Vec::new();
+        for (key, value) in self.assign {
+            let Some(value) = meta_value(&value) else {
+                bail!("assign {key} is a {}, not a value", value.type_str());
+            };
+            assigns.push(format!("{key}={value}"));
+        }
+        if !assigns.is_empty() {
+            meta.insert("assign", leak(assigns.join(";")));
+        }
+
+        let patches = self
+            .patch
+            .map(Patches::into_vec)
+            .unwrap_or_default()
+            .into_iter()
+            .map(RawPatch::build)
+            .collect::<Result<Vec<Patch>>>()?;
+
+        let mut events = Vec::with_capacity(self.events.len());
+        if !self.events.is_empty() {
+            let keys = Emulator::build_keycode_map();
+            for event in self.events {
+                let name = match event.key.as_str() {
+                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
+                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
+                        format!("Key{}", c.to_ascii_uppercase())
+                    }
+                    name => name.to_string(),
+                };
+                let Some((_, code)) = keys.iter().find(|(k, _)| format!("{k:?}") == name) else {
+                    bail!("unknown key {:?} in events", event.key);
+                };
+                events.push((event.frame, *code));
+            }
+        }
+
+        Ok(Override {
+            download: self.file.map(leak),
+            boot_file: self.boot.map(leak),
+            meta,
+            patches,
+            fast: self.fast,
+            events,
+        })
+    }
+}
+
+impl RawPatch {
+    fn build(self) -> Result<Patch> {
+        let patch = match (self.contents, self.source) {
+            (Some(contents), None) => Patch {
+                data: leak(contents),
+                ..Default::default()
+            },
+            (None, Some(source)) => Patch {
+                source: Some(leak(source)),
+                ..Default::default()
+            },
+            _ => bail!("patch for {:?} needs one of contents or source", self.target),
+        };
+        let patch = Patch {
+            target: leak(self.target),
+            offset: self.offset,
+            info: leak(self.info),
+            ..patch
+        };
+        if let Some(source) = patch.source {
+            let path = system_dir().join(source);
+            if !path.is_file() {
+                bail!("patch source {path:?} does not exist");
+            }
+        } else {
+            // Decoded here and thrown away, so that a mistyped `contents` is
+            // reported at startup rather than by the one load that needs it.
+            patch.bytes()?;
+        }
+        Ok(patch)
+    }
+}
+
+/// A meta value as the string every consumer of meta wants. Numbers and bools
+/// are written unquoted often enough (`dosbox_pure_cycles = 150000`) that
+/// rejecting them would only be pedantic; a table or an array is a mistake.
+fn meta_value(value: &toml::Value) -> Option<String> {
+    match value {
+        toml::Value::String(s) => Some(s.clone()),
+        toml::Value::Integer(i) => Some(i.to_string()),
+        toml::Value::Float(f) => Some(f.to_string()),
+        toml::Value::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/overrides_tests.rs"]
+mod tests;

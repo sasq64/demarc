@@ -4,17 +4,25 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::render::view::screenshot::Screenshot;
+use bevy::render::view::screenshot::save_to_disk;
 use bevy::window::{PrimaryWindow, WindowMode};
+use percent_encoding::percent_decode_str;
+use url::Url;
 
+use crate::config::{AppSettings, RenderSettings};
+use crate::demarc_settings::DemarcSettings;
+use crate::egui_settings::ShowSettings;
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
+use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
+use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
-use crate::fuzzy_list::{FuzzyItem, FuzzySource, IndexedSource};
+use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
-use crate::{AppSettings, RenderSettings};
-use crate::{EmuFile, emu_file::FileSource};
+use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -32,6 +40,7 @@ pub enum Cmd {
     ToggleInfo,
     Reset,
     Screenshot,
+    ScreenshotAll,
     Warp10,
     Warp30,
     Fullscreen,
@@ -42,6 +51,43 @@ pub enum Cmd {
     NextFileAll,
     OpenFile,
     Reload,
+    Settings,
+    ShaderDialog,
+}
+
+impl Cmd {
+    /// Every variant, so the remote control can name them all.
+    pub const ALL: &'static [Cmd] = &[
+        Cmd::NextFile,
+        Cmd::PrevFile,
+        Cmd::SwapDisk,
+        Cmd::ChangeScale,
+        Cmd::ToggleCrt,
+        Cmd::ToggleBorder,
+        Cmd::PauseResume,
+        Cmd::MouseClick,
+        Cmd::ToggleInput,
+        Cmd::ToggleInfo,
+        Cmd::Reset,
+        Cmd::Screenshot,
+        Cmd::Warp10,
+        Cmd::Warp30,
+        Cmd::Fullscreen,
+        Cmd::ToggleAll,
+        Cmd::NextEmu,
+        Cmd::PrevEmu,
+        Cmd::Maximize,
+        Cmd::NextFileAll,
+        Cmd::OpenFile,
+        Cmd::Reload,
+        Cmd::Settings,
+        Cmd::ShaderDialog,
+    ];
+
+    /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
+    pub fn from_name(name: &str) -> Option<Cmd> {
+        Cmd::ALL.iter().copied().find(|c| format!("{c:?}") == name)
+    }
 }
 
 #[derive(Message)]
@@ -50,6 +96,10 @@ pub struct CmdMessage(pub Cmd);
 /// Id the file picker is opened under, echoed back by
 /// [`FuzzyListSelect`] so its selections are told apart from any other list's.
 pub const FILE_PICKER_ID: usize = 1;
+
+/// Id of the second list, over one entry's download URLs, that Shift+Enter in
+/// the file picker opens (see [`handle_textlist`]).
+pub const DOWNLOAD_PICKER_ID: usize = 2;
 
 /// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
 /// RightAlt overlay (see [`handle_textlist`]).
@@ -110,9 +160,20 @@ const HOTKEYS: &[KeyMapping] = &[
         Cmd::ToggleInput,
     ),
     KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
+    KeyMapping::new(KeyCode::KeyX, "Edit settings", Cmd::Settings),
+    KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
-    KeyMapping::new(KeyCode::KeyT, "Take screenshot", Cmd::Screenshot),
+    KeyMapping::new(
+        KeyCode::KeyT,
+        "Screenshot: Current Emulator",
+        Cmd::Screenshot,
+    ),
+    KeyMapping::shifted(
+        KeyCode::KeyT,
+        "Screenshot: Whole Screen",
+        Cmd::ScreenshotAll,
+    ),
     KeyMapping::new(KeyCode::KeyW, "Warp 10s forward", Cmd::Warp10),
     KeyMapping::shifted(KeyCode::KeyW, "Warp 30s forward", Cmd::Warp30),
     KeyMapping::new(
@@ -132,12 +193,29 @@ const HOTKEYS: &[KeyMapping] = &[
 
 /// Returns the [`Cmd`] bound to whichever hotkey was just pressed this frame,
 /// or `None` if no hotkey was pressed.
-pub fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
+fn check_hotkey(input: &ButtonInput<KeyCode>) -> Option<Cmd> {
     let shift = input.pressed(KeyCode::ShiftLeft) || input.pressed(KeyCode::ShiftRight);
     HOTKEYS
         .iter()
         .find(|m| input.just_pressed(m.key) && m.shift == shift)
         .map(|m| m.cmd)
+}
+
+fn handle_hotkey(
+    mut settings: ResMut<AppSettings>,
+    input: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    hud: Res<HudState>,
+    mut writer: MessageWriter<CmdMessage>,
+) {
+    let hot_key_pressed = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
+    if hot_key_pressed && !hud.modal() {
+        settings.select_box_drawn_at = time.elapsed_secs_f64();
+        if let Some(cmd) = check_hotkey(&input) {
+            settings.hotkey_pressed_at = 0.0;
+            writer.write(CmdMessage(cmd));
+        }
+    }
 }
 
 fn handle_textlist(
@@ -148,19 +226,59 @@ fn handle_textlist(
     mut show_list: MessageWriter<ShowFuzzyList>,
     time: Res<Time>,
     hud: Res<HudState>,
+    // The entry whose downloads the list opened by Shift+Enter is showing, kept
+    // until that list reports back (its own `item` is a URL index, not a file).
+    mut download_pick: Local<Option<usize>>,
 ) {
     // The file picker is the egui list in `crate::egui_ui`, which closes itself
     // once a row is picked; `item` is the stable index into `settings.files`,
     // independent of the current search filter.
-    for &FuzzyListSelect { id, item, .. } in file_reader.read() {
-        info!("Got SELECT {id} {item:?}");
-        if id == FILE_PICKER_ID {
-            settings.current_game = item as isize;
-            writer.write(CmdMessage(Cmd::Reload));
-        } else {
-            if item < HOTKEYS.len() {
-                let cmd = HOTKEYS[item].cmd;
-                writer.write(CmdMessage(cmd));
+    for &FuzzyListSelect { id, item, alt, .. } in file_reader.read() {
+        info!("Got SELECT {id} {item:?} alt={alt}");
+        match id {
+            FILE_PICKER_ID => {
+                // Shift+Enter picks the download instead of starting it: an
+                // entry's URLs are alternatives (a mirror, the same release
+                // packed differently), and a plain load takes whichever of them
+                // answers first. A second list over their file names lets the
+                // user say which one to use.
+                let picker = alt
+                    .then(|| original_file(&settings, item).and_then(DownloadSource::new))
+                    .flatten();
+                if let Some(source) = picker {
+                    *download_pick = Some(item);
+                    show_list.write(ShowFuzzyList {
+                        id: DOWNLOAD_PICKER_ID,
+                        source: Arc::new(source),
+                    });
+                    continue;
+                }
+                settings.current_game = item as isize;
+                writer.write(CmdMessage(Cmd::Reload));
+            }
+            DOWNLOAD_PICKER_ID => {
+                let Some(file) = download_pick.take() else {
+                    continue;
+                };
+                // Narrow the entry down to the one URL, so the load fetches
+                // that and nothing else -- `FileSource::resolve` would
+                // otherwise re-apply its own idea of which of them to take.
+                // The picker's snapshot still holds them all, so the entry can
+                // be pointed at a different download later.
+                let url = original_file(&settings, file)
+                    .and_then(download_urls)
+                    .and_then(|urls| urls.get(item));
+                if let Some(url) = url {
+                    settings.files[file].path = FileSource::Url(UrlList::one(url));
+                }
+                settings.current_game = file as isize;
+                writer.write(CmdMessage(Cmd::Reload));
+            }
+            _ => {
+                if item < HOTKEYS.len() {
+                    let cmd = HOTKEYS[item].cmd;
+                    writer.write(CmdMessage(cmd));
+                }
             }
         }
     }
@@ -170,14 +288,14 @@ fn handle_textlist(
         input.just_released(KeyCode::AltRight) || input.just_released(KeyCode::ControlRight);
 
     if hot_key_pressed {
-        settings.hotkey_pressed = time.elapsed_secs();
+        settings.hotkey_pressed_at = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = hud.list_open();
+        let modal = hud.modal();
         if modal {
             return;
         }
-        if time.elapsed_secs() - settings.hotkey_pressed < 0.35 {
+        if time.elapsed_secs() - settings.hotkey_pressed_at < 0.35 {
             let lines = HOTKEYS
                 .iter()
                 .map(|m| {
@@ -197,16 +315,94 @@ fn handle_textlist(
     }
 }
 
+/// The entry as the picker first saw it, asked of the picker's own source.
+/// [`FilePickerSource`] snapshots `settings.files` when the picker is first
+/// built, so an entry that has since been narrowed to a single download still
+/// has all of its URLs here — and can be pointed at another one of them.
+fn original_file(settings: &AppSettings, index: usize) -> Option<&EmuFile> {
+    settings
+        .file_source
+        .as_ref()
+        .and_then(|source| source.get_data(index))
+        .or_else(|| settings.files.get(index))
+}
+
+/// The URLs of an entry there is something to choose between: several remote
+/// alternatives. A local path, or a single URL, has nothing to pick from.
+fn download_urls(file: &EmuFile) -> Option<&UrlList> {
+    match &file.path {
+        FileSource::Url(urls) if urls.len() > 1 => Some(urls),
+        _ => None,
+    }
+}
+
+/// The file-name part of `url`, percent-decoded for display: the last path
+/// segment, without any `?query` or `#fragment`. A URL ending in a slash has no
+/// file name, so it is listed whole.
+fn url_file_name(url: &Url) -> String {
+    let name = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or_default();
+    let name = percent_decode_str(name).decode_utf8_lossy();
+    if name.is_empty() {
+        url.as_str().to_owned()
+    } else {
+        name.into_owned()
+    }
+}
+
+/// Backs the download picker: the file-name part of each of one entry's URLs,
+/// with the whole URL in the info field below the list — mirrors of the same
+/// release often share a file name, and the host is what tells them apart.
+///
+/// The `id` a selection reports is the index of the URL in the entry's own
+/// list, which is how [`handle_textlist`] finds it again.
+struct DownloadSource {
+    names: AllWordsSource,
+    urls: Vec<Url>,
+}
+
+impl DownloadSource {
+    /// The picker over `file`'s downloads, or `None` when there is nothing to
+    /// pick between (see [`download_urls`]).
+    fn new(file: &EmuFile) -> Option<Self> {
+        // The one place a URL has to be taken apart rather than just shown, so
+        // the one place worth parsing them (see [`UrlList::urls`]).
+        let urls = download_urls(file)?.urls();
+        let names = urls.iter().map(url_file_name).collect();
+        Some(Self {
+            names: AllWordsSource::new(names),
+            urls,
+        })
+    }
+}
+
+impl FuzzySource<EmuFile> for DownloadSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
+    }
+
+    fn get_info(&self, id: usize) -> String {
+        self.urls.get(id).map(Url::to_string).unwrap_or_default()
+    }
+}
+
 /// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
-/// the list, paired with the fuller per-entry detail (year, type, party, …)
-/// shown in the info field below it.
+/// the list, paired with the entries themselves — the fuller detail (year,
+/// type, party, …) shown in the info field below the list, and the entry a
+/// selection is *of*, handed back by [`FuzzySource::get_data`].
 ///
 /// Both are built once, on first open, and reused on every open after that —
 /// cloning is a pair of `Arc` bumps, not a re-index.
 #[derive(Clone)]
 pub struct FilePickerSource {
     names: IndexedSource,
-    /// Info text per entry, indexed by the same id `names` reports.
+    /// The entries themselves, indexed by the same id `names` reports.
     info: Arc<Vec<EmuFile>>,
     width: u32,
 }
@@ -227,13 +423,21 @@ impl FilePickerSource {
     }
 }
 
-impl FuzzySource for FilePickerSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+impl FuzzySource<EmuFile> for FilePickerSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
     }
 
     fn get_info(&self, id: usize) -> String {
         entry_info(&self.info[id], self.width as usize)
+    }
+
+    fn get_data(&self, id: usize) -> Option<&EmuFile> {
+        self.info.get(id)
     }
 }
 
@@ -311,7 +515,7 @@ fn entry_name(file: &EmuFile) -> String {
     if info.title.is_empty() {
         "???".into()
     } else if info.group.is_empty() {
-        info.title.clone()
+        info.title.to_string()
     } else {
         format!("{} / {}", info.title, info.group)
     }
@@ -324,7 +528,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     let mut lines = Vec::new();
     let platform = file.get_meta("platform");
     let category = file.get_meta("category");
-    let year = file.game_info.year;
+    let year = file.game_info.year();
     let year = if year == 0 {
         "".to_string()
     } else {
@@ -349,7 +553,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
             .unwrap_or_else(|| p.display().to_string()),
         FileSource::Url(urls) => urls
             .first()
-            .map(|u| trunc_url(u.as_str(), width))
+            .map(|u| trunc_url(u, width))
             .unwrap_or_default(),
     };
     if !source.is_empty() {
@@ -358,18 +562,24 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     lines.join("\n")
 }
 
-fn handle_cmd(
+pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
-    mut emus: Query<&mut Emulator>,
+    mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    // Optional: `--headless` has no window, and a bare `Single` would skip the
+    // whole system, dropping every command a remote-control script sends.
+    mut window: Option<Single<&mut Window, With<PrimaryWindow>>>,
     time: Res<Time>,
     mut writer: MessageWriter<SetHudText>,
     mut show_list: MessageWriter<ShowFuzzyList>,
+    mut show_settings: MessageWriter<ShowSettings<DemarcSettings>>,
+    mut show_shader: MessageWriter<ShowShaderDialog>,
+    mut demo_settings: ResMut<DemarcSettings>,
+    mut commands: Commands,
 ) {
     let mut show_info = false;
-    let count = emus.iter().count();
+    let count = emus.iter().filter(|(emu, _)| !emu.is_crossfade).count();
     let multi = count > 1;
     for cmd in cmds.read() {
         debug!("Received command: {:?}", cmd.0);
@@ -412,12 +622,19 @@ fn handle_cmd(
                 });
             }
             Cmd::Fullscreen => {
-                window.mode = match window.mode {
-                    WindowMode::Windowed => {
-                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-                    }
-                    _ => WindowMode::Windowed,
-                };
+                if let Some(window) = window.as_mut() {
+                    window.mode = match window.mode {
+                        WindowMode::Windowed => {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        }
+                        _ => WindowMode::Windowed,
+                    };
+                    // So the settings dialog opens showing where the window
+                    // actually is, and doesn't undo this the next time it is
+                    // applied. This is the only hotkey that moves a field the
+                    // dialog also owns.
+                    demo_settings.fullscreen = window.mode != WindowMode::Windowed;
+                }
             }
             Cmd::ToggleAll if multi => {
                 settings.all_emus = !settings.all_emus;
@@ -447,27 +664,30 @@ fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                // Build the trigram index once, on first open, and reuse it on
-                // every open after that — `files` never changes, and indexing
-                // the whole list is what made reopening the picker slow. The
-                // clone below is a cheap `Arc` bump, not a re-index.
                 if settings.file_source.is_none() {
                     settings.file_source = Some(FilePickerSource::new(&settings.files));
                 }
-                // The info field wraps to the width of the list box, which is
-                // as wide as the window is tall; this is what the source
-                // truncates the (unwrappable) URL line to.
-                let size = window.resolution.size();
-                settings.file_source.as_mut().unwrap().width = (size.y / 12.0) as u32;
+                let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
+                settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
 
                 show_list.write(ShowFuzzyList {
                     id: FILE_PICKER_ID,
                     source: Arc::new(settings.file_source.clone().unwrap()),
                 });
             }
+            Cmd::Settings => {
+                show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
+            }
+            Cmd::ShaderDialog => {
+                show_shader.write(ShowShaderDialog);
+            }
             _ => {}
         }
-        for (i, mut emu) in &mut emus.iter_mut().enumerate() {
+        for (mut emu, view) in &mut emus {
+            if emu.is_crossfade {
+                continue;
+            }
+            let i = view.index;
             if show_info && i == settings.current_emu {
                 writer.write(SetHudText {
                     text: emu.get_info(),
@@ -525,7 +745,7 @@ fn handle_cmd(
                         }
                         let disk_no = emu.disk_no;
                         emu.set_disk(disk_no);
-                        let floppy = emu.work_file.get_meta("system", "").starts_with("C64");
+                        let floppy = emu.work_file.get_meta_or("system", "").starts_with("C64");
                         let d = emu.disk_no + 1;
 
                         writer.write(SetHudText {
@@ -571,7 +791,8 @@ fn handle_cmd(
                         emu.skip(10 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1),
+                            // For safety, should be hidden automatically
+                            duration: Duration::from_secs(10),
                             text,
                             ..Default::default()
                         });
@@ -581,13 +802,20 @@ fn handle_cmd(
                         emu.skip(30 * 50);
                         writer.write(SetHudText {
                             location: HudLocation::TopRight,
-                            duration: Duration::from_secs(1),
+                            // For safety, should be hidden automatically
+                            duration: Duration::from_secs(30),
                             text,
                             ..Default::default()
                         });
                     }
+                    Cmd::ScreenshotAll => {
+                        let name = format!("screenshot-{}.png", time.elapsed_secs() as i32);
+                        commands
+                            .spawn(Screenshot::primary_window())
+                            .observe(save_to_disk(name));
+                    }
                     Cmd::Screenshot => {
-                        let title = emu.work_file.get_meta("title", "shot");
+                        let title = emu.work_file.get_meta_or("title", "shot");
                         let name = format!("{}-{}.png", title, time.elapsed_secs() as i32);
                         _ = emu.save_png(&name);
                         writer.write(SetHudText {
@@ -673,6 +901,7 @@ impl Plugin for CommandPlugin {
         app.add_systems(
             Update,
             (
+                handle_hotkey,
                 open_select_menu,
                 handle_textlist,
                 handle_media_keys,
@@ -683,70 +912,5 @@ impl Plugin for CommandPlugin {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
-
-    #[test]
-    fn short_url_is_left_alone() {
-        assert_eq!(trunc_url(URL, URL.len()), URL);
-        assert_eq!(trunc_url("http://a.org/x.zip", 70), "http://a.org/x.zip");
-    }
-
-    #[test]
-    fn path_components_drop_from_the_left_until_it_fits() {
-        // One character short. Dropping `pub` alone buys nothing (`...` is just
-        // as long), so `demos` goes with it — components come off the left
-        // until the result actually fits.
-        assert_eq!(
-            trunc_url(URL, URL.len() - 1),
-            "https://ftp.example.org/.../c64/1992/zentro4.zip"
-        );
-        // Tighter budgets eat further into the path, always from the left…
-        assert_eq!(
-            trunc_url(URL, 46),
-            "https://ftp.example.org/.../1992/zentro4.zip"
-        );
-        // …down to just the host and the file name.
-        assert_eq!(
-            trunc_url(URL, 40),
-            "https://ftp.example.org/.../zentro4.zip"
-        );
-    }
-
-    #[test]
-    fn every_result_fits_the_budget() {
-        for max in 4..URL.len() + 2 {
-            let out = trunc_url(URL, max);
-            assert!(
-                out.chars().count() <= max,
-                "{max}: {out:?} is {} chars",
-                out.chars().count()
-            );
-        }
-    }
-
-    #[test]
-    fn host_and_file_too_long_together_are_cut_in_the_middle() {
-        // Nothing left to drop, so both ends are kept and the middle goes.
-        let out = trunc_url(URL, 20);
-        assert_eq!(out.chars().count(), 20);
-        assert!(out.starts_with("https://"), "{out}");
-        assert!(out.ends_with(".zip"), "{out}");
-    }
-
-    #[test]
-    fn urls_without_a_path_are_still_bounded() {
-        let out = trunc_url("https://a-very-long-host-name.example.org", 20);
-        assert_eq!(out.chars().count(), 20);
-    }
-
-    #[test]
-    fn multibyte_urls_are_counted_in_characters() {
-        let url = "https://exämple.org/påth/före/filnämn-ÅÄÖ.zip";
-        let out = trunc_url(url, 40);
-        assert_eq!(out, "https://exämple.org/.../filnämn-ÅÄÖ.zip");
-        assert!(out.chars().count() <= 40);
-    }
-}
+#[path = "tests/commands_tests.rs"]
+mod tests;

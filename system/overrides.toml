@@ -1,0 +1,151 @@
+# Overrides for specific demos from demozoo
+# Can selects which file to download, and which file in the archive to load
+# Can also add meta data and patch files from the archive, data as base64 and full replacement for now
+# 'fast = true' runs an Amiga release on an accelerated A1200 (68030+FPU, 8MB fast, 128MB Z3, JIT);
+# options written in the same entry are applied on top of it.
+
+[zoo.20]
+meta = { wine_res = "1024x768" }
+
+[zoo.76]
+# meta = { wine_dll_overrides = "d3dx9_31=n" }
+
+[zoo.102]
+file = "rgba_tbc_elevated_2016.zip"
+boot = "elevated_1280x720.exe"
+# meta = { wine_dll_overrides = "d3dx9_43=n" }
+
+[zoo.108]
+file = "2nd_real.zip"
+events = [{ frame = 50, key = "Enter" }]
+meta = { dosbox_pure_cycles = 100000 }
+
+[zoo.138]
+file = "variform_by_kewlers.zip"
+
+[zoo.350]
+# meta = { wine_dll_overrides = "d3dx9_31=n" }
+
+[zoo.3298]
+file = "fr-025-final.zip"
+
+[zoo.7236]
+boot = "dEEP"
+file = "CNCD_PRX-Deep.lha"
+fast = true
+
+# Closer / CNCD
+[zoo.7613]
+assign = { CNCD = "SYS:" }
+
+[zoo.8039]
+events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }, { frame = 40, key = "Enter" }]
+meta = { dosbox_pure_cycles = 100000 }
+
+[zoo.8092]
+file = "odd_wd.zip"
+
+# Klone / DCS
+[zoo.8120]
+meta = { amiga_core = "puae" }
+
+[zoo.8205]
+file = "tbc+mainloop_micropolis-party.zip"
+
+[zoo.8960]
+file = "petroleo_boah.zip"
+
+# Killer / CNCD
+[zoo.19401]
+assign = { Killer = "SYS:" }
+fast = true
+
+[zoo.18030]
+patch = { info = "GUS 0x240", target = "SOUND.CFG", contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+file = "inside.zip"
+
+[zoo.55180]
+file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
+
+# Ninja II by Melon Dezign
+[zoo.18032]
+file = "ninja2.zip"
+patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==" }
+
+[zoo.19162]
+events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }]
+
+[zoo.25839]
+meta = { wine_res = "640x480" }
+file = "gerbera_final_by_moppi_productions.zip"
+
+[zoo.28174]
+boot = "Batman Forever (One disk version).dsk"
+
+[zoo.31384]
+file = "kbd-texas_rel2.zip"
+boot = "texas_safe_1280x720.exe"
+
+# Gaia Machina by Approximate. Asks for a GL 3.3 context without naming a
+# profile, so it gets a core one, and then calls glActiveTextureARB — which
+# wine's wglGetProcAddress will not resolve on a core context, and which the
+# intro calls without checking. NULL, during FBO setup, every time.
+[zoo.31427]
+meta = { wine_gl_compat = true }
+file = "gaiamachinafinal.zip"
+
+[zoo.40674]
+events = [{ frame = 450, key = "1" }]
+
+# ix / Moppi
+[zoo.67521]
+meta = { wine_res = "1024x768" }
+
+[zoo.68604]
+file = "puls.zip"
+libretro = { dosbox_pure_cycles = "max" }
+
+# Tube by Baze / 3CS
+[zoo.57849]
+libretro = { dosbox_pure_cycles = 150000 }
+
+[zoo.90015]
+boot = "dEEPMiX"
+fast = true
+
+[zoo.119665]
+assign = { Love = "SYS:" }
+
+[zoo.122582]
+libretro = { aga = "true" }
+
+[zoo.205735]
+file = "MOTUS.ZIP"
+
+[zoo.211926]
+assign = { retro = "SYS:" }
+
+[zoo.322619]
+file = "dkg^lmn-neocolora.lha"
+
+[zoo.376675]
+meta = { amiga_core = "puae" }
+
+# Razor demos needing patched d3d11 dll
+[zoo.374116]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.381012]
+patch = { info = "DX11 Hack", target = "Razor1911_-_CMOS_Cosmos/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.390060]
+patch = { info = "DX11 Hack", target = "Razor1911/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.395873]
+patch = { info = "DX11 Hack", target = "RZR_D-Cracktro_02-Madden_NFL_2027/d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.397555]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
+
+[zoo.397556]
+patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }

@@ -2,93 +2,98 @@
 
 An command line emulator frontend for the demoscene
 
-_because_
-
-Emulation is better than youtube!
-
-## Screenshots
-**All screenshots are taken directly from Demarc in grid mode**
-
-### Amiga Demos
-`demarc --shuffle ~/Demo/Amiga --grid=6x5`
-
-<img width="2880" height="1920" alt="amiga" src="https://github.com/user-attachments/assets/af18c9f8-aa7b-4d09-bbdd-7c031e337aff" />
-
-### New Amiga/Atari ST Graphics
-
-`demarc --db ../demodb/demozoo.txt -I category:Graphics$ --shuffle -I "author:(Steffest|Critikill|Slayer|Facet|Optic|Prowler)" --grid=9x8 -I date:202 -X platform:C64`
-
-<img width="2880" height="1920" alt="graphics" src="https://github.com/user-attachments/assets/b92b06ad-60d9-43be-9e4b-29e826339ce1" />
-
-### C64 Demos
-`demarc -shuffle ~/Demo/C64/0* --grid=8x7 --fast-load`
-
-<img width="2880" height="1920" alt="c64" src="https://github.com/user-attachments/assets/d0b2e9d4-e2d5-4b47-9693-1f0198936f6a" />
-
-### GBA Cracktros
-`demarc --db ../demodb/demozoo.txt --shuffle -I "platform:GBA" -I "category:Cracktro" --grid=5x5`
-
-<img width="2880" height="1920" alt="gba_cracktro" src="https://github.com/user-attachments/assets/15a91673-7dfa-4abb-8100-f809d3512525" />
-
-### New C64 Graphics
-`demarc --db ../demodb/csdb.txt -I category:Graphics$ --shuffle -I "author:(The Sarge|Critikill|Facet|Prowler)" --grid=9x8 -I date:202`
-
-<img width="2880" height="1920" alt="c64_graphics" src="https://github.com/user-attachments/assets/9cd0f1bd-7ceb-43e3-a5e7-dfbd9f0071bd" />
-
-## INTRO
+![Screenshot](img/c64.png)
 
 *Main goal*
 
-Make it easy to watch demos from C64 and Amiga
+Make it easy to watch demos on your PC through emulation
 
+* Runs oldskool demos using emulator cores
+* Runs Windows demos through Wine (Linux only)
+* Shows images and plays music
 * Runs multiple demos in order or shuffled
+* Indexes Demozoo/Pouet and CSDb
+* Fuzzy search
 * Shows demo meta data as overlay
 * CRT filter for "authentic" look (using Timothy Lottes shader)
-* Can run Amiga/Atari/C64 exes & disk images
 * Right-Alt hotkey for disk switch etc
-* Can run multiple files at once in a grid
 
+### Platforms
 
+C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance, Neo Geo, PC (DOS, and Windows through wine)
+
+### Graphics Format Support
+
+* **Standard**: `PNG`, `JPEG`, `TIF`, `GIF`, `TGA`, `PCX`
+* **Amiga/PC**: IFF (`ILBM`, `ACBM`, `PBM`, Impulse `RGB`) including `HAM`/`HAM8` and dynamic palette (`SHAM`,`CTBL`,`BEAM`)
+* **Atari**: Degas (`PIx`, `PCx`), Neo Chrome (`NEO`), Crack Art (`CA2`), Fullscreen Construction Kit (`KID`)
+* **ZX Spectrum** (`SCR`)
+* Color Cycling
+
+### Music Format Support
+
+* **C64** (sid)
+* **Trackers** (mod, xm, s3m, ft, stm, it)
+* **Atari** (snd, sndh, sap)
+* **Consoles** (nsf, gbs, spc, psf)
+* **Streaming** (mp3, flac)
+* **PC** (v2m)
+* **Spectrum** (emul, vtx, pt1, pt2, pt3, asc, sqt, stc, stp, psc)
+* **Amiga** (smod, dm2, ahx, aon, mt2, mon, dw, fred, smod, hip, cus, fc, hvl, cm, fp, syn, ma, hipc, ml, mk2, bd, dln, 669, jam, dbm, bp, bp3, hes, lds)
 
 ## INSTALL
 
 Pre-built binaries for Linux (x86_64), Windows (x86_64) and macOS (arm64) are
 attached to every [release](https://github.com/sasq64/demarc/releases/latest).
 
-Linux/macOS:
+Emulator cores are downloaded from the on first use, so the binary is all you need (except *Wine*, see below).
+
+### Linux/macOS
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
 ```
 
-Windows:
+### Windows
+
+*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
+
+`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
+
+The above is often blocked by Windows security. You can try downloading the ps1 script manually and executing it:
 
 ```powershell
 irm https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.ps1 -OutFile "$env:TEMP\demarc-installer.ps1"
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\demarc-installer.ps1"
 ```
 
-The shorter `powershell -c "irm ... | iex"` one-liner does the same thing, but
-antivirus and script policies tend to block that download-cradle pattern (it
-fails with "Access is denied" before the installer prints anything), so
-downloading the script first is the reliable route.
+Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-x86_64-pc-windows-msvc.zip)
 
-Both install to `%CARGO_HOME%\bin` (or `%USERPROFILE%\.cargo\bin`) and add it to
-your PATH; set `DEMARC_INSTALL_DIR` to install elsewhere.
+## RUNNING
 
-With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) (demarc is
-not on crates.io, so point it at the repo):
-
-```sh
-cargo binstall --git https://github.com/sasq64/demarc demarc
+```bash
+demarc Downloads/cool_group-new_demo.lha
+demarc --db demozoo.tzt.gz --sort=rank --select
 ```
 
-Emulator cores are downloaded from the libretro buildbot on first use, so the
-binary is all you need.
+Database files can be found for each release (Assets)
+
+*Or here:*
+
+* [demozoo](https://minnberg.se/dl/demozoo.txt.gz)
+* [csdb](https://minnberg.se/dl/csdb.txt.gz)
+
+## USING WINE (LINUX ONLY)
+
+* Install wine (latest version)
+* Install bubblewrap and cabextract (for winetricks)
+* Run wine-prefix setup script [scripts/mk_wine_prefix.sh](scripts/mk_wine_prefix.sh)
+
+Use `demarc --check-wine` to see if requirements are met.
 
 ## BUILD
 
-You need _rust_.
+You need *rust*.
 
 `cargo build --release`
 
@@ -96,10 +101,6 @@ On Linux the ALSA and udev headers are also needed
 (`libasound2-dev libudev-dev` on Debian/Ubuntu).
 
 ## RUN
-
-Set your monitor to 50Hz if possible.
-
-then
 
 `cargo run -- <files>`
 
@@ -109,24 +110,36 @@ or
 
 ## SHORTCUTS
 
-_Right Alt_ / _Right Ctrl_ +
+*Right Alt* / *Right Ctrl* +
+
 ```
+O = Open fuzzy search
 D = Swap disk
-N = Next file
+SPACE or N = Next file
+P = Previous file
 S = Change scaling
-B = Change border
 I = Toggle Info
-P = Screenshot
+T = Screenshot
+SHIFT+T = Screenshot All
+U = Pause/Resume
 R = Reset
 C = Toggle CRT filter
-M = Click mouse
-J = Toggle joystick/keyboard
-W/SHIFT-W = Skip forward 10/30s
+W/SHIFT-W = Warp 10s/30s
+J = Toggle Joystick/keyboard
+Z = Shader Settings
 
 For grid:
 
-TAB/SHIFT-TAB = Next/Prev emulator
-ENTER = Maximize/Unmazimize
+TAB = Next emulator
+SHIFT+TAB = Previous emulator
+ENTER = Maximize/Unmaximize
 A = Select all emulators
+SHIFT+N = Next file in all emulators
 
 ```
+
+## More screenshots
+
+![Screenshot](img/gfx.png)
+
+![Screenshot](img/gba.png)

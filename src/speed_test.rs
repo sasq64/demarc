@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::AppSettings;
+use crate::config::AppSettings;
 use crate::emulator::Emulator;
 
 /// Tracks the `--speed-test` measurement window across frames.

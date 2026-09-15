@@ -21,37 +21,46 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 /// far more items than can be shown; this caps how many we pull and render.
 pub const DEFAULT_MAX_RESULTS: usize = 500_000;
 
-/// One filtered result: the text to display plus a stable `id` identifying the
-/// item in the underlying source (an index into a `Vec`, a database row id, …).
-/// The `id` is what a selection reports back, so callers get a handle that is
-/// stable regardless of the current filter/order.
-#[derive(Debug, Clone)]
-pub struct FuzzyItem {
-    pub id: usize,
-    pub text: String,
-}
-
-impl AsRef<str> for FuzzyItem {
-    fn as_ref(&self) -> &str {
-        &self.text
-    }
-}
-
 /// Backs the searchable list with items. Implement this to plug in smarter
 /// matching without touching the UI: prefix trees, fuzzy scoring, or an
 /// external index/database.
-pub trait FuzzySource: Send + Sync + 'static {
-    /// Return the items matching `query`, best match first, capped at `limit`.
-    /// An empty/whitespace query should return the head of the full list (the
-    /// unfiltered view).
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem>;
+///
+/// `T` is what one item *is* to the caller — the record the list is a view of
+/// ([`get_data`](FuzzySource::get_data) hands it back, so a caller holding an
+/// id needn't keep its own copy of the list to resolve it). A source with
+/// nothing behind its rows but their text leaves `T` at `()` and inherits the
+/// default `get_data`; the bundled sources go further and implement the trait
+/// for *every* `T`, so a plain list of strings drops into a picker whose other
+/// sources do carry records.
+pub trait FuzzySource<T = ()>: Send + Sync + 'static {
+    /// Return the ids of the items matching `query`, best match first, capped
+    /// at `limit`. An empty/whitespace query should return the head of the full
+    /// list (the unfiltered view).
+    ///
+    /// An id is a stable handle on an item in the underlying source (an index
+    /// into a `Vec`, a database row id, …) — it is what a selection reports
+    /// back, so callers get something that holds regardless of the current
+    /// filter/order.
+    fn search(&self, query: &str, limit: usize) -> Vec<usize>;
 
-    /// Free-form detail about the item with this [`FuzzyItem::id`], shown in the
+    /// The line to display for the item with this id. Asked for the rows on
+    /// screen only, so a source is free to build it on the spot.
+    fn get_text(&self, id: usize) -> String;
+
+    /// Free-form detail about the item with this id, shown in the
     /// multi-line field below the list as the selection moves. Newlines are
     /// honoured and long lines wrap. The default returns nothing, which hides
     /// the field entirely — implement it to describe the highlighted item.
     fn get_info(&self, _id: usize) -> String {
         String::new()
+    }
+
+    /// The record behind the item with this id, borrowed from the source, or
+    /// `None` when there is nothing behind it (the default) or the id is not
+    /// one of ours. Borrowed rather than cloned: the picker asks for it as the
+    /// selection moves, and a record can be a good deal bigger than a row.
+    fn get_data(&self, _id: usize) -> Option<&T> {
+        None
     }
 }
 
@@ -70,6 +79,24 @@ impl SubstringSource {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
     }
+
+    /// The matching ids. Inherent as well as trait method so a caller holding
+    /// the source itself needn't say which `T` it means -- the source carries
+    /// no records, so it implements [`FuzzySource`] for all of them.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        let q = query.trim().to_lowercase();
+        self.lowercased
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| q.is_empty() || s.contains(&q))
+            .take(limit)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn get_text(&self, id: usize) -> String {
+        self.items[id].clone()
+    }
 }
 
 impl From<Vec<String>> for SubstringSource {
@@ -78,19 +105,13 @@ impl From<Vec<String>> for SubstringSource {
     }
 }
 
-impl FuzzySource for SubstringSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
-        let q = query.trim().to_lowercase();
-        self.lowercased
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| q.is_empty() || s.contains(&q))
-            .take(limit)
-            .map(|(i, _)| FuzzyItem {
-                id: i,
-                text: self.items[i].clone(),
-            })
-            .collect()
+impl<T> FuzzySource<T> for SubstringSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
@@ -110,6 +131,23 @@ impl AllWordsSource {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
     }
+
+    /// See [`SubstringSource::search`] for why this is inherent too.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        let q = query.to_lowercase();
+        let words: Vec<&str> = q.split_whitespace().collect();
+        self.lowercased
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| words.iter().all(|w| s.contains(w)))
+            .take(limit)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn get_text(&self, id: usize) -> String {
+        self.items[id].clone()
+    }
 }
 
 impl From<Vec<String>> for AllWordsSource {
@@ -118,20 +156,13 @@ impl From<Vec<String>> for AllWordsSource {
     }
 }
 
-impl FuzzySource for AllWordsSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
-        let q = query.to_lowercase();
-        let words: Vec<&str> = q.split_whitespace().collect();
-        self.lowercased
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| words.iter().all(|w| s.contains(w)))
-            .take(limit)
-            .map(|(i, _)| FuzzyItem {
-                id: i,
-                text: self.items[i].clone(),
-            })
-            .collect()
+impl<T> FuzzySource<T> for AllWordsSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
@@ -227,49 +258,14 @@ impl IndexedSource {
         }
         acc
     }
-}
 
-impl From<Vec<String>> for IndexedSource {
-    fn from(items: Vec<String>) -> Self {
-        Self::new(items)
-    }
-}
-
-/// Intersect two ascending, de-duplicated id lists into a new ascending list.
-fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
-    let mut out = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                out.push(a[i]);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    out
-}
-
-impl FuzzySource for IndexedSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<FuzzyItem> {
+    /// See [`SubstringSource::search`] for why this is inherent too.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         // Empty/whitespace query: unfiltered head of the list, in original order.
         if words.is_empty() {
-            return self
-                .inner
-                .items
-                .iter()
-                .take(limit)
-                .enumerate()
-                .map(|(id, text)| FuzzyItem {
-                    id,
-                    text: text.clone(),
-                })
-                .collect();
+            return (0..self.inner.items.len().min(limit)).collect();
         }
 
         // Prune to candidate ids using every word long enough to be indexed
@@ -299,10 +295,7 @@ impl FuzzySource for IndexedSource {
             let mut out = Vec::new();
             for i in 0..self.inner.items.len() as u32 {
                 if verify(i) {
-                    out.push(FuzzyItem {
-                        id: i as usize,
-                        text: self.inner.items[i as usize].clone(),
-                    });
+                    out.push(i as usize);
                     if out.len() >= limit {
                         break;
                     }
@@ -343,228 +336,48 @@ impl FuzzySource for IndexedSource {
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
         scored.truncate(limit);
-        scored
-            .into_iter()
-            .map(|(_, i)| FuzzyItem {
-                id: i as usize,
-                text: self.inner.items[i as usize].clone(),
-            })
-            .collect()
+        scored.into_iter().map(|(_, i)| i as usize).collect()
+    }
+
+    pub fn get_text(&self, id: usize) -> String {
+        self.inner.items[id].clone()
+    }
+}
+
+impl From<Vec<String>> for IndexedSource {
+    fn from(items: Vec<String>) -> Self {
+        Self::new(items)
+    }
+}
+
+/// Intersect two ascending, de-duplicated id lists into a new ascending list.
+fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                out.push(a[i]);
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
+}
+
+impl<T> FuzzySource<T> for IndexedSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn items() -> Vec<String> {
-        ["apple", "apricot", "banana", "cherry", "grape"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    }
-
-    #[test]
-    fn substring_source_filters_case_insensitively() {
-        let src = SubstringSource::new(items());
-        let texts =
-            |q: &str| -> Vec<String> { src.search(q, 256).into_iter().map(|r| r.text).collect() };
-
-        // Empty query is the unfiltered list…
-        assert_eq!(texts(""), items());
-        // …a substring matches wherever it sits in the entry…
-        assert_eq!(texts("ap"), vec!["apple", "apricot", "grape"]);
-        // …case doesn't matter…
-        assert_eq!(texts("BAN"), vec!["banana"]);
-        // …and nothing matching means nothing shown.
-        assert!(texts("zzz").is_empty());
-    }
-
-    #[test]
-    fn substring_source_reports_stable_source_ids() {
-        let src = SubstringSource::new(items());
-        let hits = src.search("cherry", 256);
-        assert_eq!(hits.len(), 1);
-        // The id indexes the source, not the filtered view.
-        assert_eq!(hits[0].id, 3);
-        assert_eq!(hits[0].text, "cherry");
-    }
-
-    #[test]
-    fn sources_describe_nothing_by_default() {
-        // `get_info` is optional; a source that doesn't implement it leaves the
-        // info field empty, which hides it.
-        assert_eq!(SubstringSource::new(items()).get_info(0), "");
-    }
-
-    #[test]
-    fn all_words_source_matches_every_word_in_any_order() {
-        let src = AllWordsSource::new(items());
-
-        // Empty query returns everything.
-        let all: Vec<String> = src.search("", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(all, items());
-
-        // Two words, out of order, both as substrings of the same item.
-        let hits: Vec<String> = src
-            .search("na an", 256)
-            .into_iter()
-            .map(|r| r.text)
-            .collect();
-        assert_eq!(hits, vec!["banana"]);
-
-        // A word matching nothing filters the item out even if others match.
-        assert!(src.search("apple zzz", 256).is_empty());
-    }
-
-    #[test]
-    fn indexed_source_matches_words_in_any_order_and_ranks() {
-        let src = IndexedSource::new(items());
-
-        // Empty query returns the head of the list, in order.
-        let all: Vec<String> = src.search("", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(all, items());
-
-        // Substring match finds the right rows regardless of order…
-        let hits: Vec<String> = src.search("ap", 256).into_iter().map(|r| r.text).collect();
-        assert!(hits.contains(&"apple".to_string()));
-        assert!(hits.contains(&"apricot".to_string()));
-        assert!(hits.contains(&"grape".to_string()));
-
-        // …and reports the stable source id, not the ranked position.
-        let cherry = src.search("cherry", 256);
-        assert_eq!(cherry.len(), 1);
-        assert_eq!(cherry[0].id, 3);
-        assert_eq!(cherry[0].text, "cherry");
-
-        // Case-insensitive, and two out-of-order words both as substrings of one
-        // item (the `AllWordsSource` semantics), via the < 3-char fallback path.
-        let banana: Vec<String> = src
-            .search("NA an", 256)
-            .into_iter()
-            .map(|r| r.text)
-            .collect();
-        assert_eq!(banana, vec!["banana"]);
-
-        // A word matching nothing filters the item out.
-        assert!(src.search("apple zzz", 256).is_empty());
-
-        // Ranking puts the closest match first: an exact/prefix hit outranks a
-        // mid-word one for the same query.
-        let ranked: Vec<String> = src.search("ap", 256).into_iter().map(|r| r.text).collect();
-        assert_eq!(
-            ranked[0], "apple",
-            "prefix match should rank ahead of 'grape'"
-        );
-    }
-
-    /// Guards the headline claim: on a large list, [`IndexedSource`] filters at
-    /// least 10x faster than the linear [`AllWordsSource`] it replaces (and,
-    /// for contrast, a plain nucleo scan would be *slower*, so the index — not
-    /// the fuzzy crate — is what buys the speed).
-    /// Ignored by default (timing-sensitive); run with `--ignored --release`.
-    #[test]
-    #[ignore]
-    fn indexed_source_is_at_least_10x_faster() {
-        use std::time::Instant;
-
-        // A realistically large list (~40k entries) with diverse vocabulary,
-        // like a fetched game DB. Titles are a few pseudo-random words drawn
-        // from a large vocabulary so trigram posting lists stay short — the
-        // real-world case, unlike a handful of repeated words.
-        let vocab: Vec<String> = (0..3000)
-            .map(|n| {
-                // Deterministic pronounceable-ish tokens: cons+vowel salad.
-                let cons = b"bcdfghjklmnpqrstvwxz";
-                let vow = b"aeiou";
-                let mut s = String::new();
-                let mut x = n * 2654435761u64.wrapping_mul(1) as usize + 12345;
-                for k in 0..(4 + n % 4) {
-                    x = x.wrapping_mul(1103515245).wrapping_add(12345);
-                    let c = if k % 2 == 0 {
-                        cons[(x >> 8) % cons.len()]
-                    } else {
-                        vow[(x >> 8) % vow.len()]
-                    };
-                    s.push(c as char);
-                }
-                s
-            })
-            .collect();
-        let names: Vec<String> = (0..40_000)
-            .map(|i| {
-                let a = &vocab[(i * 2654435761usize) % vocab.len()];
-                let b = &vocab[(i * 40503 + 7) % vocab.len()];
-                let c = &vocab[(i * 12289 + 3) % vocab.len()];
-                format!("{a} {b} {c} {i}")
-            })
-            .collect();
-
-        let old = AllWordsSource::new(names.clone());
-        let idx = IndexedSource::new(names.clone());
-
-        // Queries derived from the data: a broad prefix, a mid-selectivity
-        // token, and two highly-selective multi-word filters (the case where a
-        // linear scan must touch every item because few/none match).
-        let w0: Vec<&str> = names[100].split_whitespace().collect();
-        let w1: Vec<&str> = names[25000].split_whitespace().collect();
-        let queries = [
-            &vocab[0][..1],
-            &vocab[500][..3.min(vocab[500].len())],
-            &format!("{} {}", w0[0], w0[1]) as &str,
-            &format!("{} {}", w1[0], w1[2]) as &str,
-        ];
-
-        // Warm up (let allocators/caches settle).
-        for q in queries {
-            let _ = old.search(q, 256);
-            let _ = idx.search(q, 256);
-        }
-
-        let time = |src: &dyn FuzzySource| {
-            let start = Instant::now();
-            for _ in 0..20 {
-                for q in queries {
-                    std::hint::black_box(src.search(q, 256));
-                }
-            }
-            start.elapsed()
-        };
-
-        // Per-query breakdown.
-        for q in queries {
-            let n_old = old.search(q, 256).len();
-            let t_old = {
-                let s = Instant::now();
-                for _ in 0..50 {
-                    std::hint::black_box(old.search(q, 256));
-                }
-                s.elapsed() / 50
-            };
-            let t_idx = {
-                let s = Instant::now();
-                for _ in 0..50 {
-                    std::hint::black_box(idx.search(q, 256));
-                }
-                s.elapsed() / 50
-            };
-            println!(
-                "  {q:24} hits={n_old:5}  old={t_old:>10.3?}  idx={t_idx:>10.3?}  ({:.1}x)",
-                t_old.as_secs_f64() / t_idx.as_secs_f64().max(1e-12)
-            );
-        }
-
-        let old_t = time(&old);
-        let idx_t = time(&idx);
-        println!("AllWordsSource (linear): {old_t:?}");
-        println!(
-            "IndexedSource  (trigram+nucleo): {idx_t:?} ({:.1}x)",
-            old_t.as_secs_f64() / idx_t.as_secs_f64()
-        );
-        let speedup = old_t.as_secs_f64() / idx_t.as_secs_f64();
-        assert!(
-            speedup >= 10.0,
-            "expected >=10x speedup, got {speedup:.1}x (old {old_t:?}, new {idx_t:?})"
-        );
-    }
-}
+#[path = "tests/fuzzy_list_tests.rs"]
+mod tests;

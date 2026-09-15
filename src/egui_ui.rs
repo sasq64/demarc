@@ -1,11 +1,24 @@
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{camera::visibility::RenderLayers, prelude::*, window::PrimaryWindow};
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
     egui::{self, Ui, scroll_area::ScrollAreaOutput},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzyItem, FuzzySource};
+use crate::emu_file::EmuFile;
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
+use crate::headless::{HeadlessTarget, camera_target};
+
+/// What the pickers in this app are lists *of*. Every source handed to
+/// [`ShowFuzzyList`] agrees on this one type, so a caller holding the `item` of
+/// a [`FuzzyListSelect`] can ask the source for the entry behind it
+/// ([`FuzzySource::get_data`]) instead of keeping its own copy of the list.
+/// A source whose rows are not entries at all -- the hotkey list, say -- has no
+/// data to hand back and simply inherits the default.
+pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
+
+use resvg::tiny_skia;
+use resvg::usvg::{self, Tree};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -13,7 +26,7 @@ const APP_FONT: &str = "app";
 pub struct EguiUiPlugin;
 
 /// Keeps `font.ttf` alive for [`setup_egui`]. Loading through the asset server
-/// rather than reading [`crate::frontend::system_dir`] directly means egui picks
+/// rather than reading [`crate::system_dir`] directly means egui picks
 /// up the very same face -- and the same hot-reloaded bytes -- as the Bevy UI in
 /// [`crate::hud`] and [`crate::text_input`].
 #[derive(Resource)]
@@ -34,11 +47,72 @@ const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
+static ICON_SVG: &[u8] = include_bytes!("../files/coupdecoeur.svg");
+static STAR_SVG: &[u8] = include_bytes!("../files/viewingtip.svg");
+
+/// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
+/// pixel size. `target_size` is in physical pixels.
+fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui::ColorImage> {
+    let opt = usvg::Options::default();
+
+    // If your SVG uses system fonts (text elements), you need a fontdb.
+    // Skip this if your SVG is pure vector shapes.
+    // let mut fontdb = usvg::fontdb::Database::new();
+    // fontdb.load_system_fonts();
+
+    let tree = Tree::from_data(svg_bytes, &opt)?;
+
+    let [w, h] = target_size;
+    let mut pixmap =
+        tiny_skia::Pixmap::new(w, h).ok_or_else(|| anyhow::anyhow!("invalid pixmap dimensions"))?;
+
+    // Scale the SVG's own viewBox size to fit target_size.
+    let svg_size = tree.size();
+    let transform =
+        tiny_skia::Transform::from_scale(w as f32 / svg_size.width(), h as f32 / svg_size.height());
+
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    // tiny_skia::Pixmap stores premultiplied RGBA — egui::ColorImage
+    // wants straight (non-premultiplied) RGBA, so unpremultiply per pixel.
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for px in pixmap.pixels() {
+        let a = px.alpha();
+        if a == 0 {
+            rgba.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            let unpremul = |c: u8| ((c as u32 * 255) / a as u32) as u8;
+            rgba.extend_from_slice(&[
+                unpremul(px.red()),
+                unpremul(px.green()),
+                unpremul(px.blue()),
+                a,
+            ]);
+        }
+    }
+
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        &rgba,
+    ))
+}
+
+/// Call once (e.g. lazily on first frame, or in app init) and cache the handle.
+fn load_icon_texture(
+    ctx: &egui::Context,
+    name: &str,
+    pixels: &[u8],
+) -> anyhow::Result<egui::TextureHandle> {
+    let image = rasterize_svg(pixels, [64, 64])?;
+    Ok(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
+}
+
 fn setup_egui(
     mut contexts: EguiContexts,
     app_font: Res<AppFont>,
     fonts: Res<Assets<Font>>,
     mut done: Local<bool>,
+    mut state: ResMut<Images>,
 ) -> Result {
     if *done {
         return Ok(());
@@ -47,6 +121,11 @@ fn setup_egui(
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
+
+    let heart = load_icon_texture(ctx, "heart_icon", ICON_SVG)?;
+    let star = load_icon_texture(ctx, "star_icon", STAR_SVG)?;
+    state.heart = Some(heart);
+    state.star = Some(star);
 
     // egui owns its font bytes (it re-parses them for its own atlas), so this
     // copies out of the Bevy asset instead of sharing the `Blob`.
@@ -98,19 +177,22 @@ pub enum HudLocation {
 #[derive(Message, Clone)]
 pub struct ShowFuzzyList {
     pub id: usize,
-    pub source: Arc<dyn FuzzySource>,
+    pub source: ListSource,
 }
 
-/// Emitted when the user picks a row (Enter) in the list opened by
-/// [`ShowFuzzyList`].
+/// Emitted when the user picks a row (Enter, or Shift+Enter — see
+/// [`FuzzyListSelect::alt`]) in the list opened by [`ShowFuzzyList`].
 #[derive(Message, Debug, Clone)]
 pub struct FuzzyListSelect {
     /// The list's `id`, so callers can tell their pickers apart.
     pub id: usize,
-    /// Stable id of the chosen item (see [`FuzzyItem::id`]).
+    /// Stable id of the chosen item, as reported by [`FuzzySource::search`].
     pub item: usize,
     #[allow(dead_code)]
     pub text: String,
+    /// Set when the row was picked with Shift held (Shift+Enter), asking the
+    /// caller for its alternative action on the item rather than the default.
+    pub alt: bool,
 }
 
 #[derive(Default, Message, Clone)]
@@ -131,6 +213,12 @@ pub struct HudText {
 pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
+    /// How many dialogs (`crate::egui_settings`, `crate::shader_dialog`) are up.
+    /// Kept here rather than on the generic `SettingsState<T>` so
+    /// [`HudState::modal`] can answer without naming the settings type, and
+    /// counted rather than a flag so closing one dialog while another is still
+    /// open does not hand the keyboard back to the emulated machine.
+    open_dialogs: u32,
     /// Caller-chosen id of the open list, echoed back in [`FuzzyListSelect`].
     list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`render_list`],
@@ -139,9 +227,9 @@ pub struct HudState {
     /// The query `list_items` was filtered with, so the source is only asked
     /// again when the text actually changed (the box is polled every frame).
     list_last_query: Option<String>,
-    /// The results currently shown, in display order. Their [`FuzzyItem::id`]s
-    /// are what a selection reports, so they survive re-filtering.
-    list_items: Vec<FuzzyItem>,
+    /// The ids of the results currently shown, in display order. An id is what
+    /// a selection reports, so it survives re-filtering.
+    list_items: Vec<usize>,
     /// Index into `list_items` of the highlighted row.
     list_selected: usize,
     /// The list's scroll offset in points, mirrored out of the [`egui::ScrollArea`]
@@ -155,14 +243,32 @@ pub struct HudState {
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
-    list_source: Option<Arc<dyn FuzzySource>>,
+    list_source: Option<ListSource>,
+}
+
+#[derive(Resource, Default)]
+pub struct Images {
+    heart: Option<egui::TextureHandle>,
+    star: Option<egui::TextureHandle>,
 }
 
 impl HudState {
-    /// Whether the file picker is up. It owns the keyboard while it is, so the
-    /// callers that feed keys to the emulated machine swallow them instead.
-    pub fn list_open(&self) -> bool {
-        self.show_list
+    /// Whether *any* modal UI owns the keyboard -- the picker or a settings
+    /// dialog. This is what the callers that feed keys to the emulated machine
+    /// check; a settings dialog with a focused text field would otherwise type
+    /// into the emulator as well.
+    pub fn modal(&self) -> bool {
+        self.show_list || self.open_dialogs > 0
+    }
+
+    /// Told by a dialog as it opens and closes. Each dialog reports each
+    /// transition once, so the count only has to survive a stray close.
+    pub fn set_settings_open(&mut self, open: bool) {
+        self.open_dialogs = if open {
+            self.open_dialogs + 1
+        } else {
+            self.open_dialogs.saturating_sub(1)
+        };
     }
 }
 
@@ -197,7 +303,7 @@ const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x10, 0x10);
 /// left a row, so a row the user passed over dims out instead of blinking off.
 const FADE_SECS: f32 = 0.5;
 
-fn panel_frame() -> egui::Frame {
+pub(crate) fn panel_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(PANEL_FILL)
         .stroke(egui::Stroke::new(PANEL_BORDER, PANEL_STROKE))
@@ -216,7 +322,7 @@ fn visible_rows(ctx: &egui::Context) -> f32 {
 /// Re-filters the list against the search box. The source is asked only when
 /// the query changed since the last frame -- or when the list was just opened,
 /// since the source itself may be a new one by then.
-fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
+fn sync_results(state: &mut HudState, source: &ListSource) {
     let changed = state.list_last_query.as_deref() != Some(state.list_query.as_str());
     if !changed && !state.list_reopened {
         return;
@@ -231,16 +337,17 @@ fn sync_results(state: &mut HudState, source: &Arc<dyn FuzzySource>) {
 }
 
 /// Draws the scrollable, fixed-row-height list of `items`, highlighting row
-/// `selected` and scrolling the least that keeps it in view. Rows are borrowed:
-/// anything that can be seen as a `&str` (`String`, `&str`, [`FuzzyItem`], ...)
-/// can be listed without copying its text out first.
+/// `selected` and scrolling the least that keeps it in view. Each visible row is
+/// handed to `render` along with the rect it was allocated, so the items can be
+/// anything at all -- only their painting is the caller's business.
 ///
 /// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
-fn scroll_area<T: AsRef<str>>(
+fn scroll_area<T>(
     ui: &mut Ui,
     selected: usize,
     list_scroll: f32,
     items: &[T],
+    render: impl Fn(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<()> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
@@ -289,33 +396,82 @@ fn scroll_area<T: AsRef<str>>(
                             SELECTED_ROW_COLOR.linear_multiply(level),
                         );
                     }
-                    // Painted rather than laid out as a `Label`: rows are
-                    // single-line and anything too long is clipped.
-                    let clip =
-                        egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
-                    ui.painter().with_clip_rect(clip).text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        items[row].as_ref(),
-                        egui::FontId::proportional(ROW_SIZE),
-                        TEXT_COLOR,
-                    );
+
+                    render(ui, rect, &items[row]);
                 }
             })
         })
         .inner
 }
 
+/// The modifier keys held *right now*, read from Bevy rather than from egui.
+/// egui only learns about a modifier through the key events it is fed, so one
+/// pressed here and released while another window had focus stays "held" for
+/// good -- and every exact-match lookup against [`egui::Modifiers::NONE`] then
+/// quietly stops matching, which is what leaves the picker unable to see a
+/// plain arrow key again. Bevy clears its keyboard state outright on
+/// [`KeyboardFocusLost`](bevy::input::keyboard::KeyboardFocusLost), so this
+/// answer recovers by itself.
+pub(crate) fn live_modifiers(keys: &ButtonInput<KeyCode>) -> egui::Modifiers {
+    let held = |a, b| keys.pressed(a) || keys.pressed(b);
+    let alt = held(KeyCode::AltLeft, KeyCode::AltRight);
+    let ctrl = held(KeyCode::ControlLeft, KeyCode::ControlRight);
+    let shift = held(KeyCode::ShiftLeft, KeyCode::ShiftRight);
+    let mac_cmd = cfg!(target_os = "macos") && held(KeyCode::SuperLeft, KeyCode::SuperRight);
+    egui::Modifiers {
+        alt,
+        ctrl,
+        shift,
+        mac_cmd,
+        // What "the" modifier is: Cmd on macOS, Ctrl everywhere else.
+        command: if cfg!(target_os = "macos") {
+            mac_cmd
+        } else {
+            ctrl
+        },
+    }
+}
+
+/// Replaces what egui believes is held -- both the running state and the
+/// modifiers stamped on the key events still queued for this frame -- with
+/// `mods`, so the search box drawn afterwards resolves its own shortcuts
+/// against the live keyboard too instead of a stuck one.
+pub(crate) fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
+    i.modifiers = mods;
+    for event in &mut i.events {
+        if let egui::Event::Key { modifiers, .. } = event {
+            *modifiers = mods;
+        }
+    }
+}
+
+/// Counts and removes every press of `key` among this frame's events, whatever
+/// modifiers came with it, so nothing downstream acts on it.
+/// [`egui::InputState::count_and_consume_key`] insists on an exact modifier
+/// match instead, which is one stale modifier away from dropping the key.
+pub(crate) fn take_key(i: &mut egui::InputState, key: egui::Key) -> i64 {
+    let mut count = 0;
+    i.events.retain(|event| {
+        let hit = matches!(event, egui::Event::Key { key: k, pressed: true, .. } if *k == key);
+        count += hit as i64;
+        !hit
+    });
+    count
+}
+
 /// Draws the file picker: a search box above a scrollable, filtered view of
 /// [`HudState::list_source`], with a fixed-height info field
 /// ([`FuzzySource::get_info`]) below it, centred on screen. The search box takes
 /// keyboard focus for as long as the picker is up, with Up/Down/PageUp/PageDown
-/// moving the highlighted row, Enter emitting a [`FuzzyListSelect`] for it and
-/// Escape closing the picker without one.
+/// moving the highlighted row, Enter (or Shift+Enter, which sets
+/// [`FuzzyListSelect::alt`]) emitting a [`FuzzyListSelect`] for it and Escape
+/// closing the picker without one.
 fn render_list(
     ctx: &egui::Context,
+    keys: &ButtonInput<KeyCode>,
     state: &mut HudState,
     writer: &mut MessageWriter<FuzzyListSelect>,
+    render: impl Fn(&mut Ui, egui::Rect, usize),
 ) {
     if !state.show_list {
         return;
@@ -338,18 +494,24 @@ fn render_list(
     // the presses keeps a held-down arrow moving at the key repeat rate even
     // when several repeats land in one frame.
     let len = state.list_items.len();
+    let mods = live_modifiers(keys);
     let (row_steps, page_steps, pick, close) = ctx.input_mut(|i| {
-        let none = egui::Modifiers::NONE;
-        let rows = i.count_and_consume_key(none, egui::Key::ArrowDown) as i64
-            - i.count_and_consume_key(none, egui::Key::ArrowUp) as i64;
-        let pages = i.count_and_consume_key(none, egui::Key::PageDown) as i64
-            - i.count_and_consume_key(none, egui::Key::PageUp) as i64;
+        // Before anything is read out of this frame: whatever egui had tracked
+        // is thrown away for the keyboard as it stands this instant.
+        sync_modifiers(i, mods);
+        let rows = take_key(i, egui::Key::ArrowDown) - take_key(i, egui::Key::ArrowUp);
+        let pages = take_key(i, egui::Key::PageDown) - take_key(i, egui::Key::PageUp);
         // Enter belongs to the list, not the search box, and Escape closes the
-        // whole picker; both are consumed so the `TextEdit` never acts on them.
-        let pick = i.consume_key(none, egui::Key::Enter);
-        let close = i.consume_key(none, egui::Key::Escape);
+        // whole picker; both are consumed so the `TextEdit` never acts on them,
+        // and both are taken whatever is held alongside them.
+        let pick = take_key(i, egui::Key::Enter) > 0;
+        let close = take_key(i, egui::Key::Escape) > 0;
         (rows, pages, pick, close)
     });
+    // Shift+Enter picks the row too, reported back as `alt` so a caller can
+    // offer a second action on the same item -- on the shift of the moment,
+    // not on the one egui has stamped on the event.
+    let alt = pick && mods.shift;
     if close {
         state.show_list = false;
         return;
@@ -364,11 +526,12 @@ fn render_list(
     };
     state.list_selected = selected;
 
-    if pick && let Some(item) = state.list_items.get(selected) {
+    if pick && let Some(&item) = state.list_items.get(selected) {
         writer.write(FuzzyListSelect {
             id: state.list_id,
-            item: item.id,
-            text: item.text.clone(),
+            item,
+            text: source.get_text(item),
+            alt,
         });
         state.show_list = false;
         return;
@@ -376,7 +539,7 @@ fn render_list(
 
     // Describe the highlighted item, asking the source only when it changes
     // (arrow keys, or a new filter) rather than every frame.
-    let info_item = state.list_items.get(selected).map(|item| item.id);
+    let info_item = state.list_items.get(selected).copied();
     if info_item != state.list_info_item {
         state.list_info = info_item.map(|id| source.get_info(id)).unwrap_or_default();
         state.list_info_item = info_item;
@@ -410,7 +573,13 @@ fn render_list(
                 }
             });
 
-            let scrolled = scroll_area(ui, selected, state.list_scroll, &state.list_items);
+            let scrolled = scroll_area(
+                ui,
+                selected,
+                state.list_scroll,
+                &state.list_items,
+                |ui, rect, &id| render(ui, rect, id),
+            );
             state.list_scroll = scrolled.state.offset.y;
 
             // The info box stays hidden while there is nothing to say.
@@ -440,24 +609,27 @@ const DOWNLOAD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0xff, 0xe0);
 /// texts: it is status, not a title.
 const DOWNLOAD_SIZE: f32 = 32.0;
 
-/// Draws how many downloads are in flight in the top-left corner, and nothing
-/// at all while there are none. A placeholder for a real progress bar -- the
-/// byte counts behind it are already tracked, see
-/// [`Emulator::load_progress`](crate::emulator::Emulator::load_progress).
+/// Draws how many bytes are left to download in the top-left corner, and
+/// nothing at all while there are none.
 fn render_downloads(ctx: &egui::Context, pos: egui::Pos2) {
-    let count = crate::emu_file::downloads_in_progress();
+    let bytes = crate::emu_file::bytes_in_progress();
     let id = egui::Id::new("downloads");
-    let t = ctx.animate_bool_with_time(id, count > 0, 1.0);
-    if count == 0 || t < 0.5 {
+    let t = ctx.animate_bool_with_time(id, bytes > 0, 1.0);
+    if bytes == 0 || t < 0.5 {
         return;
     }
+    let text = if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    };
     egui::Area::new(id)
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             heading_with_shadow(
                 ui,
-                format!("\u{f409} {count}").as_str(),
+                format!("\u{f409} {text}").as_str(),
                 DOWNLOAD_SIZE,
                 DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
                 egui::Align::Min,
@@ -505,11 +677,13 @@ fn heading_with_shadow(
     ui.painter().galley(pos, galley, color);
 }
 
-fn update_ui(
+pub(crate) fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
+    images: Res<Images>,
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
+    keys: Res<ButtonInput<KeyCode>>,
     window: Single<&mut Window, With<PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -578,7 +752,71 @@ fn update_ui(
         });
 
     render_downloads(ctx, rect.min);
-    render_list(ctx, &mut state, &mut selected);
+    // Cloned out before `state` is borrowed mutably below; the row painter
+    // looks each visible row's text up through it. `render_list` bails out
+    // itself when there is no source, so the painter never runs without one.
+    let source = state.list_source.clone();
+    render_list(ctx, &keys, &mut state, &mut selected, |ui, rect, id| {
+        let Some(source) = source.as_ref() else {
+            return;
+        };
+        let text = source.get_text(id);
+
+        let mut cdc = 0;
+        let mut vt = false;
+        if let Some(emu_file) = source.get_data(id)
+            && let Some(pouet) = emu_file.meta.get("pouet")
+        {
+            for (i, s) in pouet.split(",").enumerate() {
+                if i == 0 {
+                    cdc = s.parse::<u32>().unwrap_or(0);
+                } else if i == 3 {
+                    vt = s.split(" ").any(|s| s == "15");
+                }
+            }
+        }
+
+        let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
+        let font = egui::FontId::proportional(ROW_SIZE);
+        // let format = TextFormat {
+        //     font_id: font.clone(),
+        //     extra_letter_spacing: -8.0, // negative = pull glyphs together
+        //     color: Color32::from_rgb(220, 220, 20),
+        //     valign: Align::Center,
+        //     ..Default::default()
+        // };
+
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &text,
+            0.0,
+            egui::TextFormat::simple(font.clone(), TEXT_COLOR),
+        );
+        //job.append("  \u{f091} ", 0.0, format);
+
+        let galley = ui.painter().layout_job(job);
+        let pos = egui::Align2::LEFT_CENTER
+            .anchor_size(rect.left_center(), galley.size())
+            .min;
+        let painter = ui.painter().with_clip_rect(clip);
+        painter.galley(pos, galley.clone(), TEXT_COLOR);
+        // Position the image right after the last glyph's end.
+        let end_x = pos.x + galley.rect.width() + 10.0;
+        let mut image_rect =
+            egui::Rect::from_min_size(egui::pos2(end_x, pos.y), egui::vec2(32.0, 32.0));
+        let tid = images.heart.as_ref().unwrap().id();
+        let vid = images.star.as_ref().unwrap().id();
+        for _ in 0..cdc {
+            egui::Image::new((tid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+            image_rect.min.x += 12.0;
+            image_rect.max.x += 12.0;
+        }
+        if vt {
+            image_rect.min.x += 12.0;
+            image_rect.max.x += 12.0;
+            egui::Image::new((vid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+        }
+    });
     Ok(())
 }
 
@@ -590,6 +828,16 @@ fn spawn_toast(
     for msg in reader.read() {
         info!("MSG: {}", msg.text);
         let now = time.elapsed_secs();
+        // An empty text retires whatever is showing in that corner. The entry
+        // is kept with its duration ended rather than dropped, because the
+        // fade-out in `update_ui` animates on the text's own id — remove the
+        // entry and the text blinks out instead of fading.
+        if msg.text.is_empty() {
+            if let Some(hud) = state.current_texts.get_mut(&msg.location) {
+                hud.duration.end = now;
+            }
+            continue;
+        }
         let start = now + msg.delay.as_secs_f32();
         let stop = start + msg.duration.as_secs_f32();
         state.current_texts.insert(
@@ -621,6 +869,23 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
     }
 }
 
+fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>) {
+    // Camera for full res UI on top of screen.
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        camera_target(headless.as_deref()),
+        RenderLayers::layer(2),
+        // egui draws into this camera's pass too, so its output lands on top of
+        // the emulators as well (see `crate::egui_ui`).
+        bevy_egui::PrimaryEguiContext,
+    ));
+}
+
 impl Plugin for EguiUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default());
@@ -634,6 +899,7 @@ impl Plugin for EguiUiPlugin {
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
             .add_message::<FuzzyListSelect>()
+            .add_systems(Startup, setup_ui_camera)
             .add_systems(
                 Update,
                 (
@@ -641,6 +907,7 @@ impl Plugin for EguiUiPlugin {
                     open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
                 ),
             )
+            .insert_resource(Images::default())
             .insert_resource(HudState::default());
     }
 }

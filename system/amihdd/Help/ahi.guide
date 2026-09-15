@@ -1,0 +1,1274 @@
+@database AHI:User/Help/ahi.guide
+
+@Master ahiusr.texinfo
+
+@Width 72
+
+
+This is the AmigaGuide®  file AHI:User/Help/ahi.guide, produced by Makeinfo-1.68 from 
+the input file ahiusr.texinfo.
+
+   This file documents AHI version 4.18, a hardware independent audio
+subsystem for Amiga.
+
+   Copyright (C) 1994-1998 Martin Blom. This publication may not be
+modified in any way, including translation, without prior consent, in
+writing, by the author.
+
+   Permission is granted to make and distribute verbatim copies of this
+manual provided the copyright notice and this permission notice are
+preserved on all copies.
+
+   THIS PUBLICATION IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS PUBLICATION, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+     $Id: ahiusr.texinfo,v 4.18 1998/12/06 11:51:25 lcs Exp lcs $
+     $Log: ahiusr.texinfo,v $
+     Revision 4.18  1998/12/06 11:51:25  lcs
+     Removed the stuff about paula not being exactly like the filesave driver
+     (it is, now).
+     
+     Revision 4.17  1998/10/25 15:38:30  lcs
+     Added note about that paula.audio cannot behave exactly like filesave.audio.
+     
+     Revision 4.16  1998/10/25 13:31:50  lcs
+     Added info about the paula.audio AHIpaulaFakeMixFreq variable.
+     
+     Revision 4.15  1998/03/11 09:28:51  lcs
+     Added info about how to make the Amiga video 31 kHz.
+     
+     Revision 4.14  1998/01/18 19:50:42  lcs
+     Updated the acknowledges. Probably more.
+     
+     Revision 4.13  1997/12/17 19:53:17  lcs
+     Added the translators of of Hrvatski and Magyar to the hall of fame...
+     
+     Revision 4.12  1997/11/02 02:01:48  lcs
+     Added Concierto (again!).
+     
+     Revision 4.11  1997/10/21 01:33:40  lcs
+     The version number is now the AHI release version, not the documents version.
+     
+     Revision 4.10  1997/09/30 13:11:09  lcs
+     Added reasons why "Fast" or "Hifi" modes should be used.
+     
+     Revision 4.9  1997/09/28 04:31:56  lcs
+     Added notes about Maestor Pro and Melody MPEG. Added Thorsten Hansen
+     to the contributors section. And some other minor things.
+     
+     Revision 4.8  1997/09/18 00:51:00  lcs
+     Added Maestro Pro stuff.
+     
+     Revision 4.7  1997/08/10 15:38:57  lcs
+     Minor changes. added AHI macro!
+     
+     Revision 4.6  1997/08/03 22:48:26  lcs
+     Added Concierto to list of supported sound cards.
+     Added Christian Buchner to the Acknowledgments section.
+     Changed Teemu Suikki's email address.
+     
+     Revision 4.5  1997/07/27 19:04:10  lcs
+     Added description of the AHIpaulaSwapChannels env. variable.
+     
+     Revision 4.4  1997/07/15 00:50:40  lcs
+     This is the second bugfix release of AHI 4.
+     
+     Revision 4.3  1997/05/04 15:52:58  lcs
+     Initial revision.
+
+@node Main "ahi.guide"
+@next "Overview"
+
+AHI User's Guide, version 4.18
+******************************
+
+   Copyright (C) 1994-1998 Martin Blom
+
+   The latest release of AHI can always be found at
+@{b}http://www.lysator.liu.se/~lcs/ahi.html@{ub}.
+
+
+ @{" Overview                   " link "Overview"}  Brief introduction
+ @{" Distribution               " link "Distribution"}  What you are allowed to do and not
+ @{" Donations                  " link "Donations"}  How to show your gratitude
+
+ @{" System description         " link "System description"}  The components of AHI
+
+ @{" The Author                 " link "The Author"}  Who designed it?
+ @{" Acknowledgments            " link "Acknowledgments"}  Thanks, guys!
+
+ @{" Concept Index              " link "Concept Index"}  Concept Index
+
+
+@endnode
+
+@node "Overview" "ahi.guide/Overview"
+@next "Distribution"
+@prev "Main"
+@toc "Main"
+
+Overview
+********
+
+   The @{i}Amiga@{ui} has always had excellent sound capabilities.  In 1986, they
+were awesome.  Today, well.... Perhaps not awesome, but still very
+good.  The OS interface, @{b}audio.device@{ub} has however never been as good as
+it could have been.  It is tied hard to the underlying hardware, and
+doesn't work very well for music.  This has led to a situation where
+most audio programs only use @{b}audio.device@{ub} to allocate the audio
+resource, and then poke around in the hardware registers--making it
+next to impossible to replace the @{i}Paula@{ui} chip (1).
+
+   There have been attempts to write an @{b}audio.device@{ub} clone that uses a
+sound card instead of Paula, but so far nobody has succeeded.  It is
+definitely possible, but the question is if it is worth the trouble--too
+many of the programs bang the hardware.
+
+   Entering AHI (2).  AHI is a new audio subsystem, designed to be
+flexible, hardware independent, expandable and future safe.  It is
+designed with real-time applications in mind.  It is designed to play
+@{i}modules@{ui} (3) and sound effects as efficient as possible, taking
+advantage of modern DSP-based sound cards.
+
+   Yet AHI allows applications that don't need full control over the
+audio hardware to share the resource, so that many different programs
+can play and record sound at the same time, without conflicts.
+
+   As a user you will hopefully not see much of AHI, other than the
+audio mode requesters.  They works almost exactly like screen mode
+requesters.
+
+   AHI was never supposed to be @{i}the@{ui} standard for hardware independent
+audio.  It was meant as a temporary solution until @{i}Amiga Technologies@{ui}
+delivered an official standard.  However, the situation looks worse and
+worse for every day that passes by, and this may be all you will ever
+get.
+
+   ---------- Footnotes ----------
+
+   (1) Paula is one of the custom chips, and she is responsible for the
+sound (and more).  Unfortunately, this chip has not been updated since
+the very first Amiga was released.
+
+   (2) The name AHI was chosen because the functions in the system had
+to have a prefix, and the author couldn't come up with anything better
+than @{i}Audio Hardware Interface@{ui}, something that he has regretted ever
+since.  The suggested pronunciation is "atchii", as in "God bless!".
+
+   (3) Originally designed in 1986 by Karsten Obarski, modules have
+become a de facto standard for game and demo music.  The original format
+has been improved many times, and many new music formats have--more or
+less--been derived from it, including the popular @{i}S3M@{ui} and @{i}XM@{ui} formats.
+
+
+@endnode
+
+@node "Distribution" "ahi.guide/Distribution"
+@next "Donations"
+@prev "Overview"
+@toc "Main"
+
+Distribution
+************
+
+   Copyright (C) 1994-1998 Martin Blom
+
+   AHI is available as @{i}freeware@{ui}.  That is, it may be freely distributed
+in unmodified form with no changes what so ever, but you may not charge
+more than a nominal fee covering distribution costs.  However,
+donations are welcome (see @{"Donations" link "Donations"}).
+
+   If you use this software in a commercial or shareware software
+product, please consider giving the author (see @{"The Author" link "The Author"})--and
+preferably each one of the contributors (see @{"Contributors" link "Contributors"}) too--an
+original or registered version of your work.  Should you want to
+distribute the AHI software with your own product, there is really
+nothing to consider, is it?
+
+   If you wish to distribute this software with a hardware product,
+contact the author (see @{"The Author" link "The Author"}).  Distribution of AHI with hardware
+products is @{i}not@{ui} free.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS
+BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+@endnode
+
+@node "Donations" "ahi.guide/Donations"
+@next "System description"
+@prev "Distribution"
+@toc "Main"
+
+Donations
+*********
+
+   -AHI is available for personal use without any charges.  I strongly
+believe in free software, and I use free high-quality software tools
+daily.  But I live, like all of us, in a real world.  As a student, my
+income doesn't even suffice for the rent, and much less food, course
+literature and entertainments.  Therefore I ask, if you like this
+software, please consider showing your gratitude by making a small
+donation (see @{"The Author" link "The Author"} for my address).
+
+@{i}   Martin@{ui}
+
+
+@endnode
+
+@node "System description" "ahi.guide/System description"
+@next "The Author"
+@prev "Donations"
+@toc "Main"
+
+System description
+******************
+
+
+ @{" AddAudioModes              " link "AddAudioModes"}  Database maintenance
+ @{" AHI                        " link "AHI"}  Preferences program
+ @{" AHI-Handler                " link "AHI-Handler"}  DOS-device
+
+ @{" System Files               " link "System Files"}  The files in @{b}DEVS:@{ub}
+
+
+@endnode
+
+@node "AddAudioModes" "ahi.guide/AddAudioModes"
+@next "AHI"
+@prev "System description"
+@toc "System description"
+
+AddAudioModes
+=============
+
+Format
+     [FILES <file|pattern>] [QUIET] [REFRESH] [REMOVE] [DBLSCAN]
+
+Template
+     FILES/M,QUIET/S,REFRESH/S,REMOVE/S,DBLSCAN/S
+
+Purpose
+     To build and remove a list of audio modes that AHI can understand.
+
+Path
+     C:ADDAUDIOMODES
+
+Specification
+@{b}     AddAudioModes@{ub} is used to build and remove a list of audio modes
+     that AHI can understand.  The definitions of the audio modes are
+     stored in @{b}DEVS:Audiomodes@{ub} (see @{"The Mode Descriptors" link "The Mode Descriptors"}).  Normally
+     you don't have to run this program, since @{b}ahi.device@{ub} automatically
+     reads all mode descriptors when it is used for the first time.  It
+     can, however, be useful in installation scripts.
+
+     The @{b}FILES@{ub} option specifies with descriptor(s) to be added to the
+     current mode list.
+
+     The @{b}QUIET@{ub} option, if specified, will suppress error and output
+     messages.
+
+     The @{b}REFRESH@{ub} option, if specified, will scan @{b}DEVS:Audiomodes@{ub} and
+     add all descriptors found there to the current mode list.
+
+     The @{b}REMOVE@{ub} option, if specified, will flush the current audio mode
+     list from memory.
+
+     The @{b}DBLSCAN@{ub} option does not have anything to do with the audio mode
+     list.  If specified, it will open and then immediately close a
+     native, double-scan screen.  On some systems using a graphic card,
+     this will enable >28 kHz sample frequencies with the native audio.
+     You need an appropriate monitor driver in @{b}DEVS:Monitors@{ub} to make
+     it work.
+
+
+@endnode
+
+@node "AHI" "ahi.guide/AHI"
+@next "AHI-Handler"
+@prev "AddAudioModes"
+@toc "System description"
+
+AHI
+===
+
+Format
+     [FROM <filename>] [EDIT] [USE] [SAVE] [PUBSCREEN <public screen
+     name>
+
+Template
+     FROM,EDIT/S,USE/S,SAVE/S,PUBSCREEN/K
+
+Purpose
+     To specify default audio options
+
+Path
+     SYS:Prefs/AHI
+
+Specification
+@{b}     AHI@{ub} without any arguments or with the @{b}EDIT@{ub} argument opens the AHI
+     preferences editor.  The @{b}FROM@{ub} argument lets you specify a file to
+     open.  This must be a file that was previously saved with the @{b}Save
+     As...@{ub} menu item of the AHI preferences editor.  For example, if
+     you have saved a special configuration of the AHI preferences
+     editor to a file in the @{b}Presets@{ub} drawer, you can use the @{b}FROM@{ub}
+     argument to open that file.  If the @{b}USE@{ub} switch is also given, the
+     editor will not be opened, but the settings in the @{b}FROM@{ub} file will
+     be used.  If the @{b}SAVE@{ub} switch is given, the editor will not open,
+     but the settings in the @{b}FROM@{ub} file will be saved.  The @{b}PUBSCREEN@{ub}
+     option allows you to specify a public screen on which the program
+     will open its window.
+
+     Example:
+
+          AHI Prefs/Presets/AHI.Delfina USE
+
+     loads and uses the specifications saved in the @{b}AHI.Delfina@{ub} file.
+     If the system is rebooted, the last saved specifications will be
+     loaded.
+
+   Note that the preferences program requires either @{b}bgui.library@{ub}
+version 41 (1) or @{i}MUI@{ui} version 3.8 (2)
+
+
+ @{" Menus                      " link "Menus"}  
+ @{" Pages                      " link "Pages"}
+
+   ---------- Footnotes ----------
+
+   (1) @{i}BGUI@{ui} is Copyright © 1996-1997 Ian J.  Einman
+
+   (2) @{i}MUI@{ui} is Copyright © 1992-1997 Stefan Stuntz
+
+
+@endnode
+
+@node "Menus" "ahi.guide/Menus"
+@next "Pages"
+@prev "AHI"
+@toc "AHI"
+
+Menus
+-----
+
+
+ @{" Project Menu               " link "Project Menu"}  
+ @{" Edit Menu                  " link "Edit Menu"}  
+ @{" Settings Menu              " link "Settings Menu"}  
+ @{" Help Menu                  " link "Help Menu"}
+
+
+@endnode
+
+@node "Project Menu" "ahi.guide/Project Menu"
+@next "Edit Menu"
+@prev "Menus"
+@toc "Menus"
+
+@{b}Project@{ub} Menu
+............
+
+   The @{b}Project@{ub} menu options let you save the editor settings to a
+specific file and open previously saved files.
+
+@{b}Open...@{ub}
+     Loads the information from a specified preset file.
+
+@{b}Save As...@{ub}
+     Specify the preset file in which to save the currently displayed
+     settings.  The requester provides a default file name in the
+     @{b}Presets@{ub} drawer.  If you want to change it, type in the full path
+     to a different file and select @{b}OK@{ub}.
+
+@{b}About...@{ub}
+     Shows the credits.
+
+@{b}Quit@{ub}
+     Exits the editor without performing any changes (the same as the
+     @{b}Cancel@{ub} gadget).
+
+
+@endnode
+
+@node "Edit Menu" "ahi.guide/Edit Menu"
+@next "Settings Menu"
+@prev "Project Menu"
+@toc "Menus"
+
+@{b}Edit@{ub} Menu
+.........
+
+   The @{b}Edit@{ub} menu options allow you to restore previously used settings
+or the default settings.  The options are:
+
+@{b}Reset to Default@{ub}
+     Returns the editor settings to the default settings.
+
+@{b}Last Saved@{ub}
+     Returns the editor settings to the last settings you saved.
+
+@{b}Restore@{ub}
+     Returns the editor to the settings displayed when the editor first
+     opened.
+
+
+@endnode
+
+@node "Settings Menu" "ahi.guide/Settings Menu"
+@next "Help Menu"
+@prev "Edit Menu"
+@toc "Menus"
+
+@{b}Settings@{ub} Menu
+.............
+
+   The @{b}Settings@{ub} menu contains the @{b}Create Icons?@{ub} item that allows you to
+save project icons representing your editor settings in the same drawer
+as your files.  For example, if you save the specifications to the
+@{b}SYS:Prefs/Presets/AHI.pre@{ub} file, the icon for the file appears in the
+@{b}Presets@{ub} window.  Double-click on the icon to activate the file's
+settings.
+
+
+@endnode
+
+@node "Help Menu" "ahi.guide/Help Menu"
+@prev "Settings Menu"
+@toc "Menus"
+
+@{b}Help@{ub} Menu
+.........
+
+   The @{b}Help@{ub} menu's items let you view the on-line "AHI User's Guide"
+using AmigaGuide.
+
+@{b}Help...@{ub}
+     Brings up the chapter about the preferences program (this chapter).
+
+@{b}AHI User's Guide...@{ub}
+     Brings up the first page of "AHI User's Guide".
+
+@{b}Concept Index...@{ub}
+     Brings up the index of "AHI User's Guide".
+
+
+@endnode
+
+@node "Pages" "ahi.guide/Pages"
+@prev "Menus"
+@toc "AHI"
+
+Pages
+-----
+
+   The preferences program's GUI is divided in two pages:
+
+
+ @{" Mode settings              " link "Mode settings"}  
+ @{" Advanced settings          " link "Advanced settings"}
+
+
+@endnode
+
+@node "Mode settings" "ahi.guide/Mode settings"
+@next "Advanced settings"
+@prev "Pages"
+@toc "Pages"
+
+@{b}Mode settings@{ub} Page
+..................
+
+   On this page you select which audio mode to use.  You can select
+audio mode for both low-level programs (@{b}Music unit@{ub}) and other programs
+(@{b}Unit n@{ub}) that don't require low-level audio access such as the AUDIO:
+device (see @{"AHI-Handler" link "AHI-Handler"}), sample players etc.  You can also select the
+sample mixing (and recording) frequency to use and how many channels
+you wish use (1).  Furthermore, you can set three hardware properties
+of your sound hardware, namely the @{i}output volume@{ui}, @{i}monitor volume@{ui} and
+@{i}input gain@{ui}.  Finally, you can select which input and output connectors
+you wish to use.
+
+   The @{b}Music unit@{ub} is the defaults for low-level programs.  Such
+programs often have an audio mode requester that lets you chose an audio
+mode.  If you chose @{b}Default audio mode@{ub} from this requester, these
+settings will be used.  Note that the number of channels is not
+selectable here, it's up to the application program to decide how many
+channels to use.
+
+   ---------- Footnotes ----------
+
+   (1) The more channels you select, the more sounds can you play at
+the same time.  However, due to the nature of sound mixing, the volume
+will decrease as well.  If you try to play more sounds at the same time
+than there are channels, the least important sounds will be muted until
+the other sounds have finished playing.
+
+
+@endnode
+
+@node "Advanced settings" "ahi.guide/Advanced settings"
+@prev "Mode settings"
+@toc "Pages"
+
+@{b}Advanced settings@{ub} Page
+......................
+
+   This page contains some options that should not be used if you don't
+understand them.
+
+@{b}Debug level@{ub}
+     Sets the debug level for AHI.  If not @{b}None@{ub}, AHI will print debug
+     information to the serial port.
+
+@{b}Echo@{ub}
+     On slow processors (like anything below a MC68040) echo can take
+     so much CPU power that it becomes unusable, and can therefore be
+     disabled.  As an alternative, echo can be done @{b}Fast@{ub}, which means
+     that the parameters will be twisted in order to gain speed.  The
+     result may not be what the composer or programmer wanted, but at
+     least it's echo.
+
+@{b}Surround in "Fast" modes@{ub}
+     In modes that use multiplication tables (the so-called "fast"
+     modes) all surround sounds have to be mixing without using tables.
+     In order to make mixing as fast as possible, surround sounds can
+     be forced to ordinary ones by disabling them.
+
+@{b}Master volume@{ub}
+     Normally, the "Master volume" feature of AHI can make the output
+     heavily distorted if set too high.  Turning "clipping" on can
+     reduce the distortion, but will--in the current
+     implementation--use 128 kB of extra memory.  Note that the
+     so-called "HiFi" modes are not affected by this switch (see
+     @{"The Mode Descriptors" link "The Mode Descriptors"}).
+
+@{b}CPU usage limit@{ub}
+     Some hardware drivers (but not all) can be told not to use more
+     that a given percentage of the available CPU time in order to
+     prevent lockups.  If your mouse pointer freezes when playing
+     music, reduce the limit slightly.  If on the other hand the sound
+     becomes cut and distorted, you can try to increase the limit--but
+     remember that you risk locking up the computer!
+
+
+@endnode
+
+@node "AHI-Handler" "ahi.guide/AHI-Handler"
+@next "System Files"
+@prev "AHI"
+@toc "System description"
+
+AHI-Handler
+===========
+
+   The @{b}AHI-Handler@{ub} is an I/O mechanism that is used to play and record
+sounds.  The @{b}AHI-Handler@{ub} is normally mounted as @{b}AUDIO:@{ub} at startup time,
+or later by double-clicking on its icon or by giving the following
+command in a Shell window:  @{b}mount AUDIO:  <RET>@{ub}.
+
+   The DOSDriver entry is:
+
+     Handler         = L:AHI-Handler
+     Stacksize       = 4096
+     Priority        = 5
+     GlobVec         = -1
+
+   When the device is mounted, you can read from the device to record
+and write to it to play.  Options can be given like this:
+
+     "AUDIO:PRIORITY=1 VOLUME=50"
+
+   All slashes (@{b}/@{ub}) in the name will be translated to spaces.  Thus, if
+you use slashes instead of spaces, you don't have to use quotes around
+the name:
+
+     AUDIO:PRIORITY/1/VOLUME/50
+
+   The full template for reading is:
+
+     B=BITS/K/N,C=CHANNELS/K/N,F=FREQUENCY/K/N,T=TYPE/K,L=LENGTH/K/N,
+     S=SECONDS/K/N,BUF=BUFFER/K/N,UNIT/K/N
+
+   The full template for writing is:
+
+     B=BITS/K/N,C=CHANNELS/K/N,F=FREQUENCY/K/N,T=TYPE/K,V=VOLUME/K/N,
+     P=POSITION/K/N,PRI=PRIORITY/K/N,L=LENGTH/K/N,S=SECONDS/K/N,
+     BUF=BUFFER/K/N,UNIT/K/N
+
+@{b}   BITS@{ub} can be one of 8, 16 or 32.  @{b}CHANNELS@{ub} can be either 1 for mono
+or 2 for stereo.  The @{b}FREQUENCY@{ub} is in Hertz, @{b}TYPE@{ub} is one of @{b}SIGNED@{ub},
+@{b}AIFF@{ub} or @{b}AIFC@{ub}.  @{b}VOLUME@{ub} ranges from 0 (silence) to 100 (full volume), and
+@{b}POSITION@{ub} ranges from -100 (far left) via 0 (center) to 100 (far right).
+The @{b}PRIORITY@{ub} can be from -128 to 127 (unstoppable).  @{b}LENGTH@{ub} is how
+many bytes you wish to read or write, and @{b}SECONDS@{ub} is the same, but in
+seconds instead of bytes.  The @{b}BUFFER@{ub} size is specified in bytes.  Note
+that two buffers are always used, which means that the memory usage
+will be two times BUFFER.  @{b}UNIT@{ub} selects which @{b}ahi.device@{ub} unit to use.
+
+   The default options for reading are @{b}BITS=8@{ub} @{b}CHANNELS=1@{ub} @{b}FREQUENCY=8000@{ub}
+@{b}TYPE=SIGNED@{ub} @{b}LENGTH=very-very-much@{ub} @{b}BUFFER=32768@{ub} @{b}UNIT=0@{ub}.
+
+   The default options for reading are @{b}BITS=8@{ub} @{b}CHANNELS=1@{ub} @{b}FREQUENCY=8000@{ub}
+@{b}TYPE=<none>@{ub} @{b}VOLUME=100@{ub} @{b}POSITION=0@{ub} @{b}PRIORITY=0@{ub} @{b}LENGTH=very-very-much@{ub}
+@{b}BUFFER=32768 UNIT=0@{ub}.
+
+   If @{b}TYPE@{ub} is not specified, the default behaviour is to identify the
+data stream as @{i}IFF-AIFF@{ui} or @{i}IFF-AIFC@{ui}.  If so, the default values of
+@{b}BITS@{ub}, @{b}CHANNELS@{ub}, @{b}FREQUENCY@{ub} and @{b}LENGTH@{ub} will taken from the file.  You can
+still override them if you wish.  If the stream could not be
+identified, the data format is assumed to be @{b}SIGNED@{ub}.
+
+   Both when reading and writing the sample rate will be converted on
+the fly to what the underlying hardware is configured to.  Normally
+this is not a big problem when writing, but the quality when reading
+leaves quite a lot to wish for, since no low-pass filters are used.
+
+   Example 1:
+
+     copy Louise.AIFF AUDIO:
+
+   plays the file @{b}Louise.AIFF@{ub}.
+
+   Example 2:
+
+     copy AUDIO:SECONDS/10/TYPE/AIFC/B/16/F/44100/C/2 sample.AIFC
+
+   records 10 seconds of audio and stores it in the file @{b}sample.AIFC@{ub} as
+uncompressed @{i}IFF-AIFC@{ui}, 16 bit stereo at 44.1 kHz.
+
+
+@endnode
+
+@node "System Files" "ahi.guide/System Files"
+@prev "AHI-Handler"
+@toc "System description"
+
+System Files
+============
+
+   AHI uses a set of hardware drivers for each sound card.  This means
+that it's easy to add support for new sound cards as they appear.  At
+the time of writing, the following sound cards are supported:
+
+   * Aura (sampling only)
+
+   * Clarity (sampling only)
+
+   * Concierto
+
+   * Delfina DSP and Delfina Lite
+
+   * DraCo Motion
+
+   * Maestro Pro
+
+   * Melody MPEG
+
+   * Paula (the built-in audio)
+
+   * Prelude
+
+   * Toccata
+
+   * Wavetools
+
+
+ @{" The Drivers                " link "The Drivers"}  
+ @{" The Mode Descriptors       " link "The Mode Descriptors"}
+
+
+@endnode
+
+@node "The Drivers" "ahi.guide/The Drivers"
+@next "The Mode Descriptors"
+@prev "System Files"
+@toc "System Files"
+
+The Drivers
+-----------
+
+   The hardware drivers themself are located in the @{b}DEVS:AHI@{ub} drawer,
+and are named as @{b}<name>.audio@{ub}.  They are actually libraries, in spite
+of being located under the @{b}DEVS:@{ub} assign, and will be flushed out from
+memory when not in use and the system needs more RAM.  Many of the
+drivers require additional files; see below.  These extra files are not
+delivered with AHI.
+
+@{b}concierto.audio@{ub}
+     Requires @{b}concierto.library@{ub}.
+
+@{b}delfina.audio@{ub}
+     Requires @{b}delfina.library@{ub} version 4 or greater (1).
+
+@{b}maestropro.audio@{ub}
+     Requires @{b}maestix.library@{ub} version 40.10 or greater (2).  For more
+     information about this driver as well as the most recent version of
+     @{b}maestix.library@{ub}, please visit the author's WWW page (3).
+
+@{b}melody.audio@{ub}
+     Requires @{b}melodympeg.device@{ub} version 1.40 or greater (4).
+
+@{b}paula.audio@{ub}
+     On startup, the file @{b}ENV:CyberSound/SoundDrivers/14Bit_Calibration@{ub}
+     is read and used for the 14 bit DAC calibration.
+
+     The 14 bit modes cannot be used for recording, but the 8 bit modes
+     supports both generic parallel port samplers as well as both the
+     Aura and Clarity samplers.
+
+     The environment variable @{b}AHIpaulaFilterFreq@{ub} is checked every time
+     playback starts, and should be set to a frequency in Hertz.  If
+     the mixing frequency is higher than this value, the internal
+     low-pass filter will be turned off.  If it is lower, the filter
+     will be activated.  The default is 0 Hz, which means that the
+     filter will always be turned off.  Example:
+
+          SetEnv AHIpaulaFilterFreq 16000
+          Copy ENV:AHIpaulaFilterFreq ENVARC:
+
+     The variable @{b}AHIpaulaSampleLimit@{ub} is also checked.  This variable
+     controls how the driver should handle mixing frequencies greater
+     than 28 kHz, which is the limit of the hardware when using 15 kHz
+     screen modes (PAL, NTSC, Euro36).  If the current screen mode is a
+     VGA (31 kHz) mode, the driver allows frequencies up to 48 kHz.
+     Normally, the driver checks the current screen mode, and decides
+     if the higher mixing frequencies should be available or not.  By
+     setting this variable, you can control that decision.  If set to
+     @{b}0@{ub}, the frequency will always be limited to 28 kHz and if set to @{b}1@{ub},
+     there will never be any limit.  Example:
+
+          SetEnv AHIpaulaSampleLimit 1
+          Copy ENV:AHIpaulaSampleLimit ENVARC:
+
+     This will disable any screen mode checking, and will always allow
+     up to 48 kHz in the mode requesters.
+
+          Delete ENV:AHIpaulaSampleLimit
+          Delete ENVARC:AHIpaulaSampleLimit
+
+     This will turn on the screen mode checking again.
+
+     Please note that this 31 kHz screen mode is not neccessary the
+     screen mode you're seeing on your monitor.  If you're using a
+     graphic card, you must force the Amiga video signal to 31 kHz.
+     CyberGraphX users might want to try this command (see
+     @{"AddAudioModes" link "AddAudioModes"} for more information):
+
+          AddAudioModes DBLSCAN
+
+     Picasso 96 users just need to set the @{b}Picasso96/AmigaVideo@{ub} variable
+     to @{b}31kHz@{ub}:
+
+          SetEnv Picasso96/AmigaVideo 31kHz
+
+     Because of incorrect hardware documentation, there is great
+     confusion about which hardware channels are sent to the left
+     speaker, and which are sent to the right.  @{b}paula.audio@{ub} uses the
+     correct order (right, left, left, right) but many other programs
+     don't.  The @{b}AHIpaulaSwapChannels@{ub} variable was added to let the
+     user decide if the correct or incorrect behaviour should be used.
+     In not present or set to @{b}0@{ub}, the correct behaviour is used.  If set
+     to @{b}1@{ub}, the left and right channels will be swapped.
+
+     By setting the @{b}AHIpaulaFakeMixFreq@{ub} variable to @{b}1@{ub}, you can make
+     @{b}paula.audio@{ub} not report the actual mixing frequency used, but rather
+     exactly the frequency that the program asked for. The default, @{b}0@{ub},
+     will report the nearest possible mixing frequency that the Paula
+     sound chip can use.
+
+     Why would anyone want this, you may ask. Well, by setting the
+     variable to @{b}1@{ub}, you will make @{b}paula.audio@{ub} behave exactly like
+     @{b}filesave.audio@{ub}, which can be important if you are making music that
+     you will later render and put on a CD, for example. Be warned,
+     however, that setting this variable to @{b}1@{ub} can make the sound
+     produced sound a little false (but not when rendered, of course)!
+
+     Finally, the variable @{b}AHIpaulaBufferLength@{ub} controls the minimum
+     playback buffer size to use.  Because of the limited @{i}Chip RAM@{ui}
+     bandwidth, a @{i}MC68060@{ui} CPU might run into trouble when using the
+     default minimum buffer size (0).  By setting this variable to @{b}1024@{ub},
+     for example, you will reduce the number of interrupts caused and
+     increase the number of samples transferred each time to at least
+     1024 samples.  But take care!  Setting this variable too high will
+     cause long periods with multitasking disabled.
+
+@{b}toccata.audio@{ub}
+     Requires @{b}toccata.library@{ub} version 12 or greater (5).  This driver
+     also reads the environment variables @{b}AHItoccataNoTask@{ub} and
+     @{b}AHItoccataIrqSize@{ub}.  If @{b}AHItoccataNoTask@{ub} is set to @{b}1@{ub}, all mixing
+     will be done in a @{i}Software Interrupt@{ui} which means the sound output
+     will not suffer when multitasking is turned off.  The back side is
+     that it requires a faster CPU.  Much faster.  Only use this option
+     as a last resort.  Example:
+
+          SetEnv AHItoccataNoTask 1
+          Copy ENV:AHItoccataNoTask ENVARC:
+
+@{b}     AHItoccataIrqSize@{ub} specifies the number of bytes transferred to the
+     card each interrupt and defaults to @{b}512@{ub}.  It must be one of @{b}32@{ub},
+     @{b}64@{ub}, @{b}128@{ub}, @{b}256@{ub} or @{b}512@{ub}.  If you encounter problems with serial port
+     hardware, you might want to set this variable to a lower value
+     than the default.
+
+     Please note that this driver is used for both the DraCo Motion and
+     the Toccata.
+
+@{b}wavetools.audio@{ub}
+     Requires @{b}dad_audio.device@{ub}.
+
+   ---------- Footnotes ----------
+
+   (1) The latest version of the Delfina software can be found at
+Petsoff Limited Partnership's WWW page:  @{b}http://www.sci.fi/~petsoff@{ub}.
+
+   (2) @{b}maestix.library@{ub} is available from AmiNet, for example
+@{b}ftp://ftp.germany.aminet.org/pub/aminet/util/libs/Maestix.lha@{ub}.
+
+   (3) Richard Körber's WWW page:
+@{b}http://www.is-koeln.de/einwohner/shred@{ub}.
+
+   (4) @{b}melodympeg.device@{ub} and the latest version of this driver can be
+found at the Kato Development Group's WWW page:
+@{b}http://home.pages.de/~kato@{ub}.
+
+   (5) @{b}toccata.library@{ub} is available from AmiNet, for example
+@{b}ftp://ftp.germany.aminet.org/pub/aminet/util/libs/toclib12.lha@{ub}.
+
+
+@endnode
+
+@node "The Mode Descriptors" "ahi.guide/The Mode Descriptors"
+@prev "The Drivers"
+@toc "System Files"
+
+The Mode Descriptors
+--------------------
+
+   The files in @{b}DEVS:AudioModes@{ub} describes the available audio modes
+that you can chose from in the audio mode requester.  All files located
+in this drawer will be scanned the first time AHI is used, and added to
+the internal mode database.
+
+   The following modes are available for most drivers:
+
+@{b}Mono@{ub}
+     Mono output, all sounds will be centered, and no surround sound is
+     possible.
+
+@{b}Stereo@{ub}
+     Stereo output, but all sounds are either forces to the extreme
+     left or extreme right--centered sounds are not possible, for
+     example.  This mode will probably use slightly more CPU power than
+     the "mono" mode.  Since all sounds are forced to one of the
+     extreme positions, stereo sounds will play with either the left or
+     the right part muted.
+
+@{b}Stereo++@{ub}
+     Stereo output with free positioning of all sounds--an instrument
+     can be placed anywhere between the two speakers, for example.
+     Unless the program only uses the extremes when positioning a
+     sound, this mode will eat more CPU cycles than the "stereo" mode.
+
+@{b}Fast mono@{ub}
+@{b}Fast stereo@{ub}
+@{b}Fast stereo++@{ub}
+     "Fast" modes take some shortcuts in order to reduce the CPU usage.
+     For 8 bit samples, multiplication tables will be used, which
+     speeds up mixing by magnitudes and still gives the same quality
+     with the exception of volume levels--instead of 256 levels only 32
+     are available.  The disadvantage of multiplication tables is that
+     they require a fair amount of free RAM.  For 16 bit samples, the
+     shortcuts are a bit more crude:  the volume of each sound will be
+     rounded to a power of 2 before it's played.  This means that a 16
+     bit sound will only be played at volume levels of 100%, 50%, 25%,
+     12.5% etc.  If surround sounds are played, the normal (not "fast")
+     mixing routines will be used.  You can use the preferences program
+     (see @{"Advanced settings" link "Advanced settings"}) to disable surround sounds for "fast"
+     modes.
+
+     "Fast" modes are useful if you wish to use as little CPU power as
+     possible, but don't mind spending some memory to reach that goal.
+     They are also very useful when playing 16 bit audio streams--from
+     a sample or MPEG player, for example--since that usually doesn't
+     involve volume scaling and frequency recalculation. However, if
+     used for playing streams, make sure the mixing frequency is the
+     same as the stream frequency!
+
+@{b}HiFi mono@{ub}
+@{b}HiFi stereo@{ub}
+@{b}HiFi stereo++@{ub}
+     "HiFi" modes use much better mixing algorithms than the other
+     modes, using 32 bits internally and linear interpolation.  They
+     are also @{i}much@{ui} slower than the other modes.  "HiFi" modes turn on
+     master volume with clipping automatically (see @{"Advanced settings" link "Advanced settings"}).
+
+     "HiFi" modes are useful when you're playing music--@{i}MIDI@{ui} songs or
+     @{i}modules@{ui}, for example--and want the best possible quality AHI has
+     to offer.
+
+
+@endnode
+
+@node "The Author" "ahi.guide/The Author"
+@next "Acknowledgments"
+@prev "System description"
+@toc "Main"
+
+The Author
+**********
+
+   The author can be reached at the following addresses:
+
+Electronic mail
+     <lcs@lysator.liu.se>
+
+Standard mail
+     Martin Blom
+     Alsättersgatan 15A:24
+     SE-584 35 Linköping
+     Sweden
+
+World-Wide Web
+@{b}     http://www.lysator.liu.se/~lcs@{ub}
+
+
+ @{" The Man                    " link "The Man"}  
+ @{" The Myth                   " link "The Myth"}  
+ @{" The Concept                " link "The Concept"}
+
+
+@endnode
+
+@node "The Man" "ahi.guide/The Man"
+@next "The Myth"
+@prev "The Author"
+@toc "The Author"
+
+The Man
+=======
+
+   Martin Blom was born 1974 in a town in Sweden called Jönköping.  He
+had a happy childhood, lots of good friends, and a great family.  He
+did his homework and went to church every Sunday.
+
+   But then, one cold, dark Christmas Eve in the year of our Lord 1986,
+everything went wrong.  This was the day when @{i}it@{ui} entered his life.  At
+once, there were fights among the brothers.  They all wanted to use @{i}it@{ui}.
+Martin started to avoid playing with kids that didn't share his
+passion for @{i}it@{ui}.  The school work suffered.  Other interests suffered.
+@{i}It@{ui} was the Commodore 64 home computer, and it would forever change his
+life.
+
+   Today, more than ten years after the tragedy, things are worse than
+ever.  He is studying @{i}Computer Science and Engineering@{ui} at @{i}Linköping
+Institute of Technology@{ui}, surrounded every day by other computer nerds.
+
+   Martin has spent loads of money on computers over the years:  Amiga
+500, Amiga 4000/040, Commodore 128D, Commodore 64 (in order of
+appearance), modem, monitors, disks, mice etc.  Interesting enough, no
+sound card.  He did, however, build a sound card of his own for the
+Commodore 64, and he likes to mention that now and then (you see, this
+was one of the few hardware projects that actually worked!).  4
+channels, 8 bit samples.  He even wrote a module player for the good
+old 64.  And it had quadrascopes.
+
+
+@endnode
+
+@node "The Myth" "ahi.guide/The Myth"
+@next "The Concept"
+@prev "The Man"
+@toc "The Author"
+
+The Myth
+========
+
+   Some people actually seem to believe that Martin is a good
+programmer.  They couldn't be more wrong.  He is lazy, has no patience,
+he is a slow thinker and he doesn't like anything he @{i}has@{ui} to do.
+
+   Martin used to say
+
+   *  If you can't write applications, write games.
+
+   *  If you can't write games, write demos.
+
+   *  If you can't write demos, write utilities.
+
+   *  If you can't write utilities, write BBS intros and doors.
+
+   *  If you can't do that either, get a modem and start trading.
+
+   And guess what?  He tried demos.  He tried utilities.  He tried
+intros.  He wrote a door for /X.  And he traded warez.
+
+
+@endnode
+
+@node "The Concept" "ahi.guide/The Concept"
+@prev "The Myth"
+@toc "The Author"
+
+The Concept
+===========
+
+   What do you do if you don't have the patience to write applications,
+if you only write moderate demos, are tired of utilities, hate BBS
+doors, are totally fed up with playing games and have decided to get
+legal and stop pirating software?  Simple.  Try a new concept!
+
+   Take a deep breath.  Close your eyes.  Think of one thing your
+computer lacks.  Think of one of the things that makes your favorite
+toy feel outdated.  Think of something that nobody has (successfully)
+tried before.  Then write the software, and release it as Freeware.
+
+   In Martins case, that something was hardware independent audio.
+
+   Come on, admit it!  It's brilliant.  It doesn't matter if you are a
+good programmer.  It doesn't matter if it takes 3 years to get to a
+half-finished product.  It doesn't matter if you give it the most
+unimaginative name in the world--you can even use a TLA (1).  Nobody is
+going to say your software sucks, because nobody can say he has done
+better himself.  Nobody is going to complain if you're slow on
+releasing bug fixes and updates, because the software is free.  And
+nobody is going to be angry with you if you stop developing the
+software--because it sucked in the first place, remember?
+
+   This concept won't make you rich, but are rich people really happier?
+
+   ---------- Footnotes ----------
+
+   (1) Three Letter Acronym
+
+
+@endnode
+
+@node "Acknowledgments" "ahi.guide/Acknowledgments"
+@next "Concept Index"
+@prev "The Author"
+@toc "Main"
+
+Acknowledgments
+***************
+
+   The author wish to give special thanks to the following persons (in
+alphabetical order):
+
+Amiga Translators' Organization
+     For the catalog translations.
+
+Daniel Arthursson and Johan Nyblom
+     For making it possible to write the first driver for a sound card,
+     the @{i}Wavetools@{ui} card.  I'm sure AHI would not have been accepted as
+     quick as it was without this driver.
+
+Christian Buchner
+     For the calibrated 14 bit routines for Paula.
+
+MacroSystem Computer GmbH
+     For lending me a Toccata card.
+
+Steve Krueger and SAS Institute, Inc.
+     For the compiler and all the updates.
+
+Johan Otterström
+     For all the help with the Toccata driver.
+
+Jyrki Petsalo and Teemu Suikki
+     For the Delfina driver, and for supporting AHI in the early days.
+     And of course, for the sound card!
+
+Pauli Porkka
+     For active support and promotion of AHI from the beginning.
+
+All the rest
+     Many, many other have helped me, sent suggestions etc.  I owe you
+     a lot.
+
+   And of course, the actual catalog translators: Samuel Aguilera,
+Andrija Antonijevic Rúben Alvim, Stéphane Barbaray, Frederico Borges,
+Piergiorgio Ghezzo, Roger Hågensen, Bernardo Innocenti, Ljubomir
+Jankovic, Petteri Kallio, Sini¹a Loliæ, Eivind Olsen, Marcin Orîowski,
+Thomas Petersen, Pauli Porkka, Vit Sindlar, Martin Sprenger, Sönke
+Tesch, Vörös Viktor, Michel Vissers, Ondrej Zima, me, myself and I....
+
+
+ @{" Contributors               " link "Contributors"}  Who has contributed to the AHI project?
+
+
+@endnode
+
+@node "Contributors" "ahi.guide/Contributors"
+@prev "Acknowledgments"
+@toc "Acknowledgments"
+
+Contributors
+============
+
+   The following people has contributed to the AHI project with code:
+
+Stéphane Barbaray <opty@club-internet.fr>
+     The MUI version of the preferences program.
+
+Olaf Barthel <olsen@sourcery.han.de>
+     The Concierto driver.
+
+Thorsten Hansen <hansen_t@informatik.fh-hamburg.de>
+     The Melody MPEG driver.
+
+Richard Körber <shred@chessy.aworld.de>
+     The Maestro Pro driver.
+
+Johan Nyblom <nyblom@ludd.luth.se>
+     The latest Wavetools driver.
+
+Pauli Porkka <pporkka@iki.fi>
+     The first version of the Toccata driver.
+
+Rüdiger Sopp
+     The first version of the preferences program.  Too bad things
+     didn't work out as planned.
+
+Teemu Suikki <tsuikki@lut.fi>
+     The Delfina driver.
+
+Thomas Wenzel <wenzel@unixserv.rz.fh-hannover.de>
+     The Prelude driver.
+
+   Many thanks!
+
+
+@endnode
+
+@node "Concept Index" "ahi.guide/Concept Index"
+@prev "Acknowledgments"
+@toc "Main"
+
+Concept Index
+*************
+
+@index "Concept Index"
+
+
+
+ @{" 14 bit calibration                       " link "The Drivers"}   The Drivers
+ @{" 68060 CPU                                " link "The Drivers"}   The Drivers
+ @{" Acknowledgments                          " link "Acknowledgments"}   Acknowledgments
+ @{" AddAudioModes <1>                        " link "AddAudioModes"}   AddAudioModes
+ @{" AddAudioModes                            " link "The Drivers"}   The Drivers
+ @{" Advanced settings                        " link "Advanced settings"}   Advanced settings
+ @{" AHI, overview                            " link "Overview"}   Overview
+ @{" AHI, preferences program                 " link "AHI"}   AHI
+ @{" AHI-Handler                              " link "AHI-Handler"}   AHI-Handler
+ @{" AHIpaulaBufferLength variable            " link "The Drivers"}   The Drivers
+ @{" AHIpaulaFakeMixFreq variable             " link "The Drivers"}   The Drivers
+ @{" AHIpaulaFilterFreq variable              " link "The Drivers"}   The Drivers
+ @{" AHIpaulaSampleLimit variable             " link "The Drivers"}   The Drivers
+ @{" AHIpaulaSwapChannels variable            " link "The Drivers"}   The Drivers
+ @{" AHItoccataIrqSize variable               " link "The Drivers"}   The Drivers
+ @{" AHItoccataNoTask variable                " link "The Drivers"}   The Drivers
+ @{" AIFC                                     " link "AHI-Handler"}   AHI-Handler
+ @{" AIFF                                     " link "AHI-Handler"}   AHI-Handler
+ @{" AmigaVideo                               " link "The Drivers"}   The Drivers
+ @{" Audio mode database                      " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Audio mode settings                      " link "Mode settings"}   Mode settings
+ @{" Audio modes, overview                    " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" AUDIO:                                   " link "AHI-Handler"}   AHI-Handler
+ @{" Aura                                     " link "System Files"}   System Files
+ @{" Author of AHI                            " link "The Author"}   The Author
+ @{" Calibration, 14 bit                      " link "The Drivers"}   The Drivers
+ @{" Clarity                                  " link "System Files"}   System Files
+ @{" Clipping, master volume                  " link "Advanced settings"}   Advanced settings
+ @{" Concierto                                " link "System Files"}   System Files
+ @{" Contributors                             " link "Contributors"}   Contributors
+ @{" Copyright                                " link "Distribution"}   Distribution
+ @{" CPU usage limit                          " link "Advanced settings"}   Advanced settings
+ @{" CyberGraphX                              " link "The Drivers"}   The Drivers
+ @{" CyberSound                               " link "The Drivers"}   The Drivers
+ @{" DAC calibration                          " link "The Drivers"}   The Drivers
+ @{" Database, audio modes                    " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Debug level                              " link "Advanced settings"}   Advanced settings
+ @{" Delfina DSP                              " link "System Files"}   System Files
+ @{" Delfina Lite                             " link "System Files"}   System Files
+ @{" Disclaimer                               " link "Distribution"}   Distribution
+ @{" Distortion, while recording              " link "AHI-Handler"}   AHI-Handler
+ @{" Distribution                             " link "Distribution"}   Distribution
+ @{" Donations                                " link "Donations"}   Donations
+ @{" DraCo Motion                             " link "System Files"}   System Files
+ @{" Drivers                                  " link "System Files"}   System Files
+ @{" Echo, enable-disable-fast                " link "Advanced settings"}   Advanced settings
+ @{" Fame                                     " link "The Concept"}   The Concept
+ @{" Fast Mono (audio mode)                   " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Fast Stereo (audio mode)                 " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Fast Stereo++ (audio mode)               " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" HiFi Mono (audio mode)                   " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" HiFi Stereo (audio mode)                 " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" HiFi Stereo++ (audio mode)               " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" IFF-AIFC                                 " link "AHI-Handler"}   AHI-Handler
+ @{" IFF-AIFF                                 " link "AHI-Handler"}   AHI-Handler
+ @{" Interpolation, linear                    " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Jesus Christ                             " link "The Man"}   The Man
+ @{" Legal nonsense                           " link "Distribution"}   Distribution
+ @{" License                                  " link "Distribution"}   Distribution
+ @{" Linear interpolation                     " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Maestro Pro                              " link "System Files"}   System Files
+ @{" Master volume, clipping                  " link "Advanced settings"}   Advanced settings
+ @{" MC68060 CPU                              " link "The Drivers"}   The Drivers
+ @{" Melody MPEG                              " link "System Files"}   System Files
+ @{" Mode settings                            " link "Mode settings"}   Mode settings
+ @{" Modules on a C64                         " link "The Man"}   The Man
+ @{" Mono (audio mode)                        " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Multiplication tables                    " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Nerd, definition of                      " link "The Man"}   The Man
+ @{" Overview                                 " link "Overview"}   Overview
+ @{" Paula                                    " link "System Files"}   System Files
+ @{" Paula, custom chip                       " link "Overview"}   Overview
+ @{" Picasso96                                " link "The Drivers"}   The Drivers
+ @{" Preferences                              " link "AHI"}   AHI
+ @{" Preferences, advanced                    " link "Advanced settings"}   Advanced settings
+ @{" Preferences, audio mode                  " link "Mode settings"}   Mode settings
+ @{" Prelude                                  " link "System Files"}   System Files
+ @{" Recursion                                " link "Concept Index"}   Concept Index
+ @{" Settings                                 " link "AHI"}   AHI
+ @{" Settings, advanced                       " link "Advanced settings"}   Advanced settings
+ @{" Settings, audio mode                     " link "Mode settings"}   Mode settings
+ @{" Software license                         " link "Distribution"}   Distribution
+ @{" Sound card drivers                       " link "System Files"}   System Files
+ @{" Starvation                               " link "Donations"}   Donations
+ @{" Stereo (audio mode)                      " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Stereo++ (audio mode)                    " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" Surround sound, enable-disable           " link "Advanced settings"}   Advanced settings
+ @{" System description                       " link "System description"}   System description
+ @{" System Files                             " link "System Files"}   System Files
+ @{" Tables, multiplication                   " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" The Author                               " link "The Author"}   The Author
+ @{" The Concept                              " link "The Concept"}   The Concept
+ @{" The Drivers                              " link "The Drivers"}   The Drivers
+ @{" The Man                                  " link "The Man"}   The Man
+ @{" The Mode Descriptors                     " link "The Mode Descriptors"}   The Mode Descriptors
+ @{" The Myth                                 " link "The Myth"}   The Myth
+ @{" Toccata                                  " link "System Files"}   System Files
+ @{" VGA screen mode                          " link "The Drivers"}   The Drivers
+ @{" Wavetools                                " link "System Files"}   System Files
+
+@endnode
+

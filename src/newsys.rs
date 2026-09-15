@@ -1,35 +1,45 @@
+use anyhow::{Context, Result, bail};
+use std::fs;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use tracing::{debug, info, trace, warn};
+
+use crate::backend::Backend;
+use crate::emu_file::{Override, Patch};
 use crate::m3u::M3u;
-use crate::newsys::amstrad::AmstradSystem;
-use crate::newsys::atari_2600::Atari2600System;
-use crate::newsys::atari_st::AtariStSystem;
-use crate::newsys::atari_xl::AtariXlSystem;
-use crate::newsys::gba::GBASystem;
-use crate::newsys::images::ImageSystem;
-use crate::newsys::megadrive::MegadriveSystem;
-use crate::newsys::music::MusicSystem;
-use crate::newsys::neo_geo::NeoGeoSystem;
-pub use crate::newsys::neo_geo::holds_boot_list;
-use crate::newsys::playstation::PSXSystem;
-use crate::newsys::sinclair::SinclairSystem;
-use crate::newsys::snes::SNESSystem;
-use crate::newsys::tic80::Tic80System;
-use crate::newsys::utils::{has_extension, read_at, sort_disks};
-use crate::retro_emu::{Backend, RetroCoreThreaded};
+use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::workfile::WorkFile;
 use crate::{Args, libloader};
+
+use crate::utils::{get_ext, has_archive_filename, has_extension, read_at, sort_disks};
+use crate::utils::{is_archive, unpack_into};
+
 use amiga::AmigaSystem;
-use anyhow::{Context, Result, bail};
+use amstrad::AmstradSystem;
+use atari_2600::Atari2600System;
+use atari_st::AtariStSystem;
+use atari_xl::AtariXlSystem;
 use c64::C64System;
+use dos::DosSystem;
 use gameboy::GameboySystem;
+use gba::GBASystem;
+use images::ImageSystem;
+use megadrive::MegadriveSystem;
+use music::MusicSystem;
+use neo_geo::NeoGeoSystem;
+use pico8::Pico8System;
+use playstation::PSXSystem;
+use plus4::Plus4System;
+use sinclair::SinclairSystem;
+use snes::SNESSystem;
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use tracing::{debug, info, trace, warn};
-use utils::{is_archive, unpack_into};
+use tic80::Tic80System;
+use web::WebSystem;
+#[cfg(target_os = "linux")]
+use windows::WindowsSystem;
 
-pub(crate) mod utils;
-
+mod adf;
 mod amiga;
 mod amstrad;
 mod atari_2600;
@@ -37,16 +47,39 @@ mod atari_st;
 mod atari_xl;
 mod c64;
 mod disc;
+mod dms;
+mod dos;
 mod gameboy;
 mod gba;
 mod images;
 mod megadrive;
 mod music;
 mod neo_geo;
+mod pico8;
 mod playstation;
+mod plus4;
 mod sinclair;
 mod snes;
 mod tic80;
+mod web;
+// wine and gamescope are Linux-only, so everywhere else a `.exe` with a `PE`
+// image in it is something nothing here can run — and claiming it would take
+// the release away from the picture and music systems that can at least show
+// what it shipped beside the program.
+#[cfg(target_os = "linux")]
+mod windows;
+
+/// Meta key saying whether the screen demarc is drawing to is a widescreen one.
+/// Set by the frontend from the window, since nothing further down knows the
+/// shape of the screen — see `crate::wine::default_dialog_res`, which is what
+/// asks.
+pub const META_WIDESCREEN: &str = "widescreen";
+
+/// Meta key holding the refresh rate, in whole Hz, of the screen demarc is
+/// drawing to. Set by the frontend from the monitor, for the same reason as
+/// [`META_WIDESCREEN`] — see `crate::newsys::windows`, which turns it into the
+/// rate a gamescope session is paced at.
+pub const META_REFRESH: &str = "screen_refresh";
 
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
@@ -136,11 +169,167 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
     Ok(())
 }
 
-pub fn get_ext(path: &Path) -> String {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase()
+/// Unpack a downloaded release, producing the [`WorkFile`] that
+/// [`NewSys::load_prepared`] takes over from.
+///
+/// Split out from the rest because it is the one expensive step that touches no
+/// shared state at all: it reads `path` and writes into a temp dir of its own,
+/// so the frontend runs it on the I/O pool while the release currently on
+/// screen keeps playing (see `Emulator::load_async`). On the main thread it
+/// cost a visible stutter — a double-packed release is unpacked twice, and
+/// that landed on a single frame. What is left for the main thread (detection, conversion,
+/// building the backend) either needs the system table or is the core itself.
+///
+/// Archives are unpacked one level deep and then once more, because scene
+/// releases are routinely packed inside another archive. An m3u is not
+/// unpacked at all; its tags become meta and the directory it names is what
+/// gets loaded.
+pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<WorkFile> {
+    debug!("Trying to load: {path:?}");
+    let mut wf = WorkFile::new_with_meta(path, meta.clone());
+    if path.is_file() {
+        if is_archive(path)? {
+            wf = WorkFile::new_dir_with_meta(meta.clone())?;
+            debug!("Unpacking {path:?} to {wf:?}");
+            unpack_into(path, &wf)?;
+            walk_dir(&wf, 4, |f, _, _| {
+                if has_archive_filename(f)? {
+                    debug!("File was double packed");
+                    unpack_into(f, &wf)?;
+                }
+                Ok(())
+            })?;
+        } else if has_extension(path, "m3u") {
+            // TODO: We should not collect m3us
+            let m3u = M3u::from_file(path)?;
+            wf.path = path.parent().unwrap_or(path).to_owned();
+            for (key, value) in m3u.tags {
+                wf.set_meta(&key, value);
+            }
+        }
+    }
+    Ok(wf)
+}
+
+/// Meta key holding the release directory a `boot_file` was picked out of, set
+/// by [`apply_override`] when it narrows the work file's path to one program.
+/// A system that copies a release into a drive of its own reads it to know that
+/// what it is holding is one file out of a release rather than a loose program.
+pub const RELEASE_DIR: &str = "release_dir";
+
+/// Apply what `overrides.toml` says about this release, once it is unpacked and
+/// before any system looks at it — see [`crate::overrides`].
+///
+/// The parts are independent and any of them may be absent: `fast` and meta go
+/// on the [`WorkFile`], patches are written into the release, and `boot_file`
+/// points the path at the one program to start so that the systems' own file
+/// picking is skipped.
+///
+/// `fast` goes on first, because it is a whole Amiga configuration written as
+/// one word (see [`amiga::apply_fast`]) and an entry that also names an option
+/// of its own means that one to stand.
+fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
+    if over.fast {
+        debug!("Override asks for the fast Amiga configuration");
+        amiga::apply_fast(file);
+    }
+    for (key, val) in &over.meta {
+        debug!("Override sets {key}={val}");
+        file.set_meta(key, *val);
+    }
+    if !over.patches.is_empty() {
+        apply_patches(file, &over.patches)?;
+    }
+    if let Some(boot) = over.boot_file {
+        match find_named(&release_dir(file), boot)? {
+            Some(path) => {
+                info!("Override starts {path:?}");
+                // A system tells "one loose program the user pointed at" from
+                // "a whole release" by whether the work file is a file or a
+                // directory, and copies the data files along only in the
+                // second case (`copy_all` in `newsys::amiga`). Narrowing the
+                // path to the named program throws that away, so leave behind
+                // the release it came out of.
+                let dir = release_dir(file).to_string_lossy().into_owned();
+                file.set_meta(RELEASE_DIR, dir);
+                file.path = path;
+            }
+            // The archive it named is not the one that was downloaded, most
+            // likely. Falling back to the systems' own pick still runs
+            // something, which beats refusing to load the release at all.
+            None => warn!("Override names {boot:?}, which is not in {:?}", file.path),
+        }
+    }
+    Ok(())
+}
+
+/// The directory holding the release, whether the work file points at the
+/// directory itself or at one file inside it.
+fn release_dir(file: &WorkFile) -> PathBuf {
+    if file.path.is_dir() {
+        file.path.clone()
+    } else {
+        file.path.parent().unwrap_or(Path::new(".")).to_owned()
+    }
+}
+
+/// Patch a release;
+/// Will add or modify files in the release directory
+/// Must call make_temp() to make sure that is OK.
+fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
+    file.make_temp()?;
+    let dir = release_dir(file);
+    for patch in patches {
+        let data = patch.bytes()?;
+        let target = match find_named(&dir, patch.target)? {
+            Some(path) => path,
+            None => dir.join(patch.target),
+        };
+        write_patch(&target, patch.offset, &data)
+            .with_context(|| format!("Could not patch {target:?}"))?;
+        info!(
+            "Patched {target:?} with {} bytes{}",
+            data.len(),
+            if patch.info.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", patch.info)
+            }
+        );
+    }
+    Ok(())
+}
+
+/// Write `data` into `target`: replacing it entirely when there is no offset,
+/// or overwriting the bytes at `offset` when there is. A file too short to
+/// reach the offset is extended with zeros.
+fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> {
+    let Some(offset) = offset else {
+        return Ok(fs::write(target, data)?);
+    };
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(target)?;
+    let offset = offset as u64;
+    if out.metadata()?.len() < offset {
+        out.set_len(offset)?;
+    }
+    out.seek(SeekFrom::Start(offset))?;
+    out.write_all(data)?;
+    Ok(())
+}
+
+fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
+    debug!("Finding {name} in {dir:?}");
+    walk_dir_find(dir, 0, |path, _ext, _header| {
+        let found = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .is_some_and(|f| f.eq_ignore_ascii_case(name));
+        Ok(found.then(|| path.to_owned()))
+    })
 }
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for
@@ -188,7 +377,6 @@ pub fn get_ext(path: &Path) -> String {
 /// held by a Bevy resource. All implementors are plain data, so this costs
 /// nothing, and it keeps this module free of any bevy dependency.
 pub trait System: Send + Sync {
-    // NOTE: Is the useful?
     fn extensions(&self) -> &'static [&'static str] {
         &[]
     }
@@ -197,6 +385,7 @@ pub trait System: Send + Sync {
         self.extensions().contains(&get_ext(path).as_str())
     }
 
+    // Systems defaulting to gamepad control should return true here
     fn is_console(&self) -> bool {
         false
     }
@@ -205,6 +394,7 @@ pub trait System: Send + Sync {
     fn core_name(&self) -> &'static str {
         ""
     }
+
     // Name of the system
     fn name(&self) -> &'static str;
 
@@ -216,26 +406,14 @@ pub trait System: Send + Sync {
         self.handles_ext(path)
     }
 
-    fn get_first_file(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                if let Some(found) = self.get_first_file(&path)? {
-                    return Ok(Some(found));
-                }
-                continue;
-            } else if self.can_load(&path) {
-                return Ok(Some(path.to_owned()));
-            }
-        }
-        Ok(None)
-    }
-
     // Try to load a program with this system. WorkFile may change. On successful
     // result, WorkFile can be used with create() to actually start emulation.
+    // On non-succesful, WorkFile is assumed to be unchanged.
+    //
+    // Default implementation returns first file it "can load".
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         if file.is_dir() {
-            if let Some(path) = self.get_first_file(file)? {
+            if let Some(path) = get_first_file(self, file)? {
                 file.path = path;
                 return Ok(true);
             }
@@ -245,6 +423,8 @@ pub trait System: Send + Sync {
         Ok(false)
     }
 
+    // Create a Backend from a WorkFile. WorkFile must have been succefully passed to load()
+    // earlier.
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         Ok(Box::new(RetroCoreThreaded::new(
@@ -255,6 +435,15 @@ pub trait System: Send + Sync {
             false,
         )?))
     }
+}
+
+fn get_first_file(sys: &(impl System + ?Sized), dir: &Path) -> Result<Option<PathBuf>> {
+    walk_dir_find(dir, 0, |file, _ext, _header| {
+        if sys.can_load(file) {
+            return Ok(Some(file.to_owned()));
+        };
+        Ok(None)
+    })
 }
 
 #[derive(Default)]
@@ -271,10 +460,16 @@ pub struct LoadResult<'a> {
 impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
+            #[cfg(target_os = "linux")]
+            Box::new(WindowsSystem {}),
             Box::new(Tic80System {}),
+            Box::new(Pico8System {}),
             Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new()),
             Box::new(AtariXlSystem::new(args)),
+            // Before the C64, which would otherwise claim the same disks and
+            // programs; it stands aside unless --cbm-variant asked for it.
+            Box::new(Plus4System::new(args)),
             Box::new(C64System::new(args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
@@ -285,8 +480,10 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
+            Box::new(DosSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
+            Box::new(WebSystem {}),
         ]
     }
     pub fn new(args: &Args) -> Self {
@@ -307,30 +504,61 @@ impl NewSys {
         }
     }
 
-    pub fn load_file(&self, path: &Path, meta: &HashMap<String, String>) -> Result<LoadResult<'_>> {
-        debug!("Trying to load: {path:?}");
-        let mut wf = WorkFile::new_with_meta(path, meta.clone());
-        if path.is_file() {
-            if is_archive(path)? {
-                wf = WorkFile::new_dir_with_meta(meta.clone())?;
-                debug!("Unpacking {path:?} to {wf:?}");
-                unpack_into(path, &wf)?;
-                walk_dir(&wf, 4, |f, _, _| {
-                    if is_archive(f)? {
-                        debug!("File was double packed");
-                        unpack_into(f, &wf)?;
-                    }
-                    Ok(())
-                })?;
-            } else if has_extension(path, "m3u") {
-                // TODO: We should not collect m3us
-                let m3u = M3u::from_file(path)?;
-                wf.path = path.parent().unwrap_or(path).to_owned();
-                for (key, value) in m3u.tags {
-                    wf.set_meta(&key, value);
-                }
-            }
+    /// Change one of the run-wide meta values set up by [`NewSys::new`] — how
+    /// the settings dialog moves `latency`.
+    ///
+    /// Applied in [`load_prepared`](Self::load_prepared), so it takes hold on
+    /// the next release loaded, not on the one playing: a backend reads its
+    /// meta once, as it is built.
+    pub fn set_meta(&mut self, key: &str, value: String) {
+        self.meta.insert(key.into(), value);
+    }
+
+    pub fn meta_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.meta
+    }
+
+    /// Has one of them been set already? What `-x` said is in here too, so this
+    /// is how the frontend leaves a value someone typed alone.
+    pub fn has_meta(&self, key: &str) -> bool {
+        self.meta.contains_key(key)
+    }
+
+    /// Load a release, with `over` carrying whatever `overrides.toml` had to
+    /// say about it (see [`crate::overrides`]) and `None` when it had nothing.
+    ///
+    /// The two halves are also callable separately, and the frontend does that:
+    /// [`unpack_release`] runs on the I/O pool while the previous release is
+    /// still on screen, and only [`load_prepared`](Self::load_prepared) has to
+    /// happen on the main thread. So outside the tests nothing takes this
+    /// route any more; it stays as the one place the whole pipeline is written
+    /// out in order.
+    #[allow(dead_code)]
+    pub fn load_file(
+        &self,
+        path: &Path,
+        meta: &HashMap<String, String>,
+        over: Option<&Override>,
+    ) -> Result<LoadResult<'_>> {
+        self.load_prepared(unpack_release(path, meta)?, over)
+    }
+
+    /// Finish loading an already-[unpacked](unpack_release) release: apply the
+    /// override, fill in meta, find the system that claims it and build its
+    /// backend.
+    pub fn load_prepared(
+        &self,
+        mut wf: WorkFile,
+        over: Option<&Override>,
+    ) -> Result<LoadResult<'_>> {
+        // Now that the release is unpacked and its own meta is in place: an
+        // override may write files into it, name the one to start and set meta
+        // of its own, which beats what the release says about itself.
+        if let Some(over) = over {
+            apply_override(&mut wf, over)?;
         }
+
+        // Last, so that `-x` on the command line beats every other source.
         for (key, val) in &self.meta {
             debug!("Adding {key}={val}");
             wf.set_meta(key, val);
@@ -366,7 +594,7 @@ impl NewSys {
         for sys in &self.systems {
             trace!("Trying to load with {}", sys.name());
             if sys.load(&mut wf)? {
-                debug!("System {} can load {:?}", sys.name(), path);
+                debug!("System {} can load {:?}", sys.name(), wf.path);
                 // Whichever system claimed the release, a cue's MP3 audio tracks
                 // are unplayable to every core here — they read the compressed
                 // bytes straight through as PCM — so the sheet is rewritten with
@@ -390,8 +618,14 @@ impl NewSys {
                 wf.set_meta("system", sys.name());
 
                 debug!("Creating {:?} with meta {:?}", &wf.path, wf.get_all_meta());
+                let mut backend = sys.create(&wf)?;
+                if let Some(over) = over
+                    && !over.events.is_empty()
+                {
+                    backend.send_keys(&over.events);
+                }
                 return Ok(LoadResult {
-                    backend: sys.create(&wf)?,
+                    backend,
                     work_file: wf,
                     system: sys.as_ref(),
                 });
@@ -415,121 +649,5 @@ impl NewSys {
 }
 
 #[cfg(test)]
-mod tests {
-
-    use clap::Parser;
-    use tracing_subscriber::{EnvFilter, fmt};
-
-    use super::*;
-
-    fn init_tracing() {
-        let _ = fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .with_test_writer()
-            .try_init();
-    }
-
-    fn test_load(path: &Path, name: &str) -> WorkFile {
-        let args = Args::parse_from(["demarc"]);
-        let s = NewSys::new(&args);
-
-        let mut result = s.load_file(path, &HashMap::new()).unwrap();
-        println!("{:?}", result.work_file.get_all_meta());
-        assert_eq!(result.system.name(), name);
-        result.backend.run();
-        result.work_file
-    }
-
-    #[test]
-    fn test_c64() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let testdata = root.join("testdata").join("c64");
-
-        test_load(&testdata.join("quantum.prg"), "C64");
-        test_load(&testdata.join("DEMO060A.rar"), "C64");
-        test_load(&testdata.join("Maniacs of Noise Logo.t64.gz"), "C64");
-        test_load(&testdata.join("cd"), "C64");
-        assert!(!testdata.join("cd").join("demo.m3u").exists());
-        test_load(&testdata.join("cd/The_Violators-CD_s1.d64"), "C64");
-        test_load(&testdata.join("Skaaneland.zip"), "C64");
-    }
-
-    #[test]
-    fn test_amiga() {
-        init_tracing();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let testdata = root.join("testdata").join("amiga");
-        test_load(&testdata.join("desert"), "Amiga");
-        assert!(!testdata.join("desert").join("demo.m3u").exists());
-        test_load(&testdata.join("desert").join("disk1.adf"), "Amiga");
-        test_load(&testdata.join("desert.zip"), "Amiga");
-        test_load(&testdata.join("rebels.adf"), "Amiga");
-        test_load(&testdata.join("o2-intro"), "Amiga");
-
-        // A plain executable is booted from a generated startup-sequence on a
-        // stock A500, not through WHDLoad.
-        let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-        assert!(work_file.get_meta("puae_use_whdload", "") == "disabled");
-        assert!(work_file.get_meta("puae_model", "") == "A500");
-
-        // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
-        // needs an A1200.
-        let work_file = test_load(&testdata.join("nexus7"), "Amiga");
-        assert!(work_file.get_meta("puae_use_whdload", "") == "enabled");
-        assert!(work_file.get_meta("puae_model", "") == "A1200");
-    }
-    /// A bare music file has no system of its own, so it falls through every
-    /// other system to [`MusicSystem`] — both on its own and as the only
-    /// playable thing in a directory.
-    #[test]
-    fn test_music() {
-        let dir = std::env::temp_dir().join("newsys_music_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let song = dir.join("tune.mod");
-        crate::music_emu::write_test_mod(&song);
-
-        test_load(&song, "Music");
-        test_load(&dir, "Music");
-    }
-
-    /// ST pictures reach [`ImageSystem`] both by extension and, since they are
-    /// as often named after the release as `.pi1`, by content. A screenshot
-    /// next to one doesn't win over it.
-    #[test]
-    fn test_degas_images() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let testdata = root.join("testdata").join("degas");
-        test_load(&testdata.join("FUSE.PI1"), "Images");
-        test_load(&testdata.join("BOLEK3.PC1"), "Images");
-        test_load(&testdata.join("ST4EVER.NEO"), "Images");
-        test_load(&testdata.join("ATARIMAN.CA1"), "Images");
-        test_load(&testdata.join("EXO7.KID"), "Images");
-
-        let dir = std::env::temp_dir().join("newsys_degas_test");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        // Named so the walk reaches the screenshot first, and with the
-        // extension stripped so only the sniff can find the picture.
-        fs::copy(testdata.join("FUSE.PI1"), dir.join("zz-picture")).unwrap();
-        fs::write(dir.join("aa-shot.png"), b"not really a png").unwrap();
-
-        let work_file = test_load(&dir, "Images");
-        assert!(
-            work_file.path.ends_with("zz-picture"),
-            "picked {:?} over the DEGAS picture",
-            work_file.path
-        );
-    }
-
-    #[test]
-    fn test_psx() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let testdata = root.join("testdata").join("psx");
-        test_load(&testdata.join("paradox").join("pdx-051.psx"), "PSX");
-        test_load(&testdata.join("monophobia"), "PSX");
-        // A bare data track with no cue beside it, named `.bin` like any other
-        // dump, is recognised from the disc's own contents.
-        test_load(&testdata.join("thisispsx"), "PSX");
-    }
-}
+#[path = "tests/newsys_tests.rs"]
+mod tests;

@@ -3,12 +3,13 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use crate::{
-    Args, cbmconvert,
-    frontend::system_dir,
-    libloader,
+    Args,
+    backend::Backend,
+    cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
     newsys::{collect_disk_images, walk_dir},
-    retro_emu::{Backend, RetroCoreThreaded},
+    retro_emu::RetroCoreThreaded,
+    system_dir,
     workfile::WorkFile,
 };
 
@@ -77,6 +78,8 @@ impl System for C64System {
         }
         if file.has_tag("6581") {
             file.set_meta("vice_sid_model", "6581");
+        } else {
+            file.set_meta("vice_sid_model", "8580");
         }
 
         let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
@@ -136,7 +139,9 @@ impl System for C64System {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
             RetroCoreThreaded::new(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
-        core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+        if self.fast_load {
+            core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+        }
         Ok(Box::new(core))
     }
 }
