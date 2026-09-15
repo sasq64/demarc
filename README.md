@@ -15,46 +15,64 @@ Make it easy to watch demos on your PC through emulation
 
 * Runs oldskool demos using emulator cores
 * Runs Windows demos through Wine (Linux only)
+* Shows images and plays music
 * Runs multiple demos in order or shuffled
 * Indexes Demozoo/Pouet and CSDb
+* Fuzzy search
 * Shows demo meta data as overlay
 * CRT filter for "authentic" look (using Timothy Lottes shader)
 * Right-Alt hotkey for disk switch etc
 
+### Platforms
+
+C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance, Neo Geo, PC (DOS, and Windows through wine)
+
+### Graphics Format Support
+
+* Standard: PNG, JPEG, TIF, GIF, TGA, PCX
+* Amiga/PC: IFF (ILBM, ACBM, PBM, Impulse RGB) including HAM/HAM8 and dynamic palette (SHAM,CTBL,BEAM)
+* Atari: Degas (PIx, PCx), Neo Chrome (NEO), Crack Art (CA2), Fullscreen Construction Kit (KID)
+* Color Cycling
+
+### Music Format Support
+
+* C64 (sid)
+* Trackers (mod, xm, s3m, ft, stm, it)
+* Atari (snd, sndh, sap)
+* Consoles (nsf, gbs, spc, psf)
+* Streaming (mp3, flac)
+* PC (v2m)
+* Spectrum (emul, vtx, pt1, pt2, pt3, asc, sqt, stc, stp, psc)
+* Amiga (smod, dm2, ahx, aon, mt2, mon, dw, fred, smod, hip, cus, fc, hvl, cm, fp, syn, ma, hipc, ml, mk2, bd, dln, 669, jam, dbm, bp, bp3, hes, lds)
 
 ## INSTALL
 
 Pre-built binaries for Linux (x86_64), Windows (x86_64) and macOS (arm64) are
 attached to every [release](https://github.com/sasq64/demarc/releases/latest).
 
-Linux/macOS:
+Emulator cores are downloaded from the on first use, so the binary is all you need (except *Wine*, see below).
+
+#### Linux/macOS:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
 ```
 
-Windows:
+#### Windows:
+
+_IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
+
+`powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
+
+The above is often blocked by Windows security. You can try downloading the ps1 script manually and executing it:
 
 ```powershell
 irm https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.ps1 -OutFile "$env:TEMP\demarc-installer.ps1"
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\demarc-installer.ps1"
 ```
 
-The shorter `powershell -c "irm ... | iex"` one-liner does the same thing, but
-antivirus and script policies tend to block that download-cradle pattern (it
-fails with "Access is denied" before the installer prints anything), so
-downloading the script first is the reliable route.
+Or download the release zip: [demarc-x86_64-pc-windows-msvc.zip](https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-x86_64-pc-windows-msvc.zip)
 
-Both install to `%CARGO_HOME%\bin` (or `%USERPROFILE%\.cargo\bin`) and add it to
-your PATH; set `DEMARC_INSTALL_DIR` to install elsewhere.
-
-With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)
-
-```sh
-cargo binstall --git https://github.com/sasq64/demarc demarc
-```
-
-Emulator cores are downloaded from the on first use, so the binary is all you need.
 
 ## USING WINE
 
@@ -75,10 +93,6 @@ On Linux the ALSA and udev headers are also needed
 
 ## RUN
 
-Set your monitor to 50Hz if possible.
-
-then
-
 `cargo run -- <files>`
 
 or
@@ -88,50 +102,30 @@ or
 ## SHORTCUTS
 
 _Right Alt_ / _Right Ctrl_ +
+
 ```
+O = Open fuzzy search
 D = Swap disk
-N = Next file
+SPACE or N = Next file
+P = Previous file
 S = Change scaling
-B = Change border
 I = Toggle Info
-P = Screenshot
+T = Screenshot
+SHIFT+T = Screenshot All
+U = Pause/Resume
 R = Reset
 C = Toggle CRT filter
-M = Click mouse
-J = Toggle joystick/keyboard
-W/SHIFT-W = Skip forward 10/30s
+W/SHIFT-W = Warp 10s/30s
+J = Toggle Joystick/keyboard
+Z = Shader Settings
 
 For grid:
 
-TAB/SHIFT-TAB = Next/Prev emulator
-ENTER = Maximize/Unmazimize
+TAB = Next emulator
+SHIFT+TAB = Previous emulator
+ENTER = Maximize/Unmaximize
 A = Select all emulators
+SHIFT+N = Next file in all emulators
 
 ```
-
-## RELEASE
-
-Releases are built by [dist](https://opensource.axo.dev/cargo-dist/)
-(`dist-workspace.toml` + `.github/workflows/release.yml`). To cut one:
-
-```sh
-# bump `version` in Cargo.toml, then
-just release-check          # sanity check what would be built
-git commit -am "release: 1.3.1"
-git tag v1.3.1
-git push && git push --tags
-```
-
-Pushing the tag builds all three targets, then creates the GitHub Release with
-the archives, checksums and the shell/powershell installers. `just release-local`
-builds the current host's artifacts into `target/distrib` without touching CI.
-
-The tag must match the version in Cargo.toml exactly, prerelease suffix
-included -- a `v1.3.1-rc.1` tag needs `version = "1.3.1-rc.1"`, otherwise dist
-fails the run with "this workspace doesn't have anything for dist to Release".
-Tags with a prerelease suffix are published as GitHub prereleases.
-
-After bumping the `dist` version in `dist-workspace.toml`, run `dist init --yes`
-to regenerate the workflow.
-
 
