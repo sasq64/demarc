@@ -1,13 +1,8 @@
 ## demarc
 
-<img width="3160" height="2370" alt="IMG_2029-high" src="https://github.com/user-attachments/assets/ca33d5ce-46a7-4f19-b0d2-a39ec551e05b" />
-
 An command line emulator frontend for the demoscene
 
-_because_
-
-Emulation is better than youtube!
-
+<img width="3160" height="2370" alt="IMG_2029-high" src="https://github.com/user-attachments/assets/ca33d5ce-46a7-4f19-b0d2-a39ec551e05b" />
 
 *Main goal*
 
@@ -29,21 +24,22 @@ C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600
 
 ### Graphics Format Support
 
-* Standard: PNG, JPEG, TIF, GIF, TGA, PCX
-* Amiga/PC: IFF (ILBM, ACBM, PBM, Impulse RGB) including HAM/HAM8 and dynamic palette (SHAM,CTBL,BEAM)
-* Atari: Degas (PIx, PCx), Neo Chrome (NEO), Crack Art (CA2), Fullscreen Construction Kit (KID)
+* **Standard**: `PNG`, `JPEG`, `TIF`, `GIF`, `TGA`, `PCX`
+* **Amiga/PC**: IFF (`ILBM`, `ACBM`, `PBM`, Impulse `RGB`) including `HAM`/`HAM8` and dynamic palette (`SHAM`,`CTBL`,`BEAM`)
+* **Atari**: Degas (`PIx`, `PCx`), Neo Chrome (`NEO`), Crack Art (`CA2`), Fullscreen Construction Kit (`KID`)
+* **ZX Spectrum** (`SCR`)
 * Color Cycling
 
 ### Music Format Support
 
-* C64 (sid)
-* Trackers (mod, xm, s3m, ft, stm, it)
-* Atari (snd, sndh, sap)
-* Consoles (nsf, gbs, spc, psf)
-* Streaming (mp3, flac)
-* PC (v2m)
-* Spectrum (emul, vtx, pt1, pt2, pt3, asc, sqt, stc, stp, psc)
-* Amiga (smod, dm2, ahx, aon, mt2, mon, dw, fred, smod, hip, cus, fc, hvl, cm, fp, syn, ma, hipc, ml, mk2, bd, dln, 669, jam, dbm, bp, bp3, hes, lds)
+* **C64** (sid)
+* **Trackers** (mod, xm, s3m, ft, stm, it)
+* **Atari** (snd, sndh, sap)
+* **Consoles** (nsf, gbs, spc, psf)
+* **Streaming** (mp3, flac)
+* **PC** (v2m)
+* **Spectrum** (emul, vtx, pt1, pt2, pt3, asc, sqt, stc, stp, psc)
+* **Amiga** (smod, dm2, ahx, aon, mt2, mon, dw, fred, smod, hip, cus, fc, hvl, cm, fp, syn, ma, hipc, ml, mk2, bd, dln, 669, jam, dbm, bp, bp3, hes, lds)
 
 ## INSTALL
 
@@ -52,13 +48,13 @@ attached to every [release](https://github.com/sasq64/demarc/releases/latest).
 
 Emulator cores are downloaded from the on first use, so the binary is all you need (except *Wine*, see below).
 
-#### Linux/macOS:
+### Linux/macOS:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
 ```
 
-#### Windows:
+### Windows:
 
 _IMPORTANT:_ Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
 
