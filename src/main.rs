@@ -320,7 +320,10 @@ fn main() {
     collect_db_stdin(&filter, &mut files).unwrap();
 
     for file in std::mem::take(&mut args.files) {
-        if file.is_dir() && args.collect {
+        let name = file.to_string_lossy().to_lowercase();
+        if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
+            collect_db(&file, &filter, &mut files).unwrap();
+        } else if file.is_dir() && args.collect {
             collect_files(&file, &mut files, args.many).unwrap();
         } else {
             files.push(collect_file(&file).unwrap());
