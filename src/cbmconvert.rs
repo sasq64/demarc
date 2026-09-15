@@ -1,6 +1,6 @@
 //! Thin FFI wrapper around the `cbmconvert` command-line tool.
 //!
-//! The C sources under `cbmconvert/` are compiled into the binary by
+//! The C sources under `external/cbmconvert/` are compiled into the binary by
 //! `build.rs`, with `main` renamed to `cbmconvert_main` (via `-Dmain=...`) so we
 //! can call it directly instead of spawning an external executable.
 //!

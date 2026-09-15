@@ -45,7 +45,7 @@ fn build_unrar_isnt_shim() {
 /// We build the C sources directly rather than via cbmconvert's CMakeLists.txt:
 /// the tool is a flat set of `.c` files with no configuration step.
 fn build_cbmconvert() {
-    const DIR: &str = "cbmconvert";
+    const DIR: &str = "external/cbmconvert";
     // The source set the upstream Makefile links into the `cbmconvert` binary.
     const SRCS: &[&str] = &[
         "main.c",
@@ -237,7 +237,7 @@ fn build_system_zip() {
     entries.sort();
 
     // Re-running this script is not the same as the archive needing to change:
-    // a touched `cbmconvert/*.c`, an edit to this file, or a `cargo clean`d
+    // a touched `external/cbmconvert/*.c`, an edit to this file, or a `cargo clean`d
     // OUT_DIR bring us here too, and deflating 19 MB of `system/` costs ~3s.
     // Skip that when the inputs fingerprint the same as the archive we left in
     // OUT_DIR last time.

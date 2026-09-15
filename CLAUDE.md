@@ -116,7 +116,7 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
   `.dms` archive back into that image first. The xDMS sources are amiberry's copy, and only
   `pfile.c` was edited — keep the rest diffable against
   `external/amiberry/src/archivers/dms`.
-- `build.rs` compiles C/C++ (`retro_log_shim.c`, vendored `cbmconvert`, an unrar shim needed only when
+- `build.rs` compiles C/C++ (`retro_log_shim.c`, vendored `external/cbmconvert`, an unrar shim needed only when
   cross-compiling to Windows) and packs `system/` into an embedded `system.zip` (checksum-cached).
   `system_dir()` prefers a local `system/` directory in debug builds and otherwise unpacks the
   embedded zip into the user cache — so editing `system/` works directly during development.
