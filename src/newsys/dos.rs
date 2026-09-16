@@ -36,7 +36,7 @@ fn dos4gw_source() -> PathBuf {
 ///   `configs/` directory and takes with `--config` — goes to PCem. It names
 ///   the machine, CPU, video and sound cards and the disc images to mount, so
 ///   it is the whole of the configuration; the core has no machine picker.
-/// - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which
+/// - A bare DOS program (`.exe`, `.com`) goes to DOSBox Pure, which
 ///   brings its own DOS and mounts the directory the program sits in as C:.
 ///   Nothing else is needed, which is what most DOS releases arrive as.
 ///
@@ -142,7 +142,7 @@ fn is_dos_program(path: &Path) -> bool {
         // size is all there is to go on.
         "com" => size > 0 && size <= MAX_COM_SIZE,
         // A batch file is text, and an empty one starts nothing.
-        "bat" => size > 0 && fs::read(path).is_ok(), // _and(|b| std::str::from_utf8(&b).is_ok()),
+        "bat" => size > 0 && fs::read(path).is_ok(),
         _ => false,
     }
 }

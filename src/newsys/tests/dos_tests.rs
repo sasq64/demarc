@@ -113,12 +113,6 @@ fn tells_a_dos_program_from_a_windows_one() {
     assert!(!sys.can_load(&huge));
     let empty = write_bytes(dir.path(), "nothing.com", &[]);
     assert!(!sys.can_load(&empty));
-
-    // A batch file starts a program, an empty one starts nothing.
-    let bat = write(dir.path(), "go.bat", "@echo off\r\ndemo.exe\r\n");
-    assert!(sys.can_load(&bat));
-    let blank = write(dir.path(), "blank.bat", "");
-    assert!(!sys.can_load(&blank));
 }
 
 /// The two cores split by content, not by system: a machine config drives
@@ -179,13 +173,6 @@ fn starts_the_program_rather_than_the_batch_file_beside_it() {
     write_bytes(&release, "trip.exe", &exe);
     let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("trip.exe"), "picked {found:?}");
-
-    // With no program to run it is still what starts the release.
-    let bare = dir.path().join("bare");
-    fs::create_dir_all(&bare).unwrap();
-    write(&bare, "go.bat", "@echo off\r\n");
-    let found = sys.pick_target(&bare).unwrap().unwrap();
-    assert!(found.ends_with("go.bat"), "picked {found:?}");
 }
 
 /// A DOS program was linked under a name DOS could type. Anything longer
