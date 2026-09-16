@@ -43,6 +43,10 @@ fast = true
 [zoo.7613]
 assign = { CNCD = "SYS:" }
 
+[zoo.7909]
+file = "asd-the_butterfly_effect.zip"
+boot = "ASD-The butterfly effect.exe"
+
 [zoo.8039]
 events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }, { frame = 40, key = "Enter" }]
 meta = { dosbox_pure_cycles = 100000 }
