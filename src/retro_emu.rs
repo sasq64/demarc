@@ -155,6 +155,10 @@ thread_local! {
     static CURRENT_EMU: Cell<*mut RetroCoreDirect> = const { Cell::new(std::ptr::null_mut()) }
 }
 
+/// Core duping gives each instance its own globals, but not libc's: puae parses
+/// its config with `strtok`, so two loading at once swap Kickstarts and crash.
+static LOAD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Points [`CURRENT_EMU`] at `emu` for the duration of a call into the core, so
 /// the C callbacks — which get no user-data pointer — can find their instance.
 ///
@@ -677,6 +681,7 @@ impl RetroCoreDirect {
                 retro_emu.set_var(key, val);
             }
 
+            let _load_guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
             retro_set_environment(Self::environment_cb);
             retro_set_video_refresh(Self::video_refresh_cb);

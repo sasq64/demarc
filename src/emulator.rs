@@ -86,6 +86,7 @@ pub(crate) enum LoadStatus {
     Done { title: String, result: Result<()> },
 }
 
+#[allow(dead_code)] // TODO: Use for better cross fading
 #[derive(Default)]
 pub enum EmuState {
     #[default]

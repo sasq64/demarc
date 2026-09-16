@@ -184,6 +184,35 @@ fn retro_threaded_multi_works() {
     }
 }
 
+/// Different models loading at the same time used to trade Kickstarts through
+/// libc's `strtok` and jump to a null opcode handler — see `LOAD_LOCK`.
+#[test]
+fn retro_amiga_concurrent_loads_work() {
+    let core = libloader::get_libretro("puae").unwrap();
+    let barrier = &std::sync::Barrier::new(4);
+    let core = &core;
+    std::thread::scope(|s| {
+        for model in ["A500", "A1200", "A500", "A1200"] {
+            s.spawn(move || {
+                let settings = HashMap::from([("puae_model".to_string(), model.to_string())]);
+                barrier.wait();
+                let mut emu = RetroCoreDirect::new(
+                    core,
+                    &root("system/amiga"),
+                    Some(&root("testdata/amiga/rebels.adf")),
+                    settings,
+                )
+                .unwrap();
+                for _ in 0..50 {
+                    emu.run();
+                }
+                let (w, h) = emu.get_frame_size();
+                assert!(w > 0 && h > 0, "no frame from {model}");
+            });
+        }
+    });
+}
+
 /// Boots a licence-stripped scene disc with an MP3 audio track — the shape
 /// Beetle can't handle, and the reason pcsx_rearmed is the default. No BIOS
 /// is installed here, so this also covers the HLE path.
