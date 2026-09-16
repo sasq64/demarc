@@ -26,6 +26,11 @@ file = "variform_by_kewlers.zip"
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
+# fr-063: Magellan / Farbrausch. Its task scheduler asserts with many cores.
+[zoo.829]
+file = "fr-063_v1.02.zip"
+meta = { wine_cpus = 4 }
+
 [zoo.3298]
 file = "fr-025-final.zip"
 

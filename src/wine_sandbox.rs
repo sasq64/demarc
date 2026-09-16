@@ -82,6 +82,15 @@ pub const META_SANDBOX: &str = "wine_sandbox";
 /// See [`META_SANDBOX`].
 pub const DEFAULT_SANDBOX: bool = true;
 
+/// Entry key: how many CPUs the demo sees. Only works inside the sandbox.
+pub const META_CPUS: &str = "wine_cpus";
+
+/// The sysfs files wine reads the CPU count from.
+const CPU_FILES: [&str; 2] = [
+    "/sys/devices/system/cpu/online",
+    "/sys/devices/system/cpu/present",
+];
+
 const BWRAP: &str = "bwrap";
 
 /// Where the mount points live, under `$XDG_RUNTIME_DIR` when there is one.
@@ -195,7 +204,12 @@ fn sweep(root: &Path) {
 ///
 /// Ends in `--`; the command goes after it. Nothing is quoted, because no shell
 /// is involved.
-fn bwrap_args(base: &Path, prefix: &Path, workdir: Option<&Path>) -> Vec<String> {
+fn bwrap_args(
+    base: &Path,
+    prefix: &Path,
+    workdir: Option<&Path>,
+    cpus: Option<&Path>,
+) -> Vec<String> {
     let mut args: Vec<String> = vec![
         BWRAP.into(),
         // The host as it stands, devices included. The demo needs the GPU
@@ -231,6 +245,15 @@ fn bwrap_args(base: &Path, prefix: &Path, workdir: Option<&Path>) -> Vec<String>
         "WINEPREFIX".into(),
         prefix.to_string_lossy().into_owned(),
     ];
+    if let Some(cpus) = cpus {
+        for file in CPU_FILES {
+            args.extend([
+                "--ro-bind".into(),
+                cpus.to_string_lossy().into_owned(),
+                file.into(),
+            ]);
+        }
+    }
     // A release that ships a `data/` folder or its own `fmod.dll` finds neither
     // from anywhere else. bwrap keeps the working directory when it can, but
     // saying it outright costs nothing and survives being spawned from a core
@@ -263,7 +286,7 @@ fn usable(base: &Path) -> bool {
         // Overlaid onto itself: the probe wants a real overlay of a real
         // prefix, and inside the sandbox that is all this is. Nothing is
         // written, and the mount is gone with the process.
-        let args = bwrap_args(base, base, None);
+        let args = bwrap_args(base, base, None, None);
         let ok = Command::new(&args[0])
             .args(&args[1..])
             .arg("true")
@@ -290,11 +313,23 @@ pub fn wanted(meta: &HashMap<String, String>) -> bool {
         .unwrap_or(DEFAULT_SANDBOX)
 }
 
+/// The CPU count this entry asks for. See [`META_CPUS`].
+pub fn cpus(meta: &HashMap<String, String>) -> Option<u32> {
+    let value = meta.get(META_CPUS)?;
+    match value.trim().parse() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            warn!("{META_CPUS}={value:?} is not a positive number; ignoring it");
+            None
+        }
+    }
+}
+
 /// Prepare a sandbox around `base`, with `workdir` as the working directory.
 ///
 /// Fails rather than falling back, so the caller decides what running without
 /// one means for it — which is not the same answer in both backends.
-pub fn prepare(base: &Path, workdir: Option<&Path>) -> Result<Sandbox> {
+pub fn prepare(base: &Path, workdir: Option<&Path>, cpus: Option<u32>) -> Result<Sandbox> {
     if !base.is_dir() {
         // Nothing to overlay: a first run, before wine has built the prefix.
         // Sandboxing it would build a prefix inside a tmpfs and throw it away
@@ -315,9 +350,20 @@ pub fn prepare(base: &Path, workdir: Option<&Path>) -> Result<Sandbox> {
     }
     fs::create_dir_all(&run).with_context(|| format!("Could not make {}", run.display()))?;
 
-    let prefix = run.join(SEQ.fetch_add(1, Ordering::Relaxed).to_string());
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let prefix = run.join(seq.to_string());
     fs::create_dir(&prefix)
         .with_context(|| format!("Could not make the mount point {}", prefix.display()))?;
+
+    let cpus_file = match cpus {
+        Some(n) => {
+            let file = run.join(format!("{seq}.cpus"));
+            fs::write(&file, format!("0-{}\n", n - 1))
+                .with_context(|| format!("Could not write {}", file.display()))?;
+            Some(file)
+        }
+        None => None,
+    };
 
     debug!(
         "Sandboxing the wine prefix {} as {}",
@@ -325,7 +371,7 @@ pub fn prepare(base: &Path, workdir: Option<&Path>) -> Result<Sandbox> {
         prefix.display()
     );
     Ok(Sandbox {
-        argv: bwrap_args(base, &prefix, workdir),
+        argv: bwrap_args(base, &prefix, workdir, cpus_file.as_deref()),
         prefix,
     })
 }

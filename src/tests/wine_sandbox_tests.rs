@@ -2,7 +2,12 @@ use super::*;
 
 /// The arguments as words, so a test can ask about pairs without counting.
 fn args(base: &str, prefix: &str, workdir: Option<&str>) -> Vec<String> {
-    bwrap_args(Path::new(base), Path::new(prefix), workdir.map(Path::new))
+    bwrap_args(
+        Path::new(base),
+        Path::new(prefix),
+        workdir.map(Path::new),
+        None,
+    )
 }
 
 /// Is `value` the word after `flag`?
@@ -121,13 +126,42 @@ fn sandboxes_by_default() {
     assert!(!asked("disabled"));
 }
 
+#[test]
+fn binds_the_cpu_count_over_sysfs() {
+    let args = bwrap_args(
+        Path::new("/base"),
+        Path::new("/session"),
+        None,
+        Some(Path::new("/run/x/0.cpus")),
+    );
+    for file in CPU_FILES {
+        let at = args.iter().position(|a| a == file).expect("the file bound");
+        assert_eq!(args[at - 2], "--ro-bind");
+        assert_eq!(args[at - 1], "/run/x/0.cpus");
+    }
+    assert!(
+        !self::args("/base", "/session", None)
+            .iter()
+            .any(|a| a == "--ro-bind")
+    );
+}
+
+#[test]
+fn parses_the_cpu_count() {
+    let cpus_of = |value: &str| cpus(&HashMap::from([(META_CPUS.to_string(), value.to_string())]));
+    assert_eq!(cpus_of("4"), Some(4));
+    assert_eq!(cpus_of("0"), None);
+    assert_eq!(cpus_of("four"), None);
+    assert_eq!(cpus(&HashMap::new()), None);
+}
+
 /// A prefix that does not exist yet is not one to sandbox: the session would
 /// build it inside a tmpfs and throw it away again, paying `wineboot` every
 /// time and keeping nothing.
 #[test]
 fn refuses_a_prefix_that_is_not_there() {
     let missing = std::env::temp_dir().join("demarc-no-such-prefix");
-    assert!(prepare(&missing, None).is_err());
+    assert!(prepare(&missing, None, None).is_err());
 }
 
 /// A crash leaves mount points behind. They are empty directories rather than

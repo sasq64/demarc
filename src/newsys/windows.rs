@@ -256,6 +256,12 @@ impl System for WindowsSystem {
             .context("Could not load the gamescope core")?;
 
         let sandbox = sandbox_for(path);
+        if sandbox.is_none() && wine_sandbox::cpus(&path.get_all_meta()).is_some() {
+            warn!(
+                "{} needs the wine sandbox; ignoring it",
+                wine_sandbox::META_CPUS
+            );
+        }
         if sandbox.is_none()
             && let Ok(prefix) = wine_prefix()
         {
@@ -301,7 +307,7 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
     // directory to start anything in. Left out, the sandbox keeps demarc's own
     // working directory, which is the one that name was relative to anyway.
     let workdir = file.path.parent().filter(|dir| !dir.as_os_str().is_empty());
-    match wine_sandbox::prepare(&wine_prefix().ok()?, workdir) {
+    match wine_sandbox::prepare(&wine_prefix().ok()?, workdir, wine_sandbox::cpus(&meta)) {
         Ok(sandbox) => Some(sandbox),
         Err(err) => {
             info!("Running in the shared wine prefix: {err}");
