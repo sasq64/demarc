@@ -70,6 +70,13 @@ const PREFIX_DIR: &str = ".wine-demarc";
 /// The dialog driver, relative to [`system_dir`].
 const AUTODLG: &str = "win/demarc-autodlg.exe";
 
+/// winmm.dll with the Windows export layout, relative to [`system_dir`]. See
+/// `tools/winmm/README.md`.
+const WINMM: &str = "win/winmm.dll";
+
+/// The `WINEDLLOVERRIDES` entry that makes wine use it.
+pub const WINMM_OVERRIDE: &str = "winmm=n,b";
+
 /// How long the driver keeps looking for a dialog before giving up.
 const DIALOG_TIMEOUT: f64 = 20.0;
 
@@ -366,6 +373,21 @@ pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result
         width: cfg.width,
         height: cfg.height,
     })
+}
+
+/// Put demarc's winmm.dll in the prefix's 32-bit system directory, unless it
+/// is already there.
+pub(crate) fn install_winmm(prefix: &Path) -> Result<()> {
+    let dir = prefix.join("drive_c/windows/syswow64");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let ours = std::fs::read(system_dir().join(WINMM))?;
+    let dest = dir.join("winmm.dll");
+    if std::fs::read(&dest).is_ok_and(|theirs| theirs == ours) {
+        return Ok(());
+    }
+    std::fs::write(&dest, ours).with_context(|| format!("Could not write {}", dest.display()))
 }
 
 /// Shut the wine prefix down: `wineserver -k` kills every process in it.

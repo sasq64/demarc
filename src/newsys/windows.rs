@@ -15,8 +15,8 @@ use crate::system_dir;
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, DEFAULT_WIDESCREEN, GL_COMPAT_OVERRIDE,
     META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_GLSL_120_SUBSET, META_GLSL_VERSION,
-    META_RES, close_prefix, default_dialog_res, dll_overrides, gl_compat, has_tool, is_yes,
-    wine_command, wine_prefix,
+    META_RES, WINMM_OVERRIDE, close_prefix, default_dialog_res, dll_overrides, gl_compat, has_tool,
+    install_winmm, is_yes, wine_command, wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
@@ -194,8 +194,9 @@ impl System for WindowsSystem {
         }
 
         // Native for all D3D seems to work
-        file.set_meta("gamescope_dll_overrides", "d3d*=n,b");
-        file.set_meta("gamescope_wine_dll_overrides", "d3d*=n,b");
+        let overrides = format!("d3d*=n,b;{WINMM_OVERRIDE}");
+        file.set_meta("gamescope_dll_overrides", &overrides);
+        file.set_meta("gamescope_wine_dll_overrides", &overrides);
 
         if !file.has_meta(META_RES)
             && let Some(res) = res_from_name(&target)
@@ -254,6 +255,12 @@ impl System for WindowsSystem {
         }
         let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
             .context("Could not load the gamescope core")?;
+
+        if let Ok(prefix) = wine_prefix()
+            && let Err(err) = install_winmm(&prefix)
+        {
+            warn!("Could not install winmm.dll in the wine prefix: {err}");
+        }
 
         let sandbox = sandbox_for(path);
         if sandbox.is_none() && wine_sandbox::cpus(&path.get_all_meta()).is_some() {

@@ -113,6 +113,11 @@ autodlg:
     cd tools/autodlg && RUSTFLAGS="-C target-feature=+crt-static" cargo xwin build --release --target x86_64-pc-windows-msvc
     cp tools/autodlg/target/x86_64-pc-windows-msvc/release/demarc-autodlg.exe system/win/
 
+# winmm.dll with the Windows export layout (source in tools/winmm). Checked in
+# like the dialog driver; needs clang, lld-link and llvm-dlltool.
+winmm:
+    python3 tools/winmm/build.py system/win/winmm.dll
+
 # `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
 # tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under
 # `#ifdef __GNUC__`, which clang-cl doesn't define, so clang rejects the
