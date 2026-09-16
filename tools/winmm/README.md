@@ -15,5 +15,5 @@ other `*32Message` exports, so everything after them is off by one — Alcatraz'
 - `winmm.c` — loads wine's winmm and fills in the jump slots.
 - `build.py` — generates the thunks and `.def`, builds with clang/lld-link.
 
-`just winmm` rebuilds `system/win/winmm.dll`. demarc copies it into the
-prefix's `syswow64` before every session and sets `winmm=n,b`.
+`just winmm` rebuilds `system/win/winmm.dll`. `scripts/setup-wine.sh` copies it into
+the prefix's `syswow64`, and demarc sets `winmm=n,b`.

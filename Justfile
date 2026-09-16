@@ -118,6 +118,12 @@ autodlg:
 winmm:
     python3 tools/winmm/build.py system/win/winmm.dll
 
+# dcomp.dll that gives DirectComposition demos a swapchain (source in
+# tools/compshim). Checked in, and installed in the prefix by scripts/setup-wine.sh.
+compshim:
+    cd tools/compshim && cargo xwin build --release --target x86_64-pc-windows-msvc
+    cp tools/compshim/target/x86_64-pc-windows-msvc/release/dcomp.dll system/win/
+
 # `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
 # tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under
 # `#ifdef __GNUC__`, which clang-cl doesn't define, so clang rejects the

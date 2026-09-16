@@ -1,0 +1,18 @@
+[package]
+name = "demarc-compshim"
+version = "0.1.0"
+edition = "2021"
+
+# Must be called dcomp.dll: it takes the place of wine's stub in the prefix.
+[lib]
+name = "dcomp"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+
+# Standalone: not part of the demarc package, and built for Windows.
+[workspace]

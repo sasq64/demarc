@@ -148,22 +148,3 @@ file = "dkg^lmn-neocolora.lha"
 
 [zoo.376675]
 meta = { amiga_core = "puae" }
-
-# Razor demos needing patched d3d11 dll
-[zoo.374116]
-patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
-
-[zoo.381012]
-patch = { info = "DX11 Hack", target = "Razor1911_-_CMOS_Cosmos/d3d11.dll", source = "win/d3d11.dll" }
-
-[zoo.390060]
-patch = { info = "DX11 Hack", target = "Razor1911/d3d11.dll", source = "win/d3d11.dll" }
-
-[zoo.395873]
-patch = { info = "DX11 Hack", target = "RZR_D-Cracktro_02-Madden_NFL_2027/d3d11.dll", source = "win/d3d11.dll" }
-
-[zoo.397555]
-patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
-
-[zoo.397556]
-patch = { info = "DX11 Hack", target = "d3d11.dll", source = "win/d3d11.dll" }
