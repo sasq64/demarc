@@ -49,6 +49,12 @@ pub const META_GL_COMPAT: &str = "wine_gl_compat";
 /// Meta key holding wine's `WINEDLLOVERRIDES`, passed through as it stands.
 pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 
+/// Meta key holding Mesa's `force_glsl_version` for the demo, e.g. `130`.
+pub const META_GLSL_VERSION: &str = "wine_glsl_version";
+
+/// Meta key: yes turns on Mesa's `allow_glsl_120_subset_in_110` for the demo.
+pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
+
 /// Whether one is used when nothing says otherwise.
 pub const DEFAULT_DESKTOP: bool = false;
 

@@ -14,8 +14,9 @@ use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, DEFAULT_WIDESCREEN, GL_COMPAT_OVERRIDE,
-    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_RES, close_prefix, default_dialog_res,
-    dll_overrides, gl_compat, has_tool, is_yes, wine_command, wine_prefix,
+    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_GLSL_120_SUBSET, META_GLSL_VERSION,
+    META_RES, close_prefix, default_dialog_res, dll_overrides, gl_compat, has_tool, is_yes,
+    wine_command, wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
@@ -375,6 +376,18 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
     if gl_compat(&meta) {
         meta.entry("gamescope_mesa_gl_version_override".into())
             .or_insert_with(|| GL_COMPAT_OVERRIDE.to_string());
+    }
+
+    if let Some(version) = meta.get(META_GLSL_VERSION).map(|v| v.trim().to_string())
+        && !version.is_empty()
+    {
+        meta.entry("gamescope_mesa_glsl_version".into())
+            .or_insert(version);
+    }
+
+    if meta.get(META_GLSL_120_SUBSET).is_some_and(|v| is_yes(v)) {
+        meta.entry("gamescope_mesa_allow_glsl_120_subset_in_110".into())
+            .or_insert_with(|| "true".into());
     }
 
     // demarc's own prefix — the one `just wine-prefix` prepares — and never the

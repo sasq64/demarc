@@ -1,5 +1,5 @@
 use super::*;
-use crate::wine::META_DLL_OVERRIDES;
+use crate::wine::{META_DLL_OVERRIDES, META_GLSL_120_SUBSET, META_GLSL_VERSION};
 use std::fs;
 
 fn write_bytes(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
@@ -504,4 +504,45 @@ fn restates_gl_compat_as_a_mesa_override() {
 
     let file = WorkFile::new(exe);
     assert!(!capture_meta(&file, None).contains_key("gamescope_mesa_gl_version_override"));
+}
+
+#[test]
+fn restates_glsl_version_as_a_core_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_GLSL_VERSION.to_string(), " 130 ".to_string())]),
+    );
+    assert_eq!(
+        capture_meta(&file, None)
+            .get("gamescope_mesa_glsl_version")
+            .map(String::as_str),
+        Some("130")
+    );
+
+    let file = WorkFile::new(exe);
+    assert!(!capture_meta(&file, None).contains_key("gamescope_mesa_glsl_version"));
+}
+
+#[test]
+fn restates_glsl_120_subset_as_a_core_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = windows_exe(dir.path(), "thing.exe");
+    let key = "gamescope_mesa_allow_glsl_120_subset_in_110";
+
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_GLSL_120_SUBSET.to_string(), "yes".to_string())]),
+    );
+    assert_eq!(
+        capture_meta(&file, None).get(key).map(String::as_str),
+        Some("true")
+    );
+
+    let file = WorkFile::new_with_meta(
+        exe.clone(),
+        HashMap::from([(META_GLSL_120_SUBSET.to_string(), "false".to_string())]),
+    );
+    assert!(!capture_meta(&file, None).contains_key(key));
 }
