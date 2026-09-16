@@ -143,6 +143,27 @@ fn check_wine_and_report() -> i32 {
     1
 }
 
+/// Can Windows releases be run here at all?
+#[cfg(target_os = "linux")]
+fn wine_enabled() -> bool {
+    wine::check_wine().ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn wine_enabled() -> bool {
+    false
+}
+
+/// Does this db entry name Windows and nothing else? Such a release needs wine,
+/// so without it there is nothing left that could run it.
+fn is_windows_only(file: &emu_file::EmuFile) -> bool {
+    let platform = file.get_meta("platform");
+    !platform.is_empty()
+        && platform
+            .split(';')
+            .all(|name| name.trim().eq_ignore_ascii_case("windows"))
+}
+
 /// Raise the process's soft open-file limit to the hard limit
 #[cfg(unix)]
 fn raise_fd_limit() {
@@ -198,6 +219,26 @@ fn tame_openmp_cores() {
     }
 }
 
+/// Wine's FXC refuses the `cs_5_1` target that wgpu's indirect-call validation
+/// shader is built with, so the DX12 backend loses the device before the first
+/// frame. Vulkan (through winevulkan) has no such problem.
+#[cfg(target_os = "windows")]
+fn prefer_vulkan_under_wine() {
+    unsafe extern "system" {
+        fn GetModuleHandleA(name: *const u8) -> *mut std::ffi::c_void;
+        fn GetProcAddress(module: *mut std::ffi::c_void, name: *const u8)
+        -> *mut std::ffi::c_void;
+    }
+    let under_wine = unsafe {
+        let ntdll = GetModuleHandleA(c"ntdll.dll".as_ptr().cast());
+        !ntdll.is_null() && !GetProcAddress(ntdll, c"wine_get_version".as_ptr().cast()).is_null()
+    };
+    if under_wine && std::env::var_os("WGPU_BACKEND").is_none() {
+        // SAFETY: single-threaded here — called at the top of `main`.
+        unsafe { std::env::set_var("WGPU_BACKEND", "vulkan") };
+    }
+}
+
 /// How many glibc malloc arenas `cap_malloc_arenas` leaves us, and so how many
 /// threads can allocate hard at once without queueing on an arena lock.
 #[cfg(all(unix, target_env = "gnu"))]
@@ -241,6 +282,8 @@ fn main() {
     #[cfg(all(unix, target_env = "gnu"))]
     cap_rayon_threads();
     tame_openmp_cores();
+    #[cfg(target_os = "windows")]
+    prefer_vulkan_under_wine();
 
     #[cfg(unix)]
     raise_fd_limit();
@@ -328,6 +371,10 @@ fn main() {
         } else {
             files.push(collect_file(&file).unwrap());
         }
+    }
+
+    if !wine_enabled() {
+        files.retain(|file| !is_windows_only(file));
     }
 
     match args.sort {
