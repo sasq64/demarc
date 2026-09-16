@@ -216,3 +216,46 @@ scroll 0 and 1
 ...
 crossfade-shader ?
 
+
+
+
+
+
+
+
+export allow_glsl_120_subset_in_110=true
+
+Why the old fix wasn't safe: Mesa 26.2.2 applies force_glsl_version to every shader, even ones with an explicit #version. That's what broke glamor's #version 130 shader in gamescope's Xwayland.
+
+Why this option is narrower: it only changes shaders being compiled as GLSL 1.10, which is what a shader with no #version defaults to. For those it allows a few GLSL 1.20 features:
+- mixing ints and floats (implicit int→float conversions), which is what your other demo needs
+- array constructors
+- assigning whole arrays
+- arrays as out/inout parameters
+
+Shaders that declare 1.20 or higher, like glamor's, aren't affected, so it's safe for Xwayland to inherit it. I checked this in the Mesa 26.2.2 source (has_implicit_conversions() in glsl_parser_extras.h, plus the version checks in ast_to_hir.cpp and ast_function.cpp). The option also exists in your installed libgallium.
+
+The limit: I haven't tested it on the other demo. If that demo relies on some other GLSL 1.20 feature, this option won't cover it. In that case, keep force_glsl_version=120 but set it on the wine process only, where Xwayland can't inherit it:
+
+gamescope -- env force_glsl_version=120 wine demo.exe
+
+Separately, Mesa's linker crashing on a shader that failed to compile is a Mesa bug you could report upstream, but you don't need a fix for it once the variable is gone.
+
+
+
+
+I updated magellan.txt with the findings and added a wine_cpus meta option, plus an override entry for Magellan. The unit tests pass, and in a headless demarc run the demo process saw 4 CPUs while 
+the host has 24. I didn't wait for it to get past its setup dialog in that run, so it isn't tested all the way through demarc yet.                                                                   
+
+magellan.txt: the old "What's now blocking it" section is now a write-up of the font crash: why the BSP root ends up NULL, that the bad mesh is the "mfx" text in Trebuchet MS (wine substitutes Liberation Sans), where to get trebuc32.exe with its checksum, and the things I ruled out (DXVK, wow64). There's also a short "How it was found" section on the winedbg setup and the font trace.
+
+wine_cpus=N:
+- How it works: it only works inside the bwrap sandbox. demarc writes 0-(N-1) to a file next to the sandbox's mount point and binds it read-only over /sys/devices/system/cpu/online and /sys/devices/system/cpu/present, which is where wine gets the CPU count.
+- Code: it lives in src/wine_sandbox.rs, and src/newsys/windows.rs passes the count through. A value that isn't a positive number is ignored with a warning, and so is the option when the session runs without the sandbox.
+- Tests: I added two, one for the bind arguments and one for parsing the value.
+
+Override in system/overrides.toml:
+[zoo.829]
+file = "fr-063_v1.02.zip"
+meta = { wine_cpus = 4 }
+I also set file so it downloads v1.02, the bug-fix release, because demozoo lists the v1.01 party version first.
