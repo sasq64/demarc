@@ -646,7 +646,8 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     fs::create_dir_all(&s_dir)?;
     if copy_all {
         let name = wf.file_name().unwrap().to_str().unwrap();
-        text += &format!("echo \"Loading...\"\n{name}\n");
+        let name = name.replace('*', "**").replace('"', "*\"");
+        text += &format!("echo \"Loading...\"\n\"{name}\"\n");
     } else {
         text += "echo \"Loading...\"\namiga_file\n";
     }

@@ -173,17 +173,17 @@ fn rejects_reloc_to_missing_hunk() {
 fn a_named_boot_file_still_brings_the_release_along() {
     let dir = tempfile::Builder::new().tempdir().unwrap();
     let exe: Vec<u8> = MINIMAL.iter().flat_map(|l| l.to_be_bytes()).collect();
-    fs::write(dir.path().join("demo"), &exe).unwrap();
+    fs::write(dir.path().join("my demo"), &exe).unwrap();
     fs::write(dir.path().join("music.mod"), b"data").unwrap();
 
-    let mut file = WorkFile::new(dir.path().join("demo"));
+    let mut file = WorkFile::new(dir.path().join("my demo"));
     file.set_meta(RELEASE_DIR, dir.path().to_string_lossy());
     assert!(AmigaSystem::default().load(&mut file).unwrap());
 
     assert!(file.path.join("music.mod").is_file(), "data files come too");
     assert_eq!(
         fs::read_to_string(file.path.join("s/startup-sequence")).unwrap(),
-        "echo \"Loading...\"\ndemo\n"
+        "echo \"Loading...\"\n\"my demo\"\n"
     );
 }
 
