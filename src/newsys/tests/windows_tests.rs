@@ -259,6 +259,9 @@ fn reads_a_resolution_only_where_a_name_holds_one() {
     assert_eq!(res("elevated_1920_1080.exe").as_deref(), Some("1920x1080"));
     assert_eq!(res("elevated_1280_720.exe").as_deref(), Some("1280x720"));
     assert_eq!(res("demo_800_600_final.exe").as_deref(), Some("800x600"));
+    // Or with any other separator that is not a letter or digit.
+    assert_eq!(res("demo-1280-720.exe").as_deref(), Some("1280x720"));
+    assert_eq!(res("demo 640.480.exe").as_deref(), Some("640x480"));
     // With both to go on, the `x` is the one that means a size.
     assert_eq!(res("party_2009_640x480.exe").as_deref(), Some("640x480"));
 

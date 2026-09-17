@@ -70,12 +70,11 @@ const MAX_SIDE: u32 = 7680;
 
 /// What can sit between the two numbers, most telling first.
 ///
-/// An `x` between two numbers is nearly always a size; an `_` is only a
-/// separator and could be holding apart anything, a year and a version
-/// included. So a name carrying both — `elevated_1920x1080` — is read by its
-/// `x`, and the `_` form is what is left for the names spelled
-/// `elevated_1920_1080`.
-const RES_SEPARATORS: [&[char]; 2] = [&['x', 'X'], &['_']];
+/// An `x` between two numbers is nearly always a size; anything else that is
+/// not a letter or digit could be holding apart a year and a version. So
+/// `party_2009_640x480` is read by its `x`, and the rest is left for names
+/// spelled `elevated_1920_1080`.
+const RES_SEPARATORS: [fn(char) -> bool; 2] = [|c| c == 'x' || c == 'X', |c| !c.is_alphanumeric()];
 
 /// Read the resolution a Windows release named itself after.
 ///
@@ -92,14 +91,14 @@ fn res_from_name(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy().into_owned();
     RES_SEPARATORS
         .iter()
-        .find_map(|separators| scan_res(&stem, separators))
+        .find_map(|&is_separator| scan_res(&stem, is_separator))
 }
 
 /// The first `<digits><separator><digits>` in `stem` that could be a screen
 /// mode, normalised to `WIDTHxHEIGHT`.
-fn scan_res(stem: &str, separators: &[char]) -> Option<String> {
+fn scan_res(stem: &str, is_separator: fn(char) -> bool) -> Option<String> {
     let bytes = stem.as_bytes();
-    for (i, sep) in stem.match_indices(separators) {
+    for (i, sep) in stem.match_indices(is_separator) {
         // Both runs stop at the first byte that isn't a digit, so the number
         // is whatever lies against the separator: `vga640x480` reads as
         // 640x480, and the name in front of it is no business of ours.
