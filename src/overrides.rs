@@ -295,7 +295,10 @@ impl RawPatch {
                 source: Some(leak(source)),
                 ..Default::default()
             },
-            _ => bail!("patch for {:?} needs one of contents or source", self.target),
+            _ => bail!(
+                "patch for {:?} needs one of contents or source",
+                self.target
+            ),
         };
         let patch = Patch {
             target: leak(self.target),

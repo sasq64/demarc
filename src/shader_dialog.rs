@@ -77,7 +77,10 @@ const SHADER_DIRS: &[&str] = &["/usr/share/libretro/shaders", "shaders"];
 fn shader_dir(configured: Option<&Path>) -> Option<PathBuf> {
     match configured {
         Some(dir) => Some(dir.to_path_buf()),
-        None => SHADER_DIRS.iter().map(PathBuf::from).find(|dir| dir.is_dir()),
+        None => SHADER_DIRS
+            .iter()
+            .map(PathBuf::from)
+            .find(|dir| dir.is_dir()),
     }
 }
 

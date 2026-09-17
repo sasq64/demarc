@@ -226,8 +226,7 @@ fn tame_openmp_cores() {
 fn prefer_vulkan_under_wine() {
     unsafe extern "system" {
         fn GetModuleHandleA(name: *const u8) -> *mut std::ffi::c_void;
-        fn GetProcAddress(module: *mut std::ffi::c_void, name: *const u8)
-        -> *mut std::ffi::c_void;
+        fn GetProcAddress(module: *mut std::ffi::c_void, name: *const u8) -> *mut std::ffi::c_void;
     }
     let under_wine = unsafe {
         let ntdll = GetModuleHandleA(c"ntdll.dll".as_ptr().cast());

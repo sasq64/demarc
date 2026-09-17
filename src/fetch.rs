@@ -489,7 +489,8 @@ impl<'a, W: Write> CountingWriter<'a, W> {
 impl<W> CountingWriter<'_, W> {
     /// Bytes of `total` not yet received; zero for an unknown total.
     fn remaining(&self) -> u64 {
-        self.total.map_or(0, |total| total.saturating_sub(self.done))
+        self.total
+            .map_or(0, |total| total.saturating_sub(self.done))
     }
 }
 
