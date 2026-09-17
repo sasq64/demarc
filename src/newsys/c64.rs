@@ -8,8 +8,7 @@ use crate::{
     cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
     newsys::{collect_disk_images, walk_dir},
-    retro_emu::RetroCoreThreaded,
-    system_dir,
+    retro_emu, system_dir,
     workfile::WorkFile,
 };
 
@@ -138,10 +137,10 @@ impl System for C64System {
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
-            RetroCoreThreaded::new(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
+            retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
         if self.fast_load {
             core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
         }
-        Ok(Box::new(core))
+        Ok(core)
     }
 }

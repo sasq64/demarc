@@ -142,7 +142,19 @@ pub struct RetroCoreDirect {
     /// See [`Backend::frame_serial`].
     frame_serial: u64,
     visible: bool,
+    /// Where the next `video_refresh` converts to instead of `state.frame`.
+    /// Taken once a frame has been written there.
+    frame_target: Option<FrameTarget>,
 }
+
+struct FrameTarget {
+    ptr: *mut u32,
+    len: usize,
+}
+
+// Only a pointer into memory owned by whoever set it, on the core's thread.
+unsafe impl Send for FrameTarget {}
+
 impl Drop for RetroCoreDirect {
     fn drop(&mut self) {
         if self.lib.is_some() {
@@ -353,19 +365,23 @@ impl RetroCoreDirect {
         state.frame_width = width;
         state.frame_height = height;
         let needed = width * height;
-        if state.frame.len() != needed {
-            state.frame.resize(needed, 0);
-        }
+        let dst: &mut [u32] = match self.frame_target.take_if(|t| t.len >= needed) {
+            Some(t) => unsafe { std::slice::from_raw_parts_mut(t.ptr, needed) },
+            None => {
+                if state.frame.len() != needed {
+                    state.frame.resize(needed, 0);
+                }
+                &mut state.frame
+            }
+        };
         let pixel_format = state.pixel_format as retro_pixel_format;
         match pixel_format {
-            RETRO_PIXEL_FORMAT_XRGB8888 => {
-                convert_xrgb8888(data, &mut state.frame, width, height, pitch)
-            }
+            RETRO_PIXEL_FORMAT_XRGB8888 => convert_xrgb8888(data, dst, width, height, pitch),
             RETRO_PIXEL_FORMAT_RGB565 => {
-                convert_16bpp(data, &mut state.frame, width, height, pitch, &RGB565_LUT)
+                convert_16bpp(data, dst, width, height, pitch, &RGB565_LUT)
             }
             RETRO_PIXEL_FORMAT_0RGB1555 => {
-                convert_16bpp(data, &mut state.frame, width, height, pitch, &RGB1555_LUT)
+                convert_16bpp(data, dst, width, height, pitch, &RGB1555_LUT)
             }
             _ => {}
         }
@@ -672,6 +688,7 @@ impl RetroCoreDirect {
                 time_reference: 0,
                 frame_serial: 0,
                 visible: true,
+                frame_target: None,
             };
             // Our options go in before the core is told anything, so they are
             // already there whenever it announces its own defaults (usually
@@ -913,6 +930,36 @@ impl Backend for RetroCoreDirect {
 
 mod threaded;
 pub use threaded::RetroCoreThreaded;
+
+#[cfg(unix)]
+mod process;
+#[cfg(unix)]
+pub use process::{RetroCoreProcess, process_worker_main};
+
+/// Build the backend for a libretro core: on a thread of its own, or in a
+/// process of its own when the `use_proc` meta is set.
+pub fn create_core(
+    core_path: &Path,
+    system_dir: &Path,
+    game: Option<&Path>,
+    meta: HashMap<String, String>,
+    speed_test: bool,
+) -> Result<Box<dyn Backend + Send + Sync>> {
+    if meta
+        .get("use_proc")
+        .is_some_and(|v| v == "1" || v == "true")
+    {
+        #[cfg(unix)]
+        return Ok(Box::new(RetroCoreProcess::new(
+            core_path, system_dir, game, meta, speed_test,
+        )?));
+        #[cfg(not(unix))]
+        warn!("use_proc is only supported on unix, running the core on a thread");
+    }
+    Ok(Box::new(RetroCoreThreaded::new(
+        core_path, system_dir, game, meta, speed_test,
+    )?))
+}
 
 mod vfs;
 

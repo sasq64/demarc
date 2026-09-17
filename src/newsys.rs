@@ -7,7 +7,7 @@ use tracing::{debug, info, trace, warn};
 use crate::backend::Backend;
 use crate::emu_file::{Override, Patch};
 use crate::m3u::M3u;
-use crate::retro_emu::RetroCoreThreaded;
+use crate::retro_emu;
 use crate::system_dir;
 use crate::workfile::WorkFile;
 use crate::{Args, libloader};
@@ -427,13 +427,7 @@ pub trait System: Send + Sync {
     // earlier.
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
-        Ok(Box::new(RetroCoreThreaded::new(
-            &core,
-            system_dir(),
-            Some(path),
-            path.get_all_meta(),
-            false,
-        )?))
+        retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)
     }
 }
 
@@ -498,6 +492,9 @@ impl NewSys {
             meta.insert("psx_core".into(), "beetle".into());
         }
         meta.insert("latency".into(), args.latency.to_string());
+        if args.proc {
+            meta.insert("use_proc".into(), "1".into());
+        }
         NewSys {
             systems: Self::get_systems(args),
             meta,

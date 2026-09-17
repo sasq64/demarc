@@ -7,7 +7,7 @@ use crate::backend::Backend;
 #[cfg(target_os = "linux")]
 use crate::libloader;
 #[cfg(target_os = "linux")]
-use crate::retro_emu::RetroCoreThreaded;
+use crate::retro_emu;
 #[cfg(target_os = "linux")]
 use crate::system_dir;
 use crate::workfile::WorkFile;
@@ -66,13 +66,7 @@ impl System for WebSystem {
         {
             let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
                 .context("Could not load the gamescope core")?;
-            Ok(Box::new(RetroCoreThreaded::new(
-                &core,
-                system_dir(),
-                Some(path),
-                path.get_all_meta(),
-                false,
-            )?))
+            retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)
         }
         // `can_load` said no everywhere else, so this is only reachable by
         // asking for a page by hand.

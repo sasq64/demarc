@@ -287,6 +287,11 @@ fn main() {
     #[cfg(unix)]
     raise_fd_limit();
 
+    #[cfg(unix)]
+    if let Some(code) = retro_emu::process_worker_main() {
+        std::process::exit(code);
+    }
+
     // Parse args before touching stdout/stderr so clap's help/errors are visible,
     // and so `--no-silence` can be honoured when setting up logging below.
     let mut args = Args::parse();

@@ -18,14 +18,14 @@ use super::RetroCoreDirect;
 
 /// Stack for the thread a core runs on. See the `stack_size` call in
 /// [`RetroCoreThreaded::new`] for why the default is not enough.
-const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
+pub(super) const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 /// How long a key scheduled by [`RetroCmd::SendKeys`] stays down before the
 /// matching release is sent. Long enough for any core to notice the press.
-const KEY_HOLD_FRAMES: u64 = 2;
+pub(super) const KEY_HOLD_FRAMES: u64 = 2;
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
-enum RetroCmd {
+pub(super) enum RetroCmd {
     Reset,
     PressKey {
         code: u32,
@@ -324,7 +324,7 @@ fn worker_loop(
 ///
 /// `key_queue` is the worker's scheduled-key list and `frame` its current frame
 /// counter; `SendKeys` appends to the former relative to the latter.
-fn apply_cmd(
+pub(super) fn apply_cmd(
     core: &mut RetroCoreDirect,
     cmd: RetroCmd,
     key_queue: &mut Vec<(u64, u32, bool)>,
@@ -372,7 +372,7 @@ fn apply_cmd(
 }
 
 /// Set or clear one bit of the shared state mask.
-fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
+pub(super) fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
     if on {
         state.fetch_or(bit, Ordering::Relaxed);
     } else {

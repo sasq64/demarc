@@ -15,8 +15,7 @@ use crate::{
     backend::Backend,
     libloader,
     newsys::{collect_disk_images, walk_dir},
-    retro_emu::RetroCoreThreaded,
-    system_dir,
+    retro_emu, system_dir,
     workfile::WorkFile,
 };
 
@@ -899,13 +898,7 @@ impl System for AmigaSystem {
         };
         debug!("Starting {core_name} with meta {meta:?}");
         let core = libloader::get_libretro(core_name).context("Could not load core")?;
-        Ok(Box::new(RetroCoreThreaded::new(
-            &core,
-            &amiga_system_dir(),
-            Some(path),
-            meta,
-            false,
-        )?))
+        retro_emu::create_core(&core, &amiga_system_dir(), Some(path), meta, false)
     }
 }
 

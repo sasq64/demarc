@@ -205,6 +205,10 @@ pub struct Args {
     #[arg(long)]
     pub check_wine: bool,
 
+    /// Run libretro cores in a separate process instead of a thread
+    #[arg(long)]
+    pub proc: bool,
+
     /// Max queued frames. Lower values = better input response
     #[arg(long, default_value_t = 2)]
     pub latency: u32,
