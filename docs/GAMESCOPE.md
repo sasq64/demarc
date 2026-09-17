@@ -154,7 +154,7 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_close_prefix` | `true` | run `wineserver -k` on that prefix at unload. demarc sends `false` for a sandboxed session, which has nothing out here to close |
 | `gamescope_wine_dll_overrides` | — | `WINEDLLOVERRIDES` for a wine client, wine's own syntax (`d3dx9_37=n`). demarc fills it in from the DLLs a release ships beside its `.exe` |
 | `gamescope_mesa_gl_version_override` | — | `MESA_GL_VERSION_OVERRIDE` for the client. demarc sets it to `4.6COMPAT` when an entry says `wine_gl_compat` |
-| `gamescope_mesa_glsl_version` | — | Mesa's `force_glsl_version` for the client only (never Xwayland). demarc sets it from `wine_glsl_version` |
+| `gamescope_mesa_glsl_version` | — | Mesa's `force_glsl_version` for the client only (never Xwayland). demarc sets it from `wine_glsl_version` (default `130`, empty for none) |
 | `gamescope_mesa_allow_glsl_120_subset_in_110` | `false` | Mesa's `allow_glsl_120_subset_in_110` for the client only. demarc sends `true` when an entry says `wine_glsl_120_subset` |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
 

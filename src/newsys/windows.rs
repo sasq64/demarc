@@ -13,10 +13,10 @@ use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
 use crate::system_dir;
 use crate::wine::{
-    DCOMP_OVERRIDE, DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_RES, DEFAULT_WIDESCREEN,
-    GL_COMPAT_OVERRIDE, META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_GLSL_120_SUBSET,
-    META_GLSL_VERSION, META_RES, WINMM_OVERRIDE, close_prefix, default_dialog_res, dll_overrides,
-    gl_compat, has_tool, is_yes, wine_command, wine_prefix,
+    DCOMP_OVERRIDE, DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_VERSION, DEFAULT_RES,
+    DEFAULT_WIDESCREEN, GL_COMPAT_OVERRIDE, META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT,
+    META_GLSL_120_SUBSET, META_GLSL_VERSION, META_RES, WINMM_OVERRIDE, close_prefix,
+    default_dialog_res, dll_overrides, gl_compat, has_tool, is_yes, wine_command, wine_prefix,
 };
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
@@ -236,6 +236,7 @@ impl System for WindowsSystem {
                 META_GL_COMPAT,
                 if DEFAULT_GL_COMPAT { "true" } else { "false" },
             ),
+            (META_GLSL_VERSION, DEFAULT_GLSL_VERSION),
         ])
     }
 

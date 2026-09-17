@@ -61,6 +61,9 @@ pub const DEFAULT_DESKTOP: bool = false;
 /// Whether a compatibility profile is asked for when nothing says otherwise.
 pub const DEFAULT_GL_COMPAT: bool = false;
 
+/// [`META_GLSL_VERSION`] when nothing says otherwise; empty turns it off.
+pub const DEFAULT_GLSL_VERSION: &str = "130";
+
 /// What [`META_GL_COMPAT`] sets `MESA_GL_VERSION_OVERRIDE` to.
 pub const GL_COMPAT_OVERRIDE: &str = "4.6COMPAT";
 
