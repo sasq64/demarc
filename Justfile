@@ -116,13 +116,13 @@ autodlg:
 # winmm.dll with the Windows export layout (source in tools/winmm). Checked in
 # like the dialog driver; needs clang, lld-link and llvm-dlltool.
 winmm:
-    python3 tools/winmm/build.py system/win/winmm.dll
+    python3 tools/winmm/build.py files/winmm.dll
 
 # dcomp.dll that gives DirectComposition demos a swapchain (source in
 # tools/compshim). Checked in, and installed in the prefix by scripts/setup-wine.sh.
 compshim:
     cd tools/compshim && cargo xwin build --release --target x86_64-pc-windows-msvc
-    cp tools/compshim/target/x86_64-pc-windows-msvc/release/dcomp.dll system/win/
+    cp tools/compshim/target/x86_64-pc-windows-msvc/release/dcomp.dll files/
 
 # `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
 # tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under

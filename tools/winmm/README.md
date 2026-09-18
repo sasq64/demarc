@@ -9,6 +9,12 @@ position in the export address table. Wine's winmm lacks `tid32Message` and the
 other `*32Message` exports, so everything after them is off by one — Alcatraz'
 "Prism break" calls `waveOutWrite` and lands in the export name table instead.
 
+It also hands wine a copy of every `WAVEHDR` instead of the app's own. Windows
+reads a header once at `waveOutWrite`, while wine reads it again on every
+buffer it feeds, so Fairlight's "Uncovering Static" crashes: it plays its one
+55 MB buffer from a header on the stack and then reuses that stack. The copy's
+flags go back to the app's header, and callbacks get the app's pointer.
+
 - `exports.txt` — `ordinal name stdcall-arg-bytes`, ordinals 2–194 taken from
   Windows 10 (10240 and 28000 are identical), then the names only wine has.
   Exports wine does not implement return 0.
