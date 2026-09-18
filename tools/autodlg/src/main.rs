@@ -196,8 +196,12 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
     let mut cmdline = wide(&format!("\"{exe}\""));
     let app = wide(exe);
     let cwd = wide(&dir);
+    // Some demos hand wShowWindow straight to ShowWindow without checking the
+    // flag, and a zero there hides their setup dialog (winnerdemo.exe).
     let mut si = StartupInfoW {
         cb: std::mem::size_of::<StartupInfoW>() as u32,
+        flags: STARTF_USESHOWWINDOW,
+        show_window: SW_SHOWNORMAL,
         ..Default::default()
     };
     let mut pi = ProcessInformation::default();
@@ -226,6 +230,8 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
     Some((pi.process, pi.process_id))
 }
 
+const STARTF_USESHOWWINDOW: u32 = 0x1;
+const SW_SHOWNORMAL: u16 = 1;
 const GWL_STYLE: i32 = -16;
 const BM_GETCHECK: u32 = 0x00F0;
 const BM_CLICK: u32 = 0x00F5;
@@ -323,6 +329,10 @@ impl Ctl {
             text: wtext(GetWindowTextW, hwnd),
             kind,
         }
+    }
+
+    fn is_default_push(&self) -> bool {
+        self.kind == Kind::Push && unsafe { GetWindowLongW(self.hwnd, GWL_STYLE) } & 0x0F == 1
     }
 
     fn checked(&self) -> bool {
@@ -653,6 +663,13 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     }
     if args.no_fallback {
         return false;
+    }
+    // A window that is not a real dialog ignores Return, so press its
+    // BS_DEFPUSHBUTTON directly when it has one.
+    if let Some(c) = kids.iter().find(|c| c.is_default_push()) {
+        println!("click default button {:?}", c.text);
+        c.click();
+        return true;
     }
     // No recognisable label: press the dialog's default button instead.
     println!("no matching button, sending Return");
