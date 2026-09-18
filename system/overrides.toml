@@ -122,6 +122,12 @@ libretro = { dosbox_pure_cycles = 150000 }
 boot = "dEEPMiX"
 fast = true
 
+[zoo.118078]
+meta = { wine_glsl_version = "130" }
+
+[zoo.163766]
+meta = { wine_glsl_version = "130" }
+
 [zoo.119665]
 assign = { Love = "SYS:" }
 
@@ -129,7 +135,7 @@ assign = { Love = "SYS:" }
 libretro = { aga = "true" }
 
 [zoo.190388]
-meta = { wine_res = "1280x720" }
+meta = { wine_glsl_version = "130", wine_res = "1280x720" }
 
 [zoo.205735]
 file = "MOTUS.ZIP"
