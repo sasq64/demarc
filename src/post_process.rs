@@ -708,10 +708,16 @@ fn post_process_pass(
                     post_process.aspect_tweak,
                     settings.scale_mode,
                 );
+                // A tiny used area (a demo's 3x3 first window) scales the whole
+                // frame far past what a texture may be.
+                let max_side = render_context
+                    .render_device()
+                    .limits()
+                    .max_texture_dimension_2d;
                 let inter_size = (rect.size().as_vec2() * image_scale)
                     .round()
                     .as_uvec2()
-                    .max(UVec2::ONE);
+                    .clamp(UVec2::ONE, UVec2::splat(max_side));
                 if inter_size.max_element()
                     > render_context
                         .render_device()
