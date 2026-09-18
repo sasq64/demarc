@@ -712,6 +712,14 @@ fn post_process_pass(
                     .round()
                     .as_uvec2()
                     .max(UVec2::ONE);
+                if inter_size.max_element()
+                    > render_context
+                        .render_device()
+                        .limits()
+                        .max_texture_dimension_2d
+                {
+                    break 'slangp &source_image.texture_view;
+                }
 
                 // Minification — the on-screen image is smaller than the source on
                 // at least one axis — is the one case the CRT/LCD presets can't
