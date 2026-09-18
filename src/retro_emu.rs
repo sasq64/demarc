@@ -132,6 +132,8 @@ pub struct RetroCoreDirect {
     audio_buf: Vec<i16>,
     core_path: CString,
     system_path: CString,
+    /// From the `save_dir` meta key, the system dir when unset.
+    save_path: CString,
     /// Temp dir holding this instance's private copy of the core .so. Held so
     /// the copy lives as long as the loaded library and is removed on drop.
     _core_tempdir: tempfile::TempDir,
@@ -476,8 +478,11 @@ impl RetroCoreDirect {
                         self.disk_callback = *callback;
                     }
                 }
-                RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+                RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY => {
                     *(data as *mut *const c_char) = self.system_path.as_ptr();
+                }
+                RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+                    *(data as *mut *const c_char) = self.save_path.as_ptr();
                 }
                 RETRO_ENVIRONMENT_GET_LIBRETRO_PATH => {
                     // The core as it lives on disk, not the private copy we
@@ -681,6 +686,13 @@ impl RetroCoreDirect {
                 vars: Default::default(),
                 audio_buf: Vec::new(),
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
+                save_path: CString::new(
+                    settings
+                        .get("save_dir")
+                        .map_or(system_dir.to_string_lossy(), |d| d.into())
+                        .as_bytes(),
+                )
+                .unwrap(),
                 core_path: CString::new(core_path.to_string_lossy().as_bytes()).unwrap(),
                 _core_tempdir: core_tempdir,
                 skip_frames: 0,

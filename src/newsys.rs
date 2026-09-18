@@ -31,6 +31,7 @@ use neo_geo::NeoGeoSystem;
 use pico8::Pico8System;
 use playstation::PSXSystem;
 use plus4::Plus4System;
+use psp::PspSystem;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
 use std::collections::HashMap;
@@ -58,6 +59,7 @@ mod neo_geo;
 mod pico8;
 mod playstation;
 mod plus4;
+mod psp;
 mod sinclair;
 mod snes;
 mod tic80;
@@ -470,6 +472,7 @@ impl NewSys {
             Box::new(MegadriveSystem::new(args)),
             Box::new(SNESSystem::new(args)),
             Box::new(PSXSystem {}),
+            Box::new(PspSystem {}),
             Box::new(AmstradSystem {}),
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
