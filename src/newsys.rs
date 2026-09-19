@@ -37,7 +37,7 @@ use snes::SNESSystem;
 use std::collections::HashMap;
 use tic80::Tic80System;
 use web::WebSystem;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use windows::WindowsSystem;
 
 mod adf;
@@ -64,11 +64,11 @@ mod sinclair;
 mod snes;
 mod tic80;
 mod web;
-// wine and gamescope are Linux-only, so everywhere else a `.exe` with a `PE`
-// image in it is something nothing here can run — and claiming it would take
-// the release away from the picture and music systems that can at least show
-// what it shipped beside the program.
-#[cfg(target_os = "linux")]
+// Windows runs them itself and Linux runs them under wine; everywhere else a
+// `.exe` with a `PE` image in it is something nothing here can run — and
+// claiming it would take the release away from the picture and music systems
+// that can at least show what it shipped beside the program.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod windows;
 
 /// Meta key saying whether the screen demarc is drawing to is a widescreen one.
@@ -458,6 +458,7 @@ impl NewSys {
         vec![
             #[cfg(target_os = "linux")]
             Box::new(DosSystem {}),
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             Box::new(WindowsSystem {}),
             Box::new(Tic80System {}),
             Box::new(Pico8System {}),

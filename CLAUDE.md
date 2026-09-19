@@ -57,6 +57,7 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins;
 | music | `music_emu.rs` | `musix` chiptune/tracker player, renders audio inline (no worker thread) and draws a Luau visualizer (`music_vis.rs`) |
 | Flash | `flash_emu.rs` | behind the `flash` feature; Ruffle with its own wgpu device |
 | gamescope session | `external/gamescope/src/libretro/` (C++) | Linux only. A patched gamescope composites a headless Wayland/Xwayland session into a shared dmabuf and a thin `gamescope_libretro.so` hands the frames back, so wine — or an HTML/JS release in an undecorated Chrome — is a picture source like any other. What to run inside it is `src/wine.rs`'s job for a Windows release (the wine command, the prefix, its teardown), restated as core options by `src/newsys/windows.rs`. See `docs/GAMESCOPE.md`. |
+| Windows release, on Windows | `win_runner.rs` | Windows only. Nothing is emulated and nothing is captured: the demo is started on the desktop and demarc only holds its process, with `demarc-autodlg.exe` answering the setup dialog as it does under wine. |
 
 ### System detection — `newsys.rs` + `src/newsys/*`
 

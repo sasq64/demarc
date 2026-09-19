@@ -227,6 +227,28 @@ fn the_driver_launches_the_demo() {
     assert_eq!(bare, vec![cfg.exe.to_string_lossy().into_owned()]);
 }
 
+/// On Windows itself the demo is started as it stands: no wine, no virtual
+/// desktop, and the window it makes is the one being looked at rather than a
+/// frame to be captured — so the driver is told not to move it.
+#[test]
+fn the_native_command_leaves_the_demo_window_where_it_is() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let cfg = Config::from_meta(&exe, &HashMap::new()).unwrap();
+    let args = cfg.launch_args(Some(Path::new("/sys/win/autodlg.exe")), false);
+
+    assert_eq!(args[0], "/sys/win/autodlg.exe");
+    assert!(args.contains(&"--no-fill".to_string()));
+    // The dialog is still answered.
+    assert!(args.contains(&"--prefer".to_string()));
+    assert!(!args.contains(&"--no-go".to_string()));
+
+    // Which is the only difference: a captured session keeps the fill.
+    assert!(
+        !cfg.wine_args(Some(Path::new("/sys/win/autodlg.exe")))
+            .contains(&"--no-fill".to_string())
+    );
+}
+
 /// `wine_desktop=true` wraps whatever would have run in a wine virtual
 /// desktop the size of the session. A handful of demos - Equinox's *Kings
 /// of the Playground* among them - do not survive a real display mode

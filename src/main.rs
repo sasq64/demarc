@@ -56,7 +56,9 @@ mod zx_scr;
 
 #[cfg(feature = "flash")]
 mod flash_emu;
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "windows")]
+mod win_runner;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod wine;
 #[cfg(target_os = "linux")]
 mod wine_sandbox;
@@ -135,11 +137,19 @@ fn check_wine_and_report() -> i32 {
     if check.ok() { 0 } else { 1 }
 }
 
-/// Elsewhere there is nothing to check: the Windows backend is the gamescope
-/// core's, and that is Linux only.
-#[cfg(not(target_os = "linux"))]
+/// On Windows there is nothing to check: the release is simply started — see
+/// [`win_runner`].
+#[cfg(target_os = "windows")]
 fn check_wine_and_report() -> i32 {
-    println("Windows releases are Linux only.");
+    println("Windows releases run directly.");
+    0
+}
+
+/// Elsewhere there is nothing to run them with: the Windows backend is either
+/// Windows itself or the gamescope core's, and that one is Linux only.
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn check_wine_and_report() -> i32 {
+    println("Windows releases are Linux and Windows only.");
     1
 }
 
@@ -149,9 +159,10 @@ fn wine_enabled() -> bool {
     wine::check_wine().ok()
 }
 
+/// Windows needs nothing to run its own releases; nowhere else can.
 #[cfg(not(target_os = "linux"))]
 fn wine_enabled() -> bool {
-    false
+    cfg!(target_os = "windows")
 }
 
 /// Does this db entry name Windows and nothing else? Such a release needs wine,

@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
+#[cfg(target_os = "linux")]
 use std::thread;
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tracing::{debug, warn};
+#[cfg(target_os = "linux")]
+use tracing::debug;
+use tracing::warn;
 
 use crate::system_dir;
 
@@ -47,9 +52,11 @@ pub const META_DESKTOP: &str = "wine_desktop";
 pub const META_GL_COMPAT: &str = "wine_gl_compat";
 
 /// Meta key holding wine's `WINEDLLOVERRIDES`, passed through as it stands.
+#[cfg(target_os = "linux")]
 pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 
 /// Meta key holding Mesa's `force_glsl_version` for the demo, e.g. `130`.
+#[cfg(target_os = "linux")]
 pub const META_GLSL_VERSION: &str = "wine_glsl_version";
 
 /// Meta key: yes turns on Mesa's `allow_glsl_120_subset_in_110` for the demo.
@@ -65,9 +72,11 @@ pub const DEFAULT_GL_COMPAT: bool = false;
 pub const DEFAULT_GLSL_120_SUBSET: bool = true;
 
 /// What [`META_GL_COMPAT`] sets `MESA_GL_VERSION_OVERRIDE` to.
+#[cfg(target_os = "linux")]
 pub const GL_COMPAT_OVERRIDE: &str = "4.6COMPAT";
 
 /// The wine prefix demos are run in, under the user's home directory.
+#[cfg(target_os = "linux")]
 const PREFIX_DIR: &str = ".wine-demarc";
 
 /// The dialog driver, relative to [`system_dir`].
@@ -75,9 +84,11 @@ const AUTODLG: &str = "win/demarc-autodlg.exe";
 
 /// The `WINEDLLOVERRIDES` entry for the winmm.dll `scripts/setup-wine.sh` puts
 /// in the prefix. See `tools/winmm`.
+#[cfg(target_os = "linux")]
 pub const WINMM_OVERRIDE: &str = "winmm=n,b";
 
 /// The same for the DirectComposition shim. See `tools/compshim`.
+#[cfg(target_os = "linux")]
 pub const DCOMP_OVERRIDE: &str = "dcomp=n,b";
 
 /// How long the driver keeps looking for a dialog before giving up.
@@ -103,6 +114,7 @@ fn parse_res(text: &str) -> Option<(u32, u32)> {
 }
 
 /// The `WINEDLLOVERRIDES` an entry asks for, if it asks for one.
+#[cfg(target_os = "linux")]
 pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
     meta.get(META_DLL_OVERRIDES)
         .map(|v| v.trim())
@@ -111,6 +123,7 @@ pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
 }
 
 /// Does an entry want a compatibility profile? See [`META_GL_COMPAT`].
+#[cfg(target_os = "linux")]
 pub(crate) fn gl_compat(meta: &HashMap<String, String>) -> bool {
     meta.get(META_GL_COMPAT)
         .map(|v| is_yes(v))
@@ -126,12 +139,14 @@ pub(crate) fn is_yes(value: &str) -> bool {
 }
 
 /// Where `name` is on `PATH`, if it is anywhere on it.
+#[cfg(target_os = "linux")]
 pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
     find_in(&std::env::var_os("PATH")?, name)
 }
 
 /// [`find_tool`] against a search path given rather than read, which is the
 /// only way to have a test look at one it prepared.
+#[cfg(target_os = "linux")]
 fn find_in(search_path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     std::env::split_paths(search_path)
@@ -142,16 +157,19 @@ fn find_in(search_path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
         })
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn has_tool(name: &str) -> bool {
     find_tool(name).is_some()
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn wine_prefix() -> Result<PathBuf> {
     let home = dirs::home_dir().context("No home directory to put a wine prefix in")?;
     Ok(home.join(PREFIX_DIR))
 }
 
 /// One of the things a Windows release needs before it can run at all.
+#[cfg(target_os = "linux")]
 pub(crate) struct Need {
     /// What is being looked for, as the report names it.
     pub what: &'static str,
@@ -160,10 +178,12 @@ pub(crate) struct Need {
 }
 
 /// What [`check_wine`] found: every requirement, in the order it looked.
+#[cfg(target_os = "linux")]
 pub(crate) struct WineCheck {
     pub needs: Vec<Need>,
 }
 
+#[cfg(target_os = "linux")]
 impl WineCheck {
     /// Is everything there?
     pub fn ok(&self) -> bool {
@@ -200,6 +220,7 @@ impl WineCheck {
 }
 
 /// Can a Windows release be run on this machine?
+#[cfg(target_os = "linux")]
 pub(crate) fn check_wine() -> WineCheck {
     let tool = |what: &'static str, fix: &str| Need {
         what,
@@ -245,6 +266,7 @@ struct Config {
     widescreen: bool,
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
+    #[cfg(target_os = "linux")]
     desktop: bool,
 }
 
@@ -286,6 +308,7 @@ impl Config {
                 .get(crate::newsys::META_WIDESCREEN)
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_WIDESCREEN),
+            #[cfg(target_os = "linux")]
             desktop: meta
                 .get(META_DESKTOP)
                 .map(|v| is_yes(v))
@@ -294,6 +317,7 @@ impl Config {
     }
 
     /// The arguments to `wine` that run this demo, dialog and all.
+    #[cfg(target_os = "linux")]
     fn wine_args(&self, autodlg: Option<&Path>) -> Vec<String> {
         let mut args = Vec::new();
         if self.desktop {
@@ -302,6 +326,18 @@ impl Config {
                 format!("/desktop=demarc,{}x{}", self.width, self.height),
             ]);
         }
+        args.extend(self.launch_args(autodlg, true));
+        args
+    }
+
+    /// The dialog driver and the demo: the half of the command that is the
+    /// same wherever it is run.
+    ///
+    /// `fill` is what a captured session needs — the demo's window
+    /// undecorated, at the origin — and what a real desktop does not, since
+    /// there the window the demo made itself is the one being looked at.
+    fn launch_args(&self, autodlg: Option<&Path>, fill: bool) -> Vec<String> {
+        let mut args = Vec::new();
         // Only when there is no driver to run at all does the demo become the
         // command: without one nothing can report the demo's end, and the
         // session runs blind until it happens to exit.
@@ -328,6 +364,9 @@ impl Config {
                     "--check".into(),
                     DEFAULT_CHECK.into(),
                 ]);
+                if !fill {
+                    args.push("--no-fill".into());
+                }
             }
             // Nothing pressed and nothing rearranged: the dialog is being
             // answered by a person, and the window they end up with is theirs
@@ -367,6 +406,7 @@ pub(crate) struct WineCommand {
 }
 
 /// Work out how a release would be started, without starting it.
+#[cfg(target_os = "linux")]
 pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
     let cfg = Config::from_meta(exe, meta)?;
     let mut argv = vec!["wine".to_string()];
@@ -378,9 +418,38 @@ pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result
     })
 }
 
+/// The same command on Windows itself, where there is nothing to run the demo
+/// under and no session to compose it into: the dialog driver and the demo,
+/// and nothing else. See [`crate::win_runner`].
+#[cfg(target_os = "windows")]
+pub(crate) fn native_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
+    let mut cfg = Config::from_meta(exe, meta)?;
+    cfg.exe = plain(cfg.exe);
+    Ok(WineCommand {
+        argv: cfg.launch_args(autodlg().as_deref(), false),
+        width: cfg.width,
+        height: cfg.height,
+    })
+}
+
+/// `canonicalize` hands back an extended-length `\\?\C:\…` path, which a demo
+/// handed one of those is free to make nothing of. The plain form is what a
+/// shortcut or an explorer window would have started it with.
+#[cfg(target_os = "windows")]
+fn plain(path: PathBuf) -> PathBuf {
+    let stripped = path
+        .to_str()
+        .and_then(|text| text.strip_prefix(r"\\?\"))
+        .filter(|rest| !rest.starts_with("UNC\\"))
+        .map(PathBuf::from);
+    stripped.unwrap_or(path)
+}
+
 /// Shut the wine prefix down: `wineserver -k` kills every process in it.
+#[cfg(target_os = "linux")]
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
+#[cfg(target_os = "linux")]
 pub(crate) fn close_prefix(prefix: &Path) {
     if !has_tool("wineserver") {
         sweep_prefix(prefix, None);
@@ -418,6 +487,7 @@ pub(crate) fn close_prefix(prefix: &Path) {
 
 /// Kill whatever is left in `prefix` that `wineserver -k` could not reach,
 /// `except` one pid.
+#[cfg(target_os = "linux")]
 fn sweep_prefix(prefix: &Path, except: Option<u32>) {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return;
@@ -452,6 +522,6 @@ fn sweep_prefix(prefix: &Path, except: Option<u32>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[path = "tests/wine_tests.rs"]
 mod tests;

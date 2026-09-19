@@ -1,32 +1,52 @@
-//! Windows releases, run under wine.
+//! Windows releases: run under wine inside a gamescope session on Linux, and
+//! started on the desktop itself on Windows — see `crate::win_runner`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
-use tracing::{info, warn};
+use anyhow::Result;
+#[cfg(target_os = "linux")]
+use anyhow::{Context, bail};
+use tracing::info;
+#[cfg(target_os = "linux")]
+use tracing::warn;
 
+#[cfg(target_os = "linux")]
+use super::META_REFRESH;
 use super::dos::{ExeKind, exe_kind};
-use super::{META_REFRESH, META_WIDESCREEN, System, get_ext, walk_dir};
+use super::{META_WIDESCREEN, System, get_ext, walk_dir};
 use crate::backend::Backend;
+#[cfg(target_os = "linux")]
 use crate::libloader;
+#[cfg(target_os = "linux")]
 use crate::retro_emu::RetroCoreThreaded;
+#[cfg(target_os = "linux")]
 use crate::system_dir;
+#[cfg(target_os = "windows")]
+use crate::win_runner::WinRunner;
+#[cfg(target_os = "linux")]
 use crate::wine::{
-    DCOMP_OVERRIDE, DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES,
-    DEFAULT_WIDESCREEN, GL_COMPAT_OVERRIDE, META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT,
-    META_GLSL_120_SUBSET, META_GLSL_VERSION, META_RES, WINMM_OVERRIDE, close_prefix,
-    default_dialog_res, dll_overrides, gl_compat, has_tool, is_yes, wine_command, wine_prefix,
+    DCOMP_OVERRIDE, GL_COMPAT_OVERRIDE, META_GLSL_VERSION, WINMM_OVERRIDE, close_prefix,
+    dll_overrides, gl_compat, has_tool, wine_command, wine_prefix,
 };
+use crate::wine::{
+    DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
+    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
+    default_dialog_res, is_yes,
+};
+#[cfg(target_os = "linux")]
 use crate::wine_sandbox::{self, Sandbox};
 use crate::workfile::WorkFile;
 
+#[cfg(target_os = "linux")]
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
 
 /// The core option naming the rate a session is composited and paced at.
+#[cfg(target_os = "linux")]
 const META_GAMESCOPE_REFRESH: &str = "gamescope_refresh";
 
 /// What holds the words of `gamescope_command` apart.
+#[cfg(target_os = "linux")]
 const ARG_SEPARATOR: &str = "\u{1f}";
 
 pub struct WindowsSystem {}
@@ -196,9 +216,12 @@ impl System for WindowsSystem {
         }
 
         // Native for all D3D seems to work
-        let overrides = format!("d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE}");
-        file.set_meta("gamescope_dll_overrides", &overrides);
-        file.set_meta("gamescope_wine_dll_overrides", &overrides);
+        #[cfg(target_os = "linux")]
+        {
+            let overrides = format!("d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE}");
+            file.set_meta("gamescope_dll_overrides", &overrides);
+            file.set_meta("gamescope_wine_dll_overrides", &overrides);
+        }
 
         if !file.has_meta(META_RES)
             && let Some(res) = res_from_name(&target)
@@ -217,9 +240,12 @@ impl System for WindowsSystem {
         // the dialog modes are settled here — only the frontend knows the
         // screen. Without one (headless, or a monitor that will not say) the
         // core's default stands.
-        let hz = file.get_meta_or(META_REFRESH, "");
-        if !file.has_meta(META_GAMESCOPE_REFRESH) && !hz.is_empty() {
-            file.set_meta(META_GAMESCOPE_REFRESH, hz);
+        #[cfg(target_os = "linux")]
+        {
+            let hz = file.get_meta_or(META_REFRESH, "");
+            if !file.has_meta(META_GAMESCOPE_REFRESH) && !hz.is_empty() {
+                file.set_meta(META_GAMESCOPE_REFRESH, hz);
+            }
         }
 
         file.path = target;
@@ -254,6 +280,12 @@ impl System for WindowsSystem {
         "Windows"
     }
 
+    #[cfg(target_os = "windows")]
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        Ok(Box::new(WinRunner::new(path)?))
+    }
+
+    #[cfg(target_os = "linux")]
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         // wine is exec'd inside the session, so a machine without it would
         // otherwise show a session that comes up empty and a line in the core's
@@ -302,6 +334,7 @@ impl System for WindowsSystem {
 /// give an unprivileged overlay, or a first run with no prefix to copy yet all
 /// mean the session runs in the shared prefix as it always did — one demo at a
 /// time, which is what demarc did up to now anyway. See [`crate::wine_sandbox`].
+#[cfg(target_os = "linux")]
 fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
     let meta = file.get_all_meta();
     if !wine_sandbox::wanted(&meta) {
@@ -349,6 +382,7 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
 ///
 /// `sandbox`, when there is one, goes on the front of that command and takes the
 /// prefix with it — see [`sandbox_for`] and [`crate::wine_sandbox`].
+#[cfg(target_os = "linux")]
 fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, String> {
     let mut meta = path.get_all_meta();
 
@@ -436,6 +470,6 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
     meta
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[path = "tests/windows_tests.rs"]
 mod tests;
