@@ -42,6 +42,18 @@ boot = "dEEP"
 file = "CNCD_PRX-Deep.lha"
 fast = true
 
+[zoo.7378]
+events = [
+  { frame = 130, key = "Enter" },
+  { frame = 135, key = "Down" },
+  { frame = 137, key = "Down" },
+  { frame = 139, key = "Down" },
+  { frame = 141, key = "Enter" },
+  { frame = 145, key = "Down" },
+  { frame = 147, key = "Down" },
+  { frame = 150, key = "Enter" },
+]
+
 # Closer / CNCD
 [zoo.7613]
 assign = { CNCD = "SYS:" }
