@@ -29,7 +29,7 @@ file = "variform_by_kewlers.zip"
 # fr-063: Magellan / Farbrausch. Its task scheduler asserts with many cores.
 [zoo.829]
 file = "fr-063_v1.02.zip"
-meta = { wine_cpus = 4 }
+meta = { wine_cpus = 8 }
 
 [zoo.3298]
 file = "fr-025-final.zip"
