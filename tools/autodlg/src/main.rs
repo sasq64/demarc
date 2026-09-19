@@ -13,8 +13,8 @@
 //! [`drive`]. Button labels carry decoration — `GO!`, `&Run` — so every
 //! comparison goes through `norm`.
 //!
-//! Everything printed here is for whoever is reading the log, bar three lines:
-//! see [`report`], which is how demarc learns what the demo is doing.
+//! Everything printed here is for whoever is reading the log, bar the lines
+//! [`report`] writes, which is how demarc learns what the demo is doing.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -159,7 +159,9 @@ fn fill_desktop(hwnd: Hwnd) {
 /// Prefix of the lines demarc reads rather than logs.
 const SENTINEL: &str = "!demarc ";
 
-/// Tell demarc what the demo is doing: `started`, `exited`, or `failed`.
+/// Tell demarc what the demo is doing: `started`, `exited` or `failed`, and
+/// `hiding`/`visible` around the setup dialog, which the gamescope core turns
+/// into black frames so nobody has to watch the dialog being answered.
 ///
 /// demarc cannot see any of this for itself. It launches one process — a
 /// gamescope with wine inside it — and that process outlives the demo by a long
@@ -701,8 +703,18 @@ fn wait_and_fill(timeout: f64) {
     eprintln!("no render window appeared to undecorate");
 }
 
+/// How long a window with no buttons on it has to stay the only thing there
+/// before it counts as "this demo has no dialog".
+const NO_DIALOG: Duration = Duration::from_millis(500);
+
 fn main() {
     let args = parse_args();
+    // Whoever is capturing the session shows black between these two, so the
+    // dialog never reaches the screen.
+    let hiding = !args.no_go && !args.list;
+    if hiding {
+        report("hiding");
+    }
     let demo = args.launch.as_ref().map(|exe| {
         let Some((handle, pid)) = launch(exe) else {
             eprintln!("could not start {exe}");
@@ -717,12 +729,16 @@ fn main() {
 
     let start = Instant::now();
     let mut driven = false;
+    // Since when the demo has had a window with no buttons on it.
+    let mut plain: Option<Instant> = None;
     while !args.no_go && !driven && start.elapsed() < Duration::from_secs_f64(args.timeout) {
+        let mut any_plain = false;
         for top in top_levels() {
             let kids = children(top.hwnd);
             // A dialog worth driving has at least one button on it; this skips
             // splash windows and the demo's own render window.
             if !kids.iter().any(|c| c.kind == Kind::Push) {
+                any_plain = true;
                 continue;
             }
             if args.list {
@@ -733,14 +749,29 @@ fn main() {
             driven = true;
             break;
         }
+        if driven {
+            break;
+        }
+        // The demo is already drawing and no dialog has turned up beside it:
+        // waiting out the timeout would only keep the session black.
+        match plain {
+            _ if !any_plain => plain = None,
+            Some(since) if since.elapsed() >= NO_DIALOG => break,
+            Some(_) => {}
+            None => plain = Some(Instant::now()),
+        }
         unsafe { Sleep(100) };
     }
-    if !args.no_go && !driven {
+    if !args.no_go && !driven && plain.is_none() {
         eprintln!("no dialog appeared within {}s", args.timeout);
     }
 
     if !args.list && !args.no_fill {
         wait_and_fill(args.timeout);
+    }
+
+    if hiding {
+        report("visible");
     }
 
     // Outlive the demo, and say so when it goes: this is the only place that

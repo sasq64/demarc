@@ -176,6 +176,12 @@ only the 4:3 ones otherwise — the frontend reads the window and says which in 
 `widescreen` meta. `wine_dialog_res=pick` presses nothing at all, leaving the dialog to
 whoever is watching.
 
+The dialog itself is never shown. The driver writes `!demarc hiding` before it starts the
+demo and `!demarc visible` once the dialog is answered and the demo's window is up, and
+the core — which reads the client's stdout through a pipe of its own — sends the frontend
+black frames in between. A demo with no dialog reaches `visible` half a second after its
+window appears, and a driver that says neither is overruled after ten seconds.
+
 ### The prefix each session runs in
 
 The command demarc sends is not `wine ...` but `bwrap ... -- wine ...`. `src/wine_sandbox.rs`
@@ -326,14 +332,13 @@ Open:
    still advances; a wine demo's sound goes straight to the user's speakers. The
    intended fix is a private PipeWire null sink with the child's
    `PULSE_SINK` pointed at it, captured into `retro_audio_sample_batch`.
-2. **The end of a demo is noticed late.** `demarc-autodlg.exe` is now in the command, so
-   the setup dialog gets answered and the driver writes `!demarc started` / `exited` as it
-   always has — but the core inherits gamescope's stdout rather than reading it, so nobody
-   here sees those lines. What ends a captured session instead is demarc's ordinary idle
-   detection: the compositor keeps presenting the same empty frame once the demo is gone,
-   and a frozen, silent view is one the frontend moves on from. Reading the driver's stream
-   in the core would make it prompt, and would tell a demo that failed to start from one on
-   a long loading screen.
+2. **The end of a demo is noticed late.** The core now reads the driver's stream — that is
+   what hides the setup dialog, above — but only acts on the lines that bound it.
+   `!demarc exited` stops the hiding and is otherwise ignored, so what ends a captured
+   session is still demarc's ordinary idle detection: the compositor keeps presenting the
+   same empty frame once the demo is gone, and a frozen, silent view is one the frontend
+   moves on from. Ending the session on that line would make it prompt, and would tell a
+   demo that failed to start from one on a long loading screen.
 3. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
 4. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome

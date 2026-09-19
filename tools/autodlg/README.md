@@ -33,7 +33,7 @@ value. Unknown arguments print a warning and are skipped.
 | `--no-go` | Touch no dialog at all — just launch the demo and watch it. What `wine_dialog_res=pick` uses, so a person can answer the dialog themselves. |
 | `--no-fill` | Leave the demo's window as it is. By default, once the demo's render window appears, its frame (title bar, borders) is stripped and its client area moved to the desktop origin, so the captured frame is the demo and nothing else. The client area keeps the size the demo picked; it is never resized. |
 | `--list` | Print the dialog's control tree — class, kind, text, checked state, combo/list items and selection — and change nothing. This is how you work out what to pass to `--prefer` for a demo that needs a per-release override. |
-| `--timeout <secs>` | How long to wait for a dialog to appear, and afterwards how long to wait for the render window to undecorate. Default `20`. Generous on purpose: a cold wine prefix spends a while building itself before showing its first window. |
+| `--timeout <secs>` | How long to wait for a dialog to appear — the wait ends early once the demo has had a window with no buttons on it for half a second, which is a demo that has no dialog — and afterwards how long to wait for the render window to undecorate. Default `20`. Generous on purpose: a cold wine prefix spends a while building itself before showing its first window. |
 
 ## Label matching
 
@@ -49,6 +49,9 @@ and that is what stops the rest of the chain from being tried.
 Everything on stdout is log text for whoever is reading it, except lines
 beginning `!demarc `, which demarc parses:
 
+- `!demarc hiding` — a dialog is about to be answered, so the session should be
+  shown as black until it is gone; the gamescope core does this (`external/gamescope/src/libretro/core.cpp`)
+- `!demarc visible` — the dialog has been dealt with and the demo's window is up
 - `!demarc started` — the demo process was created
 - `!demarc exited` — it has ended (this is the one demarc is waiting for)
 - `!demarc failed` — `--launch` could not start the executable
