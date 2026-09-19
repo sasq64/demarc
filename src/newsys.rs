@@ -457,6 +457,7 @@ impl NewSys {
     fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
         vec![
             #[cfg(target_os = "linux")]
+            Box::new(DosSystem {}),
             Box::new(WindowsSystem {}),
             Box::new(Tic80System {}),
             Box::new(Pico8System {}),
@@ -477,7 +478,6 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
-            Box::new(DosSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
             Box::new(WebSystem {}),

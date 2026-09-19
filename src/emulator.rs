@@ -10,7 +10,9 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
 use crate::backend::{Backend, STATE_SKIPPING, ViewFocus, frame_bytes};
-use crate::emu_file::{EmuFile, GameInfo, Override, download_finished, download_started};
+use crate::emu_file::{
+    EmuFile, FileSource, GameInfo, Override, UrlList, download_finished, download_started,
+};
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
 use crate::newsys::{self, NewSys};
@@ -593,8 +595,10 @@ impl Emulator {
             .collect();
         let mut source = emu_file.path.clone();
         // The one part of an override that has to happen before the transfer:
-        // which of the release's downloads is the demo.
-        if let Some(name) = over.and_then(|o| o.download) {
+        // where the release comes from, or which of its downloads is the demo.
+        if let Some(url) = over.and_then(|o| o.download_url) {
+            source = FileSource::Url(UrlList::one(url));
+        } else if let Some(name) = over.and_then(|o| o.download) {
             source.pick_download(name);
         }
         let job = Job::spawn(name, move |progress| {

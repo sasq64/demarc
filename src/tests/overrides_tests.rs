@@ -184,3 +184,28 @@ fn parses_key_events() {
     );
     assert!(!overrides.contains_key(&2));
 }
+
+/// `download` replaces the release's own links, and has to be a URL.
+#[test]
+fn download_overrides_the_url() {
+    let overrides = parse(
+        r#"
+        [zoo.311767]
+        download = "https://example.org/area5150_86box.zip"
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        overrides[&311767].download_url,
+        Some("https://example.org/area5150_86box.zip")
+    );
+
+    let overrides = parse(
+        r#"
+        [zoo.1]
+        download = "area5150.zip"
+        "#,
+    )
+    .unwrap();
+    assert!(overrides.is_empty());
+}

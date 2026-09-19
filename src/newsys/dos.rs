@@ -14,6 +14,7 @@ use crate::utils::read_at;
 use crate::workfile::WorkFile;
 
 const CORE_NAME_PCEM: &str = "pcem";
+const CORE_NAME_86BOX: &str = "86box";
 const CORE_NAME_DOSBOX: &str = "dosbox_pure";
 
 /// Meta key asking for the Watcom extender to be placed beside the program.
@@ -32,8 +33,8 @@ fn dos4gw_source() -> PathBuf {
 ///
 /// Two very different ways of running a PC, picked by what the release is:
 ///
-/// - A PCem machine `.cfg` — the same file the desktop PCem writes into its
-///   `configs/` directory and takes with `--config` — goes to PCem. It names
+/// - A PCem or 86Box machine `.cfg` — the same file either desktop emulator
+///   writes and takes on the command line — goes to that emulator. It names
 ///   the machine, CPU, video and sound cards and the disc images to mount, so
 ///   it is the whole of the configuration; the core has no machine picker.
 /// - A bare DOS program (`.exe`, `.com`) goes to DOSBox Pure, which
@@ -49,28 +50,36 @@ fn dos4gw_source() -> PathBuf {
 /// says so: the release is copied somewhere writable and a `DOS4GW.EXE` is put
 /// beside the program — see [`place_extender`].
 ///
-/// Neither core ships BIOS ROMs — DOSBox needs none, and PCem's are
-/// copyrighted, so they must be placed under
-/// `<system dir>/pcem/roms/<machine>/`; `docs/roms.txt` in the PCem tree lists
-/// what each machine needs. Everything the machine writes — NVR, logs — goes
-/// under `<save dir>/pcem/`.
+/// No core ships BIOS ROMs — DOSBox needs none, and the PC emulators' are
+/// copyrighted, so they must be placed under `<system dir>/pcem/roms/` and
+/// `<system dir>/86box/roms/`, each in that emulator's own layout; `docs/roms.txt`
+/// in the PCem tree and `docs/86BOX.md` say what goes where. Everything the
+/// machine writes — NVR, logs — goes under `<save dir>/`.
 pub struct DosSystem {}
 
-/// Does this look like a PCem machine config?
+/// Which emulator a machine `.cfg` belongs to, if it is one at all.
 ///
 /// `.cfg` is far too generic an extension to accept on its own — plenty of
-/// systems drop one next to their content — so require the one key every PCem
-/// machine config has and nothing else uses: a `model =` naming the machine.
-fn is_pcem_config(path: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
+/// systems drop one next to their content — so require the one key each
+/// emulator's machine config has and nothing else uses: `model =` naming the
+/// machine for PCem, `machine =` for 86Box.
+fn config_core(path: &Path) -> Option<&'static str> {
+    let text = fs::read_to_string(path).ok()?;
+    let names = |key: &str| {
+        text.lines().any(|line| {
+            line.trim()
+                .strip_prefix(key)
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .is_some_and(|value| !value.trim().is_empty())
+        })
     };
-    text.lines().any(|line| {
-        let line = line.trim();
-        line.strip_prefix("model")
-            .and_then(|rest| rest.trim_start().strip_prefix('='))
-            .is_some_and(|value| !value.trim().is_empty())
-    })
+    if names("machine") {
+        Some(CORE_NAME_86BOX)
+    } else if names("model") {
+        Some(CORE_NAME_PCEM)
+    } else {
+        None
+    }
 }
 
 /// The largest a `.com` can be: DOS loads one into a single segment, below the
@@ -268,6 +277,23 @@ fn place_extender(file: &WorkFile, source: &Path) -> Result<()> {
     Ok(())
 }
 
+fn generate_cfg(input: HashMap<String, String>) {
+    let cfg: HashMap<&str, &[&str]> = [("Machine", &["machine", "cpu_family"][..])].into();
+    let mut result: String = "".into();
+    for (key, val) in cfg {
+        let mut first = true;
+        for subkey in val {
+            if let Some(subval) = input.get(&subkey.to_string()) {
+                if first {
+                    result += &format!("\n[{key}]\n");
+                }
+                first = false;
+                result += &format!("{subkey}={subval}\n");
+            }
+        }
+    }
+}
+
 impl DosSystem {
     /// Which of the files in a release is the one to start.
     ///
@@ -311,7 +337,7 @@ impl System for DosSystem {
             return false;
         }
         if get_ext(path) == "cfg" {
-            is_pcem_config(path)
+            config_core(path).is_some()
         } else {
             is_dos_program(path)
         }
@@ -377,11 +403,11 @@ impl System for DosSystem {
     }
 }
 
-/// Which core runs this file: PCem drives a machine config, DOSBox runs a
-/// program on a DOS of its own.
+/// Which core runs this file: a machine config goes to the emulator that wrote
+/// it, anything else to DOSBox and its own DOS.
 fn core_for(path: &Path) -> &'static str {
     if get_ext(path) == "cfg" {
-        CORE_NAME_PCEM
+        config_core(path).unwrap_or(CORE_NAME_PCEM)
     } else {
         CORE_NAME_DOSBOX
     }

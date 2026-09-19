@@ -592,6 +592,8 @@ impl Patch {
 pub struct Override {
     // If Some, select the URL ending with this file-name for download
     pub download: Option<&'static str>,
+    // If Some, download this URL instead of anything the db lists
+    pub download_url: Option<&'static str>,
     // If Some, override file selection by system and pass this file directly to load()
     pub boot_file: Option<&'static str>,
     // Add this meta-data to WorkFile

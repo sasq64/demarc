@@ -209,6 +209,7 @@ const MARKER_FILES: &[&str] = &[
 /// savegames — move `system/amiga/` and the build breaks on the dangling links.
 const SKIP_DIRS: &[&str] = &[
     "system/pcem",
+    "system/86box",
     "system/amiga/WHDBoot/save-data",
     "system/amiga/WHDBoot/tmp",
     "system/amiga/WHDSaves",

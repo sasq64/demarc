@@ -34,6 +34,9 @@ meta = { wine_cpus = 4 }
 [zoo.3298]
 file = "fr-025-final.zip"
 
+[zoo.4767]
+boot = "final.png"
+
 [zoo.7236]
 boot = "dEEP"
 file = "CNCD_PRX-Deep.lha"
@@ -70,7 +73,11 @@ assign = { Killer = "SYS:" }
 fast = true
 
 [zoo.18030]
-patch = { info = "GUS 0x240", target = "SOUND.CFG", contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }
+patch = {
+  info = "GUS 0x240",
+  target = "SOUND.CFG",
+  contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+}
 file = "inside.zip"
 
 [zoo.55180]
@@ -79,10 +86,23 @@ file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
 # Ninja II by Melon Dezign
 [zoo.18032]
 file = "ninja2.zip"
-patch = { info = "GUS 0x240", target = "NINJA2.CFG", contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==" }
+patch = {
+  info = "GUS 0x240",
+  target = "NINJA2.CFG",
+  contents = "AAAAAAEAAABAAgAA//////////9ErAAACgAAAA==",
+}
 
 [zoo.19162]
-events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }]
+events = [
+  {
+    frame = 30,
+    key = "Enter",
+  },
+  {
+    frame = 35,
+    key = "Enter",
+  }
+]
 
 [zoo.25839]
 meta = { wine_res = "640x480" }
@@ -134,6 +154,9 @@ assign = { Love = "SYS:" }
 [zoo.122582]
 libretro = { aga = "true" }
 
+[zoo.136167]
+download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_86box.zip"
+
 [zoo.190388]
 meta = { wine_glsl_version = "130", wine_res = "1280x720" }
 
@@ -148,3 +171,6 @@ file = "dkg^lmn-neocolora.lha"
 
 [zoo.376675]
 meta = { amiga_core = "puae" }
+
+[zoo.311767]
+download = "https://github.com/sasq64/demodb/releases/download/demo-arc/area5150_86box.zip"

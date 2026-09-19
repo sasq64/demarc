@@ -14,6 +14,9 @@
 //! file = "rgba_tbc_elevated.zip"      # which download to fetch
 //! boot = "elevated_1280x720.exe"      # which file inside it to start
 //!
+//! [zoo.311767]
+//! download = "https://example.org/area5150_86box.zip"  # fetch this, not the db's links
+//!
 //! [zoo.68604]
 //! libretro = { dosbox_pure_cycles = "max" }   # core options, as meta
 //!
@@ -37,7 +40,7 @@
 //! Every key is optional, and an entry may carry several patches by writing
 //! `patch` as an array (`[[zoo.18030.patch]]`). What each one does, and when,
 //! is described on [`Override`]; the three are applied at the three stages of a
-//! load — `file` when it is downloaded
+//! load — `file`/`download` when it is downloaded
 //! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
 //! `patch` once it is unpacked and `boot`/`libretro`/`fast` as it is handed to
 //! a system (both in [`NewSys::load_file`](crate::newsys::NewSys::load_file)).
@@ -48,6 +51,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tracing::{info, warn};
+use url::Url;
 
 use crate::emu_file::{Override, Patch};
 use crate::emulator::Emulator;
@@ -117,6 +121,9 @@ struct OverrideFile {
 struct RawOverride {
     /// File name of the download to fetch, out of the several a release lists.
     file: Option<String>,
+    /// A URL to fetch instead of anything the db lists, for a release whose
+    /// own links are dead or unusable.
+    download: Option<String>,
     /// File name inside the release of the program to start.
     boot: Option<String>,
     /// Core options, which is what most meta on an entry is.
@@ -247,6 +254,14 @@ impl RawOverride {
             meta.insert("assign", leak(assigns.join(";")));
         }
 
+        let download_url = match self.download {
+            Some(url) => {
+                Url::parse(&url).with_context(|| format!("download {url:?} is not a URL"))?;
+                Some(leak(url))
+            }
+            None => None,
+        };
+
         let patches = self
             .patch
             .map(Patches::into_vec)
@@ -275,6 +290,7 @@ impl RawOverride {
 
         Ok(Override {
             download: self.file.map(leak),
+            download_url,
             boot_file: self.boot.map(leak),
             meta,
             patches,
