@@ -148,6 +148,9 @@ impl WindowsSystem {
             .collect();
         let mut best: Option<((usize, i32), PathBuf)> = None;
         walk_dir(dir, 0, |path, _ext, _| {
+            if path.to_string_lossy().contains("redist") {
+                return Ok(());
+            }
             if !self.can_load(path) {
                 return Ok(());
             }
