@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 
 use crate::Args;
-use crate::libretro::RETROK_RETURN;
 use crate::newsys::NewSys;
 use crate::system_dir;
 
@@ -20,33 +19,33 @@ fn write_bytes(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
 }
 
 /// `.cfg` is a name half the world uses, so the sniff has to lean on the
-/// `model =` key rather than the extension.
+/// `machine =` key rather than the extension.
 #[test]
 fn tells_a_machine_config_from_any_other_cfg() {
     let dir = tempfile::tempdir().unwrap();
     let sys = DosSystem {};
 
-    let pcem = write(
+    let cfg = write(
         dir.path(),
         "486.cfg",
-        "model = ami486\ncpu = 0\nmem_size = 16384\ngfxcard = tgui9440\n",
+        "machine = ami486\ncpu_family = i486dx\nmem_size = 16384\ngfxcard = tgui9440\n",
     );
-    assert!(sys.can_load(&pcem));
+    assert!(sys.can_load(&cfg));
 
     // Section headers and spacing vary between hand-written configs.
-    let spaced = write(dir.path(), "xt.cfg", "\n[Machine]\n  model=ibmxt\n");
+    let spaced = write(dir.path(), "xt.cfg", "\n[Machine]\n  machine=ibmxt86\n");
     assert!(sys.can_load(&spaced));
 
     // Some other emulator's settings file that happens to end in .cfg.
     let other = write(dir.path(), "other.cfg", "fullscreen = 1\nscale = 2\n");
     assert!(!sys.can_load(&other));
 
-    // A `model` key with nothing after it configures no machine.
-    let empty = write(dir.path(), "empty.cfg", "model = \n");
+    // A `machine` key with nothing after it configures no machine.
+    let empty = write(dir.path(), "empty.cfg", "machine = \n");
     assert!(!sys.can_load(&empty));
 
-    // A key that merely starts with "model" is not the model key.
-    let lookalike = write(dir.path(), "look.cfg", "model_name = foo\n");
+    // A key that merely starts with "machine" is not the machine key.
+    let lookalike = write(dir.path(), "look.cfg", "machine_name = foo\n");
     assert!(!sys.can_load(&lookalike));
 }
 
@@ -116,12 +115,12 @@ fn tells_a_dos_program_from_a_windows_one() {
 }
 
 /// The two cores split by content, not by system: a machine config drives
-/// PCem, everything else runs on DOSBox's own DOS.
+/// 86Box, everything else runs on DOSBox's own DOS.
 #[test]
 fn routes_each_kind_of_content_to_its_core() {
     let dir = tempfile::tempdir().unwrap();
-    let cfg = write(dir.path(), "486.cfg", "model = ami486\n");
-    assert_eq!(core_for(&cfg), CORE_NAME_PCEM);
+    let cfg = write(dir.path(), "486.cfg", "machine = ami486\n");
+    assert_eq!(core_for(&cfg), CORE_NAME_86BOX);
     assert_eq!(core_for(Path::new("demo.exe")), CORE_NAME_DOSBOX);
     assert_eq!(core_for(Path::new("go.bat")), CORE_NAME_DOSBOX);
     assert_eq!(core_for(Path::new("tiny.com")), CORE_NAME_DOSBOX);
@@ -150,11 +149,11 @@ fn picks_what_the_release_means_to_start() {
     );
 
     // A machine config beside the programs describes the whole machine, so
-    // it wins - and takes the release to PCem rather than DOSBox.
-    write(&release, "crystal.cfg", "model = ami486\n");
+    // it wins - and takes the release to 86Box rather than DOSBox.
+    write(&release, "crystal.cfg", "machine = ami486\n");
     let found = sys.pick_target(&release).unwrap().unwrap();
     assert!(found.ends_with("crystal.cfg"), "picked {found:?}");
-    assert_eq!(core_for(&found), CORE_NAME_PCEM);
+    assert_eq!(core_for(&found), CORE_NAME_86BOX);
 }
 
 /// A `.bat` beside the program is as often a wrapper printing the .NFO as
@@ -354,21 +353,25 @@ const TIMEOUT: Duration = Duration::from_secs(180);
 /// Boot a real IBM PC/XT, BIOS and all, and read the screen back.
 ///
 /// Ignored because it needs two things this repo does not and cannot ship:
-/// a locally built PCem core (`just pcem-core`), and IBM's copyrighted BIOS
-/// ROMs under `<system dir>/pcem/roms/`. With both in place:
+/// a locally built 86Box core (`just 86box-core`), and IBM's copyrighted BIOS
+/// ROMs under `<system dir>/86box/roms/`. With both in place:
 ///
-///   DEMARC_CORE_DIR=external/pcem/build-lr/src \
+///   DEMARC_CORE_DIR=external/86box/build-lr/src \
 ///       cargo test boots_an_ibm_xt -- --ignored --nocapture
 ///
-/// With no disks attached the 1981 BIOS falls through to the Cassette
-/// BASIC in ROM, so a successful boot ends on a screen that cannot be
-/// mistaken for anything else.
+/// With no disks attached the BIOS should fall through to the Cassette BASIC
+/// in ROM, so a successful boot ends on a screen that cannot be mistaken for
+/// anything else.
+///
+/// NOT PASSING on 86Box as it stands: `testdata/pc/ibmxt.cfg` gets through the
+/// POST memory count and then resets to a blank screen instead of entering
+/// BASIC, over and over. The config still needs work.
 #[test]
-#[ignore = "needs a locally built pcem core and IBM BIOS ROMs"]
+#[ignore = "needs a locally built 86box core and IBM BIOS ROMs"]
 fn boots_an_ibm_xt_to_rom_basic() {
-    let roms = system_dir().join("pcem").join("roms");
+    let roms = system_dir().join("86box").join("roms");
     assert!(
-        roms.join("ibmxt").is_dir(),
+        roms.join("machines").join("ibmxt86").is_dir(),
         "no BIOS ROMs at {} - see testdata/pc/ibmxt.cfg",
         roms.display()
     );
@@ -384,7 +387,7 @@ fn boots_an_ibm_xt_to_rom_basic() {
     let mut loaded = systems
         .load_file(&cfg, &HashMap::new(), None)
         .expect("failed to load the XT config");
-    assert_eq!(loaded.system.name(), "DOS");
+    assert_eq!(loaded.system.name(), "MS/DOS");
 
     // Both milestones of a real boot: the BIOS sizing memory, then BASIC.
     let mut post_line: Option<String> = None;
@@ -412,7 +415,7 @@ fn boots_an_ibm_xt_to_rom_basic() {
 
         let mut text = Vec::new();
         loaded.backend.with_frame(&mut |width, height, pixels| {
-            if width >= 640 && height >= 200 {
+            if width == 640 && height == 200 {
                 text = super::screen::decode(width, height, pixels, &font);
             }
         });
@@ -462,145 +465,5 @@ fn boots_an_ibm_xt_to_rom_basic() {
         last[2].ends_with("Bytes free"),
         "third line was {:?}",
         last[2]
-    );
-}
-
-/// Second Reality's own SETUP screen wants Enter before it starts. Sending
-/// one every second is easier to trust than trying to spot the screen: the
-/// keystrokes before it land at the DOS prompt, where they do nothing.
-const ENTER_EVERY: usize = 60;
-
-/// Enough for the POST, the FreeDOS boot, JEMMEX, and the demo loading a
-/// megabyte off C: — it reaches the SETUP screen around frame 2000.
-const DEMO_FRAME_LIMIT: usize = 9000;
-
-/// Wall-clock ceiling for the whole run, so a wedged core fails rather than
-/// hangs. A debug build is a long way off 60 fps here.
-const DEMO_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Frames to watch once the demo has switched to its 320x200 mode.
-const ANIMATION_FRAMES: usize = 300;
-
-/// Boot DOS off a floppy image and run Second Reality from a hard disc.
-///
-/// Ignored for the same reasons as the XT test — it needs `just pcem-core`
-/// and an AMI 486 BIOS under `<system dir>/pcem/roms/` — plus the ET4000
-/// video BIOS:
-///
-///   DEMARC_CORE_DIR=external/pcem/build-lr/src \
-///       cargo test runs_second_reality -- --ignored --nocapture
-///
-/// Unlike the XT, there is no text to read at the end: this is a graphics
-/// demo. What it asserts instead is that the machine leaves text mode for
-/// the 320x200 the demo runs in, and that what arrives after that is a
-/// moving picture rather than one frame held still — which cannot happen
-/// without the BIOS, DOS, the hard disc and the video card all working.
-#[test]
-#[ignore = "needs a locally built pcem core and an AMI 486 BIOS"]
-fn runs_second_reality_from_a_dos_hard_disc() {
-    let roms = system_dir().join("pcem").join("roms");
-    assert!(
-        roms.join("ami486").is_dir() && roms.join("et4000.bin").is_file(),
-        "no AMI 486 / ET4000 ROMs at {} - see testdata/pc/2ndreality.cfg",
-        roms.display()
-    );
-
-    let cfg = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
-        .join("pc")
-        .join("2ndreality.cfg");
-
-    let args = Args::parse_from(["demarc"]);
-    let systems = NewSys::new(&args);
-    let mut loaded = systems
-        .load_file(&cfg, &HashMap::new(), None)
-        .expect("failed to load the Second Reality config");
-    assert_eq!(loaded.system.name(), "DOS");
-
-    // Every video mode the machine passes through, in order. The POST and
-    // the SETUP screen are 80x25 text; the demo proper is 320x200.
-    let mut modes: Vec<(usize, usize, usize)> = Vec::new();
-    let mut graphics_at = None;
-    let mut seen_text_mode = false;
-    let mut frame = 0;
-    let deadline = Instant::now() + DEMO_TIMEOUT;
-
-    while frame < DEMO_FRAME_LIMIT {
-        if !loaded.backend.run() {
-            assert!(
-                Instant::now() < deadline,
-                "the core stopped producing frames"
-            );
-            std::thread::yield_now();
-            continue;
-        }
-        frame += 1;
-
-        let (width, height) = loaded.backend.get_frame_size();
-        if modes.last().map(|&(_, w, h)| (w, h)) != Some((width, height)) {
-            modes.push((frame, width, height));
-        }
-        // PCem starts out at the CGA-ish 656x200 it uses before any card
-        // has set a mode, so "not 80x25" is not enough on its own: wait
-        // for the ET4000's 720x400 text mode, and only then for the demo
-        // to switch away from it.
-        if height >= 350 {
-            seen_text_mode = true;
-        } else if seen_text_mode {
-            graphics_at = Some(frame);
-            break;
-        }
-        if frame % ENTER_EVERY == 0 {
-            loaded.backend.send_keys(&[(0, RETROK_RETURN)]);
-        }
-    }
-
-    let modes_seen = modes
-        .iter()
-        .map(|(at, w, h)| format!("{w}x{h} at {at}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let graphics_at = graphics_at.unwrap_or_else(|| {
-        panic!("never left text mode in {DEMO_FRAME_LIMIT} frames. Modes: {modes_seen}")
-    });
-    println!("modes: {modes_seen}");
-    println!("in graphics mode at frame {graphics_at}");
-
-    // A demo that has started is a picture that keeps changing. One held
-    // frame - a crash back to DOS, or a mode set with nothing behind it -
-    // gives a single hash and a near-empty palette.
-    let mut hashes = std::collections::HashSet::new();
-    let mut colours = std::collections::HashSet::new();
-    let mut watched = 0;
-    while watched < ANIMATION_FRAMES {
-        if !loaded.backend.run() {
-            assert!(
-                Instant::now() < deadline,
-                "the core stopped producing frames"
-            );
-            std::thread::yield_now();
-            continue;
-        }
-        watched += 1;
-        hashes.insert(loaded.backend.frame_hash());
-        loaded.backend.with_frame(&mut |_, _, pixels| {
-            colours.extend(pixels.iter().copied());
-        });
-    }
-    println!(
-        "{} distinct frames and {} colours over {ANIMATION_FRAMES} frames",
-        hashes.len(),
-        colours.len()
-    );
-
-    assert!(
-        hashes.len() > ANIMATION_FRAMES / 10,
-        "only {} distinct frames in {ANIMATION_FRAMES} - the picture is not moving",
-        hashes.len()
-    );
-    assert!(
-        colours.len() > 16,
-        "only {} distinct colours - the screen is effectively blank",
-        colours.len()
     );
 }

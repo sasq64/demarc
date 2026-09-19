@@ -254,7 +254,7 @@ FBO setup, every time.
 - **`-W/-H` and `-w/-h` and `-f`.** `-W/-H` size the captured output, `-w/-h` size what the
   client is told it has, and `-f` makes it fullscreen. All three are passed, with the two
   sizes equal: there is no display to letterbox into, so scaling would only cost sharpness.
-- **`exit()` in a core is a bug** (the same lesson as `docs/PCEM.md`). A core lives in the
+- **`exit()` in a core is a bug.** A core lives in the
   frontend's address space. The only `_exit` here is in the forked child after `execvp`
   fails, which is where it belongs. `nm -u ... | grep -w exit` should stay empty.
 - **Teardown has an order, and getting it wrong leaks quietly.** gamescope is a `setsid()`

@@ -17,8 +17,6 @@ PSP emulator
 
 Dreamcast emulator
 
-PCEM with 8080 demos
-
 gamescope audio streaming (but why though)
 
 Audio filters

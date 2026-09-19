@@ -40,22 +40,21 @@ iff:
 royale file="testdata/amiga/rebels.adf":
     cargo run --profile release-fast -- --shuffle --slangp slang-shaders/crt/crt-royale.slangp {{file}}
 
-# Build the PCem libretro core out of external/pcem. PCem itself is GPLv2 and
-# is not shipped with demarc; point demarc at the result with
-# DEMARC_CORE_DIR, or copy it into <system dir>/cores.
+# Build the 86Box libretro core out of external/86box. 86Box is GPLv2 and is
+# not shipped with demarc; point demarc at the result with DEMARC_CORE_DIR, or
+# copy it into <system dir>/cores.
 #
 # BIOS ROMs are not included and never will be: put them under
-# <system dir>/pcem/roms/<machine>/ (external/pcem/docs/roms.txt lists what
-# each machine needs).
-pcem-core:
-    cmake -B external/pcem/build-lr -G Ninja -S external/pcem \
-        -DPCEM_DISPLAY_ENGINE=libretro -DCMAKE_BUILD_TYPE=Release
-    ninja -C external/pcem/build-lr
-    @echo "core at external/pcem/build-lr/src/pcem_libretro.so"
+# <system dir>/86box/roms/ in 86Box's own layout (see docs/86BOX.md).
+86box-core:
+    cmake -S external/86box -B external/86box/build-lr -G Ninja -DLIBRETRO=ON \
+        -DCMAKE_BUILD_TYPE=Release -DRTMIDI=OFF -DFLUIDSYNTH=OFF -DMUNT=OFF -DSOUNDCANVAS=OFF
+    ninja -C external/86box/build-lr
+    @echo "core at external/86box/build-lr/src/86box_libretro.so"
 
-# Run a PCem machine config through the locally built core.
+# Run an 86Box machine config through the locally built core.
 pc file:
-    DEMARC_CORE_DIR={{justfile_directory()}}/external/pcem/build-lr/src \
+    DEMARC_CORE_DIR={{justfile_directory()}}/external/86box/build-lr/src \
         cargo run --profile release-fast -- {{file}}
 
 

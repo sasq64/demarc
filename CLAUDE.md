@@ -134,9 +134,10 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 ## Docs worth reading before touching those areas
 
-`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/PCEM.md`, `docs/86BOX.md`, `PICO8.md` and
+`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/86BOX.md`, `PICO8.md` and
 `GAMESCOPE.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
-(`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/NOTES.md` (design
+(`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/CRINKLER.md` (why 4k
+intros run but draw nothing under wine), `docs/NOTES.md` (design
 scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.
 
 ## Releases

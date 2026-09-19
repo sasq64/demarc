@@ -194,9 +194,9 @@ const MARKER_FILES: &[&str] = &[
 /// Directories under `system/` that are never packed, whatever they contain.
 ///
 /// `MARKER_FILES` can only name files it knows in advance, which is no help
-/// against a subtree whose file names are the user's. PCem is the case in
-/// point: it looks for BIOS ROMs under `pcem/roms/` (copyrighted, so never
-/// ours to ship) and writes NVR, logs and configs into `pcem/` beside them,
+/// against a subtree whose file names are the user's. 86Box is the case in
+/// point: it looks for BIOS ROMs under `86box/roms/` (copyrighted, so never
+/// ours to ship) and writes NVR, logs and configs into `86box/` beside them,
 /// with names taken from whichever machine config was loaded. In a debug build
 /// `system_dir()` is this very directory, so without this the emulator would
 /// be filling up the archive as it ran.
@@ -208,7 +208,6 @@ const MARKER_FILES: &[&str] = &[
 /// up at the Kickstart ROMs, so packing them does not merely ship a developer's
 /// savegames — move `system/amiga/` and the build breaks on the dangling links.
 const SKIP_DIRS: &[&str] = &[
-    "system/pcem",
     "system/86box",
     "system/amiga/WHDBoot/save-data",
     "system/amiga/WHDBoot/tmp",
@@ -318,7 +317,7 @@ fn hex(digest: &[u8]) -> String {
 /// The distinction is what keeps no-op builds fast. Cargo watches a directory
 /// by taking the newest mtime found anywhere beneath it, so the single
 /// `rerun-if-changed=system` this used to emit fired on every scribble into
-/// `system/amiga/` or `system/pcem/` -- exactly the paths the archive is
+/// `system/amiga/` or `system/86box/` -- exactly the paths the archive is
 /// careful *not* to contain. Re-running a build script dirties the crate that
 /// owns it, so one Amiga demo made the next `cargo build` a ~10s rebuild of
 /// demarc with nothing to show for it.

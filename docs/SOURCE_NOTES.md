@@ -759,20 +759,20 @@ every track is already playable.
 
 ## `newsys/dos.rs`
 
-PC/DOS through **PCem** or **DOSBox Pure**, picked by what the release is:
+PC/DOS through **86Box** or **DOSBox Pure**, picked by what the release is:
 
-- A PCem machine `.cfg` — the same file desktop PCem writes into `configs/` and takes with
-  `--config` — goes to PCem. It names the machine, CPU, video and sound cards and the disc images to
-  mount, so it *is* the whole configuration; the core has no machine picker.
+- An 86Box machine `.cfg` — the same file the desktop 86Box writes and takes on the command line —
+  goes to 86Box. It names the machine, CPU, video and sound cards and the disc images to mount, so
+  it *is* the whole configuration; the core has no machine picker.
 - A bare DOS program (`.exe`, `.com`, `.bat`) goes to DOSBox Pure, which brings its own DOS and
   mounts the directory the program sits in as `C:`. That is what most DOS releases arrive as.
 
-Neither core ships BIOS ROMs — DOSBox needs none, PCem's are copyrighted and must be placed under
-`<system dir>/pcem/roms/<machine>/` (`docs/roms.txt` in the PCem tree lists what each machine needs).
-Everything the machine writes (NVR, logs) goes under `<save dir>/pcem/`.
+Neither core ships BIOS ROMs — DOSBox needs none, 86Box's are copyrighted and must be placed under
+`<system dir>/86box/roms/` in 86Box's own layout (see `docs/86BOX.md`). Everything the machine writes
+(NVR, logs) goes under `<save dir>/`.
 
-`is_pcem_config`: `.cfg` is far too generic to accept on its own, so require the one key every PCem
-machine config has and nothing else uses — a `model =` naming the machine.
+`is_machine_config`: `.cfg` is far too generic to accept on its own, so require the one key every
+86Box machine config has and nothing else uses — a `machine =` naming the machine.
 
 ### Executable sniffing (`exe_kind`, shared with `newsys/windows.rs`)
 
@@ -832,7 +832,7 @@ question. Only relevant under DOSBox — a machine config brings its own DOS on 
 the pixel-aspect-corrected display ratio, which is what a CRT showed and what our scaler wants.
 
 Tests read the emulated screen back **as text**: a pixel hash would say the frame changed, not that
-the machine booted, and would go stale on any cosmetic change in PCem.
+the machine booted, and would go stale on any cosmetic change in 86Box.
 
 ## `newsys/windows.rs`
 
@@ -3235,7 +3235,7 @@ Convention: unit tests live beside the code as an out-of-line `mod tests` —
 still inner modules, so `use super::*` and private access work.
 
 `tests/retro_emu_tests.rs` boots **real libretro cores** against demo content in the repo — one of
-the reasons the ignored tests are ignored (network, GPU adapter, or a locally built PCem core plus
+the reasons the ignored tests are ignored (network, GPU adapter, or a locally built 86Box core plus
 BIOS ROMs).
 
 Facts the tests encode that are not stated elsewhere:

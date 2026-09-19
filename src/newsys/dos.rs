@@ -13,7 +13,6 @@ use crate::system_dir;
 use crate::utils::read_at;
 use crate::workfile::WorkFile;
 
-const CORE_NAME_PCEM: &str = "pcem";
 const CORE_NAME_86BOX: &str = "86box";
 const CORE_NAME_DOSBOX: &str = "dosbox_pure";
 
@@ -29,14 +28,14 @@ fn dos4gw_source() -> PathBuf {
     system_dir().join("dos").join("dos4gw.exe")
 }
 
-/// PC/DOS through PCem or DOSBox.
+/// PC/DOS through 86Box or DOSBox.
 ///
 /// Two very different ways of running a PC, picked by what the release is:
 ///
-/// - A PCem or 86Box machine `.cfg` — the same file either desktop emulator
-///   writes and takes on the command line — goes to that emulator. It names
-///   the machine, CPU, video and sound cards and the disc images to mount, so
-///   it is the whole of the configuration; the core has no machine picker.
+/// - An 86Box machine `.cfg` — the same file the desktop emulator writes and
+///   takes on the command line — goes to 86Box. It names the machine, CPU,
+///   video and sound cards and the disc images to mount, so it is the whole of
+///   the configuration; the core has no machine picker.
 /// - A bare DOS program (`.exe`, `.com`) goes to DOSBox Pure, which
 ///   brings its own DOS and mounts the directory the program sits in as C:.
 ///   Nothing else is needed, which is what most DOS releases arrive as.
@@ -50,36 +49,27 @@ fn dos4gw_source() -> PathBuf {
 /// says so: the release is copied somewhere writable and a `DOS4GW.EXE` is put
 /// beside the program — see [`place_extender`].
 ///
-/// No core ships BIOS ROMs — DOSBox needs none, and the PC emulators' are
-/// copyrighted, so they must be placed under `<system dir>/pcem/roms/` and
-/// `<system dir>/86box/roms/`, each in that emulator's own layout; `docs/roms.txt`
-/// in the PCem tree and `docs/86BOX.md` say what goes where. Everything the
-/// machine writes — NVR, logs — goes under `<save dir>/`.
+/// No core ships BIOS ROMs — DOSBox needs none, and 86Box's are copyrighted, so
+/// they must be placed under `<system dir>/86box/roms/` in that emulator's own
+/// layout; `docs/86BOX.md` says what goes where. Everything the machine writes
+/// — NVR, logs — goes under `<save dir>/`.
 pub struct DosSystem {}
 
-/// Which emulator a machine `.cfg` belongs to, if it is one at all.
+/// Is this `.cfg` an 86Box machine config?
 ///
 /// `.cfg` is far too generic an extension to accept on its own — plenty of
-/// systems drop one next to their content — so require the one key each
-/// emulator's machine config has and nothing else uses: `model =` naming the
-/// machine for PCem, `machine =` for 86Box.
-fn config_core(path: &Path) -> Option<&'static str> {
-    let text = fs::read_to_string(path).ok()?;
-    let names = |key: &str| {
-        text.lines().any(|line| {
-            line.trim()
-                .strip_prefix(key)
-                .and_then(|rest| rest.trim_start().strip_prefix('='))
-                .is_some_and(|value| !value.trim().is_empty())
-        })
+/// systems drop one next to their content — so require the one key an 86Box
+/// machine config has and nothing else uses: `machine =` naming the machine.
+fn is_machine_config(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
     };
-    if names("machine") {
-        Some(CORE_NAME_86BOX)
-    } else if names("model") {
-        Some(CORE_NAME_PCEM)
-    } else {
-        None
-    }
+    text.lines().any(|line| {
+        line.trim()
+            .strip_prefix("machine")
+            .and_then(|rest| rest.trim_start().strip_prefix('='))
+            .is_some_and(|value| !value.trim().is_empty())
+    })
 }
 
 /// The largest a `.com` can be: DOS loads one into a single segment, below the
@@ -337,7 +327,7 @@ impl System for DosSystem {
             return false;
         }
         if get_ext(path) == "cfg" {
-            config_core(path).is_some()
+            is_machine_config(path)
         } else {
             is_dos_program(path)
         }
@@ -350,7 +340,7 @@ impl System for DosSystem {
 
         debug!("FILE: {file:?}");
 
-        if file.has_tag("needs-mmx") {
+        if file.has_tag("needs-mmx") || file.has_tag("mmx") {
             file.set_meta("dosbox_pure_cpu_type", "pentium_mmx");
         }
 
@@ -403,11 +393,11 @@ impl System for DosSystem {
     }
 }
 
-/// Which core runs this file: a machine config goes to the emulator that wrote
-/// it, anything else to DOSBox and its own DOS.
+/// Which core runs this file: a machine config goes to 86Box, anything else to
+/// DOSBox and its own DOS.
 fn core_for(path: &Path) -> &'static str {
     if get_ext(path) == "cfg" {
-        config_core(path).unwrap_or(CORE_NAME_PCEM)
+        CORE_NAME_86BOX
     } else {
         CORE_NAME_DOSBOX
     }
@@ -420,7 +410,7 @@ mod tests;
 /// Reading the emulated screen back as text.
 ///
 /// A pixel hash would say the frame changed, not that the machine booted, and
-/// it would go stale on any cosmetic change in PCem. Decoding the text instead
+/// it would go stale on any cosmetic change in 86Box. Decoding the text instead
 /// lets the test assert on what the BIOS actually printed.
 #[cfg(test)]
 #[path = "tests/dos_screen.rs"]

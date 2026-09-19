@@ -7,7 +7,7 @@ threading, the Bevy plugin or the renderer. This implements just enough of a
 libretro frontend to answer the question on its own: load the core, hand it
 some content, step it, and write out the last frame plus the audio tally.
 
-    scripts/libretro-smoke.py external/pcem/build-lr/src/pcem_libretro.so \\
+    scripts/libretro-smoke.py external/86box/build-lr/src/86box_libretro.so \\
         machine.cfg --system-dir ~/.cache/demarc/system --frames 180 --png frame.png
 
 The environment implementation deliberately declines GET_LOG_INTERFACE:
