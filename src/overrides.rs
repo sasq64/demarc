@@ -27,6 +27,9 @@
 //! [zoo.390060]
 //! patch = { target = "d3d11.dll", source = "win/d3d11.dll" }  # file from the system dir
 //!
+//! [zoo.301363]
+//! patch = { target = "demo.dat", format = "bsdiff", patch = "QlNESUZG…" }  # bsdiff 4 delta
+//!
 //! [zoo.119665]
 //! assign = { Love = "SYS:" }         # AmigaDOS assigns to make before booting
 //!
@@ -38,7 +41,10 @@
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
-//! `patch` as an array (`[[zoo.18030.patch]]`). What each one does, and when,
+//! `patch` as an array (`[[zoo.18030.patch]]`). A `format = "bsdiff"` patch is a
+//! bsdiff 4 delta (`bsdiff old new delta`, base64, wrapped over as many lines as
+//! it takes) applied to the file already in the release, which is what a data
+//! file too big to write out in full needs. What each one does, and when,
 //! is described on [`Override`]; the three are applied at the three stages of a
 //! load — `file`/`download` when it is downloaded
 //! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
@@ -49,6 +55,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use qbsdiff::Bspatch;
 use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
@@ -183,10 +190,16 @@ impl Patches {
 struct RawPatch {
     /// Name of the file to write, found anywhere inside the release.
     target: String,
-    /// What to write, base64 encoded — these are binary config files.
+    /// What to write, base64 encoded — these are binary config files. Spelled
+    /// `patch` instead when it is a delta rather than the file itself.
+    #[serde(alias = "patch")]
     contents: Option<String>,
     /// Or a file in the system dir to write instead.
     source: Option<String>,
+    /// `bsdiff` when the data is a bsdiff 4 delta against the file already
+    /// there, which is how a megabyte of release data is fixed up by a few
+    /// hundred bytes of override. Left out for the data as the file's contents.
+    format: Option<String>,
     /// Where in the file it goes. Left out to replace the file entirely,
     /// which is what a config file small enough to write out in full wants.
     offset: Option<usize>,
@@ -302,6 +315,14 @@ impl RawOverride {
 
 impl RawPatch {
     fn build(self) -> Result<Patch> {
+        let bsdiff = match self.format.as_deref() {
+            None | Some("raw") => false,
+            Some("bsdiff") => true,
+            Some(other) => bail!("patch format {other:?} is not one of raw, bsdiff"),
+        };
+        if bsdiff && self.offset.is_some() {
+            bail!("bsdiff patch for {:?} cannot take an offset", self.target);
+        }
         let patch = match (self.contents, self.source) {
             (Some(contents), None) => Patch {
                 data: leak(contents),
@@ -319,6 +340,7 @@ impl RawPatch {
         let patch = Patch {
             target: leak(self.target),
             offset: self.offset,
+            bsdiff,
             info: leak(self.info),
             ..patch
         };
@@ -330,7 +352,12 @@ impl RawPatch {
         } else {
             // Decoded here and thrown away, so that a mistyped `contents` is
             // reported at startup rather than by the one load that needs it.
-            patch.bytes()?;
+            let data = patch.bytes()?;
+            if bsdiff {
+                Bspatch::new(&data).with_context(|| {
+                    format!("patch for {:?} is not a bsdiff patch", patch.target)
+                })?;
+            }
         }
         Ok(patch)
     }

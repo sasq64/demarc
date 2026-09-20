@@ -814,6 +814,8 @@ pub struct Patch {
     pub data: &'static str,
     // If Some, data is read from this file in the system dir instead
     pub source: Option<&'static str>,
+    // If true, data is a bsdiff patch to apply to the target, not the new contents
+    pub bsdiff: bool,
     // Info to user
     pub info: &'static str,
 }
@@ -826,8 +828,11 @@ impl Patch {
             return std::fs::read(&path).with_context(|| format!("Could not read {path:?}"));
         }
         use base64::Engine;
+        // A delta is thousands of characters, so it is written wrapped over as
+        // many lines in the toml; the decoder wants none of that whitespace.
+        let data: String = self.data.split_whitespace().collect();
         base64::engine::general_purpose::STANDARD
-            .decode(self.data.trim())
+            .decode(&data)
             .with_context(|| format!("Bad base64 in patch for {:?}", self.target))
     }
 }

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use qbsdiff::Bspatch;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -287,8 +288,12 @@ fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
             Some(path) => path,
             None => dir.join(patch.target),
         };
-        write_patch(&target, patch.offset, &data)
-            .with_context(|| format!("Could not patch {target:?}"))?;
+        let result = if patch.bsdiff {
+            apply_bsdiff(&target, &data)
+        } else {
+            write_patch(&target, patch.offset, &data)
+        };
+        result.with_context(|| format!("Could not patch {target:?}"))?;
         info!(
             "Patched {target:?} with {} bytes{}",
             data.len(),
@@ -320,6 +325,19 @@ fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> 
     }
     out.seek(SeekFrom::Start(offset))?;
     out.write_all(data)?;
+    Ok(())
+}
+
+/// Apply a bsdiff patch to `target`, rewriting it with the result. This is how
+/// a release whose data file needs a few bytes changed is fixed up without
+/// writing the whole file out in the override — see `format = "bsdiff"` in
+/// [`crate::overrides`].
+fn apply_bsdiff(target: &Path, patch: &[u8]) -> Result<()> {
+    let source = fs::read(target)?;
+    let patcher = Bspatch::new(patch)?;
+    let mut out = Vec::with_capacity(patcher.hint_target_size() as usize);
+    patcher.apply(&source, &mut out)?;
+    fs::write(target, &out)?;
     Ok(())
 }
 

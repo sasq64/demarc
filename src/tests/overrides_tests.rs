@@ -209,3 +209,55 @@ fn download_overrides_the_url() {
     .unwrap();
     assert!(overrides.is_empty());
 }
+
+/// A bsdiff patch is written as `format = "bsdiff"` and the delta under
+/// `patch`, and is checked at startup like any other patch data.
+#[test]
+fn parses_a_bsdiff_patch() {
+    let delta = bsdiff(b"old contents", b"new contents");
+    let overrides = parse(&format!(
+        r#"
+        [zoo.301363]
+        patch = {{ target = "demo.dat", format = "bsdiff", patch = """
+{delta}
+""" }}
+        "#
+    ))
+    .unwrap();
+    let patch = &overrides[&301363].patches[0];
+    assert!(patch.bsdiff);
+    assert_eq!(patch.target, "demo.dat");
+    // Wrapped over several lines in the file, and still the delta it was.
+    assert!(patch.data.contains('\n') && patch.bytes().unwrap().starts_with(b"BSDIFF40"));
+
+    // Not a delta at all, an unknown format, and an offset that means nothing
+    // for a delta — each one drops its entry.
+    for entry in [
+        r#"patch = { target = "a", format = "bsdiff", patch = "AAEC" }"#.to_string(),
+        format!(r#"patch = {{ target = "a", format = "xdelta", patch = """{delta}""" }}"#),
+        format!(
+            r#"patch = {{ target = "a", format = "bsdiff", offset = 4, patch = """{delta}""" }}"#
+        ),
+    ] {
+        assert!(
+            parse(&format!("[zoo.1]\n{entry}\n")).unwrap().is_empty(),
+            "{entry}"
+        );
+    }
+}
+
+/// A bsdiff delta of `source` to `target`, base64 and line wrapped the way an
+/// override writes one.
+fn bsdiff(source: &[u8], target: &[u8]) -> String {
+    use base64::Engine;
+    let mut patch = Vec::new();
+    qbsdiff::Bsdiff::new(source, target)
+        .compare(std::io::Cursor::new(&mut patch))
+        .unwrap();
+    let text = base64::engine::general_purpose::STANDARD.encode(&patch);
+    text.as_bytes()
+        .chunks(76)
+        .map(|line| String::from_utf8_lossy(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}

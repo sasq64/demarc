@@ -113,10 +113,9 @@ fn an_override_patches_the_release_and_picks_what_starts_it() {
         meta: HashMap::from([("dosbox_pure_cycles", "max")]),
         patches: vec![Patch {
             target: "SOUND.CFG",
-            offset: None,
             data: "AAEC",
-            source: None,
             info: "GUS 0x240",
+            ..Default::default()
         }],
         ..Default::default()
     };
@@ -203,6 +202,37 @@ fn a_patch_may_write_into_a_file() {
     );
     // Nothing there to write into, so the gap in front is zero filled.
     assert_eq!(fs::read(wf.path.join("new.cfg")).unwrap(), [0, 0, 0, 1, 2]);
+}
+
+/// A `bsdiff` patch rewrites the file already in the release rather than
+/// replacing it, which is how a data file too big to write out in an override
+/// gets its few changed bytes.
+#[test]
+fn a_bsdiff_patch_rewrites_the_file_it_names() {
+    use base64::Engine;
+
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("demo");
+    fs::create_dir_all(&release).unwrap();
+    let old = b"#version 450 core\nvoid main() { gl_FragColor = c; }\n";
+    let new = b"#version 450 core\nout vec4 bbFrag;\nvoid main() { bbFrag = c; }\n";
+    fs::write(release.join("demo.dat"), old).unwrap();
+
+    let mut delta = Vec::new();
+    qbsdiff::Bsdiff::new(old, new)
+        .compare(std::io::Cursor::new(&mut delta))
+        .unwrap();
+    let patches = [Patch {
+        target: "demo.dat",
+        data: crate::files::leak(base64::engine::general_purpose::STANDARD.encode(&delta)),
+        bsdiff: true,
+        ..Default::default()
+    }];
+
+    let mut wf = WorkFile::new(release);
+    apply_patches(&mut wf, &patches).unwrap();
+
+    assert_eq!(fs::read(wf.path.join("demo.dat")).unwrap(), new);
 }
 
 #[test]
