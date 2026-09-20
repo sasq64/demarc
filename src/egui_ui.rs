@@ -767,13 +767,8 @@ pub(crate) fn update_ui(
         if let Some(emu_file) = source.get_data(id)
             && let Some(pouet) = emu_file.meta.get("pouet")
         {
-            for (i, s) in pouet.split(",").enumerate() {
-                if i == 0 {
-                    cdc = s.parse::<u32>().unwrap_or(0);
-                } else if i == 3 {
-                    vt = s.split(" ").any(|s| s == "15");
-                }
-            }
+            cdc = emu_file.game_info.awards.cdc();
+            vt = emu_file.game_info.awards.viewing_tip();
         }
 
         let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());

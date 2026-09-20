@@ -504,6 +504,21 @@ impl CompactDate {
     }
 }
 
+#[derive(Debug, Copy, Clone, Default, PartialOrd, Ord, PartialEq, Eq)]
+pub struct Awards(u32);
+impl Awards {
+    pub fn cdc(&self) -> usize {
+        (self.0 & 0xff) as usize
+    }
+    pub fn viewing_tip(&self) -> bool {
+        (self.0 & 0x100) != 0
+    }
+
+    pub fn new(cdc: u32, vt: bool) -> Self {
+        Self(cdc & 0xff | if vt { 0x100 } else { 0 })
+    }
+}
+
 // CDC, Starred, Winner x ( Scene, Party) RunnerUp x (Scene Party)
 
 /// The whole file list lives for the run (see [`EmuFile`]), so the strings here
@@ -516,11 +531,48 @@ pub struct GameInfo {
     pub date: CompactDate,
     pub category: &'static str,
     pub rank: u32,
+    pub awards: Awards,
     // ..|Pp|Ss|*|cccccccc
     // awards: u32,
 }
 
 impl GameInfo {
+    pub fn new(meta: &HashMap<&str, &str>) -> Self {
+        let title = meta.get("title").copied().unwrap_or("");
+        let author = meta.get("author").copied().unwrap_or("");
+        let category = meta.get("category").copied().unwrap_or("");
+
+        let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
+
+        let year_s = meta
+            .get("date")
+            .copied()
+            .unwrap_or("")
+            .split(['-', '/', '.'])
+            .next()
+            .unwrap_or("");
+        //meta.insert("year", &year_s);
+
+        let mut cdc = 0;
+        let mut vt = false;
+        if let Some(pouet) = meta.get("pouet") {
+            for (i, s) in pouet.split(",").enumerate() {
+                if i == 0 {
+                    cdc = s.parse::<u32>().unwrap_or(0);
+                } else if i == 3 {
+                    vt = s.split(" ").any(|s| s == "15");
+                }
+            }
+        }
+        GameInfo {
+            title,
+            group: author,
+            category,
+            awards: Awards::new(cdc, vt),
+            ..Default::default()
+        }
+    }
+
     pub fn year(&self) -> u32 {
         self.date.year()
     }

@@ -289,15 +289,16 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
             .unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
+            game_info: GameInfo::new(&meta),
+            // game_info: GameInfo {
+            //     title,
+            //     group: author,
+            //     date,
+            //     rank,
+            //     category,
+            //     ..Default::default()
+            // },
             meta,
-            game_info: GameInfo {
-                title,
-                group: author,
-                date,
-                rank,
-                category,
-                ..Default::default()
-            },
         });
     }
 }

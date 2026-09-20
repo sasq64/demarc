@@ -46,7 +46,7 @@ royale file="testdata/amiga/rebels.adf":
 #
 # BIOS ROMs are not included and never will be: put them under
 # <system dir>/86box/roms/ in 86Box's own layout (see docs/86BOX.md).
-86box-core:
+x86box-core:
     cmake -S external/86box -B external/86box/build-lr -G Ninja -DLIBRETRO=ON \
         -DCMAKE_BUILD_TYPE=Release -DRTMIDI=OFF -DFLUIDSYNTH=OFF -DMUNT=OFF -DSOUNDCANVAS=OFF
     ninja -C external/86box/build-lr
