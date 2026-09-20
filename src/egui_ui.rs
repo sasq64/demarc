@@ -45,8 +45,8 @@ const BOTTOM_LEFT_SCALE: f32 = 1.0;
 const INFO_TEXT_SCALE: f32 = 1.0;
 const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
-const GOLD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0x00);
-const SILVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0xa0, 0xff);
+const GOLD_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x60, 0x10);
+const SILVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0x60, 0x60, 0x80);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
 static ICON_SVG: &[u8] = include_bytes!("../files/coupdecoeur.svg");
@@ -804,10 +804,10 @@ pub(crate) fn update_ui(
         );
         let extra = if winner > 0 || nominee > 0 { 10.0 } else { 0.0 };
         for _ in 0..winner {
-            job.append(" \u{f091}", 0.0, win_format.clone());
+            job.append(" \u{f4cf}", 0.0, win_format.clone());
         }
         for _ in 0..nominee {
-            job.append(" \u{f091}", 0.0, nom_format.clone());
+            job.append(" \u{f4cf}", 0.0, nom_format.clone());
         }
 
         let galley = ui.painter().layout_job(job);
