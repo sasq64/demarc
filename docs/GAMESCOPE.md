@@ -124,6 +124,40 @@ core restates it as the geometry's base size with `SET_GEOMETRY` whenever it cha
 display aspect stays the session's, because the frame still arrives whole. That is what
 `Backend::get_used_frame_size` reports.
 
+### Audio
+
+gamescope has none, and a client left to itself plays to whatever sink the desktop points
+at — past every volume control demarc has, and in a grid that is every demo at once. So
+the session is given a sink of its own.
+
+The core makes one before it forks: a `pw_stream` that declares
+`media.class=Audio/Sink`, which is all it takes to *be* a sink in the PipeWire graph, and
+whose process callback is handed whatever clients write to it. `PULSE_SINK` goes into the
+child's environment naming it, and since `PULSE_SINK` is read by libpulse on the client's
+side this works against pipewire-pulse and PulseAudio alike, and survives the trip through
+`bwrap` into a sandboxed wine session. `retro_run` then hands the samples to
+`retro_audio_sample_batch` like any other core.
+
+libpipewire is `dlopen`'d rather than linked — the core still needs nothing but libc and
+libstdc++, `nm -u` still finds no `pw_` symbol, and a machine without PipeWire loses the
+sound rather than the session. What it costs is a thread waking about fifty times a second
+to copy a couple of kilobytes: 48 kHz stereo `s16` is 192 KB/s against the 115 MB/s the
+dmabuf ring already carries.
+
+The count of samples matters more than the content. demarc runs on an audio clock
+(`audio_seen` in `src/emulator.rs`), so handing it less than a video frame's worth makes it
+call `retro_run` again to refill, and handing it more makes it skip a call — which here
+costs a video frame. So `PublishAudio` always sends exactly `48000/fps`, drawn from a ring
+the capture fills and padded with silence when the client is quiet, when there is no
+capture at all, or when `gamescope_audio=false`. The ring holds 120 ms and drops its oldest
+samples rather than let a backlog build, which is also what bounds how much stale audio
+survives the SIGSTOP pause.
+
+Two things follow from it that are worth knowing. A client that uses wine's ALSA driver
+rather than pulse ignores `PULSE_SINK` and still reaches the speakers. And a demo with
+sound is no longer `is_silent()`, so idle detection now ends a session on a genuinely quiet
+frozen frame rather than on any frozen frame.
+
 ### Pacing
 
 None of it is demarc's to schedule. `CBaseBackendConnector::FrameSync()` sleeps to the next
@@ -157,6 +191,7 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_mesa_glsl_version` | — | Mesa's `force_glsl_version` for the client only (never Xwayland). demarc sets it from `wine_glsl_version` |
 | `gamescope_mesa_allow_glsl_120_subset_in_110` | `false` | Mesa's `allow_glsl_120_subset_in_110` for the client only. demarc sends `true` unless an entry sets `wine_glsl_120_subset` to false |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
+| `gamescope_audio` | `true` | capture the client into a sink of the session's own. `false` lets its sound go straight to the desktop's sink, as it did before there was a capture |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
 (`src/newsys/windows.rs`), so an entry keeps saying `wine_res`, `wine_dialog_res`, `wine_desktop`,
@@ -246,7 +281,10 @@ FBO setup, every time.
   globals, and nothing is unpacked beside that copy. `GET_LIBRETRO_PATH` now answers with
   the core as it lives on disk rather than the copy — which is what the callback means,
   and what lets `FindGamescope()` pick up the compositor a downloaded release unpacked
-  next to the library. Failing that the build and install paths baked in at compile time
+  next to the library. Whatever it finds is made absolute before it is run: the child
+  `chdir`s into the release's directory before it execs, so a relative path that was good
+  in demarc's cwd — `DEMARC_CORE_DIR=external/gamescope/build-lr/src` — names nothing
+  there, and the only symptom is a session that closed the socket before its first frame. Failing that the build and install paths baked in at compile time
   (`GAMESCOPE_BUILD_BIN` / `GAMESCOPE_INSTALL_BIN`) still answer, which is what a local
   build uses; `GAMESCOPE_LIBRETRO_BIN` overrides everything.
 - **Chrome needs X11, not Wayland.** gamescope sets `WAYLAND_DISPLAY` to the empty string,
@@ -279,6 +317,20 @@ FBO setup, every time.
   whitespace would tear those in half, and quoting rules would mean writing a shell. ASCII
   US between the words instead: it exists for this, cannot occur in a path, and leaves the
   whitespace split in place for commands people type by hand.
+- **A sink is a stream, not a module.** The obvious way to get a null sink is the one
+  `pactl load-module module-null-sink` uses, and loading `libpipewire-module-adapter` with
+  `support.null-audio-sink` into our own context does create the node — but only inside
+  this process, where nothing else can see it. `PULSE_SINK` then named a sink that did not
+  exist. A `pw_stream` declaring `media.class=Audio/Sink` is exported to the graph by
+  `pw_stream` itself, is a real sink to pulse clients, hands us the samples with no monitor
+  to record, and dies with the process. Less code and fewer objects for the thing that
+  actually worked.
+- **A capture stream that autoconnects will record the desktop.** With
+  `PW_STREAM_FLAG_AUTOCONNECT` and a target that cannot be resolved, the session manager
+  falls back to the default sink's monitor — so the first version of this quietly captured
+  everything the machine was playing and looked like a success, because what it was playing
+  was the test tone. Worth knowing for anything else that captures here: check *what* is
+  linked, not just that samples arrived.
 - **Input wants no new plumbing.** `wlserver_key(evdev, down, time)` and friends take a
   `wlserver_lock()` and can be called from any thread, which is what `SDLBackend` already
   does from its own. The backend runs one reader thread rather than adding a waitable to
@@ -294,6 +346,9 @@ Kept as small as possible, so the tree stays diffable:
 - `src/main.hpp` — declares `ShutdownGamescope()`, which was defined in `main.cpp` and
   declared nowhere, so nothing outside it could ask for a clean shutdown.
 - `src/meson.build`, `meson_options.txt` — a `libretro_backend` feature.
+- `meson.build` — a second, headers-only lookup of `libpipewire-0.3`, independent of the
+  `pipewire` feature (which the release still builds with `disabled`): the core needs the
+  declarations to compile and nothing at link time.
 - `src/steamcompmgr.cpp`, `src/rendervulkan.hpp` — `FrameInfo_t::focusedWindowCoverage`,
   beside the focused window transform that was already there.
 - `src/wlserver.cpp` — one `#include <float.h>`. Upstream uses `DBL_MAX` without it and no
@@ -321,33 +376,32 @@ Working, and verified by eye on captured frames:
 - **Through demarc** — the picture reaches a view, with the CRT shader applied to it.
 - **Teardown** — after a wine session unloads, no `gamescope`, `Xwayland`,
   `gamescopereaper`, `wineserver` or `winedevice.exe` is left running.
+- **Audio** — a demo's sound arrives as libretro audio, on the session's own sink: the
+  client is linked to it and the hardware sink has nothing on it, verified with `pw-link`
+  on a wine session under demarc. A grid gives each session a sink of its own, so only the
+  focused view is heard, and neither picks up the desktop's audio or the other's.
 - **Two Windows demos at once** — `--grid=2x1 heaven7.exe tracie.exe`
   brings up two compositors, two sandboxes, two wineservers and two demos rendering side
   by side in demarc's grid. See The prefix each session runs in.
 
 Open:
 
-1. **No audio.** gamescope has none — an exhaustive grep of `src/` finds only keycode
-   names. The core reports silence and pushes silent samples so the frontend's audio clock
-   still advances; a wine demo's sound goes straight to the user's speakers. The
-   intended fix is a private PipeWire null sink with the child's
-   `PULSE_SINK` pointed at it, captured into `retro_audio_sample_batch`.
-2. **The end of a demo is noticed late.** The core now reads the driver's stream — that is
+1. **The end of a demo is noticed late.** The core now reads the driver's stream — that is
    what hides the setup dialog, above — but only acts on the lines that bound it.
    `!demarc exited` stops the hiding and is otherwise ignored, so what ends a captured
    session is still demarc's ordinary idle detection: the compositor keeps presenting the
    same empty frame once the demo is gone, and a frozen, silent view is one the frontend
    moves on from. Ending the session on that line would make it prompt, and would tell a
    demo that failed to start from one on a long loading screen.
-3. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
-4. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
+2. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
+3. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome
    itself is happy with either (`BuildClient` passes an `http` path through unchanged);
    it is the routing that needs teaching.
-5. **Chrome sessions still share one profile directory.** `ProfileDir()` is one path under
+4. **Chrome sessions still share one profile directory.** `ProfileDir()` is one path under
    the save directory, so two pages at once fight over it — the wine half of this is
    solved (see The prefix each session runs in), the Chrome half is not.
-6. **The release has not been run on a machine that did not build it.** See
+5. **The release has not been run on a machine that did not build it.** See
    Distribution — the bundle is built against Ubuntu 24.04's libraries and carries the
    ones a desktop cannot be assumed to have, but nobody has yet unpacked it on a
    different distribution and started a session from it.
