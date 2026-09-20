@@ -266,9 +266,11 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
             .unwrap_or("");
         meta.insert("year", &year);
 
+        let game_info = GameInfo::new(&meta);
+
         out.push(EmuFile {
+            game_info,
             path: FileSource::Url(urls),
-            game_info: GameInfo::new(&meta),
             meta,
         });
     }
