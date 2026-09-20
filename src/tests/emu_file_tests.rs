@@ -232,3 +232,15 @@ fn no_urls_is_an_error() {
     assert!(tried.is_empty());
     assert!(result.is_err());
 }
+
+/// The rank is the third item of the `pouet` field. A release that is on
+/// pouet but unranked leaves that item empty, and one that isn't there at
+/// all has no field, so neither gets a rank to sort on.
+#[test]
+fn pouet_rank_comes_from_the_third_item() {
+    assert_eq!(parse_pouet_rank("17,828,1,8,1 5 11"), Some(1));
+    assert_eq!(parse_pouet_rank("0,146,382,,"), Some(382));
+    assert_eq!(parse_pouet_rank("0,1,,,"), None);
+    assert_eq!(parse_pouet_rank("0,1"), None);
+    assert_eq!(parse_pouet_rank(""), None);
+}

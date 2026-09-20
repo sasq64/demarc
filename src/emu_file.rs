@@ -477,14 +477,6 @@ impl FileSource {
     }
 }
 
-// enum Rank {
-//     Pouet,
-//     SceneAwards,
-//     Party,
-//     Cdc,
-//     Thumbs,
-// }
-
 #[derive(Debug, Copy, Clone, Default, PartialOrd, Ord, PartialEq, Eq)]
 pub struct CompactDate(u32);
 impl CompactDate {
@@ -504,6 +496,9 @@ impl CompactDate {
     }
 }
 
+// pouet:cncd,thumbs,rank,winners,nominees
+
+// Compact awards: |winner:5|vt:1|cdc:7|
 #[derive(Debug, Copy, Clone, Default, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Awards(u32);
 impl Awards {
@@ -515,11 +510,189 @@ impl Awards {
     }
 
     pub fn new(cdc: u32, vt: bool) -> Self {
-        Self(cdc & 0xff | if vt { 0x100 } else { 0 })
+        Self((cdc & 0xff) | if vt { 0x100 } else { 0 })
     }
 }
 
-// CDC, Starred, Winner x ( Scene, Party) RunnerUp x (Scene Party)
+/// Every award a release can carry, as the numeric ids the db writes them as
+/// (see `docs/AWARDS.md`). The ids are one flat space shared by several
+/// competitions, so the few names that collide between them are qualified.
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Award {
+    // scene.org Awards
+    BestDemo = 1,
+    BestIntro = 2,
+    Best64kIntro = 3,
+    Best4kIntro = 4,
+    BestEffects = 5,
+    BestGraphics = 6,
+    BestSoundtrack = 7,
+    BestDirection = 8,
+    MostOriginalConcept = 9,
+    BestBreakthroughPerformance = 10,
+    PublicsChoice = 11,
+    BestOldschoolDemo = 12,
+    BestAnimation = 13,
+    BestTechnicalAchievement = 14,
+    ViewingTip = 15,
+
+    // The Meteoriks
+    MeteoriksPublicsChoice = 18,
+    BestHighEndDemo = 19,
+    BestHighEndIntro = 20,
+    BestHighEndGraphics = 21,
+    BestHighEndSoundtrack = 22,
+    BestLowEndDemo = 23,
+    BestLowEndIntro = 24,
+    BestLowEndGraphics = 25,
+    BestLowEndSoundtrack = 26,
+    NewTalent = 27,
+    Interactive = 28,
+    BestTinyIntro = 29,
+    AlternativePlatforms = 30,
+    BestArtDirection = 31,
+    BestLowEndPixelGraphics = 32,
+    BestStorytelling = 33,
+    NotPossibleOnThisPlatform = 38,
+    BestLowEndProduction = 40,
+    BestSmallHighEndIntro = 41,
+    BestHighEnd64kIntro = 42,
+    BestVisuals = 43,
+    OutstandingTechnicalAchievement = 44,
+    OutstandingConcept = 45,
+    BestExecutableGraphics = 48,
+    SceneSpirit = 49,
+    BestOldschoolProduction = 50,
+    BestMidschoolProduction = 51,
+
+    // The Nano Awards
+    BestOldschoolTinyIntro = 46,
+    NanoBestHighEndIntro = 47,
+    BestFantasyConsoleTinyIntro = 56,
+
+    // 30 Years Of Assembly
+    AssemblyGameDev = 52,
+    AssemblyRestricted = 53,
+    AssemblyGroundBreakingProduction = 54,
+    AssemblyDemo = 55,
+}
+
+impl Award {
+    /// `None` for an id no competition has handed out.
+    #[allow(dead_code)]
+    pub fn from_id(id: u32) -> Option<Self> {
+        use Award::*;
+        Some(match id {
+            1 => BestDemo,
+            2 => BestIntro,
+            3 => Best64kIntro,
+            4 => Best4kIntro,
+            5 => BestEffects,
+            6 => BestGraphics,
+            7 => BestSoundtrack,
+            8 => BestDirection,
+            9 => MostOriginalConcept,
+            10 => BestBreakthroughPerformance,
+            11 => PublicsChoice,
+            12 => BestOldschoolDemo,
+            13 => BestAnimation,
+            14 => BestTechnicalAchievement,
+            15 => ViewingTip,
+            18 => MeteoriksPublicsChoice,
+            19 => BestHighEndDemo,
+            20 => BestHighEndIntro,
+            21 => BestHighEndGraphics,
+            22 => BestHighEndSoundtrack,
+            23 => BestLowEndDemo,
+            24 => BestLowEndIntro,
+            25 => BestLowEndGraphics,
+            26 => BestLowEndSoundtrack,
+            27 => NewTalent,
+            28 => Interactive,
+            29 => BestTinyIntro,
+            30 => AlternativePlatforms,
+            31 => BestArtDirection,
+            32 => BestLowEndPixelGraphics,
+            33 => BestStorytelling,
+            38 => NotPossibleOnThisPlatform,
+            40 => BestLowEndProduction,
+            41 => BestSmallHighEndIntro,
+            42 => BestHighEnd64kIntro,
+            43 => BestVisuals,
+            44 => OutstandingTechnicalAchievement,
+            45 => OutstandingConcept,
+            46 => BestOldschoolTinyIntro,
+            47 => NanoBestHighEndIntro,
+            48 => BestExecutableGraphics,
+            49 => SceneSpirit,
+            50 => BestOldschoolProduction,
+            51 => BestMidschoolProduction,
+            52 => AssemblyGameDev,
+            53 => AssemblyRestricted,
+            54 => AssemblyGroundBreakingProduction,
+            55 => AssemblyDemo,
+            56 => BestFantasyConsoleTinyIntro,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for Award {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Award::*;
+        let name = match self {
+            BestDemo => "Best demo",
+            BestIntro => "Best intro",
+            Best64kIntro => "Best 64K intro",
+            Best4kIntro => "Best 4k intro",
+            BestEffects => "Best effects",
+            BestGraphics => "Best graphics",
+            BestSoundtrack => "Best soundtrack",
+            BestDirection => "Best direction",
+            MostOriginalConcept => "Most original concept",
+            BestBreakthroughPerformance => "Best breakthrough performance",
+            PublicsChoice | MeteoriksPublicsChoice => "Publics choice",
+            BestOldschoolDemo => "Best demo on an oldschool platform",
+            BestAnimation => "Best animation",
+            BestTechnicalAchievement => "Best technical achievement",
+            ViewingTip => "Viewing Tip",
+            BestHighEndDemo => "Best High-end demo",
+            BestHighEndIntro | NanoBestHighEndIntro => "Best High-end intro",
+            BestHighEndGraphics => "Best High-end graphics",
+            BestHighEndSoundtrack => "Best High-end soundtrack",
+            BestLowEndDemo => "Best Low-end demo",
+            BestLowEndIntro => "Best Low-end intro",
+            BestLowEndGraphics => "Best Low-end graphics",
+            BestLowEndSoundtrack => "Best Low-end soundtrack",
+            NewTalent => "New Talent",
+            Interactive => "Interactive",
+            BestTinyIntro => "Best Tiny intro",
+            AlternativePlatforms => "Alternative platforms",
+            BestArtDirection => "Best Art direction",
+            BestLowEndPixelGraphics => "Best Pixel Graphics in a Low-End Demo or Intro",
+            BestStorytelling => "Best storytelling",
+            NotPossibleOnThisPlatform => "That's not Possible on this Platform!",
+            BestLowEndProduction => "Best Low-End Production",
+            BestSmallHighEndIntro => "Best Small High-End Intro",
+            BestHighEnd64kIntro => "Best High-End 64k Intro",
+            BestVisuals => "Best visuals",
+            OutstandingTechnicalAchievement => "Outstanding Technical Achievement",
+            OutstandingConcept => "Outstanding Concept",
+            BestExecutableGraphics => "Best executable graphics",
+            SceneSpirit => "Scene Spirit Award",
+            BestOldschoolProduction => "Best Oldschool production",
+            BestMidschoolProduction => "Best Midschool Production",
+            BestOldschoolTinyIntro => "Best Oldschool Tiny Intro",
+            BestFantasyConsoleTinyIntro => "Best Fantasy Console Tiny Intro",
+            AssemblyGameDev => "Game Dev",
+            AssemblyRestricted => "Restricted",
+            AssemblyGroundBreakingProduction => "Ground Breaking Production",
+            AssemblyDemo => "Demo",
+        };
+        f.write_str(name)
+    }
+}
 
 /// The whole file list lives for the run (see [`EmuFile`]), so the strings here
 /// are `&'static str` — either literals, slices of the leaked db text, or
@@ -536,22 +709,23 @@ pub struct GameInfo {
     // awards: u32,
 }
 
+pub(crate) fn parse_pouet_rank(field: &str) -> Option<u32> {
+    field.split(',').nth(2)?.trim().parse().ok()
+}
+
 impl GameInfo {
-    pub fn new(meta: &HashMap<&str, &str>) -> Self {
+    pub fn new(meta: &HashMap<&'static str, &'static str>) -> Self {
         let title = meta.get("title").copied().unwrap_or("");
         let author = meta.get("author").copied().unwrap_or("");
         let category = meta.get("category").copied().unwrap_or("");
 
         let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
 
-        let year_s = meta
-            .get("date")
+        let rank = meta
+            .get("pouet")
             .copied()
-            .unwrap_or("")
-            .split(['-', '/', '.'])
-            .next()
-            .unwrap_or("");
-        //meta.insert("year", &year_s);
+            .and_then(parse_pouet_rank)
+            .unwrap_or(0);
 
         let mut cdc = 0;
         let mut vt = false;
@@ -568,6 +742,8 @@ impl GameInfo {
             title,
             group: author,
             category,
+            rank,
+            date,
             awards: Awards::new(cdc, vt),
             ..Default::default()
         }
@@ -602,6 +778,29 @@ pub struct EmuFile {
 impl EmuFile {
     pub fn get_meta(&self, name: &str) -> &'static str {
         self.meta.get(name).copied().unwrap_or("")
+    }
+
+    pub fn cdc(&self) -> usize {
+        self.game_info.awards.cdc()
+    }
+    fn get_awards(&self, index: usize) -> Vec<Award> {
+        let mut result = vec![];
+        if let Some(pouet) = self.meta.get("pouet") {
+            if let Some(awards) = pouet.split(",").nth(index) {
+                for a in awards.split(" ") {
+                    if let Some(award) = Award::from_id(a.parse::<u32>().unwrap_or_default()) {
+                        result.push(award);
+                    }
+                }
+            }
+        }
+        result
+    }
+    pub fn get_wins(&self) -> Vec<Award> {
+        self.get_awards(3)
+    }
+    pub fn get_nominees(&self) -> Vec<Award> {
+        self.get_awards(4)
     }
 }
 

@@ -5,7 +5,7 @@ use bevy_egui::{
 };
 use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
 
-use crate::emu_file::EmuFile;
+use crate::emu_file::{Award, EmuFile};
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
 use crate::headless::{HeadlessTarget, camera_target};
 
@@ -45,6 +45,8 @@ const BOTTOM_LEFT_SCALE: f32 = 1.0;
 const INFO_TEXT_SCALE: f32 = 1.0;
 const BODY_SIZE: f32 = 32.0;
 const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
+const GOLD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0x00);
+const SILVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0xa0, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
 static ICON_SVG: &[u8] = include_bytes!("../files/coupdecoeur.svg");
@@ -764,11 +766,22 @@ pub(crate) fn update_ui(
 
         let mut cdc = 0;
         let mut vt = false;
-        if let Some(emu_file) = source.get_data(id)
-            && let Some(pouet) = emu_file.meta.get("pouet")
-        {
-            cdc = emu_file.game_info.awards.cdc();
-            vt = emu_file.game_info.awards.viewing_tip();
+        let mut winner = 0;
+        let mut nominee = 0;
+        if let Some(emu_file) = source.get_data(id) {
+            cdc = emu_file.cdc();
+            for award in emu_file.get_wins() {
+                match award {
+                    Award::ViewingTip => vt = true,
+                    _ => winner += 1,
+                }
+            }
+            for award in emu_file.get_nominees() {
+                match award {
+                    Award::ViewingTip => vt = true,
+                    _ => nominee += 1,
+                }
+            }
         }
 
         let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
@@ -780,6 +793,8 @@ pub(crate) fn update_ui(
         //     valign: Align::Center,
         //     ..Default::default()
         // };
+        let win_format = egui::TextFormat::simple(font.clone(), GOLD_COLOR);
+        let nom_format = egui::TextFormat::simple(font.clone(), SILVER_COLOR);
 
         let mut job = egui::text::LayoutJob::default();
         job.append(
@@ -787,7 +802,13 @@ pub(crate) fn update_ui(
             0.0,
             egui::TextFormat::simple(font.clone(), TEXT_COLOR),
         );
-        //job.append("  \u{f091} ", 0.0, format);
+        let extra = if winner > 0 || nominee > 0 { 10.0 } else { 0.0 };
+        for _ in 0..winner {
+            job.append(" \u{f091}", 0.0, win_format.clone());
+        }
+        for _ in 0..nominee {
+            job.append(" \u{f091}", 0.0, nom_format.clone());
+        }
 
         let galley = ui.painter().layout_job(job);
         let pos = egui::Align2::LEFT_CENTER
@@ -796,7 +817,7 @@ pub(crate) fn update_ui(
         let painter = ui.painter().with_clip_rect(clip);
         painter.galley(pos, galley.clone(), TEXT_COLOR);
         // Position the image right after the last glyph's end.
-        let end_x = pos.x + galley.rect.width() + 10.0;
+        let end_x = pos.x + galley.rect.width() + 10.0 + extra;
         let mut image_rect =
             egui::Rect::from_min_size(egui::pos2(end_x, pos.y), egui::vec2(32.0, 32.0));
         let tid = images.heart.as_ref().unwrap().id();

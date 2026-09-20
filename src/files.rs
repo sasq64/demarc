@@ -85,16 +85,6 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
     result
 }
 
-/// The pouet.net rank out of a db line's `pouet` field.
-///
-/// The field is `pouet:<cdc>,<thumbs>,<rank>,...` — the release's id on pouet,
-/// how many thumbs up it has and where it sits in pouet's ranking, 1 being the
-/// best. A release that isn't on pouet has no field at all, and one that is but
-/// hasn't been ranked leaves the item empty, so both give `None`.
-pub(crate) fn parse_pouet_rank(field: &str) -> Option<u32> {
-    field.split(',').nth(2)?.trim().parse().ok()
-}
-
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
 ///
@@ -267,37 +257,18 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
             continue;
         }
 
-        let title = meta.get("title").copied().unwrap_or("");
-        let author = meta.get("author").copied().unwrap_or("");
-        let category = meta.get("category").copied().unwrap_or("");
-
-        let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
-
-        let year_s = meta
+        let year = meta
             .get("date")
             .copied()
             .unwrap_or("")
             .split(['-', '/', '.'])
             .next()
             .unwrap_or("");
-        meta.insert("year", &year_s);
+        meta.insert("year", &year);
 
-        let rank = meta
-            .get("pouet")
-            .copied()
-            .and_then(parse_pouet_rank)
-            .unwrap_or(0);
         out.push(EmuFile {
             path: FileSource::Url(urls),
             game_info: GameInfo::new(&meta),
-            // game_info: GameInfo {
-            //     title,
-            //     group: author,
-            //     date,
-            //     rank,
-            //     category,
-            //     ..Default::default()
-            // },
             meta,
         });
     }
