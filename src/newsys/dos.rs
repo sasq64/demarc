@@ -267,23 +267,6 @@ fn place_extender(file: &WorkFile, source: &Path) -> Result<()> {
     Ok(())
 }
 
-fn generate_cfg(input: HashMap<String, String>) {
-    let cfg: HashMap<&str, &[&str]> = [("Machine", &["machine", "cpu_family"][..])].into();
-    let mut result: String = "".into();
-    for (key, val) in cfg {
-        let mut first = true;
-        for subkey in val {
-            if let Some(subval) = input.get(&subkey.to_string()) {
-                if first {
-                    result += &format!("\n[{key}]\n");
-                }
-                first = false;
-                result += &format!("{subkey}={subval}\n");
-            }
-        }
-    }
-}
-
 impl DosSystem {
     /// Which of the files in a release is the one to start.
     ///

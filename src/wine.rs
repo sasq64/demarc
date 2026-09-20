@@ -191,6 +191,7 @@ impl WineCheck {
     }
 
     /// The names of the missing pieces, for a one-line warning.
+    #[cfg(test)]
     pub fn missing(&self) -> String {
         self.needs
             .iter()
