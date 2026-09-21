@@ -207,7 +207,7 @@ impl System for WindowsSystem {
         };
 
         for tag in [
-            "512x384", "320x200", "640x480", "800x600", "1024x768", "1280x720",
+            "512x384", "320x200", "320x240", "640x480", "800x600", "1024x768", "1280x720",
         ] {
             if file.has_tag(tag) {
                 file.set_meta(META_RES, tag);
