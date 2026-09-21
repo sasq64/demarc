@@ -133,10 +133,6 @@ pub struct Emulator {
     /// Current dimensions of [`Self::image`], tracked to detect size changes.
     pub width: u32,
     pub height: u32,
-    /// [`Backend::frame_serial`] as of the last copy into [`Self::image`]. The
-    /// display refreshes much faster than a core produces frames, so this is
-    /// what keeps `run_retro` from re-uploading the same pixels every frame.
-    pub frame_hash: u64,
     pub paused: bool,
     pub skipping: bool,
     /// Set while a warp indicator is on screen for this emulator, so
@@ -778,7 +774,6 @@ impl Emulator {
         self.core = Some(core);
         self.work_file = res.work_file;
 
-        self.frame_hash = 0;
         self.run_next = false;
         self.audio_seen = false;
         self.next_frame = time.elapsed_secs_f64();

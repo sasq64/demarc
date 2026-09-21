@@ -98,6 +98,11 @@ pub struct FrameStats {
 /// average at 60 fps.
 const AGG_ALPHA: f32 = 1.0 / 60.0;
 
+/// `aggregated_diff` down to which a picture still counts as moving, for
+/// [`Backend::screen_changed`](crate::backend::Backend::screen_changed).
+/// Identical frames take about four seconds to decay past it.
+pub const SCREEN_ACTIVE: f32 = 0.02;
+
 /// Per-channel step a pixel has to move before it counts as changed.
 const PIXEL_CHANGE: u8 = 8;
 
@@ -372,25 +377,6 @@ impl FrameStatsLog {
         );
         let _ = self.file.write_all(self.line.as_bytes());
     }
-}
-
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-pub fn scan_frame(frame: &[u32]) -> u64 {
-    let mut hash = FNV_OFFSET;
-
-    let mut pairs = frame.chunks_exact(2);
-    for p in &mut pairs {
-        let w = (p[0] as u64) | ((p[1] as u64) << 32);
-        hash = (hash ^ w).wrapping_mul(FNV_PRIME);
-    }
-
-    // An odd pixel count leaves one pixel over; hash it alone in the low half.
-    if let [px] = *pairs.remainder() {
-        hash = (hash ^ px as u64).wrapping_mul(FNV_PRIME);
-    }
-    hash
 }
 
 /// Convert an XRGB8888 libretro framebuffer to packed RGBA8888.

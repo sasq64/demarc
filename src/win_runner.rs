@@ -97,11 +97,6 @@ impl Backend for WinRunner {
         false
     }
 
-    /// Black, once. Nothing ever redraws it.
-    fn frame_hash(&self) -> u64 {
-        1
-    }
-
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(FRAME_W, FRAME_H, &self.frame);
     }

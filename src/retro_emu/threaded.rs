@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
 use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
-use crate::pixels::{FrameStatsLog, get_frame_stats, scan_frame};
+use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
 use super::RetroCoreDirect;
 
@@ -75,7 +75,8 @@ struct RetroUpdate {
     aspect_ratio: f32,
     sample_rate: f64,
     fps: f64,
-    frame_hash: u64,
+    frame_diff: f32,
+    aggregated_diff: f32,
 }
 
 pub struct RetroCoreThreaded {
@@ -87,8 +88,10 @@ pub struct RetroCoreThreaded {
     update_rx: Mutex<mpsc::Receiver<RetroUpdate>>,
     handle: Option<thread::JoinHandle<()>>,
     frame: Vec<u32>,
-    frame_hash: u64,
-    last_hash: u64,
+    /// Motion in the last frame handed over, and the moving average of it —
+    /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
+    frame_diff: f32,
+    aggregated_diff: f32,
     audio_sum: i32,
     last_sum: i32,
     frame_width: usize,
@@ -199,8 +202,8 @@ impl RetroCoreThreaded {
                 update_rx: Mutex::new(update_rx),
                 handle: Some(handle),
                 frame: Vec::new(),
-                frame_hash: 0,
-                last_hash: 0,
+                frame_diff: 0.0,
+                aggregated_diff: 0.0,
                 audio_sum: 0,
                 last_sum: 0,
                 frame_width: width,
@@ -242,8 +245,8 @@ fn worker_loop(
     // pressed). Frames are absolute counts of `frames`, so nothing can be
     // scheduled into the past.
     let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
-    // Only kept when `DEMARC_FRAME_STATS` asks for a log: the statistics cost a
-    // couple of passes over the framebuffer, and a copy of it to diff against.
+    // Only opened when `DEMARC_FRAME_STATS` asks for a log; the average colour
+    // it adds costs a couple of extra passes over the framebuffer.
     let mut stats_log = FrameStatsLog::from_env();
     let mut last_frame: Vec<u32> = Vec::new();
     let mut aggregated_diff = 0.0f32;
@@ -293,15 +296,17 @@ fn worker_loop(
             let mut frame = Vec::new();
             core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
 
-            let hash = scan_frame(&frame);
-
+            let frame_diff;
             if let Some(log) = &mut stats_log {
                 let stats = get_frame_stats(&frame, &last_frame, aggregated_diff);
-                aggregated_diff = stats.aggregated_diff;
+                (frame_diff, aggregated_diff) = (stats.frame_diff, stats.aggregated_diff);
                 log.log(frames.load(Ordering::Relaxed), width, height, &stats);
-                last_frame.clear();
-                last_frame.extend_from_slice(&frame);
+            } else {
+                (frame_diff, aggregated_diff) =
+                    get_frame_diff(&frame, &last_frame, aggregated_diff);
             }
+            last_frame.clear();
+            last_frame.extend_from_slice(&frame);
 
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
@@ -316,7 +321,8 @@ fn worker_loop(
                 aspect_ratio: core.aspect_ratio(),
                 sample_rate: core.sample_rate(),
                 fps: core.fps(),
-                frame_hash: hash,
+                frame_diff,
+                aggregated_diff,
             };
             if speed_test {
                 // Benchmark: never block on the consumer. Hand off the latest frame
@@ -397,8 +403,8 @@ impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
             self.frame = update.frame;
-            self.last_hash = self.frame_hash;
-            self.frame_hash = update.frame_hash;
+            self.frame_diff = update.frame_diff;
+            self.aggregated_diff = update.aggregated_diff;
             self.frame_width = update.width;
             self.frame_height = update.height;
             self.used_width = update.used_width;
@@ -433,8 +439,12 @@ impl Backend for RetroCoreThreaded {
         self.audio_sum.abs() < 1000
     }
 
+    fn screen_activity(&self) -> f32 {
+        self.aggregated_diff
+    }
+
     fn screen_changed(&self) -> bool {
-        self.last_hash == self.frame_hash
+        self.frame_diff > 0.0
     }
 
     fn get_number_of_disks(&mut self) -> u32 {
@@ -497,10 +507,6 @@ impl Backend for RetroCoreThreaded {
     }
     fn frames_stepped(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
-    }
-
-    fn frame_hash(&self) -> u64 {
-        self.frame_hash
     }
 }
 

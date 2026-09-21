@@ -618,27 +618,22 @@ pub(crate) fn run_frontend(
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
 
-        // Only copy (and so re-upload) when the backend has different pixels
-        let hash = emu.core.as_ref().unwrap().frame_hash();
-        if hash != emu.frame_hash {
-            emu.frame_hash = hash;
-            if let Some(mut image) = images.get_mut(&emu.image)
-                && let Some(dst) = image.data.as_mut()
-            {
-                emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
-                    // The texture is a byte buffer; the frame is one packed RGBA
-                    // `u32` per pixel, so copy it through a byte view.
-                    let frame = crate::backend::frame_bytes(frame);
-                    let copy_w = w.min(bg_w);
-                    let copy_h = h.min(bg_h);
-                    for y in 0..copy_h {
-                        let src_off = y * w * 4;
-                        let dst_off = y * bg_w * 4;
-                        dst[dst_off..dst_off + copy_w * 4]
-                            .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
-                    }
-                });
-            }
+        if let Some(mut image) = images.get_mut(&emu.image)
+            && let Some(dst) = image.data.as_mut()
+        {
+            emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
+                // The texture is a byte buffer; the frame is one packed RGBA
+                // `u32` per pixel, so copy it through a byte view.
+                let frame = crate::backend::frame_bytes(frame);
+                let copy_w = w.min(bg_w);
+                let copy_h = h.min(bg_h);
+                for y in 0..copy_h {
+                    let src_off = y * w * 4;
+                    let dst_off = y * bg_w * 4;
+                    dst[dst_off..dst_off + copy_w * 4]
+                        .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
+                }
+            });
         }
 
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
@@ -658,7 +653,6 @@ pub(crate) fn run_frontend(
             debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
-            emu.frame_hash = 0;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(

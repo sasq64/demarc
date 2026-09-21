@@ -251,8 +251,6 @@ pub struct MusicEmu {
     /// Metadata changes a handful of times a song; copying it across on every
     /// frame instead would be a dozen string allocations at 60Hz for nothing.
     meta_dirty: bool,
-    /// Bumped on every redraw. See [`Backend::frame_hash`].
-    serial: u64,
     /// Set once the player has stopped producing samples for long enough to
     /// call it over. Drives [`is_idle`](Backend::is_idle) so the frontend can
     /// move on to the next entry.
@@ -277,8 +275,8 @@ pub struct MusicEmu {
 // except through `&mut self`: `run`, `skip_frames` and `reset`. A shared
 // `&MusicEmu` genuinely can exist on two threads — `Emulator::core` is read
 // through `&Emulator` in `speed_test` while `run_retro` holds it mutably
-// elsewhere — but none of the `&self` methods (`with_frame`, `frame_hash`,
-// `get_frame_size`, …) touch Lua. Keep it that way.
+// elsewhere — but none of the `&self` methods (`with_frame`, `get_frame_size`,
+// …) touch Lua. Keep it that way.
 unsafe impl Send for MusicEmu {}
 unsafe impl Sync for MusicEmu {}
 
@@ -358,7 +356,6 @@ impl MusicEmu {
             frame_count: 0,
             meta: Vec::new(),
             meta_dirty: true,
-            serial: 1,
             ended: false,
             focus: ViewFocus::Focus,
             info,
@@ -509,7 +506,6 @@ impl MusicEmu {
     /// should look broken rather than look like a paused song.
     fn draw_frame(&mut self) {
         self.frame_count += 1;
-        self.serial += 1;
 
         // Everything the script reads is gathered before the call, so the Lua
         // closures need no access to `self` (which they could not outlive).
@@ -591,10 +587,6 @@ impl Backend for MusicEmu {
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(WIDTH, HEIGHT, &self.frame);
-    }
-
-    fn frame_hash(&self) -> u64 {
-        self.serial
     }
 
     fn get_frame_size(&self) -> (usize, usize) {

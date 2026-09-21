@@ -140,9 +140,6 @@ pub struct RetroCoreDirect {
     skip_frames: u32,
     retro_frame_time: Option<unsafe extern "C" fn(i64)>,
     time_reference: i64,
-    /// Bumped by every `run`, since each one leaves a freshly rendered frame.
-    /// See [`Backend::frame_serial`].
-    frame_serial: u64,
     visible: bool,
     /// Where the next `video_refresh` converts to instead of `state.frame`.
     /// Taken once a frame has been written there.
@@ -698,7 +695,6 @@ impl RetroCoreDirect {
                 skip_frames: 0,
                 retro_frame_time: None,
                 time_reference: 0,
-                frame_serial: 0,
                 visible: true,
                 frame_target: None,
             };
@@ -797,7 +793,6 @@ impl RetroCoreDirect {
             unsafe { cb(self.time_reference) }
         }
         unsafe { (self.retro_run_fn)() }
-        self.frame_serial = self.frame_serial.wrapping_add(1);
         // Relative motion has been consumed by the core this frame.
         self.mouse.dx = 0;
         self.mouse.dy = 0;
@@ -882,9 +877,6 @@ impl Backend for RetroCoreDirect {
     fn run(&mut self) -> bool {
         RetroCoreDirect::run(self);
         true
-    }
-    fn frame_hash(&self) -> u64 {
-        self.frame_serial
     }
     fn reset(&mut self) {
         RetroCoreDirect::reset(self)

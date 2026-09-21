@@ -417,9 +417,12 @@ fn renders_audio_and_a_scope() {
         assert!(frame.contains(&LEFT_TRACE), "no waveform drawn");
         first = frame.to_vec();
     });
-    let hash = emu.frame_hash();
-    assert!(emu.run());
-    assert_ne!(emu.frame_hash(), hash, "frame hash did not move");
+    let mut moved = false;
+    for _ in 0..30 {
+        assert!(emu.run());
+        emu.with_frame(&mut |_, _, frame| moved |= frame != first.as_slice());
+    }
+    assert!(moved, "picture did not move");
 }
 
 /// A song with no script still plays. The picture is blank rather than

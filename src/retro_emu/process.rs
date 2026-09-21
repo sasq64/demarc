@@ -24,7 +24,7 @@ use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
 
 use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
-use crate::pixels::scan_frame;
+use crate::pixels::{SCREEN_ACTIVE, get_frame_diff};
 
 use super::threaded::{RetroCmd, WORKER_STACK_SIZE, apply_cmd, set_state_bit};
 use super::{FrameTarget, RetroCoreDirect};
@@ -59,7 +59,8 @@ struct SlotHeader {
     height: u64,
     used_width: u64,
     used_height: u64,
-    frame_hash: u64,
+    frame_diff: f32,
+    aggregated_diff: f32,
     sample_rate: f64,
     fps: f64,
     aspect_ratio: f32,
@@ -320,8 +321,10 @@ pub struct RetroCoreProcess {
     /// The slot currently on display, owned by us until the next one arrives.
     slot: Option<usize>,
     dead: bool,
-    frame_hash: u64,
-    last_hash: u64,
+    /// Motion in the last frame handed over, and the moving average of it —
+    /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
+    frame_diff: f32,
+    aggregated_diff: f32,
     audio_sum: i32,
     frame_width: usize,
     frame_height: usize,
@@ -411,8 +414,8 @@ impl RetroCoreProcess {
             shm,
             slot: None,
             dead: false,
-            frame_hash: 0,
-            last_hash: 0,
+            frame_diff: 0.0,
+            aggregated_diff: 0.0,
             audio_sum: 0,
             audio: Vec::new(),
             aspect_ratio: 0.0,
@@ -479,8 +482,8 @@ impl Backend for RetroCoreProcess {
             self.send(Msg::new(MSG_RELEASE, prev as u32, 0, 0));
         }
         let h = unsafe { &*self.shm.slot(slot) };
-        self.last_hash = self.frame_hash;
-        self.frame_hash = h.frame_hash;
+        self.frame_diff = h.frame_diff;
+        self.aggregated_diff = h.aggregated_diff;
         self.frame_width = h.width as usize;
         self.frame_height = h.height as usize;
         self.used_width = h.used_width as usize;
@@ -519,7 +522,7 @@ impl Backend for RetroCoreProcess {
     }
 
     fn screen_changed(&self) -> bool {
-        self.last_hash == self.frame_hash
+        self.frame_diff > 0.0 || self.aggregated_diff > SCREEN_ACTIVE
     }
 
     fn get_number_of_disks(&mut self) -> u32 {
@@ -592,10 +595,6 @@ impl Backend for RetroCoreProcess {
     }
     fn frames_stepped(&self) -> u64 {
         self.shm.atomics().0.load(Ordering::Relaxed)
-    }
-
-    fn frame_hash(&self) -> u64 {
-        self.frame_hash
     }
 }
 
@@ -722,6 +721,9 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
     // The slot holding the newest frame, which a duped frame is copied from.
     let mut last: Option<usize> = None;
     let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
+    // Copy of the last frame handed over, to measure motion against.
+    let mut last_frame: Vec<u32> = Vec::new();
+    let mut aggregated_diff = 0.0f32;
     loop {
         let frame = frames.load(Ordering::Relaxed);
 
@@ -808,7 +810,10 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
             unsafe { std::ptr::copy_nonoverlapping(shm.pixels(prev), shm.pixels(slot), len) };
         }
         let pixels = unsafe { std::slice::from_raw_parts(shm.pixels(slot), len) };
-        let frame_hash = scan_frame(pixels);
+        let frame_diff;
+        (frame_diff, aggregated_diff) = get_frame_diff(pixels, &last_frame, aggregated_diff);
+        last_frame.clear();
+        last_frame.extend_from_slice(pixels);
 
         let mut audio_len = 0;
         core.with_audio(|s| {
@@ -823,7 +828,8 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
                 height: height as u64,
                 used_width: used_width as u64,
                 used_height: used_height as u64,
-                frame_hash,
+                frame_diff,
+                aggregated_diff,
                 sample_rate: core.sample_rate(),
                 fps: core.fps(),
                 aspect_ratio: core.aspect_ratio(),

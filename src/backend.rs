@@ -71,24 +71,28 @@ pub trait Backend {
         0
     }
 
-    /// A value that changes whenever [`with_frame`](Self::with_frame) would hand
-    /// back different pixels than it did last time.
-    ///
-    /// The frontend re-uploads the emulator's texture only when this moves, so a
-    /// backend that leaves it constant is never redrawn — which is why there is
-    /// no default implementation. Any monotonic counter or content hash will do;
-    /// it only has to differ, not to increase.
-    fn frame_hash(&self) -> u64;
     fn is_idle(&self) -> bool {
         self.is_silent() && !self.screen_changed()
+    }
+
+    // Value between 0 -> 1 indicating "current" screen activity,
+    // an aggregated value of screen diffs.
+    fn screen_activity(&self) -> f32 {
+        0.5
+    }
+
+    fn audio_activity(&self) -> f32 {
+        0.5
     }
 
     fn is_silent(&self) -> bool {
         false
     }
 
+    /// Whether the picture is still moving. Backends that cannot tell say it
+    /// is, so they are never called idle on the strength of the screen alone.
     fn screen_changed(&self) -> bool {
-        true
+        self.screen_activity() > 0.01
     }
 
     /// Tell the backend how much the user is looking at it — see [`ViewFocus`].
