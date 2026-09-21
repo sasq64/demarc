@@ -42,6 +42,7 @@ use librashader::runtime::{Size, Viewport};
 use wgpu::SamplerBorderColor;
 
 use crate::config::{AppSettings, RenderSettings};
+use crate::dj::{DjCamera, DjView};
 
 /// Format of both the librashader intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
@@ -207,6 +208,10 @@ pub struct PostProcess {
     pub view: ViewRect,
     /// Opacity of the view over the clear color: `0` skips it, `1` draws it unblended.
     pub alpha: f32,
+    /// Composite the source as it is: no effect, no downsampler. What the DJ
+    /// window shows, where a filter chain would be a second one over the same
+    /// source texture.
+    pub raw: bool,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -385,6 +390,7 @@ fn compute_uniform(
     // the source size are per-view, so a grid cell can fall below the limit
     // while the same core, maximized, stays above it.
     let crt_enabled = settings.crt_effect
+        && !pp.raw
         && match (viewport, src) {
             (Some(target), Some(src)) => pixel_ratio(target, src, uv_scale) >= crt_limit,
             // Source not loaded yet: keep the global setting rather than
@@ -587,12 +593,13 @@ pub fn scale_offset(
 /// skips every camera but the [`EmuCamera`] (notably the UI camera, which draws
 /// the HUD on top afterwards).
 fn post_process_pass(
-    view: ViewQuery<(&ViewTarget, &ExtractedCamera), With<EmuCamera>>,
+    view: ViewQuery<(&ViewTarget, &ExtractedCamera, Has<DjCamera>), With<EmuCamera>>,
     views: Query<(
         &PostProcess,
         &PostProcessUniform,
         &DynamicUniformIndex<PostProcessUniform>,
         &BorderScissor,
+        Has<DjView>,
     )>,
     mut pipeline_resource: ResMut<PostProcessPipeline>,
     pipeline_cache: Res<PipelineCache>,
@@ -605,7 +612,7 @@ fn post_process_pass(
     render_queue: Res<RenderQueue>,
     mut render_context: RenderContext,
 ) {
-    let (view_target, camera) = view.into_inner();
+    let (view_target, camera, dj_camera) = view.into_inner();
 
     // Both of these are no-ops unless the settings dialog has just changed the
     // shader: the pipeline is already in the map, and the chains already point
@@ -642,7 +649,12 @@ fn post_process_pass(
         .map(|size| URect::from_corners(UVec2::ZERO, size));
 
     let mut quads: Vec<Quad> = Vec::with_capacity(views.iter().len());
-    'views: for (post_process, uniform, uniform_index, border_scissor) in &views {
+    'views: for (post_process, uniform, uniform_index, border_scissor, dj_view) in &views {
+        // The DJ window draws its one view and nothing else; the main window
+        // draws everything but it.
+        if dj_view != dj_camera {
+            continue;
+        }
         let alpha = post_process.alpha.min(1.0);
         if alpha <= 0.0 {
             continue;
@@ -696,6 +708,7 @@ fn post_process_pass(
             // WGSL backend: the composite shader applies the effect itself while
             // sampling the emulator framebuffer directly — nothing to prepare.
             ShaderEffect::Wgsl(_) => &source_image.texture_view,
+            ShaderEffect::Slangp(_) if post_process.raw => &source_image.texture_view,
             ShaderEffect::Slangp(_) => 'slangp: {
                 let source_id = post_process.source.id();
                 let src_size =

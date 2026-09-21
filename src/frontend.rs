@@ -177,6 +177,7 @@ pub(crate) fn spawn_emulator(
                 active: true,
             },
             alpha: 1.0,
+            raw: false,
         },
         EmuView { index },
     ));
@@ -514,7 +515,11 @@ pub(crate) fn run_frontend(
     window: Option<Single<&Window, With<PrimaryWindow>>>,
     headless: Option<Res<HeadlessTarget>>,
     hud: Res<HudState>,
+    // Bevy's input resources are app wide, so this is what keeps the keyboard
+    // and mouse on the window that has focus -- see `crate::dj`.
+    dj: Option<Res<crate::dj::DjWindow>>,
 ) {
+    let dj_focused = crate::dj::has_focus(dj.as_deref());
     let cursor = cursor_pos(window.as_deref().copied());
     let mut no_input =
         input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
@@ -522,6 +527,7 @@ pub(crate) fn run_frontend(
 
     // Handle double click maximize/unmaximize
     if !no_input
+        && !dj_focused
         && mouse_buttons.just_pressed(MouseButton::Left)
         && let Some(i) = settings.mouse_index
     {
@@ -545,10 +551,12 @@ pub(crate) fn run_frontend(
             continue;
         }
         // Drop audio entirely in the speed-test benchmark and when headless.
+        // The cross fade spare keeps its sink open and its volume at zero, so
+        // the fade can ramp it up without opening a stream — and refilling its
+        // ring buffer — in the middle of one.
         let audio = !settings.speed_test
             && headless.is_none()
-            && !emu.is_crossfade
-            && (settings.all_emus || i == settings.current_emu);
+            && (settings.all_emus || i == settings.current_emu || emu.is_crossfade);
         emu.audio_active(audio);
         // Exactly one view is focused; the others are on screen as grid tiles
         // unless the focused one is maximized over them. The cross fade spare
@@ -596,12 +604,20 @@ pub(crate) fn run_frontend(
             continue;
         }
 
-        if (settings.all_emus || i == settings.current_emu)
-            && !no_input
-            && !emu.is_crossfade
-            && settings.maximized
-        {
-            let abs = cursor_frame_uv(cursor, &pp, &images, render.scale_mode);
+        // The DJ window shows the cue and nothing else, so it has no grid tile
+        // to point at: its emulator takes the input whole, without a cursor
+        // position, which the main window's view rectangles do not describe.
+        let feed = if dj_focused {
+            emu.is_crossfade
+        } else {
+            (settings.all_emus || i == settings.current_emu)
+                && !emu.is_crossfade
+                && settings.maximized
+        };
+        if feed && !no_input {
+            let abs = (!dj_focused)
+                .then(|| cursor_frame_uv(cursor, &pp, &images, render.scale_mode))
+                .flatten();
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         emu.run(&time);

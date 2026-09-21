@@ -1,4 +1,6 @@
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::Result;
 
@@ -203,7 +205,46 @@ fn pick_output_config(
     Some((supported, rate))
 }
 
-pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stream)> {
+/// Output level of one sink, shared with its audio callback. `f32` bits in an
+/// atomic so the cross fade can ramp it from the main thread while the callback
+/// reads it, without touching the samples already queued behind it.
+#[derive(Clone)]
+pub struct Volume(Arc<AtomicU32>);
+
+impl Volume {
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    pub fn set(&self, level: f32) {
+        self.0
+            .store(level.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+}
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU32::new(1.0f32.to_bits())))
+    }
+}
+
+/// Ready one callback buffer: `count` samples came out of the ring, so scale
+/// those to `level` and silence whatever is left. The tail matters — cpal hands
+/// out the previous callback's buffer, so an underrun that left it alone would
+/// replay those samples, at full volume however quiet this sink is meant to be.
+fn finish_buffer(output: &mut [f32], count: usize, level: f32) {
+    if level < 1.0 {
+        for sample in &mut output[..count] {
+            *sample *= level;
+        }
+    }
+    output[count..].fill(0.0);
+}
+
+pub fn init_audio_stream(
+    mut consumer: HeapCons<f32>,
+    volume: Volume,
+) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
 
@@ -247,11 +288,10 @@ pub fn init_audio_stream(mut consumer: HeapCons<f32>) -> Result<(f32, cpal::Stre
         &config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let count = consumer.pop_slice(output);
-            if count == 0 {
-                output.fill(0.0);
-            } else if count < output.len() {
+            if count > 0 && count < output.len() {
                 debug!("Audio drop");
             }
+            finish_buffer(output, count, volume.get());
         },
         |err| eprintln!("audio stream error: {err}"),
         None,
@@ -267,12 +307,15 @@ pub struct AudioSink {
     pub sample_rate: f32,
     pub stream: Option<SendStream>,
     pub resampler: Option<AudioResampler>,
+    /// Survives [`AudioSink::deactivate`], so a level set while the sink is
+    /// closed is still in force when it opens again.
+    volume: Volume,
 }
 
 impl AudioSink {
     pub fn activate(&mut self) {
         let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
-        let Ok((sample_rate, stream)) = init_audio_stream(consumer) else {
+        let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.volume.clone()) else {
             error!("Could not init audio");
             return;
         };
@@ -290,6 +333,11 @@ impl AudioSink {
         self.stream = None;
         self.producer = None;
         self.resampler = None;
+    }
+
+    /// Set this sink's output level, `0` (silent) to `1`.
+    pub fn set_volume(&self, level: f32) {
+        self.volume.set(level);
     }
 
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {

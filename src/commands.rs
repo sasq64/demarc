@@ -53,6 +53,7 @@ pub enum Cmd {
     Reload,
     Settings,
     ShaderDialog,
+    StartOther,
 }
 
 impl Cmd {
@@ -82,6 +83,7 @@ impl Cmd {
         Cmd::Reload,
         Cmd::Settings,
         Cmd::ShaderDialog,
+        Cmd::StartOther,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -160,6 +162,11 @@ const HOTKEYS: &[KeyMapping] = &[
         Cmd::ToggleInput,
     ),
     KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
+    KeyMapping::shifted(
+        KeyCode::KeyO,
+        "Fade in cross fade emulator",
+        Cmd::StartOther,
+    ),
     KeyMapping::new(KeyCode::KeyX, "Edit settings", Cmd::Settings),
     KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
@@ -577,7 +584,9 @@ pub(crate) fn handle_cmd(
     mut show_shader: MessageWriter<ShowShaderDialog>,
     mut demo_settings: ResMut<DemarcSettings>,
     mut commands: Commands,
+    dj: Option<Res<crate::dj::DjWindow>>,
 ) {
+    let dj_focused = crate::dj::has_focus(dj.as_deref());
     let mut show_info = false;
     let count = emus.iter().filter(|(emu, _)| !emu.is_crossfade).count();
     let multi = count > 1;
@@ -683,8 +692,17 @@ pub(crate) fn handle_cmd(
             }
             _ => {}
         }
+        // While the DJ window has the keyboard the per-emulator commands belong
+        // to the cue it shows. Advancing is the exception: the cross fade
+        // pipeline takes a load off the view that asked for it and runs it in
+        // the cue itself, so those stay where they are.
+        let advance = matches!(
+            cmd.0,
+            Cmd::NextFile | Cmd::PrevFile | Cmd::Reload | Cmd::NextFileAll
+        );
+        let cue = dj_focused && !advance;
         for (mut emu, view) in &mut emus {
-            if emu.is_crossfade {
+            if emu.is_crossfade != cue {
                 continue;
             }
             let i = view.index;
@@ -699,7 +717,7 @@ pub(crate) fn handle_cmd(
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;
             }
-            if settings.all_emus || i == settings.current_emu {
+            if cue || settings.all_emus || i == settings.current_emu {
                 match cmd.0 {
                     Cmd::MouseClick => emu.set_mouse_buttons(0x1),
                     Cmd::ToggleInput => {

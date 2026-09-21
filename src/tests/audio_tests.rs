@@ -48,3 +48,23 @@ fn picks_target_rate_from_a_wide_range() {
     let (_, rate) = pick_output_config(configs, 48000).unwrap();
     assert_eq!(rate, 48000);
 }
+
+/// A muted sink plays nothing, however much the ring had for it.
+#[test]
+fn silences_a_full_buffer_at_zero_volume() {
+    let mut output = [1.0f32; 8];
+    let len = output.len();
+
+    finish_buffer(&mut output, len, 0.0);
+    assert_eq!(output, [0.0; 8]);
+}
+
+/// An underrun clears the samples it could not fill, rather than leaving the
+/// previous callback's -- which the volume above never touched.
+#[test]
+fn clears_what_an_underrun_left_behind() {
+    let mut output = [1.0f32; 8];
+
+    finish_buffer(&mut output, 4, 0.5);
+    assert_eq!(output, [0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
+}

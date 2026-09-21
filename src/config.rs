@@ -231,6 +231,16 @@ pub struct Args {
     #[arg(long)]
     pub cross_fade: bool,
 
+    /// Hold the cross fade back until the hidden emulator's screen activity
+    /// rises above this threshold (0-1).
+    #[arg(long)]
+    pub cross_fade_activity: Option<f32>,
+
+    /// Open a second window showing the cross fade emulator, and fade it in
+    /// only when asked to (RightAlt+Shift+O). Implies `--cross-fade`.
+    #[arg(long)]
+    pub dj_mode: bool,
+
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000000")]
     pub clear_color: Color,

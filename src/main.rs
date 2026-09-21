@@ -20,6 +20,7 @@ mod config;
 mod cross_fade;
 mod degas;
 mod demarc_settings;
+mod dj;
 mod egui_settings;
 mod egui_ui;
 mod emu_file;
@@ -65,6 +66,7 @@ mod wine_sandbox;
 
 use commands::CommandPlugin;
 use cross_fade::CrossFadePlugin;
+use dj::DjPlugin;
 use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::FrontendPlugin;
@@ -308,6 +310,10 @@ fn main() {
     let mut args = Args::parse();
     if cfg!(debug_assertions) {
         args.no_silence = true;
+    }
+    // The cue window shows the cross fade emulator, so there has to be one.
+    if args.dj_mode {
+        args.cross_fade = true;
     }
 
     // On Unix, silence the cores by redirecting stdout/stderr to /dev/null
@@ -561,6 +567,7 @@ fn main() {
                 }),
             FrontendPlugin {},
             CrossFadePlugin,
+            DjPlugin,
             CommandPlugin,
             PostProcessPlugin {
                 shader: shader_path,

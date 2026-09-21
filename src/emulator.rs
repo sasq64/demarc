@@ -363,6 +363,12 @@ impl Emulator {
         }
     }
 
+    /// Set this emulator's output level, `0` (silent) to `1`. The cross fade
+    /// ramps it; everything else runs at `1`.
+    pub fn set_volume(&self, level: f32) {
+        self.sink.set_volume(level);
+    }
+
     pub fn audio_active(&mut self, on: bool) {
         if on && self.sink.stream.is_none() {
             self.sink.activate();

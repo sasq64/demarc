@@ -30,7 +30,7 @@ pub struct EguiUiPlugin;
 /// up the very same face -- and the same hot-reloaded bytes -- as the Bevy UI in
 /// [`crate::hud`] and [`crate::text_input`].
 #[derive(Resource)]
-struct AppFont(Handle<Font>);
+pub(crate) struct AppFont(pub Handle<Font>);
 
 fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(AppFont(asset_server.load("font.ttf")));
@@ -114,7 +114,6 @@ fn setup_egui(
     app_font: Res<AppFont>,
     fonts: Res<Assets<Font>>,
     mut done: Local<bool>,
-    mut state: ResMut<Images>,
 ) -> Result {
     if *done {
         return Ok(());
@@ -122,13 +121,14 @@ fn setup_egui(
     let Some(font) = fonts.get(&app_font.0) else {
         return Ok(());
     };
-    let ctx = contexts.ctx_mut()?;
+    apply_style(contexts.ctx_mut()?, font);
+    *done = true;
+    Ok(())
+}
 
-    let heart = load_icon_texture(ctx, "heart_icon", ICON_SVG)?;
-    let star = load_icon_texture(ctx, "star_icon", STAR_SVG)?;
-    state.heart = Some(heart);
-    state.star = Some(star);
-
+/// Give `ctx` the app font and text styles. Every window has its own context,
+/// and a context starts with egui's own defaults.
+pub(crate) fn apply_style(ctx: &egui::Context, font: &Font) {
     // egui owns its font bytes (it re-parses them for its own atlas), so this
     // copies out of the Bevy asset instead of sharing the `Blob`.
     let mut font_defs = egui::FontDefinitions::default();
@@ -157,9 +157,22 @@ fn setup_egui(
             .insert(egui::TextStyle::Body, egui::FontId::proportional(BODY_SIZE));
         style.visuals.override_text_color = Some(TEXT_COLOR);
     });
+}
 
-    *done = true;
-    Ok(())
+/// The icon textures for `ctx`, rasterized and uploaded on first use. Each
+/// window's context has its own texture manager, so they cannot be shared.
+fn icons(ctx: &egui::Context) -> Option<(egui::TextureId, egui::TextureId)> {
+    let key = egui::Id::new("icons");
+    let pair = match ctx.data(|d| d.get_temp::<(egui::TextureHandle, egui::TextureHandle)>(key)) {
+        Some(pair) => pair,
+        None => {
+            let heart = load_icon_texture(ctx, "heart_icon", ICON_SVG).ok()?;
+            let star = load_icon_texture(ctx, "star_icon", STAR_SVG).ok()?;
+            ctx.data_mut(|d| d.insert_temp(key, (heart.clone(), star.clone())));
+            (heart, star)
+        }
+    };
+    Some((pair.0.id(), pair.1.id()))
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
@@ -246,12 +259,6 @@ pub struct HudState {
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
     list_source: Option<ListSource>,
-}
-
-#[derive(Resource, Default)]
-pub struct Images {
-    heart: Option<egui::TextureHandle>,
-    star: Option<egui::TextureHandle>,
 }
 
 impl HudState {
@@ -682,16 +689,30 @@ fn heading_with_shadow(
 pub(crate) fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
-    images: Res<Images>,
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Single<&mut Window, With<PrimaryWindow>>,
+    // In DJ mode the overlay belongs on the cue window, and the picker is drawn
+    // on whichever of the two has the keyboard -- see `crate::dj`.
+    dj: Option<Res<crate::dj::DjWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
-    let scale = (window.height() / 1600.0).clamp(0.2, 8.0);
-    ctx.set_pixels_per_point(window.scale_factor() * scale);
+    set_scale(ctx, &window);
 
+    if dj.is_none() {
+        draw_hud(ctx, &state, &time);
+    }
+    if !crate::dj::has_focus(dj.as_deref()) {
+        draw_picker(ctx, &keys, &mut state, &mut selected);
+    }
+    Ok(())
+}
+
+/// The corner texts and the download list: the app's own overlay, drawn over
+/// the picture. In DJ mode this is the cue window's, so the main window shows
+/// nothing but the demo.
+pub(crate) fn draw_hud(ctx: &egui::Context, state: &HudState, time: &Time) {
     let rect = ctx.content_rect().shrink2(MARGIN);
 
     egui::Area::new(egui::Id::new("overlay"))
@@ -754,11 +775,31 @@ pub(crate) fn update_ui(
         });
 
     render_downloads(ctx, rect.min);
+}
+
+/// Scale `ctx` to `window`, so the UI keeps its proportions whatever the window
+/// is sized at.
+pub(crate) fn set_scale(ctx: &egui::Context, window: &Window) {
+    let scale = (window.height() / 1600.0).clamp(0.2, 8.0);
+    ctx.set_pixels_per_point(window.scale_factor() * scale);
+}
+
+/// Draws the file picker into `ctx`: the primary window's context, or the DJ
+/// window's under `--dj-mode`.
+pub(crate) fn draw_picker(
+    ctx: &egui::Context,
+    keys: &ButtonInput<KeyCode>,
+    state: &mut HudState,
+    selected: &mut MessageWriter<FuzzyListSelect>,
+) {
+    let Some((heart_id, star_id)) = icons(ctx) else {
+        return;
+    };
     // Cloned out before `state` is borrowed mutably below; the row painter
     // looks each visible row's text up through it. `render_list` bails out
     // itself when there is no source, so the painter never runs without one.
     let source = state.list_source.clone();
-    render_list(ctx, &keys, &mut state, &mut selected, |ui, rect, id| {
+    render_list(ctx, keys, state, selected, |ui, rect, id| {
         let Some(source) = source.as_ref() else {
             return;
         };
@@ -820,20 +861,17 @@ pub(crate) fn update_ui(
         let end_x = pos.x + galley.rect.width() + 10.0 + extra;
         let mut image_rect =
             egui::Rect::from_min_size(egui::pos2(end_x, pos.y), egui::vec2(32.0, 32.0));
-        let tid = images.heart.as_ref().unwrap().id();
-        let vid = images.star.as_ref().unwrap().id();
         for _ in 0..cdc {
-            egui::Image::new((tid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+            egui::Image::new((heart_id, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
             image_rect.min.x += 12.0;
             image_rect.max.x += 12.0;
         }
         if vt {
             image_rect.min.x += 12.0;
             image_rect.max.x += 12.0;
-            egui::Image::new((vid, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+            egui::Image::new((star_id, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
         }
     });
-    Ok(())
 }
 
 fn spawn_toast(
@@ -923,7 +961,6 @@ impl Plugin for EguiUiPlugin {
                     open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
                 ),
             )
-            .insert_resource(Images::default())
             .insert_resource(HudState::default());
     }
 }
