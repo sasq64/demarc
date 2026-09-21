@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
 use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
-use crate::pixels::scan_frame;
+use crate::pixels::{FrameStatsLog, get_frame_stats, scan_frame};
 
 use super::RetroCoreDirect;
 
@@ -242,6 +242,11 @@ fn worker_loop(
     // pressed). Frames are absolute counts of `frames`, so nothing can be
     // scheduled into the past.
     let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
+    // Only kept when `DEMARC_FRAME_STATS` asks for a log: the statistics cost a
+    // couple of passes over the framebuffer, and a copy of it to diff against.
+    let mut stats_log = FrameStatsLog::from_env();
+    let mut last_frame: Vec<u32> = Vec::new();
+    let mut aggregated_diff = 0.0f32;
     loop {
         let frame = frames.load(Ordering::Relaxed);
 
@@ -289,6 +294,14 @@ fn worker_loop(
             core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
 
             let hash = scan_frame(&frame);
+
+            if let Some(log) = &mut stats_log {
+                let stats = get_frame_stats(&frame, &last_frame, aggregated_diff);
+                aggregated_diff = stats.aggregated_diff;
+                log.log(frames.load(Ordering::Relaxed), width, height, &stats);
+                last_frame.clear();
+                last_frame.extend_from_slice(&frame);
+            }
 
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
