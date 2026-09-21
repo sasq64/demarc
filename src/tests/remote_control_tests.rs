@@ -21,6 +21,7 @@ fn names(actions: &[Action]) -> Vec<String> {
             Action::KeyUp(k) => format!("up {k:?}"),
             Action::Cmd(c) => format!("cmd {c:?}"),
             Action::Screenshot(p) => format!("shot {}", p.display()),
+            Action::LoadDemo(id) => format!("load {id}"),
             Action::Quit => "quit".into(),
         })
         .collect()
@@ -120,6 +121,18 @@ fn the_name_tables_are_populated() {
     .unwrap();
     assert_eq!(names(&r.update()), ["cmd ShaderDialog", "down ArrowUp"]);
     assert!(r.finished());
+}
+
+/// A demo id reaches Rust as its text whether the script wrote it as a number
+/// or as a string, so `load_demo(1234)` and `load_demo("1234")` are the same.
+#[test]
+fn load_demo_takes_a_number_or_a_string() {
+    let mut r = runner(
+        "loaddemo",
+        r#"function Main() load_demo(1234) load_demo("5678") end"#,
+    )
+    .unwrap();
+    assert_eq!(names(&r.update()), ["load 1234", "load 5678"]);
 }
 
 /// Every `Cmd` round-trips through the name the Lua table exposes.

@@ -21,7 +21,7 @@ use bevy::window::PrimaryWindow;
 use mlua::{Function, Lua, LuaOptions, StdLib};
 
 use crate::commands::{Cmd, CmdMessage};
-use crate::config::Args;
+use crate::config::{AppSettings, Args};
 use crate::emulator::Emulator;
 use crate::headless::HeadlessTarget;
 
@@ -31,6 +31,10 @@ pub enum Action {
     KeyUp(KeyCode),
     Cmd(Cmd),
     Screenshot(PathBuf),
+    /// Start the db entry whose `id` meta is this, by value rather than index:
+    /// a script names a release the way the db does, not by where it landed in
+    /// the file list.
+    LoadDemo(String),
     Quit,
 }
 
@@ -237,6 +241,26 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>) -> Result<()> {
 
     let state = shared.clone();
     globals.set(
+        "load_demo",
+        lua.create_function(move |_, id: mlua::Value| {
+            let id = match id {
+                mlua::Value::Integer(n) => n.to_string(),
+                mlua::Value::Number(n) => (n as i64).to_string(),
+                mlua::Value::String(s) => s.to_str()?.to_owned(),
+                other => {
+                    return Err(mlua::Error::runtime(format!(
+                        "load_demo wants a demo id, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            push(&state, Action::LoadDemo(id));
+            Ok(())
+        })?,
+    )?;
+
+    let state = shared.clone();
+    globals.set(
         "quit",
         lua.create_function(move |_, ()| {
             push(&state, Action::Quit);
@@ -326,6 +350,7 @@ fn run_script(
     mut keys: MessageWriter<KeyboardInput>,
     mut cmds: MessageWriter<CmdMessage>,
     mut exit: MessageWriter<AppExit>,
+    mut settings: ResMut<AppSettings>,
     windows: Query<Entity, With<PrimaryWindow>>,
     headless: Option<Res<HeadlessTarget>>,
 ) {
@@ -351,6 +376,18 @@ fn run_script(
                     None => Screenshot::primary_window(),
                 };
                 commands.spawn(shot).observe(save_to_disk(path));
+            }
+            Action::LoadDemo(id) => {
+                let index = settings.files.iter().position(|f| f.get_meta("id") == id);
+                match index {
+                    // Same two steps as picking a row in the file picker: point
+                    // `current_game` at the entry and let `Reload` boot it.
+                    Some(index) => {
+                        settings.current_game = index as isize;
+                        cmds.write(CmdMessage(Cmd::Reload));
+                    }
+                    None => error!("Remote control: no demo with id {id}"),
+                }
             }
             Action::Quit => {
                 exit.write(AppExit::Success);
