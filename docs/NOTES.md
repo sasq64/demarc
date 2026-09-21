@@ -259,3 +259,16 @@ Override in system/overrides.toml:
 file = "fr-063_v1.02.zip"
 meta = { wine_cpus = 4 }
 I also set file so it downloads v1.02, the bug-fix release, because demozoo lists the v1.01 party version first.
+
+
+# PLAYLISTS / FAVORITES / "VIEWS"
+
+Feed fuzzy list from custom == created subset.
+
+goto party = grep party => push current_subset.
+Parent = pop
+
+Add to fav/pl
+
+Multi: Downloads -> files in archive -> files on disk image
+
