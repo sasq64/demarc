@@ -14,7 +14,7 @@ use crate::backend::{Backend, STATE_SKIPPING, ViewFocus, frame_bytes};
 use crate::emu_file::{
     EmuFile, FileSource, GameInfo, Override, UrlList, download_finished, download_started,
 };
-use crate::jobs::{Job, JobError, JobProgress};
+use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
 use crate::libretro;
 use crate::newsys::{self, LoadResult, NewSys};
 use crate::workfile::WorkFile;
@@ -707,6 +707,17 @@ impl Emulator {
                     Err(err) => self.failed_load(advance, title, Self::job_error(err)),
                 }
             }
+        }
+    }
+
+    /// Let go of the running core without blocking the main thread, for
+    /// callers that are not about to build another one.
+    ///
+    /// Unlike [`start_create`](Self::start_create) nothing has to wait for the
+    /// teardown to finish, so it is simply detached.
+    pub(crate) fn drop_core_async(&mut self) {
+        if let Some(core) = self.core.take() {
+            drop_on_pool(core);
         }
     }
 

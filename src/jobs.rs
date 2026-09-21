@@ -296,6 +296,16 @@ impl<T: Send + 'static> Job<T> {
     }
 }
 
+/// Let go of `value` on the I/O pool, for values whose `Drop` blocks — a
+/// libretro core's `retro_deinit` joins its worker thread.
+///
+/// Detached rather than a [`Job`]: there is no result and nobody polls, and a
+/// dropped `Job` handle would cancel a task the pool hadn't picked up yet,
+/// which would run the very `Drop` this avoids on the main thread.
+pub fn drop_on_pool<T: Send + 'static>(value: T) {
+    IoTaskPool::get().spawn(async move { drop(value) }).detach();
+}
+
 struct RunningJob<T> {
     id: JobId,
     job: Job<T>,

@@ -34,7 +34,7 @@ pub(crate) const CROSSFADE_INDEX: usize = usize::MAX;
 const DELAY_TIME: f32 = 5.0;
 
 /// Seconds the fade itself takes.
-const FADE_TIME: f32 = 1.5;
+const FADE_TIME: f32 = 4.0;
 
 /// One emulator finished a load this frame.
 #[derive(Message)]
@@ -139,7 +139,9 @@ fn swap_roles(
     o_emu.set_volume(0.0);
     o_emu.is_crossfade = true;
     s_emu.is_crossfade = false;
-    o_emu.core = None;
+    // Off the main thread: tearing a core down joins its worker thread, which
+    // landed as a stutter on the frame the fade ended.
+    o_emu.drop_core_async();
 
     debug!("Cross fade emulator took over view {}", s_view.index);
     state.spare = Some(origin);
