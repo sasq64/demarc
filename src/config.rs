@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use bevy::{color::Color, ecs::resource::Resource, render::extract_resource::ExtractResource};
 use clap::{
@@ -502,7 +502,10 @@ pub struct RenderSettings {
 
 #[derive(Resource, Default)]
 pub struct AppSettings {
-    pub system: NewSys,
+    /// Shared so that a load can run the whole of
+    /// [`NewSys::load_prepared`] on a job thread; see
+    /// [`Emulator::update_load`](crate::emulator::Emulator::update_load).
+    pub system: Arc<NewSys>,
     pub show_info: bool,
     pub files: Vec<EmuFile>,
     pub current_game: isize,

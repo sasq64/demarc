@@ -209,6 +209,11 @@ impl RetroCoreDirect {
     /// hand work to another thread expect: the shutdown handshake is with the
     /// frontend thread they have been synchronising with all along.
     fn shut_down(&mut self) {
+        // Held for the teardown as well as for the load: a core is now torn
+        // down on a job thread (see `Emulator::start_create`), so with two
+        // emulators a `retro_deinit` can run while another core is loading,
+        // and the libc state below is just as shared either way.
+        let _load_guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _guard = CurrentEmuGuard::enter(self);
         unsafe {
             (self.retro_unload_game_fn)();

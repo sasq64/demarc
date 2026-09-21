@@ -3,6 +3,7 @@ use qbsdiff::Bspatch;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace, warn};
 
 use crate::backend::Backend;
@@ -175,13 +176,12 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
 /// Unpack a downloaded release, producing the [`WorkFile`] that
 /// [`NewSys::load_prepared`] takes over from.
 ///
-/// Split out from the rest because it is the one expensive step that touches no
-/// shared state at all: it reads `path` and writes into a temp dir of its own,
-/// so the frontend runs it on the I/O pool while the release currently on
-/// screen keeps playing (see `Emulator::load_async`). On the main thread it
-/// cost a visible stutter — a double-packed release is unpacked twice, and
-/// that landed on a single frame. What is left for the main thread (detection, conversion,
-/// building the backend) either needs the system table or is the core itself.
+/// Split out from the rest because it touches no shared state at all: it reads
+/// `path` and writes into a temp dir of its own, so the frontend runs it on the
+/// I/O pool while the release currently on screen keeps playing (see
+/// `Emulator::load_async`). [`NewSys::load_prepared`] then runs on the I/O pool
+/// too, but only once this half is in: what it does to the release — and to the
+/// core it replaces — cannot start until the download has landed.
 ///
 /// Archives are unpacked one level deep and then once more, because scene
 /// releases are routinely packed inside another archive. An m3u is not
@@ -463,12 +463,20 @@ fn get_first_file(sys: &(impl System + ?Sized), dir: &Path) -> Result<Option<Pat
 #[derive(Default)]
 pub struct NewSys {
     systems: Vec<Box<dyn System>>,
-    meta: HashMap<String, String>,
+    /// Behind a lock because the whole of [`NewSys::load_prepared`] runs on a
+    /// job thread while the settings dialog may write here (see
+    /// [`NewSys::set_meta`]). Read once per load, so the lock is never hot.
+    meta: Mutex<HashMap<String, String>>,
 }
-pub struct LoadResult<'a> {
+
+/// What a finished [`NewSys::load_prepared`] hands back. Owned rather than
+/// borrowing the [`System`] that claimed the release, so it can be carried back
+/// from the job thread that built it.
+pub struct LoadResult {
     pub backend: Box<dyn Backend + Send + Sync>,
-    pub system: &'a dyn System,
     pub work_file: WorkFile,
+    pub system_name: &'static str,
+    pub is_console: bool,
 }
 
 impl NewSys {
@@ -519,7 +527,7 @@ impl NewSys {
         }
         NewSys {
             systems: Self::get_systems(args),
-            meta,
+            meta: Mutex::new(meta),
         }
     }
 
@@ -529,18 +537,18 @@ impl NewSys {
     /// Applied in [`load_prepared`](Self::load_prepared), so it takes hold on
     /// the next release loaded, not on the one playing: a backend reads its
     /// meta once, as it is built.
-    pub fn set_meta(&mut self, key: &str, value: String) {
-        self.meta.insert(key.into(), value);
+    pub fn set_meta(&self, key: &str, value: String) {
+        self.meta_mut().insert(key.into(), value);
     }
 
-    pub fn meta_mut(&mut self) -> &mut HashMap<String, String> {
-        &mut self.meta
+    pub fn meta_mut(&self) -> MutexGuard<'_, HashMap<String, String>> {
+        self.meta.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Has one of them been set already? What `-x` said is in here too, so this
     /// is how the frontend leaves a value someone typed alone.
     pub fn has_meta(&self, key: &str) -> bool {
-        self.meta.contains_key(key)
+        self.meta_mut().contains_key(key)
     }
 
     /// Load a release, with `over` carrying whatever `overrides.toml` had to
@@ -548,28 +556,29 @@ impl NewSys {
     ///
     /// The two halves are also callable separately, and the frontend does that:
     /// [`unpack_release`] runs on the I/O pool while the previous release is
-    /// still on screen, and only [`load_prepared`](Self::load_prepared) has to
-    /// happen on the main thread. So outside the tests nothing takes this
-    /// route any more; it stays as the one place the whole pipeline is written
-    /// out in order.
+    /// still on screen, and [`load_prepared`](Self::load_prepared) follows it
+    /// on a job of its own. So outside the tests nothing takes this route any
+    /// more; it stays as the one place the whole pipeline is written out in
+    /// order.
     #[allow(dead_code)]
     pub fn load_file(
         &self,
         path: &Path,
         meta: &HashMap<String, String>,
         over: Option<&Override>,
-    ) -> Result<LoadResult<'_>> {
+    ) -> Result<LoadResult> {
         self.load_prepared(unpack_release(path, meta)?, over)
     }
 
     /// Finish loading an already-[unpacked](unpack_release) release: apply the
     /// override, fill in meta, find the system that claims it and build its
     /// backend.
-    pub fn load_prepared(
-        &self,
-        mut wf: WorkFile,
-        over: Option<&Override>,
-    ) -> Result<LoadResult<'_>> {
+    ///
+    /// Runs on a job thread (see
+    /// [`Emulator::start_create`](crate::emulator::Emulator::start_create)), so
+    /// everything a [`System`] reaches for here has to be shareable — which is
+    /// why [`NewSys`] holds its meta behind a lock.
+    pub fn load_prepared(&self, mut wf: WorkFile, over: Option<&Override>) -> Result<LoadResult> {
         // Now that the release is unpacked and its own meta is in place: an
         // override may write files into it, name the one to start and set meta
         // of its own, which beats what the release says about itself.
@@ -578,7 +587,7 @@ impl NewSys {
         }
 
         // Last, so that `-x` on the command line beats every other source.
-        for (key, val) in &self.meta {
+        for (key, val) in self.meta_mut().iter() {
             debug!("Adding {key}={val}");
             wf.set_meta(key, val);
         }
@@ -646,7 +655,8 @@ impl NewSys {
                 return Ok(LoadResult {
                     backend,
                     work_file: wf,
-                    system: sys.as_ref(),
+                    system_name: sys.name(),
+                    is_console: sys.is_console(),
                 });
             }
         }

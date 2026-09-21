@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
@@ -15,7 +16,7 @@ use crate::emu_file::{
 };
 use crate::jobs::{Job, JobError, JobProgress};
 use crate::libretro;
-use crate::newsys::{self, NewSys};
+use crate::newsys::{self, LoadResult, NewSys};
 use crate::workfile::WorkFile;
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
@@ -50,6 +51,34 @@ impl InputMode {
     }
 }
 
+/// The two off-thread halves a load is made of, in the order they run.
+enum LoadPhase {
+    /// Resolves the download *and* unpacks it — see [`newsys::unpack_release`].
+    /// Both are off-thread so that neither a slow mirror nor a big archive is
+    /// paid for on a frame the previous release is still drawing.
+    ///
+    /// The override rides along because the parts of it that apply after the
+    /// download — the file to start, the files to patch — belong to the phase
+    /// after this one.
+    Unpacking {
+        job: Job<WorkFile>,
+        over: Option<Override>,
+    },
+    /// Tears the old core down and builds the new one, which is the expensive
+    /// half: `retro_load_game` alone is tens to hundreds of milliseconds, and a
+    /// core that is not cached yet is downloaded here as well.
+    Creating(Job<LoadResult>),
+}
+
+impl LoadPhase {
+    fn cancel(&self) {
+        match self {
+            LoadPhase::Unpacking { job, .. } => job.cancel(),
+            LoadPhase::Creating(job) => job.cancel(),
+        }
+    }
+}
+
 /// A load started by [`Emulator::load_async`] whose job hasn't landed yet.
 struct PendingLoad {
     /// What the entry is called, kept here because the job reports only a
@@ -62,14 +91,7 @@ struct PendingLoad {
     /// puts them back, which is what lets tv mode carry on past a dead link in
     /// the direction it was already going.
     advance: (bool, bool),
-    /// What `overrides.toml` had to say about this release, if anything. Held
-    /// here because the parts of it that apply after the download — the file to
-    /// start, the files to patch — are only used once the load actually runs.
-    over: Option<Override>,
-    /// Resolves the download *and* unpacks it — see [`newsys::unpack_release`].
-    /// Both are off-thread so that neither a slow mirror nor a big archive is
-    /// paid for on a frame the previous release is still drawing.
-    job: Job<WorkFile>,
+    phase: LoadPhase,
 }
 
 /// What [`Emulator::update_load`] found this frame.
@@ -552,11 +574,12 @@ impl Emulator {
     /// Begin loading `emu_file`, downloading it first if it is URL-backed.
     ///
     /// Returns immediately. Downloading and unpacking run on the I/O pool, and
-    /// starting what came out of them happens in whichever
-    /// [`update_load`](Self::update_load) call finds the job finished — so the
-    /// core currently running keeps running (and playing) until then, rather
-    /// than the frontend stalling for the transfer or for an archive big
-    /// enough to be felt as a dropped frame.
+    /// so does building the core out of what they produced
+    /// ([`start_create`](Self::start_create)) — the main thread only takes the
+    /// finished backend over. So the core currently running keeps running (and
+    /// playing) until the download is in, rather than the frontend stalling for
+    /// the transfer, for an archive big enough to be felt as a dropped frame,
+    /// or for the `retro_load_game` of the release that replaces it.
     ///
     /// A load already in flight is abandoned; its result is discarded (and with
     /// it the temp dir it unpacked into). That is what makes a fresh request
@@ -564,7 +587,7 @@ impl Emulator {
     /// take effect instead of being queued behind it.
     pub fn load_async(&mut self, emu_file: &EmuFile, over: Option<&Override>) {
         if let Some(previous) = &self.pending_load {
-            previous.job.cancel();
+            previous.phase.cancel();
             // The abandoned job never reaches `update_load`, so its share of
             // the counter has to be given back here.
             download_finished();
@@ -618,56 +641,130 @@ impl Emulator {
         self.pending_load = Some(PendingLoad {
             info: emu_file.game_info,
             advance,
-            over: over.cloned(),
-            job,
+            phase: LoadPhase::Unpacking {
+                job,
+                over: over.cloned(),
+            },
         });
     }
 
     /// Drive a [`load_async`](Self::load_async) forward; call once per frame.
     ///
-    /// When the job lands this hands its unpacked [`WorkFile`] to
-    /// [`load_prepared`](Self::load_prepared), so the caller sees exactly the
-    /// outcome the old synchronous `load` produced — just some frames later.
-    pub fn update_load(&mut self, time: &Time, sys: &NewSys) -> LoadStatus {
+    /// Both halves of the load run on the job pool: the unpacked [`WorkFile`]
+    /// the first one produces is handed straight to a second job that tears the
+    /// old core down and builds the new one, and only the finished
+    /// [`LoadResult`] is taken over here. The caller sees exactly the outcome
+    /// the old synchronous `load` produced — just some frames later.
+    pub fn update_load(&mut self, time: &Time, sys: &Arc<NewSys>) -> LoadStatus {
         let Some(pending) = self.pending_load.as_mut() else {
             return LoadStatus::Idle;
         };
-        // `poll` hands the result over exactly once, so it has to be kept here
-        // rather than re-read after the `take` below.
-        let Some(resolved) = pending.job.poll() else {
-            return LoadStatus::Pending;
+        match &mut pending.phase {
+            LoadPhase::Unpacking { job, .. } => {
+                // `poll` hands the result over exactly once, so it has to be
+                // kept here rather than re-read after the `take` below.
+                let Some(resolved) = job.poll() else {
+                    return LoadStatus::Pending;
+                };
+                let PendingLoad {
+                    info,
+                    advance,
+                    phase,
+                } = self.pending_load.take().expect("checked just above");
+                let LoadPhase::Unpacking { over, .. } = phase else {
+                    unreachable!("matched just above");
+                };
+                match resolved {
+                    Ok(work_file) => {
+                        self.start_create(sys, info, advance, work_file, over);
+                        LoadStatus::Pending
+                    }
+                    Err(err) => {
+                        download_finished();
+                        self.failed_load(advance, info.title.to_string(), Self::job_error(err))
+                    }
+                }
+            }
+            LoadPhase::Creating(job) => {
+                let Some(resolved) = job.poll() else {
+                    return LoadStatus::Pending;
+                };
+                let PendingLoad { info, advance, .. } =
+                    self.pending_load.take().expect("checked just above");
+                // Past the `poll` above the load is over one way or another --
+                // landed, failed or cancelled -- so it stops counting here,
+                // whichever of the branches below the outcome takes.
+                download_finished();
+                let title = info.title.to_string();
+                match resolved {
+                    Ok(res) => {
+                        self.finish_load(time, res, info);
+                        LoadStatus::Done {
+                            title,
+                            result: Ok(()),
+                        }
+                    }
+                    Err(err) => self.failed_load(advance, title, Self::job_error(err)),
+                }
+            }
+        }
+    }
+
+    /// Start the second half of a load. From here on this emulator has no core,
+    /// and the job pool holds both the old one — to tear down — and everything
+    /// needed to build the new one.
+    ///
+    /// The old core is taken before the new one is built, and let go of by the
+    /// job before it starts on it: a backend may own something the machine only
+    /// has one of, and the next one cannot take it until this one has let go.
+    /// `musix`'s sc68 plugin is the case that bites — libsc68 has a
+    /// process-wide init that the plugin claims per song, so a second SNDH
+    /// loaded while the first is still alive fails to init and no plugin is
+    /// found for the file — but libretro cores are widely non-reentrant in the
+    /// same way.
+    ///
+    /// The cost is that a load which fails leaves nothing running rather than
+    /// the previous entry; the frontend already draws that state (it skips an
+    /// emulator with no core), and tv mode steps on to the next.
+    fn start_create(
+        &mut self,
+        sys: &Arc<NewSys>,
+        info: GameInfo,
+        advance: (bool, bool),
+        work_file: WorkFile,
+        over: Option<Override>,
+    ) {
+        let old_core = self.core.take();
+        let sys = Arc::clone(sys);
+        let name = if info.title.is_empty() {
+            "load"
+        } else {
+            info.title
         };
-        let PendingLoad {
+        let job = Job::spawn(name, move |_| {
+            // Both of these block for long enough to be seen as a dropped frame
+            // on the main thread: a core's `retro_deinit` joins its worker
+            // thread, and building the next one runs `retro_load_game` — and
+            // downloads the core itself when it is not cached yet.
+            drop(old_core);
+            sys.load_prepared(work_file, over.as_ref())
+        });
+        self.pending_load = Some(PendingLoad {
             info,
             advance,
-            over,
-            ..
-        } = self.pending_load.take().expect("checked just above");
-        // Past the `poll` above the download is over one way or another --
-        // landed, failed or cancelled -- so it stops counting here, whichever
-        // of the branches below the outcome takes.
-        download_finished();
+            phase: LoadPhase::Creating(job),
+        });
+    }
 
-        let title = info.title.to_string();
-        let work_file = match resolved {
-            Ok(work_file) => work_file,
-            // Unwrap `JobError::Failed` rather than wrapping it: `load_error::classify`
-            // downcasts along the error chain to tell a 404 from a dead mirror,
-            // and an extra layer on top would still work but buys nothing.
-            Err(JobError::Failed(err)) => {
-                return self.failed_load(advance, title, err);
-            }
-            Err(JobError::Cancelled) => {
-                return self.failed_load(advance, title, anyhow::anyhow!("load cancelled"));
-            }
-        };
-
-        match self.load_prepared(time, sys, work_file, info, over.as_ref()) {
-            Ok(()) => LoadStatus::Done {
-                title,
-                result: Ok(()),
-            },
-            Err(err) => self.failed_load(advance, title, err),
+    /// Unwrap a [`JobError`] into the error the frontend reports.
+    ///
+    /// `Failed` is unwrapped rather than wrapped: `load_error::classify`
+    /// downcasts along the error chain to tell a 404 from a dead mirror, and an
+    /// extra layer on top would still work but buys nothing.
+    fn job_error(err: JobError) -> anyhow::Error {
+        match err {
+            JobError::Failed(err) => err,
+            JobError::Cancelled => anyhow::anyhow!("load cancelled"),
         }
     }
 
@@ -706,7 +803,10 @@ impl Emulator {
     /// multi-disk set and for a server that declares no size.
     #[allow(dead_code)]
     pub fn load_progress(&self) -> Option<&JobProgress> {
-        self.pending_load.as_ref().map(|p| p.job.progress())
+        self.pending_load.as_ref().map(|p| match &p.phase {
+            LoadPhase::Unpacking { job, .. } => job.progress(),
+            LoadPhase::Creating(job) => job.progress(),
+        })
     }
 
     /// Load `emu_file` here and now, downloading and unpacking it on this
@@ -736,48 +836,29 @@ impl Emulator {
             .collect();
 
         let work_file = newsys::unpack_release(path, &meta)?;
-        self.load_prepared(time, sys, work_file, emu_file.game_info, over)
+        // Same order the asynchronous path keeps: the old core lets go of
+        // whatever it owns before the new one is built (see
+        // [`start_create`](Self::start_create)).
+        self.core = None;
+        let res = sys.load_prepared(work_file, over)?;
+        self.finish_load(time, res, emu_file.game_info);
+        Ok(())
     }
 
-    /// Start the release in `work_file`, which
-    /// [`newsys::unpack_release`] has already unpacked.
-    ///
-    /// Everything left here has to be on the main thread: it either touches
-    /// state only one emulator may hold at a time, or is the backend itself.
-    fn load_prepared(
-        &mut self,
-        time: &Time,
-        sys: &NewSys,
-        work_file: WorkFile,
-        info: GameInfo,
-        over: Option<&Override>,
-    ) -> Result<()> {
+    /// Take over a [`LoadResult`] built by
+    /// [`NewSys::load_prepared`](crate::newsys::NewSys::load_prepared) —
+    /// everything about starting a release that has to happen on the main
+    /// thread, which is only this bookkeeping.
+    fn finish_load(&mut self, time: &Time, res: LoadResult, info: GameInfo) {
         self.title_info = info;
-
-        // Before `NewSys::load_prepared`, which builds the new backend at the
-        // end of it: a
-        // backend may own something the machine only has one of, and the next
-        // one cannot take it until this one has let go. `musix`'s sc68 plugin
-        // is the case that bites — libsc68 has a process-wide init that the
-        // plugin claims per song, so a second SNDH loaded while the first is
-        // still alive fails to init and no plugin is found for the file — but
-        // libretro cores are widely non-reentrant in the same way.
-        //
-        // The cost is that a load which fails leaves nothing running rather
-        // than the previous entry; the frontend already draws that state (it
-        // skips an emulator with no core), and tv mode steps on to the next.
-        self.core = None;
-
-        let res = sys.load_prepared(work_file, over)?;
-        let core = res.backend;
-        if res.system.is_console() {
+        if res.is_console {
             self.input_mode = InputMode::Joystick1;
         }
 
-        self.is_image = res.system.name().starts_with("Image");
+        self.is_image = res.system_name.starts_with("Image");
         self.paused = self.is_image && (!self.color_cycle);
 
-        self.core = Some(core);
+        self.core = Some(res.backend);
         self.work_file = res.work_file;
 
         self.run_next = false;
@@ -786,8 +867,8 @@ impl Emulator {
         self.start_time = time.elapsed_secs_f64();
         self.last_active_time = time.elapsed_secs();
         trace!("FRAME START");
-        Ok(())
     }
+
     pub fn skip(&mut self, frames: u32) {
         // Latched even with no core to skip, so the indicator the caller puts up
         // for it is taken down again on the next frame rather than sitting there

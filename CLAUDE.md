@@ -72,10 +72,13 @@ in `NewSys::get_systems` until one claims the file → fill in that system's `de
 nothing else set → `create` the backend. **Order matters** — specific systems come first,
 `MusicSystem` and `ImageSystem` last because `musix` and `image` claim a lot of files.
 
-It is split in two so the frontend can run the halves in different places: `newsys::unpack_release`
+It is split in two so the frontend can run the halves as separate jobs: `newsys::unpack_release`
 (unpack + m3u tags) needs nothing but the file, so `Emulator::load_async` runs it on the I/O pool
-along with the download, and only `NewSys::load_prepared` (everything from the override onwards)
-runs on the main thread — unpacking there cost a dropped frame.
+along with the download, and `NewSys::load_prepared` (everything from the override onwards) follows
+on a second I/O-pool job — `Emulator::start_create`, which also drops the outgoing core there.
+Neither half touches the main thread: unpacking cost a dropped frame, and `retro_load_game` plus a
+core teardown cost tens to hundreds of milliseconds. So a `System` must be usable off the main
+thread, and `NewSys` holds its run-wide meta behind a lock.
 `load_file` is still the two called in order, and is what the tests use.
 
 To add a machine: new file under `src/newsys/`, implement `System`, register it in `get_systems()`.

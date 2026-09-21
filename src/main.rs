@@ -468,7 +468,7 @@ fn main() {
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
-    let sys = NewSys::new(&args);
+    let sys = std::sync::Arc::new(NewSys::new(&args));
     let settings = AppSettings {
         demozoo_overrides: overrides::load_default(),
         boot_file: args.boot_file.clone().map(files::leak),

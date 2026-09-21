@@ -111,7 +111,7 @@ pub fn apply_settings(
     mut current: ResMut<DemarcSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     mut clear_color: ResMut<ClearColor>,
-    mut app_settings: ResMut<AppSettings>,
+    app_settings: Res<AppSettings>,
 ) {
     for SettingsApplied(new) in reader.read() {
         if new.fullscreen != current.fullscreen {
@@ -131,7 +131,7 @@ pub fn apply_settings(
         }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {
-            apply_wine(&new.wine, &current.wine, app_settings.system.meta_mut());
+            apply_wine(&new.wine, &current.wine, &mut app_settings.system.meta_mut());
         }
         *current = new.clone();
     }

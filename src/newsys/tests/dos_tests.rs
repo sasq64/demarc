@@ -387,7 +387,7 @@ fn boots_an_ibm_xt_to_rom_basic() {
     let mut loaded = systems
         .load_file(&cfg, &HashMap::new(), None)
         .expect("failed to load the XT config");
-    assert_eq!(loaded.system.name(), "MS/DOS");
+    assert_eq!(loaded.system_name, "MS/DOS");
 
     // Both milestones of a real boot: the BIOS sizing memory, then BASIC.
     let mut post_line: Option<String> = None;

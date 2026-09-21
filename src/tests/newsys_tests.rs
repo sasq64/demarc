@@ -16,7 +16,7 @@ fn test_load(path: &Path, name: &str) -> WorkFile {
 
     let mut result = s.load_file(path, &HashMap::new(), None).unwrap();
     println!("{:?}", result.work_file.get_all_meta());
-    assert_eq!(result.system.name(), name);
+    assert_eq!(result.system_name, name);
     result.backend.run();
     result.work_file
 }
@@ -76,7 +76,7 @@ fn set_meta_reaches_the_next_release() {
             .get_meta_or("latency", "")
     };
 
-    let mut sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
+    let sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
     assert_eq!(latency_of(&sys), "2");
 
     sys.set_meta("latency", "5".into());

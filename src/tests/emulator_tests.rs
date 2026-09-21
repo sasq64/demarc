@@ -19,12 +19,12 @@ fn task_pools() -> App {
 
 /// The system table with stock settings, which is all `update_load` needs
 /// to hand the resolved file on to `load`.
-fn systems() -> NewSys {
-    NewSys::new(&Args::parse_from(["demarc"]))
+fn systems() -> Arc<NewSys> {
+    Arc::new(NewSys::new(&Args::parse_from(["demarc"])))
 }
 
 /// Pumps `update_load` until it stops reporting `Pending`.
-fn drive_load(emu: &mut Emulator, sys: &NewSys) -> LoadStatus {
+fn drive_load(emu: &mut Emulator, sys: &Arc<NewSys>) -> LoadStatus {
     let time = Time::default();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

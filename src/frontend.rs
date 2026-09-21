@@ -342,7 +342,7 @@ const WIDE_ASPECT: f32 = 1.55;
 fn detect_screen(
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     headless: Option<Res<HeadlessTarget>>,
-    mut settings: ResMut<AppSettings>,
+    settings: Res<AppSettings>,
 ) {
     if settings.system.has_meta(META_WIDESCREEN) && settings.system.has_meta(META_REFRESH) {
         return;

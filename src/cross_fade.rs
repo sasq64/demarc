@@ -1,7 +1,7 @@
 //! Loading the next release into a spare, off-screen emulator and fading it in
 //! over the one it replaces.
 //!
-//! `load_prepared` drops the running core before it builds the new one, so an
+//! A load drops the running core before it builds the new one, so an
 //! emulator that loads cannot keep showing what it was showing. With
 //! `--cross-fade` an extra emulator entity (the *spare*) is spawned and every
 //! advance is diverted into it. Once the load lands the spare keeps running off
