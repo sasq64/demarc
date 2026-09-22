@@ -154,14 +154,17 @@ pub fn is_archive(path: &Path) -> Result<bool> {
 /// makes a temp directory of its own. Returns `false`, having written nothing,
 /// when `path` is not a recognised archive.
 pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
-    use std::{io::BufReader, path::Component};
-
     let mut file = BufReader::new(fs::File::open(path)?);
     let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
         return Ok(false);
     };
     if !is_supported_archive(format) {
         return Ok(false);
+    }
+
+    if format == ArchiveFormat::SevenZ {
+        unpack_7z(file, target_dir)?;
+        return Ok(true);
     }
 
     let mut archive = format.open(file)?;
@@ -180,18 +183,10 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
         } else {
             name
         };
-        // Keep only normal path components so an absolute path or `..` in the
-        // archive can't write outside the target directory.
-        let rel: PathBuf = Path::new(name)
-            .components()
-            .filter(|c| matches!(c, Component::Normal(_)))
-            .collect();
-        if rel.as_os_str().is_empty() {
-            // Unusable name (e.g. all `..`): nothing safe to write.
+        let Some(out_path) = entry_path(target_dir, name) else {
             archive.skip(&entry)?;
             continue;
-        }
-        let out_path = target_dir.join(&rel);
+        };
         if name.ends_with('/') || name.ends_with('\\') {
             // Explicit directory entry (zip, tar).
             fs::create_dir_all(&out_path)?;
@@ -214,6 +209,42 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
     }
     Ok(true)
 }
+
+/// Where an archive entry called `name` goes under `target_dir`, keeping only
+/// normal path components so an absolute path or `..` can't escape it. `None`
+/// when nothing is left of the name.
+fn entry_path(target_dir: &Path, name: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let rel: PathBuf = Path::new(name)
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .collect();
+    (!rel.as_os_str().is_empty()).then(|| target_dir.join(rel))
+}
+
+/// Extract a 7z in one pass over each block. unarc-rs reads entries one at a
+/// time, which in a solid archive decodes the block from its start for every
+/// file.
+fn unpack_7z(file: impl std::io::Read + std::io::Seek, target_dir: &Path) -> Result<()> {
+    let mut archive = sevenz_rust2::ArchiveReader::new(file, sevenz_rust2::Password::empty())?;
+    archive.for_each_entries(|entry, reader| {
+        let Some(out_path) = entry_path(target_dir, entry.name()) else {
+            std::io::copy(reader, &mut std::io::sink())?;
+            return Ok(true);
+        };
+        if entry.is_directory() {
+            fs::create_dir_all(&out_path)?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            std::io::copy(reader, &mut fs::File::create(&out_path)?)?;
+        }
+        Ok(true)
+    })?;
+    Ok(())
+}
+
 /// Read exactly `len` bytes from the start of `path`. Fails with
 /// [`std::io::ErrorKind::UnexpectedEof`] if the file is shorter.
 pub fn read_header(path: &Path, len: usize) -> std::io::Result<Vec<u8>> {

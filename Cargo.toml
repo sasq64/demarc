@@ -155,6 +155,7 @@ ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e34912
 ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 unarc-rs = "0.6.1"
+sevenz-rust2 = "0.20.2"
 walkdir = "2.5.0"
 
 # The `contents` of a patch, which is binary and so is written base64 in the toml.

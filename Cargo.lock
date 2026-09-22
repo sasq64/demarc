@@ -3087,6 +3087,7 @@ dependencies = [
  "ruffle_render",
  "ruffle_render_wgpu",
  "serde",
+ "sevenz-rust2",
  "sha2 0.11.0",
  "suppaftp",
  "swf 0.2.2 (git+https://github.com/ruffle-rs/ruffle?rev=6b83e349125a872e7db5fe80875f5cab64c1c6a9)",
