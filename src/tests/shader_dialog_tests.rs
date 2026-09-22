@@ -381,7 +381,7 @@ fn the_default_collection_is_always_there() {
 }
 
 /// The real `shaders/shaders.toml`, if this checkout has one. Ignored for the
-/// same reason `post_process_tests::megabezel_pack_presets_resolve` is: it needs
+/// same reason `post_process::chains::tests::megabezel_pack_presets_resolve` is: it needs
 /// `shaders/` laid out as `docs/SHADERS.md` describes.
 #[test]
 #[ignore]

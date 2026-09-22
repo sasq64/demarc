@@ -44,6 +44,7 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins;
     emulator.rs    Emulator component: pacing, input routing, audio sink, frame → Handle<Image> upload
       backend.rs   `trait Backend` — the only thing the frontend knows about a "core"
   post_process.rs  librashader/wgpu compositing of every view into one camera
+    post_process/  geometry.rs (where a view lands), chains.rs (the only librashader user), composite.rs (the pass)
   egui_ui.rs       HUD, info overlay, fuzzy-search selector (fuzzy_list.rs)
   commands.rs      RightAlt/RightCtrl hotkeys → Cmd enum → app actions
 ```

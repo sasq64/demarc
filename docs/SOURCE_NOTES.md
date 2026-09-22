@@ -266,9 +266,11 @@ alongside image, music, Flash and Wine backends.
 - `frame_bytes()` reinterprets packed RGBA `u32`s as bytes; each `u32` already holds `[r,g,b,a]` in
   memory order (see the LUTs / `video_refresh`), so it is a plain, always-sound width narrowing.
 
-## `post_process.rs`
+## `post_process.rs` + `post_process/`
 
 Compositing of every emulator view into one camera, via librashader or a single-pass WGSL shader.
+The parent holds the plugin and the components other modules use; `geometry.rs` works out where a
+view's picture lands, `chains.rs` owns every librashader chain, `composite.rs` runs the pass.
 
 **Backends.** `ShaderEffect::Slangp(path)` runs a librashader `.slangp` filter chain into an
 intermediate texture that a *passthrough* composite blit (`shaders/blit.wgsl`) then draws. With the

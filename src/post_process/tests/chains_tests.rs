@@ -1,0 +1,136 @@
+use super::*;
+
+use crate::post_process::DOWNSAMPLE_PRESET;
+
+/// The bundled downsample preset has to parse and reference a shader that
+/// is actually in the `system` tree — a preset that only fails at
+/// `FilterChain::load_from_path` time shows up as a log line at runtime and
+/// silently leaves minified views unfiltered.
+#[test]
+fn bundled_downsample_preset_resolves() {
+    use librashader::presets::ShaderPreset;
+    let path = crate::system_dir().join(DOWNSAMPLE_PRESET);
+    let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
+        .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
+    let pass = preset.passes.first().expect("preset should have a pass");
+    assert!(pass.path.is_file(), "missing shader {:?}", pass.path);
+}
+
+/// The Mega Bezel preset packs lean on three things RetroArch's preset parser
+/// does and stock librashader 0.11 does not, so demarc builds against a fork
+/// that does them too (see `docs/SHADERS.md`): a `#reference` path ends at its
+/// closing quote rather than swallowing a trailing comment, reference depth
+/// counts chain levels rather than files visited, and a reference that does not
+/// resolve is skipped rather than failing the whole preset. Going back to a
+/// librashader without those fixes breaks every preset in those packs, so pin
+/// the behaviour here rather than finding out at load time.
+#[test]
+fn preset_references_follow_retroarch_rules() {
+    use librashader::presets::ShaderPreset;
+    use std::fmt::Write as _;
+
+    let dir = std::env::temp_dir().join("demarc-preset-reference-rules");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let stock = crate::system_dir().join("shaders/slangp/stock.slangp");
+    let mut root = format!("#reference \"{}\" // the passes\n", stock.display());
+    // Well past SHADER_MAX_REFERENCE_DEPTH (16) files, but only one level deep:
+    // a pack preset pulls in this many .params siblings, each one annotated.
+    for i in 0..20 {
+        let leaf = dir.join(format!("leaf{i}.params"));
+        std::fs::write(&leaf, format!("leaf_param{i} = \"{i}.0\"\n")).expect("leaf");
+        let _ = writeln!(root, "#reference \"leaf{i}.params\" // leaf {i}");
+    }
+    // A reference to a file the pack never shipped: RetroArch warns and moves on.
+    root.push_str("#reference \"absent.params\" // renamed upstream\n");
+
+    let root_path = dir.join("root.slangp");
+    std::fs::write(&root_path, root).expect("root preset");
+
+    let preset = ShaderPreset::try_parse(&root_path, ShaderFeatures::NONE)
+        .unwrap_or_else(|err| panic!("annotated reference chain should parse: {err}"));
+    assert_eq!(preset.passes.len(), 1, "should inherit the stock pass");
+    assert!(
+        preset.passes[0].path.is_file(),
+        "reference paths should not keep their quotes: {:?}",
+        preset.passes[0].path
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Parse a slice of an installed Mega Bezel pack. Ignored because it needs the
+/// pack and a `slang-shaders` checkout laid out as `docs/SHADERS.md` describes;
+/// run it after updating either, or after `scripts/fix-megabezel-pack.sh`.
+#[test]
+#[ignore]
+fn megabezel_pack_presets_resolve() {
+    use librashader::presets::ShaderPreset;
+
+    let root = PathBuf::from("shaders/Mega_Bezel_Packs/TheNamec-Commodore/presets");
+    assert!(root.is_dir(), "no pack at {root:?}");
+
+    let mut presets = Vec::new();
+    let mut dirs = vec![root];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("readable").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "slangp") {
+                presets.push(path);
+            }
+        }
+    }
+    presets.sort();
+    assert!(!presets.is_empty(), "no presets found");
+
+    // The pack ships ~72k presets built from a few hundred building blocks;
+    // every 200th covers each device/flavour/scene combination many times over.
+    let mut checked = 0;
+    for path in presets.iter().step_by(200) {
+        let preset = ShaderPreset::try_parse(path, ShaderFeatures::NONE)
+            .unwrap_or_else(|err| panic!("{path:?}: {err}"));
+        // No passes means every reference that carried them went missing —
+        // the pack and the Mega Bezel checkout have drifted apart.
+        assert!(!preset.passes.is_empty(), "{path:?} resolved to no passes");
+        checked += 1;
+    }
+    println!("{checked} of {} presets parsed", presets.len());
+}
+
+/// A shader change starts one build and, until it lands, exactly one: the
+/// selections the user clicked past on the way are never compiled.
+#[test]
+fn rapid_shader_changes_coalesce_onto_one_build() {
+    let a = Path::new("/presets/a.slangp");
+    let b = Path::new("/presets/b.slangp");
+    let c = Path::new("/presets/c.slangp");
+
+    // Nothing ready, nothing running: the first draw starts the build.
+    assert!(should_start(None, None, a, false));
+    // Already building what we want, or already running it: no second build.
+    assert!(!should_start(None, Some(a), a, false));
+    assert!(!should_start(Some(a), None, a, false));
+    // The dialog moves on twice while a's build still holds a pool thread.
+    // Neither b nor c is started — b is skipped entirely.
+    assert!(!should_start(None, Some(a), b, false));
+    assert!(!should_start(None, Some(a), c, false));
+    // a lands and is dropped (it is not what is selected any more); only now,
+    // and only for the current selection, does a build start.
+    assert!(should_start(None, None, c, false));
+    // The same holds with an older preset still on screen: the switch away from
+    // a chain that is already rendering is what a shader change is.
+    assert!(should_start(Some(a), None, c, false));
+}
+
+/// A preset that failed to load is not retried on every frame — and is not
+/// papered over with the preset the user switched away from.
+#[test]
+fn a_failed_preset_is_not_retried() {
+    let a = Path::new("/presets/a.slangp");
+    let broken = Path::new("/presets/broken.slangp");
+    assert!(!should_start(Some(a), None, broken, true));
+    assert!(!should_start(None, None, broken, true));
+}

@@ -25,7 +25,7 @@ Three fixes, each matching what RetroArch's own parser does:
 | Reference depth counts chain levels | A single counter was bumped once per preset read, so any chain touching more than 16 *files* failed with `ExceededReferenceDepth` | A pack preset pulls in ~45 files while never going more than three levels deep |
 | An unresolvable reference is skipped | The whole preset failed with an IO error | Shipped packs reference files that were renamed or never shipped; RetroArch only warns |
 
-`src/tests/post_process_tests.rs::preset_references_follow_retroarch_rules` pins
+`src/post_process/tests/chains_tests.rs::preset_references_follow_retroarch_rules` pins
 all three, so moving the dependency back to a stock librashader fails the test
 suite rather than every bezel preset at load time.
 

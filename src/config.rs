@@ -530,7 +530,7 @@ pub struct AppSettings {
     /// mask alias into mud at low magnification — most visibly in grid mode,
     /// where each cell is a fraction of the window. `0` disables the check.
     ///
-    /// Applied per emulator view (see `post_process::compute_uniform`), so the
+    /// Applied per emulator view (see `post_process::geometry::compute_uniform`), so the
     /// same core can render without the filter in a small grid cell and with it
     /// once maximized.
     pub crt_limit: f32,
