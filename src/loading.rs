@@ -43,7 +43,7 @@ impl LoadPhase {
     }
 }
 
-/// A load started by [`Emulator::load_async`] whose job hasn't landed yet.
+/// A load started by [`load_async`] whose job hasn't landed yet.
 pub(crate) struct PendingLoad {
     /// What the entry is called, kept here because the job reports only a
     /// [`WorkFile`] and the entry itself is gone by the time it lands — and on
@@ -68,6 +68,17 @@ pub(crate) enum LoadStatus {
     Done { title: String, result: Result<()> },
 }
 
+/// Begin loading `emu_file`, downloading it first if it is URL-backed.
+///
+/// Returns immediately. Downloading and unpacking run on the I/O pool, and so
+/// does building the core out of what they produced
+/// (`Emulator::start_create`) — the main thread only takes the finished
+/// backend over. So the core currently running keeps running (and playing)
+/// until the download is in.
+///
+/// Only the job is started here: cancelling a load already in flight, the
+/// download counters and the emulator's own state are the caller's
+/// ([`handle_loading`]).
 pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
     let name = if emu_file.game_info.title.is_empty() {
         "load"
@@ -116,82 +127,7 @@ pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
 }
 
 impl Emulator {
-    /// Begin loading `emu_file`, downloading it first if it is URL-backed.
-    ///
-    /// Returns immediately. Downloading and unpacking run on the I/O pool, and
-    /// so does building the core out of what they produced
-    /// ([`start_create`](Self::start_create)) — the main thread only takes the
-    /// finished backend over. So the core currently running keeps running (and
-    /// playing) until the download is in, rather than the frontend stalling for
-    /// the transfer, for an archive big enough to be felt as a dropped frame,
-    /// or for the `retro_load_game` of the release that replaces it.
-    ///
-    /// A load already in flight is abandoned; its result is discarded (and with
-    /// it the temp dir it unpacked into). That is what makes a fresh request
-    /// during a slow download — picking another entry from the selector, say —
-    /// take effect instead of being queued behind it.
-    pub fn load_async(&mut self, emu_file: &EmuFile, over: Option<&Override>) {
-        if let Some(previous) = &self.pending_load {
-            previous.phase.cancel();
-            // The abandoned job never reaches `update_load`, so its share of
-            // the counter has to be given back here.
-            download_finished();
-        }
-        download_started();
-        self.state = EmuState::Loading;
-
-        // Taken, not just read: leaving them set would have the frontend ask
-        // for this same load again on the very next frame.
-        self.run_next = false;
-        self.run_prev = false;
-
-        let name = if emu_file.game_info.title.is_empty() {
-            "load"
-        } else {
-            emu_file.game_info.title
-        }
-        .to_string();
-
-        // Resolution and unpacking both run off-thread; only what touches shared
-        // state — system detection, conversion, core creation — is left for
-        // `load_prepared` on the main thread. `NewSys` and the `WorkFile` it
-        // builds own their meta, so the entry's borrowed pairs are copied into
-        // `String`s here, at the one boundary where the file list hands work off.
-        let meta: HashMap<String, String> = emu_file
-            .meta
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-            .collect();
-        let mut source = emu_file.path.clone();
-        // The one part of an override that has to happen before the transfer:
-        // where the release comes from, or which of its downloads is the demo.
-        if let Some(url) = over.and_then(|o| o.download_url) {
-            source = FileSource::Url(UrlList::one(url));
-        } else if let Some(name) = over.and_then(|o| o.download) {
-            source.pick_download(name);
-        }
-        let job = Job::spawn(name, move |progress| {
-            let path = source.resolve_with_progress(&|done, total| {
-                progress.set_done(done);
-                progress.set_total(total.unwrap_or(0));
-            })?;
-            // Unpacking has no useful byte count; flip back to indeterminate so
-            // a progress bar doesn't sit at 100% for the rest of the job.
-            progress.set_total(0);
-            progress.set_done(0);
-            newsys::unpack_release(path, &meta)
-        });
-
-        self.pending_load = Some(PendingLoad {
-            info: emu_file.game_info,
-            phase: LoadPhase::Unpacking {
-                job,
-                over: over.cloned(),
-            },
-        });
-    }
-
-    /// Drive a [`load_async`](Self::load_async) forward; call once per frame.
+    /// Drive a [`load_async`] forward; call once per frame.
     ///
     /// Both halves of the load run on the job pool: the unpacked [`WorkFile`]
     /// the first one produces is handed straight to a second job that tears the
@@ -353,7 +289,7 @@ impl Emulator {
     // plumbed end to end already (`fetch` counts,
     // [`FileSource::resolve_with_progress`] forwards).
 
-    /// True while a [`load_async`](Self::load_async) download is outstanding.
+    /// True while a [`load_async`] download is outstanding.
     pub fn is_loading(&self) -> bool {
         self.pending_load.is_some()
     }
@@ -369,7 +305,7 @@ impl Emulator {
     }
 
     /// Load `emu_file` here and now, downloading and unpacking it on this
-    /// thread. [`load_async`](Self::load_async) is what the frontend uses;
+    /// thread. [`load_async`] is what the frontend uses;
     /// this is the whole thing in one call, for a caller with nothing on
     /// screen to keep running — which today is nobody, since the frontend went
     /// asynchronous, but it is the one place the synchronous order of the load

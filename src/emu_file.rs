@@ -16,7 +16,7 @@ use crate::fetch::{OnProgress, fetch_url_with_progress};
 /// UI that shows it ([`crate::egui_ui`]) draws one indicator for the whole
 /// window and has no emulator to ask; kept in step by
 /// [`download_started`]/[`download_finished`] around the job in
-/// [`Emulator::load_async`](crate::emulator::Emulator::load_async).
+/// [`load_async`](crate::loading::load_async).
 static DOWNLOADS_IN_PROGRESS: AtomicUsize = AtomicUsize::new(0);
 
 /// Count one more download as started.
@@ -447,7 +447,7 @@ impl FileSource {
     ///
     /// This blocks for as long as the download takes, so on the main thread it
     /// is only safe for a source that is already a path. Loads that may hit the
-    /// network go through [`Emulator::load_async`](crate::emulator::Emulator::load_async),
+    /// network go through [`load_async`](crate::loading::load_async),
     /// which runs this on the I/O pool.
     pub fn resolve(&mut self) -> Result<&PathBuf> {
         self.resolve_with_progress(&|_, _| {})

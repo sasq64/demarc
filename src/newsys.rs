@@ -179,7 +179,7 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
 /// Split out from the rest because it touches no shared state at all: it reads
 /// `path` and writes into a temp dir of its own, so the frontend runs it on the
 /// I/O pool while the release currently on screen keeps playing (see
-/// `Emulator::load_async`). [`NewSys::load_prepared`] then runs on the I/O pool
+/// `loading::load_async`). [`NewSys::load_prepared`] then runs on the I/O pool
 /// too, but only once this half is in: what it does to the release — and to the
 /// core it replaces — cannot start until the download has landed.
 ///

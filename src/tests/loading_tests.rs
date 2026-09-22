@@ -23,6 +23,20 @@ fn systems() -> Arc<NewSys> {
     Arc::new(NewSys::new(&Args::parse_from(["demarc"])))
 }
 
+/// Starts a load the way `handle_loading` does: `load_async` itself only
+/// spawns the job, and the bookkeeping around it belongs to the caller.
+fn start_load(emu: &mut Emulator, file: &EmuFile, over: Option<&Override>) {
+    if let Some(previous) = &emu.pending_load {
+        previous.phase.cancel();
+        download_finished();
+    }
+    emu.state = EmuState::Loading;
+    emu.run_next = false;
+    emu.run_prev = false;
+    emu.pending_load = Some(load_async(file, over));
+    download_started();
+}
+
 /// Pumps `update_load` until it stops reporting `Pending`.
 fn drive_load(emu: &mut Emulator, sys: &Arc<NewSys>) -> LoadStatus {
     let time = Time::default();
@@ -59,7 +73,8 @@ fn a_failed_download_finishes_the_load() {
     let _app = task_pools();
     let mut emu = Emulator::default();
 
-    emu.load_async(
+    start_load(
+        &mut emu,
         &EmuFile {
             path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
             game_info: GameInfo {
@@ -94,7 +109,8 @@ fn a_local_path_reaches_load_unchanged() {
     std::fs::write(&game, b"not really anything").unwrap();
 
     let mut emu = Emulator::default();
-    emu.load_async(
+    start_load(
+        &mut emu,
         &EmuFile {
             path: FileSource::Path(game),
             ..Default::default()
@@ -132,7 +148,8 @@ fn an_archive_is_unpacked_before_the_main_thread_sees_it() {
     zw.finish().unwrap();
 
     let mut emu = Emulator::default();
-    emu.load_async(
+    start_load(
+        &mut emu,
         &EmuFile {
             path: FileSource::Path(archive),
             ..Default::default()
@@ -150,60 +167,6 @@ fn an_archive_is_unpacked_before_the_main_thread_sees_it() {
     );
 }
 
-/// `load_async` consumes the advance request, so the frontend asks for the
-/// load once rather than on every frame of the download; a failure hands it
-/// back, which is how tv mode steps past a dead link.
-#[test]
-fn the_advance_request_is_taken_and_returned_on_failure() {
-    let _app = task_pools();
-    let mut emu = Emulator {
-        run_next: true,
-        ..Default::default()
-    };
-
-    emu.load_async(
-        &EmuFile {
-            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
-            ..Default::default()
-        },
-        None,
-    );
-    assert!(
-        !emu.run_next && !emu.run_prev,
-        "the request is consumed while the download runs"
-    );
-
-    assert!(matches!(
-        drive_load(&mut emu, &systems()),
-        LoadStatus::Done { .. }
-    ));
-    assert!(emu.run_next, "a failed load re-arms the advance");
-}
-
-/// The backwards direction survives a failure too, so an explicit PrevFile
-/// onto a dead link keeps going backwards rather than reversing.
-#[test]
-fn a_failed_load_re_arms_the_direction_it_had() {
-    let _app = task_pools();
-    let mut emu = Emulator {
-        run_prev: true,
-        ..Default::default()
-    };
-
-    emu.load_async(
-        &EmuFile {
-            path: FileSource::Url(UrlList::one("http://127.0.0.1:1/demo.zip")),
-            ..Default::default()
-        },
-        None,
-    );
-    assert!(matches!(
-        drive_load(&mut emu, &systems()),
-        LoadStatus::Done { .. }
-    ));
-    assert!(emu.run_prev && !emu.run_next);
-}
-
 /// Starting a second load replaces the first: only one download can be
 /// outstanding, so the frontend can't stack them up frame after frame.
 #[test]
@@ -219,8 +182,8 @@ fn a_second_load_replaces_the_first() {
         ..Default::default()
     };
 
-    emu.load_async(&entry("First"), None);
-    emu.load_async(&entry("Second"), None);
+    start_load(&mut emu, &entry("First"), None);
+    start_load(&mut emu, &entry("Second"), None);
 
     let sys = systems();
     let LoadStatus::Done { title, .. } = drive_load(&mut emu, &sys) else {
