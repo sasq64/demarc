@@ -197,7 +197,7 @@ impl Plugin for DjPlugin {
         ))
         .add_systems(Startup, setup_dj)
         .add_systems(PreUpdate, track_focus)
-        .add_systems(Update, update_dj_view.after(crate::frontend::run_frontend))
+        .add_systems(PostUpdate, update_dj_view)
         .add_systems(DjContextPass, dj_ui);
     }
 }

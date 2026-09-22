@@ -15,20 +15,19 @@ use crate::config::{AppSettings, Args, RenderSettings};
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::Emulator;
 use crate::headless::{HeadlessTarget, camera_target};
-use crate::loading::handle_loading;
+use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FrontendSet {
-    Input,
-    Update,
-    PreLoad,
+    Input,  // Collect Inputs
+    Update, // Normal Update.
     Loading,
 }
 
-pub struct FrontendPlugin {}
+pub struct FrontendPlugin;
 
 /// Marks an emulator view as occupying a sub-rectangle of the window,
 /// expressed in normalized `[0, 1]` coordinates. [`update_view_rects`] keeps
@@ -609,7 +608,6 @@ impl Plugin for FrontendPlugin {
             (
                 FrontendSet::Input,
                 FrontendSet::Update,
-                FrontendSet::PreLoad,
                 FrontendSet::Loading,
             )
                 .chain(),
@@ -617,13 +615,9 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (
-                run_frontend,
-                handle_loading,
-                update_view_rects,
-                draw_current_emu_outline,
-            ),
+            (run_frontend, update_view_rects, draw_current_emu_outline),
         );
         app.add_systems(PostStartup, detect_screen);
+        app.add_plugins((LoadingPlugin,));
     }
 }

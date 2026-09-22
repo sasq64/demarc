@@ -566,7 +566,7 @@ fn main() {
                     file_path: system_dir().to_string_lossy().into_owned(),
                     ..Default::default()
                 }),
-            FrontendPlugin {},
+            FrontendPlugin,
             CrossFadePlugin,
             DjPlugin,
             CommandPlugin,

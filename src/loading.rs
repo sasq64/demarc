@@ -9,15 +9,19 @@ use anyhow::Result;
 use bevy::prelude::*;
 
 use crate::config::AppSettings;
-use crate::cross_fade::LoadFinished;
 use crate::egui_ui::{HudLocation, SetHudText};
 use crate::emu_file::{
     EmuFile, FileSource, GameInfo, Override, UrlList, download_finished, download_started,
 };
 use crate::emulator::{EmuState, Emulator, InputMode};
+use crate::frontend::FrontendSet;
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
 use crate::newsys::{self, LoadResult, NewSys};
 use crate::workfile::WorkFile;
+
+/// One emulator finished a load this frame.
+#[derive(Message)]
+pub struct LoadFinished(pub Entity);
 
 /// How long [`Emulator::load_delay_until`] holds off the next poll. Roughly the
 /// handful of frames this used to be at 60Hz, but no longer tied to frame rate.
@@ -42,6 +46,8 @@ impl LoadPhase {
         }
     }
 }
+
+pub struct LoadingPlugin;
 
 /// A load started by [`load_async`] whose job hasn't landed yet.
 pub(crate) struct PendingLoad {
@@ -425,6 +431,8 @@ pub(crate) fn handle_loading(
                             duration: Duration::from_secs(4),
                             location: HudLocation::Error,
                         });
+                    } else {
+                        emu.run_next = true;
                     }
                     error!("{e:?}");
                     emu.load_delay_until = now + LOAD_SETTLE_SECS;
@@ -453,6 +461,13 @@ pub(crate) fn handle_loading(
                 }
             }
         }
+    }
+}
+
+impl Plugin for LoadingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<LoadFinished>()
+            .add_systems(Update, handle_loading.in_set(FrontendSet::Loading));
     }
 }
 

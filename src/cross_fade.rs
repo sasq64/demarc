@@ -22,7 +22,8 @@ use bevy::prelude::*;
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::Args;
 use crate::emulator::Emulator;
-use crate::frontend::{EmuView, GridCell, grid_cells, setup_frontend, spawn_emulator};
+use crate::frontend::{EmuView, FrontendSet, GridCell, grid_cells, spawn_emulator};
+use crate::loading::LoadFinished;
 use crate::post_process::PostProcess;
 
 /// [`EmuView::index`] of the spare while it is off screen — past anything
@@ -34,11 +35,7 @@ pub(crate) const CROSSFADE_INDEX: usize = usize::MAX;
 const DELAY_TIME: f32 = 5.0;
 
 /// Seconds the fade itself takes.
-const FADE_TIME: f32 = 4.0;
-
-/// One emulator finished a load this frame.
-#[derive(Message)]
-pub struct LoadFinished(pub Entity);
+const FADE_TIME: f32 = 2.0;
 
 #[derive(Resource, Default)]
 struct CrossFade {
@@ -201,6 +198,7 @@ fn hijack_load(mut state: ResMut<CrossFade>, mut views: Views, args: Res<Args>) 
         return;
     }
 
+    // Find any emulator (that is not the spare) that wants to load (ie run_next or run_prev = true)
     let Some((origin, advance, index, cell)) = views
         .iter()
         .find(|(_, emu, ..)| !emu.is_crossfade && (emu.run_next || emu.run_prev))
@@ -211,6 +209,7 @@ fn hijack_load(mut state: ResMut<CrossFade>, mut views: Views, args: Res<Args>) 
         return;
     };
 
+    // Stop that emulator from loading
     if let Ok((_, mut emu, ..)) = views.get_mut(origin) {
         emu.run_next = false;
         emu.run_prev = false;
@@ -218,6 +217,8 @@ fn hijack_load(mut state: ResMut<CrossFade>, mut views: Views, args: Res<Args>) 
     let Ok((_, mut emu, _, _, spare_cell)) = views.get_mut(spare) else {
         return;
     };
+
+    // Copy over from origin -> spare
     (emu.run_next, emu.run_prev) = advance;
     // Same rectangle as the view it is loading for, ready for the fade.
     if let (Some(mut spare_cell), Some(cell)) = (spare_cell, cell) {
@@ -307,21 +308,17 @@ fn run_fade(mut state: ResMut<CrossFade>, mut views: Views, time: Res<Time>, arg
 impl Plugin for CrossFadePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CrossFade>()
-            .add_message::<LoadFinished>()
-            .add_systems(Startup, spawn_spare.after(setup_frontend))
+            .add_systems(Startup, spawn_spare) // .after(setup_frontend))
             .add_systems(
                 Update,
                 (
                     // Between everything that arms an advance and the system
                     // that acts on one, so a load is never started on the view
                     // it was requested from.
-                    hijack_load
-                        .after(crate::commands::handle_cmd)
-                        .after(crate::frontend::run_frontend)
-                        .before(crate::loading::handle_loading),
-                    start_fade.after(crate::loading::handle_loading),
-                    arm_fade.after(crate::commands::handle_cmd),
-                    run_fade.after(start_fade).after(arm_fade),
+                    hijack_load.in_set(FrontendSet::Update),
+                    start_fade.run_if(on_message::<LoadFinished>),
+                    arm_fade.run_if(on_message::<CmdMessage>),
+                    run_fade,
                 ),
             );
     }
