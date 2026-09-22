@@ -35,6 +35,7 @@ mod image_emu;
 mod jobs;
 mod libloader;
 mod load_error;
+mod loading;
 mod m3u;
 mod media_keys;
 mod mouse_cursor;

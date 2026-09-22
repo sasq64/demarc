@@ -12,13 +12,21 @@ use bevy::{
 
 use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
-use crate::cross_fade::LoadFinished;
 use crate::egui_ui::{HudLocation, HudState, SetHudText};
-use crate::emulator::{EmuState, Emulator, LOAD_SETTLE_SECS, LoadStatus};
+use crate::emulator::Emulator;
 use crate::headless::{HeadlessTarget, camera_target};
+use crate::loading::handle_loading;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FrontendSet {
+    Input,
+    Update,
+    PreLoad,
+    Loading,
+}
 
 pub struct FrontendPlugin {}
 
@@ -326,27 +334,14 @@ const fn config_line_width() -> f32 {
 /// do, 3:2, 4:3 and 5:4 don't.
 const WIDE_ASPECT: f32 = 1.55;
 
-/// Tell the loading pipeline what shape the screen is and how fast it refreshes,
-/// so a release that has to choose a resolution can choose one that fits it and
-/// a backend that paces itself to the display can — see [`META_WIDESCREEN`] and
-/// [`META_REFRESH`].
-///
-/// Only when nothing has said already, which is what leaves `-x widescreen=` to
-/// whoever typed it.
-///
-/// The monitor rather than the window, because this is settled once and then
-/// kept: on the first frame the window is still the 800x600 winit starts every
-/// window as, and latching that shape asked every 16:9 screen for 5:4 modes.
-/// A monitor is the right size from the moment it exists, and until one does
-/// there is nothing to answer with — so nothing is set and the default stands.
+// TODO:
+//  * Use Current Monitor
+//  * Update if window moves to new monitor
 fn detect_screen(
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     headless: Option<Res<HeadlessTarget>>,
     settings: Res<AppSettings>,
 ) {
-    if settings.system.has_meta(META_WIDESCREEN) && settings.system.has_meta(META_REFRESH) {
-        return;
-    }
     // Whichever monitor is the primary one, or the first there is: Wayland
     // has no notion of a primary display, so waiting for one marked that
     // way would be waiting forever.
@@ -359,9 +354,10 @@ fn detect_screen(
         Some(headless) => headless.size,
         None => match monitor {
             Some(monitor) => monitor.physical_size(),
-            None => return,
+            None => panic!("No monitor!"),
         },
     };
+    debug!("MONITOR SIZE: {}x{}", size.x, size.y);
     if !settings.system.has_meta(META_WIDESCREEN) && size.x != 0 && size.y != 0 {
         let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
         debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
@@ -376,89 +372,6 @@ fn detect_screen(
         let hz = (mhz + 500) / 1000;
         debug!("Screen refreshes at {hz}Hz");
         settings.system.set_meta(META_REFRESH, hz.to_string());
-    }
-}
-
-pub(crate) fn handle_loading(
-    mut emus: Query<(Entity, &mut Emulator)>,
-    mut settings: ResMut<AppSettings>,
-    mut writer: MessageWriter<SetHudText>,
-    mut loaded: MessageWriter<LoadFinished>,
-    time: Res<Time>,
-) {
-    let now = time.elapsed_secs_f64();
-    for (entity, mut emu) in &mut emus.iter_mut() {
-        let flen = settings.files.len() as isize;
-
-        let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
-            1
-        } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
-            -1
-        } else {
-            0
-        };
-        if d != 0 {
-            settings.current_game = (settings.current_game + d + flen) % flen;
-            let game = settings.files[settings.current_game as usize].clone();
-            let over = settings.override_for(&game);
-            if let Some(o) = &over {
-                debug!("Found override for {game:?}: {o:?}");
-            }
-            emu.load_async(&game, over.as_ref());
-            continue;
-        }
-
-        if now >= emu.load_delay_until {
-            let status = emu.update_load(&time, &settings.system);
-            match status {
-                LoadStatus::Idle | LoadStatus::Pending => {}
-                LoadStatus::Done {
-                    title,
-                    result: Err(e),
-                } => {
-                    let text = format!(
-                        "Could not load {title}: {}",
-                        crate::load_error::classify(&e).reason()
-                    );
-                    emu.state = EmuState::Stopped;
-
-                    if !settings.tv_mode {
-                        emu.run_next = false;
-                        emu.run_prev = false;
-                        writer.write(SetHudText {
-                            text,
-                            delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(4),
-                            location: HudLocation::Error,
-                        });
-                    }
-                    error!("{e:?}");
-                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
-                    continue;
-                }
-                LoadStatus::Done { result: Ok(()), .. } => {
-                    emu.run_next = false;
-                    emu.run_prev = false;
-                    loaded.write(LoadFinished(entity));
-                    if emu.is_crossfade {
-                        emu.state = EmuState::PreDelay;
-                        emu.state_change_time = now + 1.0;
-                    } else {
-                        emu.state = EmuState::Running;
-                        if settings.show_info && settings.maximized {
-                            writer.write(SetHudText {
-                                text: emu.get_info(),
-                                delay: Duration::from_secs(settings.info_delay),
-                                duration: Duration::from_secs(settings.info_duration),
-                                location: HudLocation::InfoText,
-                            });
-                        }
-                    }
-                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
-                    continue;
-                }
-            }
-        }
     }
 }
 
@@ -691,16 +604,26 @@ pub(crate) fn run_frontend(
 
 impl Plugin for FrontendPlugin {
     fn build(&self, app: &mut App) {
+        app.configure_sets(
+            Update,
+            (
+                FrontendSet::Input,
+                FrontendSet::Update,
+                FrontendSet::PreLoad,
+                FrontendSet::Loading,
+            )
+                .chain(),
+        );
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
             (
                 run_frontend,
-                detect_screen.before(handle_loading),
                 handle_loading,
                 update_view_rects,
                 draw_current_emu_outline,
             ),
         );
+        app.add_systems(PostStartup, detect_screen);
     }
 }

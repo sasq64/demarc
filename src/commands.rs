@@ -18,6 +18,7 @@ use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
 use crate::frontend::EmuView;
+use crate::frontend::FrontendSet;
 use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
@@ -919,7 +920,7 @@ impl Plugin for CommandPlugin {
         app.add_systems(
             Update,
             (
-                handle_hotkey,
+                handle_hotkey.in_set(FrontendSet::Input),
                 open_select_menu,
                 handle_textlist,
                 handle_media_keys,

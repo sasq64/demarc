@@ -318,8 +318,8 @@ impl Plugin for CrossFadePlugin {
                     hijack_load
                         .after(crate::commands::handle_cmd)
                         .after(crate::frontend::run_frontend)
-                        .before(crate::frontend::handle_loading),
-                    start_fade.after(crate::frontend::handle_loading),
+                        .before(crate::loading::handle_loading),
+                    start_fade.after(crate::loading::handle_loading),
                     arm_fade.after(crate::commands::handle_cmd),
                     run_fade.after(start_fade).after(arm_fade),
                 ),
