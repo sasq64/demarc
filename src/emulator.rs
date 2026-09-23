@@ -111,12 +111,10 @@ pub struct Emulator {
     /// sees. Travels with the role, not the entity: the swap at the end of a
     /// cross-faded load moves it to the emulator that just left the screen.
     pub is_crossfade: bool,
-    /// Download in flight for the next game, driven by
+    /// Download in flight for the next file, driven by
     /// [`Emulator::update_load`](crate::loading).
     pub(crate) pending_load: Option<PendingLoad>,
-    pub load_delay_until: f64,
     pub state: EmuState,
-    pub state_change_time: f64,
 }
 
 const AUDIO_BUF_MIN: usize = 9000;

@@ -1,22 +1,3 @@
-//! Loading the next release into a spare, off-screen emulator and fading it in
-//! over the one it replaces.
-//!
-//! A load drops the running core before it builds the new one, so an
-//! emulator that loads cannot keep showing what it was showing. With
-//! `--cross-fade` an extra emulator entity (the *spare*) is spawned and every
-//! advance is diverted into it. Once the load lands the spare keeps running off
-//! screen for [`DELAY_TIME`], fades up over [`FADE_TIME`], and then the two
-//! entities trade roles: the spare takes the origin's view index, the origin
-//! becomes the new spare.
-//!
-//! `--dj-mode` ([`crate::dj`]) gives the spare a window of its own and leaves
-//! the fade to [`Cmd::StartOther`]: nothing reaches the main window until it is
-//! asked for, and a load while one is waiting simply replaces it.
-//!
-//! There is one spare, so under `--grid` only the first emulator asking to
-//! advance in a frame is diverted; while that load runs the others load into
-//! themselves as they always did. Cross fade is aimed at the single view case.
-
 use bevy::prelude::*;
 
 use crate::commands::{Cmd, CmdMessage};
@@ -26,8 +7,7 @@ use crate::frontend::{EmuView, FrontendSet, GridCell, grid_cells, spawn_emulator
 use crate::loading::LoadFinished;
 use crate::post_process::PostProcess;
 
-/// [`EmuView::index`] of the spare while it is off screen — past anything
-/// `current_emu` or `mouse_index` is ever compared against.
+/// [`EmuView::index`] of the spare while it is off screen
 pub(crate) const CROSSFADE_INDEX: usize = usize::MAX;
 
 /// Seconds the loaded release runs off screen before the fade starts, so what

@@ -10,34 +10,26 @@ use url::Url;
 
 use crate::fetch::{OnProgress, fetch_url_with_progress};
 
-/// How many downloads are in flight right now, across every emulator.
-///
-/// Global rather than per-[`Emulator`](crate::emulator::Emulator) because the
-/// UI that shows it ([`crate::egui_ui`]) draws one indicator for the whole
-/// window and has no emulator to ask; kept in step by
-/// [`download_started`]/[`download_finished`] around the job in
-/// [`load_async`](crate::loading::load_async).
-static DOWNLOADS_IN_PROGRESS: AtomicUsize = AtomicUsize::new(0);
-
-/// Count one more download as started.
-pub fn download_started() {
-    DOWNLOADS_IN_PROGRESS.fetch_add(1, Ordering::Relaxed);
+pub struct DownloadCounter {
+    pub downloads_in_progress: AtomicUsize,
 }
 
-/// Count one download as finished, however it ended -- landed, failed or
-/// cancelled. Saturates at zero so a stray extra call can't wrap the counter
-/// around into a permanent "downloading" state.
-pub fn download_finished() {
-    let _ = DOWNLOADS_IN_PROGRESS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-        Some(n.saturating_sub(1))
-    });
+impl DownloadCounter {
+    pub fn started(&self) {
+        self.downloads_in_progress.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn ended(&self) {
+        let _ = self
+            .downloads_in_progress
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                Some(n.saturating_sub(1))
+            });
+    }
 }
 
-/// Downloads currently in flight; zero when nothing is loading.
-#[allow(dead_code)]
-pub fn downloads_in_progress() -> usize {
-    DOWNLOADS_IN_PROGRESS.load(Ordering::Relaxed)
-}
+pub static DOWNLOAD_COUNTER: DownloadCounter = DownloadCounter {
+    downloads_in_progress: AtomicUsize::new(0),
+};
 
 /// Bytes still to arrive, across every download whose size is known.
 static BYTES_IN_PROGRESS: AtomicU64 = AtomicU64::new(0);
@@ -48,7 +40,7 @@ pub fn download_bytes_expected(bytes: u64) {
 
 /// Saturates at zero, like [`download_finished`].
 pub fn download_bytes_received(bytes: u64) {
-    let _ = BYTES_IN_PROGRESS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+    let _ = BYTES_IN_PROGRESS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
         Some(n.saturating_sub(bytes))
     });
 }

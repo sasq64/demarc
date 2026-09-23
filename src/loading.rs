@@ -10,9 +10,7 @@ use bevy::prelude::*;
 
 use crate::config::AppSettings;
 use crate::egui_ui::{HudLocation, SetHudText};
-use crate::emu_file::{
-    EmuFile, FileSource, GameInfo, Override, UrlList, download_finished, download_started,
-};
+use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, GameInfo, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
 use crate::frontend::FrontendSet;
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
@@ -22,10 +20,6 @@ use crate::workfile::WorkFile;
 /// One emulator finished a load this frame.
 #[derive(Message)]
 pub struct LoadFinished(pub Entity);
-
-/// How long [`Emulator::load_delay_until`] holds off the next poll. Roughly the
-/// handful of frames this used to be at 60Hz, but no longer tied to frame rate.
-pub const LOAD_SETTLE_SECS: f64 = 0.1;
 
 /// The two off-thread halves a load is made of, in the order they run.
 enum LoadPhase {
@@ -162,7 +156,7 @@ impl Emulator {
                         LoadStatus::Pending
                     }
                     Err(err) => {
-                        download_finished();
+                        DOWNLOAD_COUNTER.ended();
                         LoadStatus::Done {
                             title: info.title.to_string(),
                             result: Err(Self::job_error(err)),
@@ -180,7 +174,7 @@ impl Emulator {
                 // Past the `poll` above the load is over one way or another --
                 // landed, failed or cancelled -- so it stops counting here,
                 // whichever of the branches below the outcome takes.
-                download_finished();
+                DOWNLOAD_COUNTER.ended();
                 let title = info.title.to_string();
                 match resolved {
                     Ok(res) => {
@@ -378,7 +372,6 @@ pub(crate) fn handle_loading(
     mut loaded: MessageWriter<LoadFinished>,
     time: Res<Time>,
 ) {
-    let now = time.elapsed_secs_f64();
     for (entity, mut emu) in &mut emus.iter_mut() {
         let flen = settings.files.len() as isize;
 
@@ -398,67 +391,62 @@ pub(crate) fn handle_loading(
             }
             if let Some(previous) = &emu.pending_load {
                 previous.phase.cancel();
-                download_finished();
+                DOWNLOAD_COUNTER.ended();
             }
             emu.state = EmuState::Loading;
             emu.run_next = false;
             emu.run_prev = false;
             emu.pending_load = Some(load_async(&game, over.as_ref()));
-            download_started();
+            DOWNLOAD_COUNTER.started();
             continue;
         }
 
-        if now >= emu.load_delay_until {
-            let status = emu.update_load(&time, &settings.system);
-            match status {
-                LoadStatus::Idle | LoadStatus::Pending => {}
-                LoadStatus::Done {
-                    title,
-                    result: Err(e),
-                } => {
-                    let text = format!(
-                        "Could not load {title}: {}",
-                        crate::load_error::classify(&e).reason()
-                    );
-                    emu.state = EmuState::Stopped;
+        let status = emu.update_load(&time, &settings.system);
+        match status {
+            LoadStatus::Idle | LoadStatus::Pending => {}
+            LoadStatus::Done {
+                title,
+                result: Err(e),
+            } => {
+                let text = format!(
+                    "Could not load {title}: {}",
+                    crate::load_error::classify(&e).reason()
+                );
+                emu.state = EmuState::Stopped;
 
-                    if !settings.tv_mode {
-                        emu.run_next = false;
-                        emu.run_prev = false;
-                        writer.write(SetHudText {
-                            text,
-                            delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(4),
-                            location: HudLocation::Error,
-                        });
-                    } else {
-                        emu.run_next = true;
-                    }
-                    error!("{e:?}");
-                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
-                    continue;
-                }
-                LoadStatus::Done { result: Ok(()), .. } => {
+                if !settings.tv_mode {
                     emu.run_next = false;
                     emu.run_prev = false;
-                    loaded.write(LoadFinished(entity));
-                    if emu.is_crossfade {
-                        emu.state = EmuState::PreDelay;
-                        emu.state_change_time = now + 1.0;
-                    } else {
-                        emu.state = EmuState::Running;
-                        if settings.show_info && settings.maximized {
-                            writer.write(SetHudText {
-                                text: emu.get_info(),
-                                delay: Duration::from_secs(settings.info_delay),
-                                duration: Duration::from_secs(settings.info_duration),
-                                location: HudLocation::InfoText,
-                            });
-                        }
-                    }
-                    emu.load_delay_until = now + LOAD_SETTLE_SECS;
-                    continue;
+                    writer.write(SetHudText {
+                        text,
+                        delay: Duration::from_secs(0),
+                        duration: Duration::from_secs(4),
+                        location: HudLocation::Error,
+                    });
+                } else {
+                    emu.run_next = true;
                 }
+                error!("{e:?}");
+                continue;
+            }
+            LoadStatus::Done { result: Ok(()), .. } => {
+                emu.run_next = false;
+                emu.run_prev = false;
+                loaded.write(LoadFinished(entity));
+                if emu.is_crossfade {
+                    emu.state = EmuState::PreDelay;
+                } else {
+                    emu.state = EmuState::Running;
+                    if settings.show_info && settings.maximized {
+                        writer.write(SetHudText {
+                            text: emu.get_info(),
+                            delay: Duration::from_secs(settings.info_delay),
+                            duration: Duration::from_secs(settings.info_duration),
+                            location: HudLocation::InfoText,
+                        });
+                    }
+                }
+                continue;
             }
         }
     }
