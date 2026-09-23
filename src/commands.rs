@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -322,26 +323,36 @@ fn handle_navigator(
                 });
                 navigator.stack.last().unwrap().show(&mut list_writer);
             } else if msg.text == "Parties" {
-                let mut parties: Vec<String> = settings
+                let parties: Vec<String> = settings
                     .files
                     .iter()
                     .filter_map(|f| f.meta.get("party").copied())
-                    .map(|s| s.to_string())
                     .filter(|p| !p.is_empty())
-                    .collect::<HashSet<_>>()
+                    .collect::<BTreeSet<_>>()
                     .into_iter()
+                    .map(String::from)
                     .collect();
-                parties.sort_unstable();
                 navigator.stack.push(NavList {
                     id: 98,
                     source: Arc::new(AllWordsSource::new(parties)),
                 });
                 navigator.stack.last().unwrap().show(&mut list_writer);
+            } else {
+                // let files: Vec<EmuFile> = settings
+                //     .files
+                //     .iter()
+                //     .filter(|f| f.meta.get("party").copied().unwrap_or("") == msg.text)
+                //     .cloned()
+                //     .collect();
+                // navigator.stack.push(NavList {
+                //     id: 99,
+                //     source: Arc::new(FilePickerSource::new(&files)),
+                // });
+                settings.current_game = msg.item as isize;
+                writer.write(CmdMessage(Cmd::Reload));
+                // Selected item in Navigator
+                // Either push new Navigator or handle EmuFile
             }
-            // Selected item in Navigator
-            // Either push new Navigator or handle EmuFile
-            settings.current_game = msg.item as isize;
-            writer.write(CmdMessage(Cmd::Reload));
         }
     }
 }
@@ -694,6 +705,7 @@ pub(crate) fn handle_cmd(
     mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
+    mut navigator: ResMut<Navigator>,
     // Optional: `--headless` has no window, and a bare `Single` would skip the
     // whole system, dropping every command a remote-control script sends.
     mut window: Option<Single<&mut Window, With<PrimaryWindow>>>,
@@ -793,16 +805,19 @@ pub(crate) fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                if settings.file_source.is_none() {
-                    settings.file_source = Some(FilePickerSource::new(&settings.files));
-                }
-                let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
-                settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
-
-                show_list.write(ShowFuzzyList {
-                    id: FILE_PICKER_ID,
-                    source: Arc::new(settings.file_source.clone().unwrap()),
-                });
+                navigator.stack.last().unwrap().show(&mut show_list);
+                // let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
+                //settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
+                // if settings.file_source.is_none() {
+                //     settings.file_source = Some(FilePickerSource::new(&settings.files));
+                // }
+                // let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
+                // settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
+                //
+                // show_list.write(ShowFuzzyList {
+                //     id: FILE_PICKER_ID,
+                //     source: Arc::new(settings.file_source.clone().unwrap()),
+                // });
             }
             Cmd::Settings => {
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
