@@ -82,9 +82,31 @@ use system_dir::system_dir;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{AppSettings, Args, InfoDisplay, RenderSettings, ShaderArg, SortArg};
+use crate::egui_ui::EguiUiPlugin;
+use crate::jobs::JobsPlugin;
+use crate::shader_dialog::ShaderDialogPlugin;
 
 fn enter_fullscreen(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
+}
+
+/// How many frames [`AppState::Startup`] lasts. The window is still settling on
+/// its final size for the first few frames, and anything sized from it has to
+/// wait for that.
+const RUNNING_FRAMES_DELAY: u32 = 5;
+
+#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AppState {
+    #[default]
+    Startup,
+    Running,
+}
+
+fn enter_running(mut next: ResMut<NextState<AppState>>, mut frame: Local<u32>) {
+    *frame += 1;
+    if *frame >= RUNNING_FRAMES_DELAY {
+        next.set(AppState::Running);
+    }
 }
 
 /// A `Write` that targets a raw fd directly, bypassing Rust's `Stdout`. Used to
@@ -573,14 +595,16 @@ fn main() {
             PostProcessPlugin {
                 shader: shader_path,
             },
-            egui_ui::EguiUiPlugin,
+            EguiUiPlugin,
             ScreenSaverPlugin,
             MouseCursorPlugin,
             SpeedTestPlugin,
             RemoteControlPlugin,
-            jobs::JobsPlugin,
-            shader_dialog::ShaderDialogPlugin,
-        ));
+            JobsPlugin,
+            ShaderDialogPlugin,
+        ))
+        .init_state::<AppState>()
+        .add_systems(Update, enter_running.run_if(in_state(AppState::Startup)));
     if headless {
         // Nothing drives the loop with winit gone. Emulation paces itself, so
         // this only needs to update about as often as a display would.

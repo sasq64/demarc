@@ -10,6 +10,7 @@ use bevy::window::{PrimaryWindow, WindowMode};
 use percent_encoding::percent_decode_str;
 use url::Url;
 
+use crate::AppState;
 use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
@@ -892,41 +893,27 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
 
 pub struct CommandPlugin;
 
-/// How many frames to wait before `--select` opens the picker. The window is
-/// still settling on its final size for the first few frames, and the picker's
-/// row count and width are derived from that size.
-const SELECT_MENU_DELAY: u32 = 5;
-
-/// When `--select` is passed, open the file-open selector once, a few frames in.
-fn open_select_menu(
-    args: Res<crate::Args>,
-    mut writer: MessageWriter<CmdMessage>,
-    mut frame: Local<u32>,
-) {
-    if !args.select {
-        return;
-    }
-    // Saturating, so the counter never wraps back around to the trigger value.
-    *frame = frame.saturating_add(1);
-    if *frame == SELECT_MENU_DELAY {
+/// When `--select` is passed, open the file-open selector once we start running.
+fn open_select_menu(args: Res<crate::Args>, mut writer: MessageWriter<CmdMessage>) {
+    if args.select {
         writer.write(CmdMessage(Cmd::OpenFile));
     }
 }
 
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<CmdMessage>();
-        app.add_systems(Startup, init_media_keys);
-        app.add_systems(
-            Update,
-            (
-                handle_hotkey.in_set(FrontendSet::Input),
-                open_select_menu,
-                handle_textlist,
-                handle_media_keys,
-                handle_cmd.run_if(on_message::<CmdMessage>),
-            ),
-        );
+        app.add_message::<CmdMessage>()
+            .add_systems(Startup, init_media_keys)
+            .add_systems(OnEnter(AppState::Running), open_select_menu)
+            .add_systems(
+                Update,
+                (
+                    handle_hotkey.in_set(FrontendSet::Input),
+                    handle_media_keys.in_set(FrontendSet::Input),
+                    handle_textlist,
+                    handle_cmd.run_if(on_message::<CmdMessage>),
+                ),
+            );
     }
 }
 
