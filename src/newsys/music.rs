@@ -3,16 +3,38 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
-use crate::Args;
 use crate::backend::Backend;
 use crate::music_emu::{self, MusicEmu};
 use crate::system_dir;
+use crate::utils::get_ext;
 use crate::workfile::WorkFile;
+use crate::{Args, libloader, retro_emu};
 
 use super::System;
+
+/// Meta key sending ProTracker modules to the ProTracker 2 clone — the tracker
+/// itself, screen, scopes and all — instead of to [`MusicEmu`].
+pub const USE_PROTRACKER: &str = "use_protracker";
+
+/// The core built out of `external/pt2-libretro`, which is pt2-clone with its
+/// SDL2 replaced by libretro. Not on the buildbot; see `libloader::ALT_SOURCES`.
+const PROTRACKER_CORE: &str = "pt2clone";
+
+/// Whether this is something the ProTracker clone can load: a 31- or 15-sample
+/// module, named either way round.
+fn is_protracker_module(path: &Path) -> bool {
+    const EXTENSIONS: &[&str] = &["mod", "stk", "nst", "m15"];
+    let name = path
+        .file_name()
+        .and_then(|p| p.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    EXTENSIONS.contains(&get_ext(path).as_str())
+        || EXTENSIONS.iter().any(|ext| name.starts_with(&format!("{ext}.")))
+}
 
 fn music_data_dir() -> PathBuf {
     system_dir().join("musix")
@@ -90,6 +112,17 @@ impl System for MusicSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         info!("MUSIC CREATE {path:?}");
+        if path.is_enabled(USE_PROTRACKER) && is_protracker_module(path) {
+            let core = libloader::get_libretro(PROTRACKER_CORE)
+                .context("Could not load the ProTracker core")?;
+            return retro_emu::create_core(
+                &core,
+                system_dir(),
+                Some(path),
+                path.get_all_meta(),
+                false,
+            );
+        }
         Ok(Box::new(MusicEmu::new(
             path,
             &music_data_dir(),
@@ -97,3 +130,7 @@ impl System for MusicSystem {
         )?))
     }
 }
+
+#[cfg(test)]
+#[path = "tests/music_tests.rs"]
+mod tests;

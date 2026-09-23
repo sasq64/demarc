@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -15,6 +16,7 @@ use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
 use crate::egui_ui::HudLocation;
+use crate::egui_ui::ListSource;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
@@ -227,6 +229,122 @@ fn handle_hotkey(
     }
 }
 
+enum ListAction {
+    OpenFile,
+}
+
+struct NavList {
+    id: usize,
+    source: ListSource,
+}
+
+impl NavList {
+    fn show(&self, show_list: &mut MessageWriter<ShowFuzzyList>) {
+        show_list.write(ShowFuzzyList {
+            id: self.id,
+            source: self.source.clone(),
+        });
+    }
+
+    // fn getSource(&self) -> ListSource<EmuFile> {}
+}
+
+#[derive(Resource)]
+struct Navigator {
+    stack: Vec<NavList>,
+}
+
+impl Navigator {
+    fn new() -> Self {
+        let source = Arc::new(RootSource::new());
+        let root = NavList { id: 0, source };
+        Self { stack: vec![root] }
+    }
+}
+
+struct RootSource {
+    names: AllWordsSource,
+}
+
+impl RootSource {
+    fn new() -> Self {
+        Self {
+            names: AllWordsSource::new(vec![
+                "Demozoo".into(),
+                "CSDb".into(),
+                "Parties".into(),
+                "Favorites".into(),
+            ]),
+        }
+    }
+}
+
+impl FuzzySource<EmuFile> for RootSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
+    }
+
+    fn get_info(&self, _id: usize) -> String {
+        "".into()
+    }
+}
+
+impl Navigator {
+    fn setup(&mut self) {
+        let source = Arc::new(RootSource::new());
+        let root = NavList { id: 0, source };
+        self.stack.push(root);
+    }
+}
+
+fn handle_navigator(
+    mut settings: ResMut<AppSettings>,
+    mut writer: MessageWriter<CmdMessage>,
+    mut navigator: ResMut<Navigator>,
+    mut reader: MessageReader<FuzzyListSelect>,
+    mut list_writer: MessageWriter<ShowFuzzyList>,
+) {
+    let Some(current) = &navigator.stack.last() else {
+        return;
+    };
+    let id = current.id;
+    for msg in reader.read() {
+        if msg.id == id {
+            debug!("Selected {}", msg.text);
+            if msg.text == "Demozoo" {
+                navigator.stack.push(NavList {
+                    id: 99,
+                    source: Arc::new(FilePickerSource::new(&settings.files)),
+                });
+                navigator.stack.last().unwrap().show(&mut list_writer);
+            } else if msg.text == "Parties" {
+                let mut parties: Vec<String> = settings
+                    .files
+                    .iter()
+                    .filter_map(|f| f.meta.get("party").copied())
+                    .map(|s| s.to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                parties.sort_unstable();
+                navigator.stack.push(NavList {
+                    id: 98,
+                    source: Arc::new(AllWordsSource::new(parties)),
+                });
+                navigator.stack.last().unwrap().show(&mut list_writer);
+            }
+            // Selected item in Navigator
+            // Either push new Navigator or handle EmuFile
+            settings.current_game = msg.item as isize;
+            writer.write(CmdMessage(Cmd::Reload));
+        }
+    }
+}
 fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
@@ -894,15 +1012,21 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
 pub struct CommandPlugin;
 
 /// When `--select` is passed, open the file-open selector once we start running.
-fn open_select_menu(args: Res<crate::Args>, mut writer: MessageWriter<CmdMessage>) {
+fn open_select_menu(
+    args: Res<crate::Args>,
+    navigator: ResMut<Navigator>,
+    mut writer: MessageWriter<ShowFuzzyList>,
+) {
     if args.select {
-        writer.write(CmdMessage(Cmd::OpenFile));
+        //writer.write(CmdMessage(Cmd::OpenFile));
+        navigator.stack[0].show(&mut writer);
     }
 }
 
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>()
+            .insert_resource(Navigator::new())
             .add_systems(Startup, init_media_keys)
             .add_systems(OnEnter(AppState::Running), open_select_menu)
             .add_systems(
@@ -910,7 +1034,8 @@ impl Plugin for CommandPlugin {
                 (
                     handle_hotkey.in_set(FrontendSet::Input),
                     handle_media_keys.in_set(FrontendSet::Input),
-                    handle_textlist,
+                    //handle_textlist,
+                    handle_navigator,
                     handle_cmd.run_if(on_message::<CmdMessage>),
                 ),
             );

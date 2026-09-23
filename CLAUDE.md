@@ -112,6 +112,9 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 - `src/libretro.rs` (223k, `#[allow(warnings)]`) is **bindgen output — never hand-edit**. Regenerate
   with `scripts/gen-libretro-bindings.sh`; it's committed so no build machine needs libclang.
+- `external/pt2-libretro` is the ProTracker 2 clone as a libretro core: our `retro_*` entry
+  points and an SDL2 replacement, built (`just pt2-core`) against the unmodified tracker
+  sources in the `libretro/pt2-clone` checkout. See `docs/PT2.md`.
 - `libretro/`, `slang-shaders/` and `shaders/` are gitignored working checkouts, not part of
   the repo. `shaders/` is the RetroArch-shaped layout the Mega Bezel preset packs need — see
   `docs/SHADERS.md`, which also explains why `librashader` is pinned to a fork.
@@ -139,8 +142,8 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 ## Docs worth reading before touching those areas
 
-`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/86BOX.md`, `PICO8.md` and
-`GAMESCOPE.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
+`docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/86BOX.md`, `PICO8.md`,
+`GAMESCOPE.md` and `PT2.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
 (`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/CRINKLER.md` (why 4k
 intros run but draw nothing under wine), `docs/NOTES.md` (design
 scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.

@@ -74,6 +74,21 @@ gamescope-core:
     ninja -C {{GAMESCOPE}}/build-lr src/gamescope src/gamescope_libretro.so
     @echo "core at {{GAMESCOPE}}/build-lr/src/gamescope_libretro.so"
 
+PT2 := "external/pt2-libretro"
+
+# Build the ProTracker 2 clone as a libretro core (source in external/pt2-libretro,
+# tracker sources from the checkout in libretro/pt2-clone). Needs SDL2's headers,
+# which is all the core takes from SDL -- see docs/PT2.md.
+pt2-core:
+    cmake -S {{PT2}} -B {{PT2}}/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    ninja -C {{PT2}}/build
+    @echo "core at {{PT2}}/build/pt2clone_libretro.so"
+
+# Play a module in the locally built ProTracker core rather than in MusicEmu.
+pt2 file:
+    DEMARC_CORE_DIR={{justfile_directory()}}/{{PT2}}/build \
+        cargo run --profile release-fast -- -x use_protracker=true {{file}}
+
 # `--no-silence` matters: without it gamescope's and wine's diagnostics go to
 # /dev/null along with the cores'.
 #

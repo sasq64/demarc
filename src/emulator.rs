@@ -117,8 +117,8 @@ pub struct Emulator {
     pub state: EmuState,
 }
 
-const AUDIO_BUF_MIN: usize = 9000;
-const AUDIO_BUF_MAX: usize = 25000;
+const AUDIO_BUF_MIN: usize = 3000;
+const AUDIO_BUF_MAX: usize = 15000;
 
 impl Emulator {
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {

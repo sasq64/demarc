@@ -6,7 +6,7 @@ use clap::Parser;
 use super::*;
 use crate::{
     Args,
-    emu_file::{FileSource, UrlList},
+    emu_file::{DOWNLOAD_COUNTER, FileSource, UrlList},
 };
 
 /// Spins up the task pools `load_async` needs, and nothing else.
@@ -28,13 +28,13 @@ fn systems() -> Arc<NewSys> {
 fn start_load(emu: &mut Emulator, file: &EmuFile, over: Option<&Override>) {
     if let Some(previous) = &emu.pending_load {
         previous.phase.cancel();
-        download_finished();
+        DOWNLOAD_COUNTER.ended();
     }
     emu.state = EmuState::Loading;
     emu.run_next = false;
     emu.run_prev = false;
     emu.pending_load = Some(load_async(file, over));
-    download_started();
+    DOWNLOAD_COUNTER.started();
 }
 
 /// Pumps `update_load` until it stops reporting `Pending`.
