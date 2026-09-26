@@ -252,6 +252,8 @@ impl NavList {
 
 #[derive(Resource)]
 struct Navigator {
+    pos: isize,
+    showing: isize,
     stack: Vec<NavList>,
 }
 
@@ -259,7 +261,36 @@ impl Navigator {
     fn new() -> Self {
         let source = Arc::new(RootSource::new());
         let root = NavList { id: 0, source };
-        Self { stack: vec![root] }
+        Self {
+            pos: -1,
+            showing: -1,
+            stack: vec![root],
+        }
+    }
+    fn push(&mut self, nav_list: NavList) -> &mut Self {
+        self.pos += 1;
+        self.stack.truncate(self.pos as usize);
+        self.stack.push(nav_list);
+        self
+    }
+    fn back(&mut self) -> &mut Self {
+        if self.pos > 0 {
+            self.pos -= 1;
+        }
+        self
+    }
+    fn forward(&mut self) -> &mut Self {
+        if self.pos < self.stack.len() as isize - 1 {
+            self.pos += 1;
+        }
+        self
+    }
+
+    fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
+        if self.pos != self.showing {
+            self.stack[self.pos as usize].show(lw);
+            self.showing = self.pos;
+        }
     }
 }
 
@@ -298,7 +329,7 @@ impl Navigator {
     fn setup(&mut self) {
         let source = Arc::new(RootSource::new());
         let root = NavList { id: 0, source };
-        self.stack.push(root);
+        self.push(root);
     }
 }
 
@@ -311,12 +342,14 @@ fn handle_navigator(
     mut list_writer: MessageWriter<ShowFuzzyList>,
 ) {
     if input.just_pressed(KeyCode::ArrowLeft) {
-        navigator.stack.pop();
-        navigator.stack.last().unwrap().show(&mut list_writer);
+        navigator.back().show(&mut list_writer);
+    } else if input.just_pressed(KeyCode::ArrowRight) {
+        navigator.forward().show(&mut list_writer);
     }
-    let Some(current) = &navigator.stack.last() else {
+    if navigator.pos < 0 {
         return;
-    };
+    }
+    let current = &navigator.stack[navigator.pos as usize];
     let id = current.id;
     for msg in reader.read() {
         if msg.id == id {
@@ -330,17 +363,19 @@ fn handle_navigator(
                     .filter(|(_, f)| f.meta.get("party").copied().unwrap_or("") == msg.text)
                     .map(|(i, _)| i as u32)
                     .collect();
-                navigator.stack.push(NavList {
-                    id: 99,
-                    source: Arc::new(PickerSource::new(files, &subset)),
-                });
-                navigator.stack.last().unwrap().show(&mut list_writer);
+                navigator
+                    .push(NavList {
+                        id: 99,
+                        source: Arc::new(PickerSource::new(files, &subset)),
+                    })
+                    .show(&mut list_writer);
             } else if msg.text == "Demozoo" {
-                navigator.stack.push(NavList {
-                    id: 99,
-                    source: Arc::new(FilePickerSource::new(settings.files)),
-                });
-                navigator.stack.last().unwrap().show(&mut list_writer);
+                navigator
+                    .push(NavList {
+                        id: 99,
+                        source: Arc::new(FilePickerSource::new(settings.files)),
+                    })
+                    .show(&mut list_writer);
             } else if msg.text == "Parties" {
                 let parties: Vec<String> = settings
                     .files
@@ -351,11 +386,12 @@ fn handle_navigator(
                     .into_iter()
                     .map(String::from)
                     .collect();
-                navigator.stack.push(NavList {
-                    id: 98,
-                    source: Arc::new(AllWordsSource::new(parties)),
-                });
-                navigator.stack.last().unwrap().show(&mut list_writer);
+                navigator
+                    .push(NavList {
+                        id: 98,
+                        source: Arc::new(AllWordsSource::new(parties)),
+                    })
+                    .show(&mut list_writer);
             } else {
                 if msg.id == 99 {
                     settings.current_game = msg.item as isize;
@@ -869,7 +905,9 @@ pub(crate) fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                navigator.stack.last().unwrap().show(&mut show_list);
+                if navigator.pos >= 0 {
+                    navigator.stack[navigator.pos as usize].show(&mut show_list);
+                }
                 // let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
                 //settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
                 // if settings.file_source.is_none() {
@@ -1093,12 +1131,13 @@ pub struct CommandPlugin;
 /// When `--select` is passed, open the file-open selector once we start running.
 fn open_select_menu(
     args: Res<crate::Args>,
-    navigator: ResMut<Navigator>,
+    mut navigator: ResMut<Navigator>,
     mut writer: MessageWriter<ShowFuzzyList>,
 ) {
     if args.select {
         //writer.write(CmdMessage(Cmd::OpenFile));
-        navigator.stack[0].show(&mut writer);
+        navigator.setup();
+        navigator.show(&mut writer);
     }
 }
 
