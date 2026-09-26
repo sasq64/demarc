@@ -208,6 +208,7 @@ pub struct FuzzyListSelect {
     /// Set when the row was picked with Shift held (Shift+Enter), asking the
     /// caller for its alternative action on the item rather than the default.
     pub alt: bool,
+    pub emu_file: Option<EmuFile>,
 }
 
 #[derive(Default, Message, Clone)]
@@ -538,9 +539,10 @@ fn render_list(
     if pick && let Some(&item) = state.list_items.get(selected) {
         writer.write(FuzzyListSelect {
             id: state.list_id,
-            item,
+            item : source.get_item(item),
             text: source.get_text(item),
             alt,
+            emu_file: source.get_data(item).cloned(),
         });
         state.show_list = false;
         return;

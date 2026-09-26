@@ -499,7 +499,7 @@ fn main() {
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
-        files,
+        files: files.leak(),
         maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,

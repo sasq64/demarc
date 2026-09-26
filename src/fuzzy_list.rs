@@ -47,6 +47,10 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
     /// screen only, so a source is free to build it on the spot.
     fn get_text(&self, id: usize) -> String;
 
+    fn get_item(&self, id: usize) -> usize {
+        id
+    }
+
     /// Free-form detail about the item with this id, shown in the
     /// multi-line field below the list as the selection moves. Newlines are
     /// honoured and long lines wrap. The default returns nothing, which hides

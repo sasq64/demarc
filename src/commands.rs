@@ -304,11 +304,16 @@ impl Navigator {
 
 fn handle_navigator(
     mut settings: ResMut<AppSettings>,
+    input: Res<ButtonInput<KeyCode>>,
     mut writer: MessageWriter<CmdMessage>,
     mut navigator: ResMut<Navigator>,
     mut reader: MessageReader<FuzzyListSelect>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
 ) {
+    if input.just_pressed(KeyCode::ArrowLeft) {
+        navigator.stack.pop();
+        navigator.stack.last().unwrap().show(&mut list_writer);
+    }
     let Some(current) = &navigator.stack.last() else {
         return;
     };
@@ -316,10 +321,24 @@ fn handle_navigator(
     for msg in reader.read() {
         if msg.id == id {
             debug!("Selected {}", msg.text);
-            if msg.text == "Demozoo" {
+            if msg.id == 98 {
+                // Selected party
+                let files = settings.files;
+                let subset: Vec<u32> = files
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| f.meta.get("party").copied().unwrap_or("") == msg.text)
+                    .map(|(i, _)| i as u32)
+                    .collect();
                 navigator.stack.push(NavList {
                     id: 99,
-                    source: Arc::new(FilePickerSource::new(&settings.files)),
+                    source: Arc::new(PickerSource::new(files, &subset)),
+                });
+                navigator.stack.last().unwrap().show(&mut list_writer);
+            } else if msg.text == "Demozoo" {
+                navigator.stack.push(NavList {
+                    id: 99,
+                    source: Arc::new(FilePickerSource::new(settings.files)),
                 });
                 navigator.stack.last().unwrap().show(&mut list_writer);
             } else if msg.text == "Parties" {
@@ -338,17 +357,11 @@ fn handle_navigator(
                 });
                 navigator.stack.last().unwrap().show(&mut list_writer);
             } else {
-                // let files: Vec<EmuFile> = settings
-                //     .files
-                //     .iter()
-                //     .filter(|f| f.meta.get("party").copied().unwrap_or("") == msg.text)
-                //     .cloned()
-                //     .collect();
-                // navigator.stack.push(NavList {
-                //     id: 99,
-                //     source: Arc::new(FilePickerSource::new(&files)),
-                // });
-                settings.current_game = msg.item as isize;
+                if msg.id == 99 {
+                    settings.current_game = msg.item as isize;
+                } else {
+                    settings.current_game = msg.item as isize;
+                }
                 writer.write(CmdMessage(Cmd::Reload));
                 // Selected item in Navigator
                 // Either push new Navigator or handle EmuFile
@@ -398,16 +411,16 @@ fn handle_textlist(
                 let Some(file) = download_pick.take() else {
                     continue;
                 };
-                // Narrow the entry down to the one URL, so the load fetches
-                // that and nothing else -- `FileSource::resolve` would
-                // otherwise re-apply its own idea of which of them to take.
-                // The picker's snapshot still holds them all, so the entry can
-                // be pointed at a different download later.
+                // Remember the one URL, so the load fetches that and nothing
+                // else -- `FileSource::resolve` would otherwise re-apply its
+                // own idea of which of them to take. The list keeps all of
+                // them, so the entry can be pointed at a different download
+                // later.
                 let url = original_file(&settings, file)
                     .and_then(download_urls)
                     .and_then(|urls| urls.get(item));
                 if let Some(url) = url {
-                    settings.files[file].path = FileSource::Url(UrlList::one(url));
+                    settings.picked_downloads.insert(file, url);
                 }
                 settings.current_game = file as isize;
                 writer.write(CmdMessage(Cmd::Reload));
@@ -453,10 +466,8 @@ fn handle_textlist(
     }
 }
 
-/// The entry as the picker first saw it, asked of the picker's own source.
-/// [`FilePickerSource`] snapshots `settings.files` when the picker is first
-/// built, so an entry that has since been narrowed to a single download still
-/// has all of its URLs here — and can be pointed at another one of them.
+/// The entry as the picker first saw it, asked of the picker's own source,
+/// falling back to the file list itself.
 fn original_file(settings: &AppSettings, index: usize) -> Option<&EmuFile> {
     settings
         .file_source
@@ -527,6 +538,59 @@ impl FuzzySource<EmuFile> for DownloadSource {
 
     fn get_info(&self, id: usize) -> String {
         self.urls.get(id).map(Url::to_string).unwrap_or_default()
+    }
+}
+
+#[derive(Clone)]
+pub struct PickerSource {
+    names: IndexedSource,
+    /// Index into `emu_files` per row, in the order `names` holds them: the ids
+    /// a search reports are rows of this subset, not of the whole list.
+    subset: Vec<u32>,
+    emu_files: &'static [EmuFile],
+    width: u32,
+}
+
+impl PickerSource {
+    fn new(files: &'static [EmuFile], subset: &[u32]) -> Self {
+        let names = subset
+            .iter()
+            .map(|&index| entry_name(&files[index as usize]))
+            .collect();
+        Self {
+            names: IndexedSource::new(names),
+            subset: subset.into(),
+            emu_files: files,
+            width: 70,
+        }
+    }
+
+    fn file(&self, id: usize) -> Option<&EmuFile> {
+        let index = *self.subset.get(id)? as usize;
+        self.emu_files.get(index)
+    }
+}
+
+impl FuzzySource<EmuFile> for PickerSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.names.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.names.get_text(id)
+    }
+
+    fn get_info(&self, id: usize) -> String {
+        self.file(id)
+            .map(|file| entry_info(file, self.width as usize))
+            .unwrap_or_default()
+    }
+
+    fn get_data(&self, id: usize) -> Option<&EmuFile> {
+        self.file(id)
+    }
+    fn get_item(&self, id: usize) -> usize {
+        self.subset[id] as usize
     }
 }
 

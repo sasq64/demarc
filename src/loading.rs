@@ -384,8 +384,9 @@ pub(crate) fn handle_loading(
         };
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
-            let game = settings.files[settings.current_game as usize].clone();
-            let over = settings.override_for(&game);
+            let index = settings.current_game as usize;
+            let game = &settings.files[index];
+            let over = settings.override_for(index);
             if let Some(o) = &over {
                 debug!("Found override for {game:?}: {o:?}");
             }
@@ -396,7 +397,7 @@ pub(crate) fn handle_loading(
             emu.state = EmuState::Loading;
             emu.run_next = false;
             emu.run_prev = false;
-            emu.pending_load = Some(load_async(&game, over.as_ref()));
+            emu.pending_load = Some(load_async(game, over.as_ref()));
             DOWNLOAD_COUNTER.started();
             continue;
         }

@@ -490,9 +490,9 @@ impl From<BorderModeArg> for BorderMode {
 
 /// The subset of settings the render world needs. This is the only resource
 /// that is [`ExtractResource`], so it is the only thing Bevy clones into the
-/// render world each frame — keeping the large [`AppSettings`] (and its `files`
-/// vec) off the per-frame extract path. Mutated directly by hotkeys in the main
-/// world (see `handle_cmd`); the extract copies the fresh values across.
+/// render world each frame — keeping the large [`AppSettings`] off the
+/// per-frame extract path. Mutated directly by hotkeys in the main world (see
+/// `handle_cmd`); the extract copies the fresh values across.
 #[derive(Resource, Default, Clone, ExtractResource)]
 pub struct RenderSettings {
     pub border_mode: BorderMode,
@@ -507,7 +507,11 @@ pub struct AppSettings {
     /// [`Emulator::update_load`](crate::emulator::Emulator::update_load).
     pub system: Arc<NewSys>,
     pub show_info: bool,
-    pub files: Vec<EmuFile>,
+    /// The whole file list, leaked at startup: the entries hold `&'static str`
+    /// slices into the leaked db text (see [`crate::files`]) and are read for
+    /// the length of the run, so the list is `'static` too and can be handed
+    /// out without borrowing this resource.
+    pub files: &'static [EmuFile],
     pub current_game: isize,
     pub current_emu: usize,
     pub maximized: bool,
@@ -544,11 +548,17 @@ pub struct AppSettings {
     /// An overrides file can only name one per demozoo id, so this is how a
     /// local archive or directory — which has no id — gets the same treatment.
     pub boot_file: Option<&'static str>,
+
+    /// Downloads picked by hand in the file picker (Shift+Enter), keyed on the
+    /// index into [`Self::files`]. The list itself is immutable, so the choice
+    /// lives here and reaches the load as an [`Override::download_url`].
+    pub picked_downloads: HashMap<usize, &'static str>,
 }
 
 impl AppSettings {
-    /// The override to load `file` with: whatever `overrides.toml` said about
-    /// the release it is, with `--boot-file` written over the top.
+    /// The override to load the entry at `index` with: whatever
+    /// `overrides.toml` said about the release it is, with `--boot-file` and a
+    /// hand-picked download written over the top.
     ///
     /// Entries are matched on the `id` field a db line carries, so the file
     /// only ever finds anything for a release loaded out of a db; a file named
@@ -558,22 +568,27 @@ impl AppSettings {
     /// were tried on. `--boot-file` is not keyed on anything and so applies to
     /// every release loaded, which is what makes it usable on a local archive
     /// or directory; being asked for by hand, it also beats the file.
-    pub fn override_for(&self, file: &EmuFile) -> Option<Override> {
+    pub fn override_for(&self, index: usize) -> Option<Override> {
         let from_file = if self.demozoo_overrides.is_empty() {
             None
         } else {
-            file.get_meta("id")
-                .parse::<usize>()
-                .ok()
+            self.files
+                .get(index)
+                .and_then(|file| file.get_meta("id").parse::<usize>().ok())
                 .and_then(|id| self.demozoo_overrides.get(&id))
         };
-        match (from_file, self.boot_file) {
-            (over, None) => over.cloned(),
-            (over, boot) => Some(Override {
-                boot_file: boot,
-                ..over.cloned().unwrap_or_default()
-            }),
+        let picked = self.picked_downloads.get(&index).copied();
+        if from_file.is_none() && self.boot_file.is_none() && picked.is_none() {
+            return None;
         }
+        let mut over = from_file.cloned().unwrap_or_default();
+        if self.boot_file.is_some() {
+            over.boot_file = self.boot_file;
+        }
+        if picked.is_some() {
+            over.download_url = picked;
+        }
+        Some(over)
     }
 }
 
