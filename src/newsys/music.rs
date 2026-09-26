@@ -19,8 +19,9 @@ use super::System;
 /// itself, screen, scopes and all — instead of to [`MusicEmu`].
 pub const USE_PROTRACKER: &str = "use_protracker";
 
-/// The core built out of `external/pt2-libretro`, which is pt2-clone with its
-/// SDL2 replaced by libretro. Not on the buildbot; see `libloader::ALT_SOURCES`.
+/// The core built out of the `libretro/` directory in the pt2-clone fork, which
+/// is pt2-clone with its SDL2 replaced by libretro. Not on the buildbot; see
+/// `libloader::ALT_SOURCES`.
 const PROTRACKER_CORE: &str = "pt2clone";
 
 /// Whether this is something the ProTracker clone can load: a 31- or 15-sample

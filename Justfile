@@ -74,11 +74,11 @@ gamescope-core:
     ninja -C {{GAMESCOPE}}/build-lr src/gamescope src/gamescope_libretro.so
     @echo "core at {{GAMESCOPE}}/build-lr/src/gamescope_libretro.so"
 
-PT2 := "external/pt2-libretro"
+PT2 := "libretro/pt2-clone/libretro"
 
-# Build the ProTracker 2 clone as a libretro core (source in external/pt2-libretro,
-# tracker sources from the checkout in libretro/pt2-clone). Needs SDL2's headers,
-# which is all the core takes from SDL -- see docs/PT2.md.
+# Build the ProTracker 2 clone as a libretro core, out of the checkout in
+# libretro/pt2-clone (which carries the wrapper as well as the tracker). Needs
+# SDL2's headers, which is all the core takes from SDL -- see docs/PT2.md.
 pt2-core:
     cmake -S {{PT2}} -B {{PT2}}/build -G Ninja -DCMAKE_BUILD_TYPE=Release
     ninja -C {{PT2}}/build

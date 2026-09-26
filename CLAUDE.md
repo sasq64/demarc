@@ -112,9 +112,9 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 
 - `src/libretro.rs` (223k, `#[allow(warnings)]`) is **bindgen output — never hand-edit**. Regenerate
   with `scripts/gen-libretro-bindings.sh`; it's committed so no build machine needs libclang.
-- `external/pt2-libretro` is the ProTracker 2 clone as a libretro core: our `retro_*` entry
-  points and an SDL2 replacement, built (`just pt2-core`) against the unmodified tracker
-  sources in the `libretro/pt2-clone` checkout. See `docs/PT2.md`.
+- The `libretro/pt2-clone` checkout is a fork that carries the ProTracker 2 clone as a
+  libretro core: `libretro/` there holds our `retro_*` entry points and an SDL2 replacement,
+  built (`just pt2-core`) against the unmodified tracker sources beside it. See `docs/PT2.md`.
 - `libretro/`, `slang-shaders/` and `shaders/` are gitignored working checkouts, not part of
   the repo. `shaders/` is the RetroArch-shaped layout the Mega Bezel preset packs need — see
   `docs/SHADERS.md`, which also explains why `librashader` is pinned to a fork.
