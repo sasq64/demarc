@@ -67,10 +67,13 @@ const ALT_SOURCES: &[(&str, &str)] = &[
         "yape",
         "https://github.com/sasq64/yape/releases/download/latest",
     ),
-    // pt2-clone as a core, built out of the libretro/ directory in the fork.
     (
         "pt2clone",
         "https://github.com/sasq64/pt2-clone/releases/download/latest",
+    ),
+    (
+        "ft2clone",
+        "https://github.com/sasq64/ft2-clone/releases/download/latest",
     ),
     (
         "hatari",

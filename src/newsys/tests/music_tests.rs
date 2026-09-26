@@ -1,19 +1,24 @@
 use super::*;
 
 #[test]
-fn claims_protracker_modules_either_way_round() {
+fn picks_the_tracker_for_a_module_either_way_round() {
     // The two naming conventions a module arrives under.
-    assert!(is_protracker_module(Path::new("enigma.mod")));
-    assert!(is_protracker_module(Path::new("mod.enigma")));
-    assert!(is_protracker_module(Path::new("/a/dir/MOD.Enigma")));
+    assert_eq!(tracker_core(Path::new("enigma.mod")), Some(PROTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("mod.enigma")), Some(PROTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("/a/dir/MOD.Enigma")), Some(PROTRACKER_CORE));
     // 15-sample modules and the other names they go by.
-    assert!(is_protracker_module(Path::new("tune.stk")));
-    assert!(is_protracker_module(Path::new("nst.tune")));
+    assert_eq!(tracker_core(Path::new("tune.stk")), Some(PROTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("nst.tune")), Some(PROTRACKER_CORE));
 
-    // Other trackers, and other music [`MusicSystem`] claims, stay with MusicEmu.
-    assert!(!is_protracker_module(Path::new("tune.xm")));
-    assert!(!is_protracker_module(Path::new("tune.sid")));
-    assert!(!is_protracker_module(Path::new("mdat.tune")));
+    // What the Fasttracker II clone loads.
+    assert_eq!(tracker_core(Path::new("tune.xm")), Some(FASTTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("XM.tune")), Some(FASTTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("tune.s3m")), Some(FASTTRACKER_CORE));
+    assert_eq!(tracker_core(Path::new("tune.it")), Some(FASTTRACKER_CORE));
+
+    // Other music [`MusicSystem`] claims stays with MusicEmu.
+    assert_eq!(tracker_core(Path::new("tune.sid")), None);
+    assert_eq!(tracker_core(Path::new("mdat.tune")), None);
     // A module directory, not a module.
-    assert!(!is_protracker_module(Path::new("mods")));
+    assert_eq!(tracker_core(Path::new("mods")), None);
 }

@@ -115,6 +115,7 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 - The `libretro/pt2-clone` checkout is a fork that carries the ProTracker 2 clone as a
   libretro core: `libretro/` there holds our `retro_*` entry points and an SDL2 replacement,
   built (`just pt2-core`) against the unmodified tracker sources beside it. See `docs/PT2.md`.
+  `libretro/ft2-clone` does the same for the Fasttracker II clone (`just ft2-core`, `docs/FT2.md`).
 - `libretro/`, `slang-shaders/` and `shaders/` are gitignored working checkouts, not part of
   the repo. `shaders/` is the RetroArch-shaped layout the Mega Bezel preset packs need — see
   `docs/SHADERS.md`, which also explains why `librashader` is pinned to a fork.
@@ -143,7 +144,7 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 ## Docs worth reading before touching those areas
 
 `docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/86BOX.md`, `PICO8.md`,
-`GAMESCOPE.md` and `PT2.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
+`GAMESCOPE.md`, `PT2.md` and `FT2.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
 (`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/CRINKLER.md` (why 4k
 intros run but draw nothing under wine), `docs/NOTES.md` (design
 scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.

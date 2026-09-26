@@ -87,7 +87,21 @@ pt2-core:
 # Play a module in the locally built ProTracker core rather than in MusicEmu.
 pt2 file:
     DEMARC_CORE_DIR={{justfile_directory()}}/{{PT2}}/build \
-        cargo run --profile release-fast -- -x use_protracker=true {{file}}
+        cargo run --profile release-fast -- -x use_tracker=true {{file}}
+
+FT2 := "libretro/ft2-clone/libretro"
+
+# Build the Fasttracker II clone as a libretro core, out of the checkout in
+# libretro/ft2-clone, the same way as pt2-core -- see docs/FT2.md.
+ft2-core:
+    cmake -S {{FT2}} -B {{FT2}}/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    ninja -C {{FT2}}/build
+    @echo "core at {{FT2}}/build/ft2clone_libretro.so"
+
+# Play an XM/S3M/IT in the locally built Fasttracker II core.
+ft2 file:
+    DEMARC_CORE_DIR={{justfile_directory()}}/{{FT2}}/build \
+        cargo run --profile release-fast -- -x use_tracker=true {{file}}
 
 # `--no-silence` matters: without it gamescope's and wine's diagnostics go to
 # /dev/null along with the cores'.

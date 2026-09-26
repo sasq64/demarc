@@ -23,11 +23,12 @@ checkout is all `just pt2-core` does, and `PT2_CLONE_DIR` overrides where the
 tracker's sources are read from. SDL2's **headers** have to be installed, and
 that is all the core takes from SDL: nothing links against the library.
 
-In demarc, the `use_protracker` meta sends ProTracker modules to the core
-rather than to `MusicEmu` — see `src/newsys/music.rs`:
+In demarc, the `use_tracker` meta sends ProTracker modules to the core
+rather than to `MusicEmu` — see `src/newsys/music.rs`. The same meta sends
+XM, S3M and IT to the Fasttracker II clone ([FT2.md](FT2.md)):
 
 ```sh
-demarc -x use_protracker=true mod.something
+demarc -x use_tracker=true mod.something
 ```
 
 `scripts/libretro-smoke.py libretro/pt2-clone/libretro/build/pt2clone_libretro.so mod.x`

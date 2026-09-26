@@ -15,26 +15,39 @@ use crate::{Args, libloader, retro_emu};
 
 use super::System;
 
-/// Meta key sending ProTracker modules to the ProTracker 2 clone — the tracker
-/// itself, screen, scopes and all — instead of to [`MusicEmu`].
-pub const USE_PROTRACKER: &str = "use_protracker";
+/// Meta key sending modules to the tracker that made them — ProTracker 2 or
+/// Fasttracker II, screen, scopes and all — instead of to [`MusicEmu`].
+pub const USE_TRACKER: &str = "use_tracker";
 
-/// The core built out of the `libretro/` directory in the pt2-clone fork, which
-/// is pt2-clone with its SDL2 replaced by libretro. Not on the buildbot; see
-/// `libloader::ALT_SOURCES`.
+/// The cores built out of the `libretro/` directories in the pt2-clone and
+/// ft2-clone forks, which are the trackers with their SDL2 replaced by
+/// libretro. Not on the buildbot; see `libloader::ALT_SOURCES`.
 const PROTRACKER_CORE: &str = "pt2clone";
+const FASTTRACKER_CORE: &str = "ft2clone";
 
-/// Whether this is something the ProTracker clone can load: a 31- or 15-sample
-/// module, named either way round.
-fn is_protracker_module(path: &Path) -> bool {
-    const EXTENSIONS: &[&str] = &["mod", "stk", "nst", "m15"];
+/// Whether `path` has one of `extensions`, named either way round.
+fn is_named(path: &Path, extensions: &[&str]) -> bool {
     let name = path
         .file_name()
         .and_then(|p| p.to_str())
         .unwrap_or_default()
         .to_lowercase();
-    EXTENSIONS.contains(&get_ext(path).as_str())
-        || EXTENSIONS.iter().any(|ext| name.starts_with(&format!("{ext}.")))
+    extensions.contains(&get_ext(path).as_str())
+        || extensions
+            .iter()
+            .any(|ext| name.starts_with(&format!("{ext}.")))
+}
+
+/// The tracker core that plays `path`: a 31- or 15-sample module goes to the
+/// ProTracker clone, and what else the Fasttracker II clone loads goes there.
+fn tracker_core(path: &Path) -> Option<&'static str> {
+    if is_named(path, &["mod", "stk", "nst", "m15"]) {
+        Some(PROTRACKER_CORE)
+    } else if is_named(path, &["xm", "ft", "s3m", "stm", "fst", "digi", "bem"]) {
+        Some(FASTTRACKER_CORE)
+    } else {
+        None
+    }
 }
 
 fn music_data_dir() -> PathBuf {
@@ -113,9 +126,11 @@ impl System for MusicSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         info!("MUSIC CREATE {path:?}");
-        if path.is_enabled(USE_PROTRACKER) && is_protracker_module(path) {
-            let core = libloader::get_libretro(PROTRACKER_CORE)
-                .context("Could not load the ProTracker core")?;
+        if path.is_enabled(USE_TRACKER)
+            && let Some(name) = tracker_core(path)
+        {
+            let core = libloader::get_libretro(name)
+                .with_context(|| format!("Could not load the {name} core"))?;
             return retro_emu::create_core(
                 &core,
                 system_dir(),
