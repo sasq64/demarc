@@ -1,7 +1,8 @@
 use super::*;
 
 /// Every dispatch target must agree with a byte-for-byte reference, including
-/// on a width that leaves a partial SIMD vector and a pitch with padding.
+/// on a width that leaves a partial SIMD vector and a pitch with padding, and
+/// every pixel must come out opaque whatever the source X byte held.
 #[test]
 fn xrgb8888_repacks_bgra_to_rgba() {
     for (width, height) in [(1usize, 1usize), (7, 3), (320, 8)] {
@@ -12,7 +13,7 @@ fn xrgb8888_repacks_bgra_to_rgba() {
         for y in 0..height {
             for x in 0..width {
                 let px = &src[y * pitch + x * 4..][..4];
-                expected[y * width + x] = u32::from_ne_bytes([px[2], px[1], px[0], px[3]]);
+                expected[y * width + x] = u32::from_ne_bytes([px[2], px[1], px[0], 255]);
             }
         }
 
