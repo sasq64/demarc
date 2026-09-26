@@ -5,6 +5,16 @@
 //! [`crate::retro_emu`] are only one implementation, alongside the image, music,
 //! Flash and Wine backends.
 
+use std::sync::Arc;
+
+/// A finished frame of packed RGBA pixels, cheap to clone and hold on to.
+#[derive(Clone, Default)]
+pub struct VideoFrame {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Arc<Vec<u32>>,
+}
+
 /// How much of the user's attention a view has, handed to the backend by
 /// [`Backend::focus`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -44,6 +54,17 @@ pub trait Backend {
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
     fn set_joypad(&mut self, port: u32, id: u32, down: bool);
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32]));
+    fn frame(&self) -> VideoFrame {
+        let mut frame = VideoFrame::default();
+        self.with_frame(&mut |width, height, pixels| {
+            frame = VideoFrame {
+                width,
+                height,
+                pixels: Arc::new(pixels.to_vec()),
+            };
+        });
+        frame
+    }
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
     fn get_frame_size(&self) -> (usize, usize);
 

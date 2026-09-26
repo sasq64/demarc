@@ -354,6 +354,7 @@ impl Emulator {
         self.paused = self.is_image && (!self.color_cycle);
 
         self.core = Some(res.backend);
+        self.frame_queue.clear();
         self.work_file = res.work_file;
 
         self.run_next = false;

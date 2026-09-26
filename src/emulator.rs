@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
 use anyhow::Result;
@@ -9,7 +9,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use crate::backend::{Backend, STATE_SKIPPING, ViewFocus, frame_bytes};
+use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
 use crate::emu_file::GameInfo;
 use crate::libretro;
 use crate::loading::PendingLoad;
@@ -115,6 +115,8 @@ pub struct Emulator {
     /// [`Emulator::update_load`](crate::loading).
     pub(crate) pending_load: Option<PendingLoad>,
     pub state: EmuState,
+    /// Frames waiting to be shown, oldest first.
+    pub frame_queue: VecDeque<VideoFrame>,
 }
 
 const AUDIO_BUF_MIN: usize = 3000;

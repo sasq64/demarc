@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
-use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
+use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus};
 use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
 use super::RetroCoreDirect;
@@ -70,7 +70,7 @@ struct RetroUpdate {
     height: usize,
     used_width: usize,
     used_height: usize,
-    frame: Vec<u32>,
+    frame: Arc<Vec<u32>>,
     audio: Vec<i16>,
     aspect_ratio: f32,
     sample_rate: f64,
@@ -87,7 +87,7 @@ pub struct RetroCoreThreaded {
     // the lock is never actually contended.
     update_rx: Mutex<mpsc::Receiver<RetroUpdate>>,
     handle: Option<thread::JoinHandle<()>>,
-    frame: Vec<u32>,
+    frame: Arc<Vec<u32>>,
     /// Motion in the last frame handed over, and the moving average of it —
     /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
     frame_diff: f32,
@@ -201,7 +201,7 @@ impl RetroCoreThreaded {
                 cmd_tx,
                 update_rx: Mutex::new(update_rx),
                 handle: Some(handle),
-                frame: Vec::new(),
+                frame: Arc::default(),
                 frame_diff: 0.0,
                 aggregated_diff: 0.0,
                 audio_sum: 0,
@@ -248,7 +248,7 @@ fn worker_loop(
     // Only opened when `DEMARC_FRAME_STATS` asks for a log; the average colour
     // it adds costs a couple of extra passes over the framebuffer.
     let mut stats_log = FrameStatsLog::from_env();
-    let mut last_frame: Vec<u32> = Vec::new();
+    let mut last_frame: Arc<Vec<u32>> = Arc::default();
     let mut aggregated_diff = 0.0f32;
     loop {
         let frame = frames.load(Ordering::Relaxed);
@@ -295,6 +295,7 @@ fn worker_loop(
             let (used_width, used_height) = core.get_used_frame_size();
             let mut frame = Vec::new();
             core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
+            let frame = Arc::new(frame);
 
             let frame_diff;
             if let Some(log) = &mut stats_log {
@@ -305,8 +306,7 @@ fn worker_loop(
                 (frame_diff, aggregated_diff) =
                     get_frame_diff(&frame, &last_frame, aggregated_diff);
             }
-            last_frame.clear();
-            last_frame.extend_from_slice(&frame);
+            last_frame = Arc::clone(&frame);
 
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
@@ -474,6 +474,13 @@ impl Backend for RetroCoreThreaded {
     }
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(self.frame_width, self.frame_height, &self.frame);
+    }
+    fn frame(&self) -> VideoFrame {
+        VideoFrame {
+            width: self.frame_width,
+            height: self.frame_height,
+            pixels: Arc::clone(&self.frame),
+        }
     }
     fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
         f(&self.audio);

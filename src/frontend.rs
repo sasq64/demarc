@@ -51,6 +51,8 @@ pub(crate) struct EmuView {
 
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
+/// How many frames the picture lags behind the core.
+const FRAME_DELAY: usize = 4;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
@@ -546,22 +548,26 @@ pub(crate) fn run_frontend(
         let bg_w = emu.width as usize;
         let bg_h = emu.height as usize;
 
+        let frame = emu.core.as_ref().unwrap().frame();
+        emu.frame_queue.push_back(frame);
+        while emu.frame_queue.len() > FRAME_DELAY + 1 {
+            emu.frame_queue.pop_front();
+        }
+        let frame = emu.frame_queue.front().unwrap().clone();
+
         if let Some(mut image) = images.get_mut(&emu.image)
             && let Some(dst) = image.data.as_mut()
         {
-            emu.core.as_mut().unwrap().with_frame(&mut |w, h, frame| {
-                // The texture is a byte buffer; the frame is one packed RGBA
-                // `u32` per pixel, so copy it through a byte view.
-                let frame = crate::backend::frame_bytes(frame);
-                let copy_w = w.min(bg_w);
-                let copy_h = h.min(bg_h);
-                for y in 0..copy_h {
-                    let src_off = y * w * 4;
-                    let dst_off = y * bg_w * 4;
-                    dst[dst_off..dst_off + copy_w * 4]
-                        .copy_from_slice(&frame[src_off..src_off + copy_w * 4]);
-                }
-            });
+            let (w, h) = (frame.width, frame.height);
+            let src = crate::backend::frame_bytes(&frame.pixels);
+            let copy_w = w.min(bg_w);
+            let copy_h = h.min(bg_h);
+            for y in 0..copy_h {
+                let src_off = y * w * 4;
+                let dst_off = y * bg_w * 4;
+                dst[dst_off..dst_off + copy_w * 4]
+                    .copy_from_slice(&src[src_off..src_off + copy_w * 4]);
+            }
         }
 
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
@@ -575,7 +581,7 @@ pub(crate) fn run_frontend(
             pp.used = used;
         }
 
-        let (w, h) = emu.core.as_mut().unwrap().get_frame_size();
+        let (w, h) = (frame.width, frame.height);
 
         if (w != bg_w || h != bg_h) && w > 0 && h > 0 {
             debug!("Emulator size changed to {w}x{h}");
