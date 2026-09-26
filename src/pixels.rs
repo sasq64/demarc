@@ -383,8 +383,11 @@ impl FrameStatsLog {
 /// `dst` must already be sized to `width * height`.
 ///
 /// The source is BGRA in memory (little-endian XRGB8888), so every pixel is a
-/// pure byte permutation of its destination: as a `u32` it is `0xAARRGGBB` and
-/// we want `0xAABBGGRR`, which is `swap_bytes()` followed by `rotate_right(8)`.
+/// byte permutation of its destination: as a `u32` it is `0xXXRRGGBB` and we
+/// want `0xAABBGGRR`, which is `swap_bytes()` followed by `rotate_right(8)`.
+/// The X byte is unused and cores leave it at 0, so alpha is forced opaque --
+/// otherwise `Emulator::save_png`, which writes the frame out verbatim, saves
+/// a fully transparent PNG.
 ///
 /// Spelling it that way rather than as `from_ne_bytes([px[2], px[1], px[0],
 /// px[3]])` is the whole point: LLVM recognises bswap+rotate as a byte shuffle
@@ -408,7 +411,7 @@ fn convert_xrgb8888_impl(src: &[u8], dst: &mut [u32], width: usize, height: usiz
                 src_row[x * 4 + 2],
                 src_row[x * 4 + 3],
             ]);
-            dst_row[x] = v.swap_bytes().rotate_right(8);
+            dst_row[x] = v.swap_bytes().rotate_right(8) | 0xff00_0000;
         }
     }
 }
