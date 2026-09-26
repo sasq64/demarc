@@ -53,12 +53,24 @@ main.rs            CLI (clap, src/config.rs) → Bevy App + plugins;
 
 | impl | file | notes |
 |---|---|---|
-| libretro core | `retro_emu.rs` + `retro_emu/threaded.rs` | `RetroCoreDirect` is the raw FFI/environment-callback side; `RetroCoreThreaded` runs it on a worker thread and ships frames back over a channel. This is what almost everything uses. |
+| libretro core | `retro_emu/mod.rs` + `retro_emu/threaded.rs` | `RetroCoreDirect` is the raw FFI/environment-callback side; `RetroCoreThreaded` runs it on a worker thread and ships frames back over a channel. This is what almost everything uses. |
 | still image | `image_emu.rs` | IFF/ILBM (`ilbm.rs`), DEGAS (`degas.rs`), ZX SCR (`zx_scr.rs`), palette TIFF (`tiff_pal.rs`, which the `image` crate refuses), plus `image` crate formats; optional palette colour-cycling |
 | music | `music_emu.rs` | `musix` chiptune/tracker player, renders audio inline (no worker thread) and draws a Luau visualizer (`music_vis.rs`) |
 | Flash | `flash_emu.rs` | behind the `flash` feature; Ruffle with its own wgpu device |
 | gamescope session | `external/gamescope/src/libretro/` (C++) | Linux only. A patched gamescope composites a headless Wayland/Xwayland session into a shared dmabuf and a thin `gamescope_libretro.so` hands the frames back, so wine — or an HTML/JS release in an undecorated Chrome — is a picture source like any other. What to run inside it is `src/wine.rs`'s job for a Windows release (the wine command, the prefix, its teardown), restated as core options by `src/newsys/windows.rs`. See `docs/GAMESCOPE.md`. |
 | Windows release, on Windows | `win_runner.rs` | Windows only. Nothing is emulated and nothing is captured: the demo is started on the desktop and demarc only holds its process, with `demarc-autodlg.exe` answering the setup dialog as it does under wine. |
+
+### A second binary: `c64`
+
+`src/bin/c64.rs` is a stripped-down player — one 720x576 window, the VICE core,
+`system/shaders/lottes.wgsl` — on winit + wgpu with no Bevy, no librashader and no
+command line, as the starting point for an Android port. It reuses
+`retro_emu`/`libretro`/`pixels`/`backend` through `#[path]` module includes, which is
+why `retro_emu` lives in `retro_emu/mod.rs`: a `#[path]`-included file resolves its own
+submodules beside itself. The shader is the same file the Bevy path uses, with its one
+`#import` line swapped for a fullscreen vertex shader. `test = false` in `Cargo.toml`
+keeps `cargo test` from building it, since those modules' unit tests reach for parts of
+the main binary it leaves out.
 
 ### System detection — `newsys.rs` + `src/newsys/*`
 
@@ -147,7 +159,9 @@ boot, files to patch in, AmigaDOS assigns, core options), read from `system/over
 `GAMESCOPE.md`, `PT2.md` and `FT2.md` (the non-buildbot cores), `docs/flags.md` (core option reference tables), `docs/SHADERS.md`
 (`--slangp` presets, the librashader fork, Mega Bezel packs), `docs/CRINKLER.md` (why 4k
 intros run but draw nothing under wine), `docs/NOTES.md` (design
-scratchpad for the loading pipeline), `docs/TODO.md` and `AI_TASKS.md` (open work), `CHANGELOG.md`.
+scratchpad for the loading pipeline), `docs/ANDROID.md` (the plan for putting the `c64`
+binary on a phone, and why that needs the package split up), `docs/TODO.md` and
+`AI_TASKS.md` (open work), `CHANGELOG.md`.
 
 ## Releases
 

@@ -18,6 +18,13 @@ pkg-fmt = "txz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
 
+# The minimal single-core player. `test = false`: it includes demarc's libretro
+# modules, and their unit tests reach for parts of the main binary it leaves out.
+[[bin]]
+name = "c64"
+path = "src/bin/c64.rs"
+test = false
+
 [dependencies]
 anyhow = "1.0.102"
 bevy = {
@@ -90,8 +97,11 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 ureq = "3"
 url = "2"
-# Matches the wgpu version Bevy 0.19 uses; only needed to name `SamplerBorderColor`,
-# which Bevy doesn't re-export.
+# The window and input for the `c64` binary, which has no Bevy in it. Same
+# version Bevy 0.19 uses, so it costs nothing extra to build.
+winit = "0.30"
+# Matches the wgpu version Bevy 0.19 uses; needed to name `SamplerBorderColor`,
+# which Bevy doesn't re-export, and to render without Bevy in the `c64` binary.
 wgpu = "29"
 zip = {
   version = "8",
@@ -124,7 +134,9 @@ bevy_egui = {
 # `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
 mlua = { version = "0.11", features = ["luau", "send"] }
 nucleo-matcher = "0.3"
-pollster = { version = "0.4", optional = true }
+# `block_on` for wgpu's adapter/device requests in the `c64` binary; also used
+# by the Flash backend.
+pollster = "0.4"
 # `--filter`: matched against each raw db line while collecting (see collect_db).
 regex = "1"
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
@@ -203,7 +215,6 @@ libc = "0.2"
 default = []
 # Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
 flash = [
-  "dep:pollster",
   "dep:ruffle_core",
   "dep:ruffle_render",
   "dep:ruffle_render_wgpu",
