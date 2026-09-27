@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -17,7 +15,6 @@ use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
 use crate::egui_ui::HudLocation;
-use crate::egui_ui::ListSource;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::{EmuFile, FileSource, UrlList};
 use crate::emulator::{Emulator, InputMode};
@@ -27,6 +24,7 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::post_process::{BorderMode, ScaleMode};
+use crate::navigator::{Navigator, handle_navigator};
 use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
@@ -230,181 +228,6 @@ fn handle_hotkey(
     }
 }
 
-enum ListAction {
-    OpenFile,
-}
-
-struct NavList {
-    id: usize,
-    source: ListSource,
-}
-
-impl NavList {
-    fn show(&self, show_list: &mut MessageWriter<ShowFuzzyList>) {
-        show_list.write(ShowFuzzyList {
-            id: self.id,
-            source: self.source.clone(),
-        });
-    }
-
-    // fn getSource(&self) -> ListSource<EmuFile> {}
-}
-
-#[derive(Resource)]
-struct Navigator {
-    pos: isize,
-    showing: isize,
-    stack: Vec<NavList>,
-}
-
-impl Navigator {
-    fn new() -> Self {
-        let source = Arc::new(RootSource::new());
-        let root = NavList { id: 0, source };
-        Self {
-            pos: -1,
-            showing: -1,
-            stack: vec![root],
-        }
-    }
-    fn push(&mut self, nav_list: NavList) -> &mut Self {
-        self.pos += 1;
-        self.stack.truncate(self.pos as usize);
-        self.stack.push(nav_list);
-        self
-    }
-    fn back(&mut self) -> &mut Self {
-        if self.pos > 0 {
-            self.pos -= 1;
-        }
-        self
-    }
-    fn forward(&mut self) -> &mut Self {
-        if self.pos < self.stack.len() as isize - 1 {
-            self.pos += 1;
-        }
-        self
-    }
-
-    fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
-        if self.pos != self.showing {
-            self.stack[self.pos as usize].show(lw);
-            self.showing = self.pos;
-        }
-    }
-}
-
-struct RootSource {
-    names: AllWordsSource,
-}
-
-impl RootSource {
-    fn new() -> Self {
-        Self {
-            names: AllWordsSource::new(vec![
-                "Demozoo".into(),
-                "CSDb".into(),
-                "Parties".into(),
-                "Favorites".into(),
-            ]),
-        }
-    }
-}
-
-impl FuzzySource<EmuFile> for RootSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
-        self.names.search(query, limit)
-    }
-
-    fn get_text(&self, id: usize) -> String {
-        self.names.get_text(id)
-    }
-
-    fn get_info(&self, _id: usize) -> String {
-        "".into()
-    }
-}
-
-impl Navigator {
-    fn setup(&mut self) {
-        let source = Arc::new(RootSource::new());
-        let root = NavList { id: 0, source };
-        self.push(root);
-    }
-}
-
-fn handle_navigator(
-    mut settings: ResMut<AppSettings>,
-    input: Res<ButtonInput<KeyCode>>,
-    mut writer: MessageWriter<CmdMessage>,
-    mut navigator: ResMut<Navigator>,
-    mut reader: MessageReader<FuzzyListSelect>,
-    mut list_writer: MessageWriter<ShowFuzzyList>,
-) {
-    if input.just_pressed(KeyCode::ArrowLeft) {
-        navigator.back().show(&mut list_writer);
-    } else if input.just_pressed(KeyCode::ArrowRight) {
-        navigator.forward().show(&mut list_writer);
-    }
-    if navigator.pos < 0 {
-        return;
-    }
-    let current = &navigator.stack[navigator.pos as usize];
-    let id = current.id;
-    for msg in reader.read() {
-        if msg.id == id {
-            debug!("Selected {}", msg.text);
-            if msg.id == 98 {
-                // Selected party
-                let files = settings.files;
-                let subset: Vec<u32> = files
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, f)| f.meta.get("party").copied().unwrap_or("") == msg.text)
-                    .map(|(i, _)| i as u32)
-                    .collect();
-                navigator
-                    .push(NavList {
-                        id: 99,
-                        source: Arc::new(PickerSource::new(files, &subset)),
-                    })
-                    .show(&mut list_writer);
-            } else if msg.text == "Demozoo" {
-                navigator
-                    .push(NavList {
-                        id: 99,
-                        source: Arc::new(FilePickerSource::new(settings.files)),
-                    })
-                    .show(&mut list_writer);
-            } else if msg.text == "Parties" {
-                let parties: Vec<String> = settings
-                    .files
-                    .iter()
-                    .filter_map(|f| f.meta.get("party").copied())
-                    .filter(|p| !p.is_empty())
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
-                navigator
-                    .push(NavList {
-                        id: 98,
-                        source: Arc::new(AllWordsSource::new(parties)),
-                    })
-                    .show(&mut list_writer);
-            } else {
-                if msg.id == 99 {
-                    settings.current_game = msg.item as isize;
-                } else {
-                    settings.current_game = msg.item as isize;
-                }
-                writer.write(CmdMessage(Cmd::Reload));
-                // Selected item in Navigator
-                // Either push new Navigator or handle EmuFile
-            }
-        }
-    }
-}
 fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
@@ -588,7 +411,7 @@ pub struct PickerSource {
 }
 
 impl PickerSource {
-    fn new(files: &'static [EmuFile], subset: &[u32]) -> Self {
+    pub(crate) fn new(files: &'static [EmuFile], subset: &[u32]) -> Self {
         let names = subset
             .iter()
             .map(|&index| entry_name(&files[index as usize]))
@@ -646,7 +469,7 @@ pub struct FilePickerSource {
 }
 
 impl FilePickerSource {
-    fn new(files: &[EmuFile]) -> Self {
+    pub(crate) fn new(files: &[EmuFile]) -> Self {
         let mut names = Vec::with_capacity(files.len());
         let mut info = Vec::with_capacity(files.len());
         for file in files {
@@ -1136,7 +959,6 @@ fn open_select_menu(
 ) {
     if args.select {
         //writer.write(CmdMessage(Cmd::OpenFile));
-        navigator.setup();
         navigator.show(&mut writer);
     }
 }

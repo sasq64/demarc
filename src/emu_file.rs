@@ -772,6 +772,29 @@ impl EmuFile {
         self.meta.get(name).copied().unwrap_or("")
     }
 
+    pub fn get_party(&self) -> &'static str {
+        let Some(party) = self.meta.get("party") else {
+            return "";
+        };
+        party.splitn(3, ";").next().unwrap_or("")
+    }
+    pub fn get_compo(&self) -> &'static str {
+        let Some(party) = self.meta.get("party") else {
+            return "";
+        };
+        party.splitn(3, ";").nth(1).unwrap_or("")
+    }
+    pub fn get_party_and_compo(&self) -> (&'static str, &'static str) {
+        let Some(party) = self.meta.get("party") else {
+            return ("", "");
+        };
+        let mut parts = party.splitn(3, ";");
+        (
+            parts.next().unwrap_or_default(),
+            parts.next().unwrap_or_default(),
+        )
+    }
+
     pub fn cdc(&self) -> usize {
         self.game_info.awards.cdc()
     }

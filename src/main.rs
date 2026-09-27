@@ -41,6 +41,7 @@ mod media_keys;
 mod mouse_cursor;
 mod music_emu;
 mod music_vis;
+mod navigator;
 mod newsys;
 mod overrides;
 mod pixels;
