@@ -8,11 +8,12 @@
 //! the same thing on Linux.
 
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, VideoFrame};
 use crate::wine::native_command;
 use crate::workfile::WorkFile;
 
@@ -26,7 +27,7 @@ const FRAME_RATE: f64 = 60.0;
 
 pub struct WinRunner {
     child: Child,
-    frame: Vec<u32>,
+    frame: Arc<Vec<u32>>,
     aspect: f32,
     ended: bool,
 }
@@ -55,7 +56,7 @@ impl WinRunner {
             .with_context(|| format!("Could not start {program}"))?;
         Ok(Self {
             child,
-            frame: vec![0; FRAME_W * FRAME_H],
+            frame: Arc::new(vec![0; FRAME_W * FRAME_H]),
             aspect: cmd.width as f32 / cmd.height.max(1) as f32,
             ended: false,
         })
@@ -99,6 +100,14 @@ impl Backend for WinRunner {
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         f(FRAME_W, FRAME_H, &self.frame);
+    }
+
+    fn frame(&self) -> VideoFrame {
+        VideoFrame {
+            width: FRAME_W,
+            height: FRAME_H,
+            pixels: Arc::clone(&self.frame),
+        }
     }
 
     fn with_audio(&mut self, _f: &mut dyn FnMut(&[i16])) {}
