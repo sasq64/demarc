@@ -115,7 +115,7 @@ fn parse_res(text: &str) -> Option<(u32, u32)> {
 
 /// The `WINEDLLOVERRIDES` an entry asks for, if it asks for one.
 #[cfg(target_os = "linux")]
-pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
+pub fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
     meta.get(META_DLL_OVERRIDES)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
@@ -124,14 +124,14 @@ pub(crate) fn dll_overrides(meta: &HashMap<String, String>) -> Option<String> {
 
 /// Does an entry want a compatibility profile? See [`META_GL_COMPAT`].
 #[cfg(target_os = "linux")]
-pub(crate) fn gl_compat(meta: &HashMap<String, String>) -> bool {
+pub fn gl_compat(meta: &HashMap<String, String>) -> bool {
     meta.get(META_GL_COMPAT)
         .map(|v| is_yes(v))
         .unwrap_or(DEFAULT_GL_COMPAT)
 }
 
 /// Is a meta value one of the ways of saying yes?
-pub(crate) fn is_yes(value: &str) -> bool {
+pub fn is_yes(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "true" | "1" | "yes" | "on"
@@ -140,7 +140,7 @@ pub(crate) fn is_yes(value: &str) -> bool {
 
 /// Where `name` is on `PATH`, if it is anywhere on it.
 #[cfg(target_os = "linux")]
-pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
+pub fn find_tool(name: &str) -> Option<PathBuf> {
     find_in(&std::env::var_os("PATH")?, name)
 }
 
@@ -158,19 +158,19 @@ fn find_in(search_path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn has_tool(name: &str) -> bool {
+pub fn has_tool(name: &str) -> bool {
     find_tool(name).is_some()
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn wine_prefix() -> Result<PathBuf> {
+pub fn wine_prefix() -> Result<PathBuf> {
     let home = dirs::home_dir().context("No home directory to put a wine prefix in")?;
     Ok(home.join(PREFIX_DIR))
 }
 
 /// One of the things a Windows release needs before it can run at all.
 #[cfg(target_os = "linux")]
-pub(crate) struct Need {
+pub struct Need {
     /// What is being looked for, as the report names it.
     pub what: &'static str,
     /// Where it was found — or, when it was not, what to do about that.
@@ -179,7 +179,7 @@ pub(crate) struct Need {
 
 /// What [`check_wine`] found: every requirement, in the order it looked.
 #[cfg(target_os = "linux")]
-pub(crate) struct WineCheck {
+pub struct WineCheck {
     pub needs: Vec<Need>,
 }
 
@@ -222,7 +222,7 @@ impl WineCheck {
 
 /// Can a Windows release be run on this machine?
 #[cfg(target_os = "linux")]
-pub(crate) fn check_wine() -> WineCheck {
+pub fn check_wine() -> WineCheck {
     let tool = |what: &'static str, fix: &str| Need {
         what,
         found: find_tool(what).ok_or_else(|| format!("not on PATH - {fix}")),
@@ -382,7 +382,7 @@ impl Config {
 ///
 /// Wanted whatever the dialog setting is: `pick` only turns off the pressing of
 /// buttons, not the driver's other job of saying when the demo starts and ends.
-pub(crate) fn autodlg() -> Option<PathBuf> {
+pub fn autodlg() -> Option<PathBuf> {
     let driver = system_dir().join(AUTODLG);
     if driver.is_file() {
         return Some(driver);
@@ -395,7 +395,7 @@ pub(crate) fn autodlg() -> Option<PathBuf> {
 }
 
 /// The wine command a Windows release runs under — see [`wine_command`].
-pub(crate) struct WineCommand {
+pub struct WineCommand {
     /// `wine` and everything after it: the virtual desktop if one was asked
     /// for, the dialog driver if there is one, and the demo. Ready to be
     /// spawned as it stands — no shell is involved, so nothing is quoted and
@@ -408,7 +408,7 @@ pub(crate) struct WineCommand {
 
 /// Work out how a release would be started, without starting it.
 #[cfg(target_os = "linux")]
-pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
+pub fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
     let cfg = Config::from_meta(exe, meta)?;
     let mut argv = vec!["wine".to_string()];
     argv.extend(cfg.wine_args(autodlg().as_deref()));
@@ -423,7 +423,7 @@ pub(crate) fn wine_command(exe: &Path, meta: &HashMap<String, String>) -> Result
 /// under and no session to compose it into: the dialog driver and the demo,
 /// and nothing else. See [`crate::win_runner`].
 #[cfg(target_os = "windows")]
-pub(crate) fn native_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
+pub fn native_command(exe: &Path, meta: &HashMap<String, String>) -> Result<WineCommand> {
     let mut cfg = Config::from_meta(exe, meta)?;
     cfg.exe = plain(cfg.exe);
     Ok(WineCommand {
@@ -451,7 +451,7 @@ fn plain(path: PathBuf) -> PathBuf {
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[cfg(target_os = "linux")]
-pub(crate) fn close_prefix(prefix: &Path) {
+pub fn close_prefix(prefix: &Path) {
     if !has_tool("wineserver") {
         sweep_prefix(prefix, None);
         return;

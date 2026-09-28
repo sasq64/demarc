@@ -13,57 +13,48 @@ use clap::Parser;
 // of demarc keeps its `crate::backend` / `crate::retro_emu` paths.
 pub use retro_core::{backend, libretro, pixels, retro_emu};
 
+// Likewise the loading pipeline and the backends that need no frontend. Both
+// re-export blocks keep the rest of demarc's `crate::<module>` paths working.
+pub use ::newsys::{
+    cache, cbmconvert, degas, fetch, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
+    system_dir, tiff_pal, utils, workfile, zx_scr,
+};
+#[cfg(target_os = "windows")]
+pub use ::newsys::win_runner;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub use ::newsys::wine;
+#[cfg(target_os = "linux")]
+pub use ::newsys::wine_sandbox;
+
 mod audio;
-mod cache;
-mod cbmconvert;
 mod commands;
 mod config;
 mod cross_fade;
-mod degas;
 mod demarc_settings;
 mod dj;
 mod egui_settings;
 mod egui_ui;
 mod emu_file;
 mod emulator;
-mod fetch;
 mod files;
 mod frontend;
 mod fuzzy_list;
 mod headless;
-mod ilbm;
-mod image_emu;
 mod jobs;
-mod libloader;
 mod load_error;
 mod loading;
-mod m3u;
 mod media_keys;
 mod mouse_cursor;
-mod music_emu;
-mod music_vis;
 mod navigator;
-mod newsys;
 mod overrides;
 mod post_process;
 mod remote_control;
 mod screensaver;
 mod shader_dialog;
 mod speed_test;
-mod system_dir;
-mod tiff_pal;
-mod utils;
-mod workfile;
-mod zx_scr;
 
 #[cfg(feature = "flash")]
 mod flash_emu;
-#[cfg(target_os = "windows")]
-mod win_runner;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-mod wine;
-#[cfg(target_os = "linux")]
-mod wine_sandbox;
 
 use commands::CommandPlugin;
 use cross_fade::CrossFadePlugin;
@@ -77,7 +68,6 @@ use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPat
 use remote_control::RemoteControlPlugin;
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
-use system_dir::system_dir;
 
 use tracing_subscriber::EnvFilter;
 
@@ -491,7 +481,7 @@ fn main() {
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
     };
-    let sys = std::sync::Arc::new(NewSys::new(&args));
+    let sys = std::sync::Arc::new(NewSys::new(&(&args).into()));
     let settings = AppSettings {
         demozoo_overrides: overrides::load_default(),
         boot_file: args.boot_file.clone().map(files::leak),

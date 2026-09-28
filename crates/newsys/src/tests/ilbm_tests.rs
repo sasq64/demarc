@@ -6,7 +6,7 @@ use super::*;
 /// a conversion running in another test switches the process-wide working
 /// directory for its duration (see `cbmconvert::CwdGuard`).
 fn root(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    Path::new(env!("DEMARC_ROOT")).join(rel)
 }
 
 fn get_path(name: &str) -> PathBuf {

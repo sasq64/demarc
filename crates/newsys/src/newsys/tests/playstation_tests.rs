@@ -1,7 +1,7 @@
 use super::*;
 
 fn testdata() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    Path::new(env!("DEMARC_ROOT"))
         .join("testdata")
         .join("psx")
 }

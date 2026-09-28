@@ -5,8 +5,11 @@ edition.workspace = true
 description = "libretro core loading and frame/audio plumbing, free of any frontend"
 
 # `cdylib` is what an Android APK loads; `rlib` is what demarc links against.
+# `doctest = false`: libretro.rs is bindgen output, and the C snippets bindgen
+# copies out of the libretro headers are not Rust.
 [lib]
 crate-type = ["rlib", "cdylib"]
+doctest = false
 
 # The minimal single-core player. `test = false`: the modules it uses carry
 # their own unit tests, which the lib target already runs.

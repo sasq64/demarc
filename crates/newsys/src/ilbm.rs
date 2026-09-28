@@ -186,7 +186,7 @@ fn display_scale(form_type: &str, header: &BmHeader, camg: u32) -> (usize, usize
 /// Replicate each element of a `width` x `height` grid `sx` times horizontally
 /// and `sy` times vertically (nearest-neighbour upscale). Used to apply the
 /// aspect-ratio correction from [`display_scale`] to pixels or palette indices.
-pub(crate) fn scale_grid<T: Copy>(
+pub fn scale_grid<T: Copy>(
     src: &[T],
     width: usize,
     height: usize,
@@ -211,7 +211,7 @@ pub(crate) fn scale_grid<T: Copy>(
 /// returning the output and how many bytes of `src` it consumed. (Callers that
 /// store something after the packed data — see [`crate::degas`] — need to know
 /// where it ends.)
-pub(crate) fn unpack_byterun1(src: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
+pub fn unpack_byterun1(src: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
     let mut out = Vec::with_capacity(expected);
     let mut i = 0;
     while i < src.len() && out.len() < expected {

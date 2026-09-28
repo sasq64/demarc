@@ -2,9 +2,8 @@ use super::*;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
 
-use crate::Args;
+use crate::SysOpts;
 use crate::newsys::NewSys;
 use crate::system_dir;
 
@@ -377,12 +376,12 @@ fn boots_an_ibm_xt_to_rom_basic() {
     );
     let font = super::screen::load_font(&roms);
 
-    let cfg = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let cfg = Path::new(env!("DEMARC_ROOT"))
         .join("testdata")
         .join("pc")
         .join("ibmxt.cfg");
 
-    let args = Args::parse_from(["demarc"]);
+    let args = SysOpts::default();
     let systems = NewSys::new(&args);
     let mut loaded = systems
         .load_file(&cfg, &HashMap::new(), None)

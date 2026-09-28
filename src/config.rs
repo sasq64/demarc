@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use bevy::{color::Color, ecs::resource::Resource, render::extract_resource::ExtractResource};
+use newsys::{CbmSystem, SysOpts};
 use clap::{
     ColorChoice, Parser,
     builder::{Styles, styling},
@@ -253,8 +254,8 @@ pub struct Args {
     pub color_cycle: bool,
 
     /// Commodore variant (C64 and C16 well supported)
-    #[arg(long, value_enum, default_value_t = CbmSystem::C64)]
-    pub cbm_variant: CbmSystem,
+    #[arg(long, value_enum, default_value_t = CbmSystemArg::C64)]
+    pub cbm_variant: CbmSystemArg,
 
     /// Don't silence libretro cores' stdout/stderr (for debugging)
     #[arg(long)]
@@ -392,8 +393,10 @@ fn parse_scale_mode(s: &str) -> Result<ScaleModeArg, String> {
     }
 }
 
+/// `--cbm-variant`, as clap sees it. The systems have their own copy (they do
+/// not know what a command line is), and this converts into it.
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
-pub enum CbmSystem {
+pub enum CbmSystemArg {
     /// Default Commodore C64
     C64,
     /// Commodore 128
@@ -404,6 +407,39 @@ pub enum CbmSystem {
     C16,
     /// VIC 20
     VIC20,
+}
+
+impl From<CbmSystemArg> for CbmSystem {
+    fn from(s: CbmSystemArg) -> Self {
+        match s {
+            CbmSystemArg::C64 => CbmSystem::C64,
+            CbmSystemArg::C128 => CbmSystem::C128,
+            CbmSystemArg::Dtv => CbmSystem::Dtv,
+            CbmSystemArg::C16 => CbmSystem::C16,
+            CbmSystemArg::VIC20 => CbmSystem::VIC20,
+        }
+    }
+}
+
+/// The slice of the command line the systems care about.
+impl From<&Args> for SysOpts {
+    fn from(a: &Args) -> Self {
+        SysOpts {
+            aga: a.aga,
+            cbm_variant: a.cbm_variant.into(),
+            extra_options: a.extra_options.clone(),
+            fast: a.fast,
+            fast_load: a.fast_load,
+            grid: a.grid,
+            latency: a.latency,
+            lua: a.lua.clone(),
+            proc: a.proc,
+            reu: a.reu,
+            silent_drive: a.silent_drive,
+            unadf: a.unadf,
+            xmem: a.xmem,
+        }
+    }
 }
 
 impl From<ScaleModeArg> for ScaleMode {

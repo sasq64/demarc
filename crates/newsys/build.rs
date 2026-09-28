@@ -6,6 +6,19 @@ use std::time::UNIX_EPOCH;
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 
+/// Everything this script reads — `external/`, `system/` — lives at the repo
+/// root, two levels above this crate. Paths stay relative so `rerun-if-changed`
+/// keeps working; `rel_name` strips the prefix back off wherever a path is used
+/// as a name rather than opened.
+const ROOT: &str = "../..";
+
+/// Repo-root-relative form of `path`: what `system.zip` stores, what
+/// `system_dir()` extracts, and what `SKIP_DIRS` is written in.
+fn rel_name(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    s.strip_prefix("../../").unwrap_or(&s).to_string()
+}
+
 fn main() {
     build_unrar_isnt_shim();
     build_cbmconvert();
@@ -40,7 +53,7 @@ fn build_unrar_isnt_shim() {
 /// We build the C sources directly rather than via cbmconvert's CMakeLists.txt:
 /// the tool is a flat set of `.c` files with no configuration step.
 fn build_cbmconvert() {
-    const DIR: &str = "external/cbmconvert";
+    const DIR: &str = "../../external/cbmconvert";
     // The source set the upstream Makefile links into the `cbmconvert` binary.
     const SRCS: &[&str] = &[
         "main.c",
@@ -86,7 +99,7 @@ fn build_cbmconvert() {
 /// hardware; `adfLibInit` registers the portable "dump" driver that reads .adf
 /// files, and that is the only one we ever ask for.
 fn build_adflib() {
-    const DIR: &str = "external/ADFlib/src";
+    const DIR: &str = "../../external/ADFlib/src";
     const SHIM: &str = "src/c_shims/adf_unpack_shim.c";
 
     let Ok(sources) = std::fs::read_dir(DIR) else {
@@ -141,7 +154,7 @@ fn build_adflib() {
 /// stdio streams instead of amiberry's `struct zfile`; the header of that file
 /// says what else changed.
 fn build_dms() {
-    const DIR: &str = "external/dms";
+    const DIR: &str = "../../external/dms";
     const SHIM: &str = "src/c_shims/dms_unpack_shim.c";
 
     let mut build = cc::Build::new();
@@ -223,11 +236,11 @@ fn build_system_zip() {
     // Collect entries first and sort them so the archive layout is stable
     // across builds.
     let mut entries = Vec::new();
-    if collect_entries(Path::new("system"), &mut entries) {
+    if collect_entries(&Path::new(ROOT).join("system"), &mut entries) {
         // Nothing under `system/` is written at runtime, so the whole tree can
         // be watched with one line. (It never is in practice -- see the note in
         // `collect_entries` -- but then the walk has emitted the lines itself.)
-        println!("cargo:rerun-if-changed=system");
+        println!("cargo:rerun-if-changed={ROOT}/system");
     }
     entries.sort();
 
@@ -251,7 +264,7 @@ fn build_system_zip() {
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for path in &entries {
-        let name = path.to_string_lossy().replace('\\', "/");
+        let name = rel_name(path);
         if path.is_dir() {
             writer
                 .add_directory(name, options)
@@ -284,7 +297,7 @@ fn build_system_zip() {
 fn input_fingerprint(entries: &[PathBuf]) -> String {
     let mut hasher = Sha256::new();
     for path in entries {
-        hasher.update(path.to_string_lossy().replace('\\', "/").as_bytes());
+        hasher.update(rel_name(path).as_bytes());
         if let Ok(meta) = path.metadata() {
             hasher.update(meta.len().to_le_bytes());
             if let Ok(mtime) = meta.modified()
@@ -335,8 +348,8 @@ fn collect_entries(dir: &Path, out: &mut Vec<PathBuf>) -> bool {
     for entry in read_dir.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            let rel = path.to_string_lossy().replace('\\', "/");
-            if SKIP_DIRS.contains(&rel.as_ref()) {
+            let rel = rel_name(&path);
+            if SKIP_DIRS.contains(&rel.as_str()) {
                 pristine = false;
                 continue;
             }

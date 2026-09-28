@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -10,6 +10,25 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::cache::FileCache;
+
+/// Bytes still to arrive, across every download whose size is known.
+static BYTES_IN_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+pub fn download_bytes_expected(bytes: u64) {
+    BYTES_IN_PROGRESS.fetch_add(bytes, Ordering::Relaxed);
+}
+
+/// Saturates at zero, like `DownloadCounter::ended`.
+pub fn download_bytes_received(bytes: u64) {
+    let _ = BYTES_IN_PROGRESS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(bytes))
+    });
+}
+
+pub fn bytes_in_progress() -> u64 {
+    BYTES_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
 
 /// Give up after this many HTTP redirects, matching typical browser limits.
 const MAX_REDIRECTS: usize = 10;
@@ -475,7 +494,7 @@ struct CountingWriter<'a, W> {
 impl<'a, W: Write> CountingWriter<'a, W> {
     fn new(inner: W, total: Option<u64>, on_progress: OnProgress<'a>) -> Self {
         if let Some(total) = total {
-            crate::emu_file::download_bytes_expected(total);
+            download_bytes_expected(total);
         }
         Self {
             inner,
@@ -497,14 +516,14 @@ impl<W> CountingWriter<'_, W> {
 impl<W> Drop for CountingWriter<'_, W> {
     fn drop(&mut self) {
         // A transfer that failed or came up short gives back what never arrived.
-        crate::emu_file::download_bytes_received(self.remaining());
+        download_bytes_received(self.remaining());
     }
 }
 
 impl<W: Write> Write for CountingWriter<'_, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
-        crate::emu_file::download_bytes_received(self.remaining().min(written as u64));
+        download_bytes_received(self.remaining().min(written as u64));
         self.done += written as u64;
         (self.on_progress)(self.done, self.total);
         Ok(written)

@@ -5,7 +5,7 @@ use std::path::Path;
 /// and verify cbmconvert produced it with the expected `$0801` load address.
 #[test]
 fn t64_to_prg() {
-    let t64 = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/c64/BADALM.T64");
+    let t64 = Path::new(env!("DEMARC_ROOT")).join("testdata/c64/BADALM.T64");
     assert!(t64.is_file(), "missing test fixture: {}", t64.display());
 
     // cbmconvert writes output relative to the CWD, so run inside a temp dir.

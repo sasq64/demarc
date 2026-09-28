@@ -9,7 +9,7 @@ use super::*;
 /// test, so it costs a ~15s transcode the first time and nothing after.
 #[test]
 fn rewrites_an_mp3_cue_to_wav() {
-    let cue = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/psx/monophobia/mono.cue");
+    let cue = Path::new(env!("DEMARC_ROOT")).join("testdata/psx/monophobia/mono.cue");
     let out = prepare_disc(&cue)
         .unwrap()
         .expect("a sheet naming an MP3 needs preparing");

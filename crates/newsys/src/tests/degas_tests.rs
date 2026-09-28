@@ -15,7 +15,7 @@ const SAMPLES: [(&str, (u32, u32)); 5] = [
 ];
 
 fn get_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    Path::new(env!("DEMARC_ROOT"))
         .join("testdata/degas")
         .join(name)
 }

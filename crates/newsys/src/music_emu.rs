@@ -666,7 +666,7 @@ impl Backend for MusicEmu {
 /// Generating the file keeps the test self-contained — no binary asset, and
 /// nothing borrowed from the `musix` checkout.
 #[cfg(test)]
-pub(crate) fn write_test_mod(path: &Path) {
+pub fn write_test_mod(path: &Path) {
     const SAMPLE_WORDS: usize = 16;
     let mut m = Vec::new();
     m.extend_from_slice(&[0u8; 20]); // song title

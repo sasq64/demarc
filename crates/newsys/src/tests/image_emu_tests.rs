@@ -4,7 +4,7 @@ use super::*;
 /// a conversion running in another test switches the process-wide working
 /// directory for its duration (see `cbmconvert::CwdGuard`).
 fn root(rel: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    Path::new(env!("DEMARC_ROOT")).join(rel)
 }
 
 /// [`get_info`](Backend::get_info) names the format the file turned out to

@@ -1,0 +1,64 @@
+[package]
+name = "newsys"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Figures out which machine a demoscene release belongs to, and gets it booted"
+
+[dependencies]
+# `System::create` hands back one of these, built on the libretro layer.
+retro-core = { path = "../retro-core" }
+
+anyhow.workspace = true
+dirs.workspace = true
+libloading.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+zip.workspace = true
+
+# Unpacking releases: they are often double-packed, and in every format the
+# scene ever used.
+sevenz-rust2 = "0.20.2"
+unarc-rs = "0.6.1"
+walkdir = "2.5.0"
+# Disk-image file systems: FAT for the DOS/Windows builders, and the C64
+# containers cbmconvert speaks.
+fatfs = "0.3.6"
+
+# Fetching releases and cores, into the content-addressed cache.
+percent-encoding.workspace = true
+suppaftp.workspace = true
+ureq.workspace = true
+url = "2"
+
+# `overrides.toml` fixups: base64 `contents`, bsdiff `format = "bsdiff"` deltas.
+base64 = "0.23.1"
+qbsdiff = "1.4.4"
+
+# The still-image backend. PCX comes from image-extras, which plugs into
+# `image`'s decoding/sniffing hooks rather than being driven directly.
+image.workspace = true
+image-extras = { version = "0.1.1", default-features = false, features = ["pcx"] }
+
+# The music backend: `musix` renders the audio, Luau draws the visualizer, and
+# realfft/notify serve the script (spectrum, hot reload).
+musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
+mlua.workspace = true
+notify = "8"
+realfft = "3.5"
+
+# CD audio tracks on a PlayStation disc image (src/newsys/disc.rs).
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
+[target."cfg(unix)".dependencies]
+# Killing a stuck wine process, and the uid the sandbox maps.
+libc.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+sha2.workspace = true
+zip.workspace = true

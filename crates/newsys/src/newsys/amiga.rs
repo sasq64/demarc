@@ -11,7 +11,7 @@ use tracing::{debug, info};
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 
 use crate::{
-    Args,
+    SysOpts,
     backend::Backend,
     libloader,
     newsys::{collect_disk_images, walk_dir},
@@ -296,7 +296,7 @@ pub struct AmigaSystem {
 }
 
 impl AmigaSystem {
-    pub fn new(args: &Args) -> Self {
+    pub fn new(args: &SysOpts) -> Self {
         Self {
             aga: args.aga,
             xmem: args.xmem,

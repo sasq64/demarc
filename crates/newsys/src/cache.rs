@@ -144,7 +144,7 @@ impl FileCache {
     /// A cache rooted at an explicit path, for tests that must not touch — or
     /// depend on the state of — the user's real cache directory.
     #[cfg(test)]
-    pub(crate) fn at(root: PathBuf, size_limit: u64) -> Self {
+    pub fn at(root: PathBuf, size_limit: u64) -> Self {
         Self {
             root,
             levels: vec![Level {

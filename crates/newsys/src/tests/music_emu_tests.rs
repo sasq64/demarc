@@ -40,7 +40,7 @@ impl MusixPlayer for FakePlayer {
 /// `MusicEmu::new` only takes one if it is handed the path, so the tests
 /// that care about pixels ask for it explicitly.
 fn script() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("system/lua/scope.lua")
+    Path::new(env!("DEMARC_ROOT")).join("system/lua/scope.lua")
 }
 
 /// The colour `scope.lua` draws the left channel in. Written out through
@@ -277,7 +277,7 @@ fn sustained_silence_ends_the_song() {
 /// and the module used here is not one of them, so a missing directory is
 /// fine — [`init_musix`] warns and carries on.
 fn data_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("system/musix")
+    Path::new(env!("DEMARC_ROOT")).join("system/musix")
 }
 
 /// A module of this test's own, in a directory that goes away with the
@@ -367,7 +367,7 @@ fn a_directory_without_music_is_rejected() {
 /// for file" while every other format was fine.
 #[test]
 fn a_second_sndh_loads_while_the_first_is_playing() {
-    let song = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/music/Pushover.sndh");
+    let song = Path::new(env!("DEMARC_ROOT")).join("testdata/music/Pushover.sndh");
     let mut first = MusicEmu::new(&song, &data_dir(), None).expect("first SNDH");
     let mut second = MusicEmu::new(&song, &data_dir(), None).expect("second SNDH");
 

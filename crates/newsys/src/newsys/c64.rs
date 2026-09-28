@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use crate::{
-    Args,
+    SysOpts,
     backend::Backend,
     cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
@@ -47,7 +47,7 @@ pub struct C64System {
 }
 
 impl C64System {
-    pub fn new(args: &Args) -> Self {
+    pub fn new(args: &SysOpts) -> Self {
         Self {
             fast_load: args.fast_load,
             reu: args.reu,

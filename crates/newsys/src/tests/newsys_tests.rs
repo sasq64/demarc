@@ -1,4 +1,3 @@
-use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt};
 
 use super::*;
@@ -11,7 +10,7 @@ fn init_tracing() {
 }
 
 fn test_load(path: &Path, name: &str) -> WorkFile {
-    let args = Args::parse_from(["demarc"]);
+    let args = SysOpts::default();
     let s = NewSys::new(&args);
 
     let mut result = s.load_file(path, &HashMap::new(), None).unwrap();
@@ -67,7 +66,7 @@ fn unpacking_reaches_into_a_double_packed_release() {
 /// An IFF still image, so this needs no libretro core.
 #[test]
 fn set_meta_reaches_the_next_release() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     let iff = root.join("testdata").join("test.iff");
     let latency_of = |sys: &NewSys| {
         sys.load_file(&iff, &HashMap::new(), None)
@@ -76,7 +75,7 @@ fn set_meta_reaches_the_next_release() {
             .get_meta_or("latency", "")
     };
 
-    let sys = NewSys::new(&Args::parse_from(["demarc", "--latency", "2"]));
+    let sys = NewSys::new(&SysOpts { latency: 2, ..Default::default() });
     assert_eq!(latency_of(&sys), "2");
 
     sys.set_meta("latency", "5".into());
@@ -224,7 +223,7 @@ fn a_bsdiff_patch_rewrites_the_file_it_names() {
         .unwrap();
     let patches = [Patch {
         target: "demo.dat",
-        data: crate::files::leak(base64::engine::general_purpose::STANDARD.encode(&delta)),
+        data: crate::leak(base64::engine::general_purpose::STANDARD.encode(&delta)),
         bsdiff: true,
         ..Default::default()
     }];
@@ -237,7 +236,7 @@ fn a_bsdiff_patch_rewrites_the_file_it_names() {
 
 #[test]
 fn test_c64() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("c64");
 
     test_load(&testdata.join("quantum.prg"), "C64");
@@ -252,7 +251,7 @@ fn test_c64() {
 #[test]
 fn test_amiga() {
     init_tracing();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("amiga");
     test_load(&testdata.join("desert"), "Amiga");
     assert!(!testdata.join("desert").join("demo.m3u").exists());
@@ -308,7 +307,7 @@ fn test_music() {
 /// next to one doesn't win over it.
 #[test]
 fn test_degas_images() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("degas");
     test_load(&testdata.join("FUSE.PI1"), "Images");
     test_load(&testdata.join("BOLEK3.PC1"), "Images");
@@ -334,7 +333,7 @@ fn test_degas_images() {
 
 #[test]
 fn test_psx() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("psx");
     test_load(&testdata.join("paradox").join("pdx-051.psx"), "PSX");
     test_load(&testdata.join("monophobia"), "PSX");

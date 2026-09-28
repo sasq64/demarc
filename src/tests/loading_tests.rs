@@ -1,13 +1,10 @@
 use std::time::{Duration, Instant};
 
 use bevy::MinimalPlugins;
-use clap::Parser;
+use ::newsys::SysOpts;
 
 use super::*;
-use crate::{
-    Args,
-    emu_file::{DOWNLOAD_COUNTER, FileSource, UrlList},
-};
+use crate::emu_file::{DOWNLOAD_COUNTER, FileSource, UrlList};
 
 /// Spins up the task pools `load_async` needs, and nothing else.
 fn task_pools() -> App {
@@ -20,7 +17,7 @@ fn task_pools() -> App {
 /// The system table with stock settings, which is all `update_load` needs
 /// to hand the resolved file on to `load`.
 fn systems() -> Arc<NewSys> {
-    Arc::new(NewSys::new(&Args::parse_from(["demarc"])))
+    Arc::new(NewSys::new(&SysOpts::default()))
 }
 
 /// Starts a load the way `handle_loading` does: `load_async` itself only

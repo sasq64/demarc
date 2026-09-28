@@ -56,17 +56,8 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     })
 }
 
-/// Give a runtime-built string the `'static` lifetime an [`EmuFile`] wants.
-///
-/// The file list is built once and kept for the whole run, so nothing collected
-/// into it is ever freed anyway; leaking says so in the type and lets entries
-/// hold plain `&'static str` instead of `String`. Only used for the handful of
-/// strings that aren't already slices of the leaked db text — m3u tags and file
-/// stems, and the overrides read at startup (see [`crate::overrides`]) — so the
-/// leak is bounded by the size of the file list.
-pub(crate) fn leak(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
+// Lives beside `Override`, whose fields are what wants the `'static`.
+pub(crate) use newsys::leak;
 
 /// Parse a `key:value`-per-field line, e.g.
 /// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`, into its pairs. Fields without a

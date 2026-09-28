@@ -49,7 +49,7 @@ fn suicide_barbie_runs() {
     let core_path = crate::libloader::get_libretro(CORE_NAME).unwrap();
     // PPSSPP writes its settings under the system dir.
     let system_dir = tempfile::tempdir().unwrap();
-    let mut file = WorkFile::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("barbie"));
+    let mut file = WorkFile::new(Path::new(env!("DEMARC_ROOT")).join("barbie"));
     assert!(PspSystem {}.load(&mut file).unwrap());
     let mut emu = crate::retro_emu::RetroCoreDirect::new(
         &core_path,

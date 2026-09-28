@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::Args;
+use crate::SysOpts;
 
 use super::System;
 use crate::utils::read_at;
@@ -84,7 +84,7 @@ pub fn is_snes_rom(path: &Path) -> bool {
 pub struct SNESSystem {}
 
 impl SNESSystem {
-    pub fn new(_args: &Args) -> Self {
+    pub fn new(_args: &SysOpts) -> Self {
         Self {}
     }
 }

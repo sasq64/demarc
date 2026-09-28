@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::System;
 use crate::utils::{build_m3u, sort_disks};
-use crate::{Args, newsys::walk_dir, workfile::WorkFile};
+use crate::{SysOpts, newsys::walk_dir, workfile::WorkFile};
 use anyhow::Result;
 
 const CORE_NAME_ATARIXL: &str = "atari800";
@@ -46,7 +46,7 @@ fn is_atari_disk(header: &[u8]) -> bool {
 pub struct AtariXlSystem {}
 
 impl AtariXlSystem {
-    pub fn new(_args: &Args) -> Self {
+    pub fn new(_args: &SysOpts) -> Self {
         Self {}
     }
 }

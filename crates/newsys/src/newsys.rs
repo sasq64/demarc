@@ -7,12 +7,12 @@ use std::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace, warn};
 
 use crate::backend::Backend;
-use crate::emu_file::{Override, Patch};
+use crate::release_override::{Override, Patch};
 use crate::m3u::M3u;
 use crate::retro_emu;
 use crate::system_dir;
 use crate::workfile::WorkFile;
-use crate::{Args, libloader};
+use crate::{SysOpts, libloader};
 
 use crate::utils::{get_ext, has_archive_filename, has_extension, read_at, sort_disks};
 use crate::utils::{is_archive, unpack_into};
@@ -480,7 +480,7 @@ pub struct LoadResult {
 }
 
 impl NewSys {
-    fn get_systems(args: &Args) -> Vec<Box<dyn System>> {
+    fn get_systems(args: &SysOpts) -> Vec<Box<dyn System>> {
         vec![
             #[cfg(target_os = "linux")]
             Box::new(DosSystem {}),
@@ -510,7 +510,7 @@ impl NewSys {
             Box::new(WebSystem {}),
         ]
     }
-    pub fn new(args: &Args) -> Self {
+    pub fn new(args: &SysOpts) -> Self {
         let mut meta = HashMap::<String, String>::new();
         for opt in &args.extra_options {
             if let Some((key, val)) = opt.split_once("=") {

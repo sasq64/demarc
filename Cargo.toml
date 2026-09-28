@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/retro-core"]
+members = ["crates/newsys", "crates/retro-core"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -15,12 +15,19 @@ cc = "1"
 dirs = "6.0.0"
 libc = "0.2"
 libloading = "0.9"
+# `image` for the still-image backend and the frontend's screenshots; the rest
+# are used on both sides of the newsys boundary.
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga", "tiff"] }
+mlua = { version = "0.11", features = ["luau", "send"] }
+percent-encoding = "2"
 pollster = "0.4"
+suppaftp = "10"
 sha2 = "0.11"
 tempfile = "3.27.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 wgpu = "29"
+ureq = "3"
 winit = "0.30"
 zip = { version = "8", default-features = false, features = ["deflate", "deflate64"] }
 
@@ -49,6 +56,8 @@ anyhow.workspace = true
 # The libretro layer, split out so it can be built for targets the rest of
 # demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
 retro-core = { path = "crates/retro-core" }
+# Unpacking a release, working out which machine it is, and getting it booted.
+newsys = { path = "crates/newsys" }
 bevy = {
   version = "0.19.0",
   default-features = false,
@@ -62,30 +71,6 @@ bevy = {
 clap = { version = "4.6.1", features = ["color", "derive"] }
 cpal = "0.17.1"
 dirs.workspace = true
-fatfs = "0.3.6"
-image = {
-  version = "0.25.10",
-  default-features = false,
-  features = [
-    "bmp",
-    "gif",
-    "jpeg",
-    "png",
-    "tga",
-    "tiff",
-  ]
-}
-# PCX, which `image` itself doesn't carry. From the image-rs org, and it plugs
-# into `image` through its decoding/sniffing hooks (see `image_emu::load_image`)
-# rather than being a decoder we drive ourselves. Only the `pcx` format is
-# enabled; the rest of the crate's formats would pull in dependencies of their own.
-image-extras = {
-  version = "0.1.1",
-  default-features = false,
-  features = [
-    "pcx",
-  ]
-}
 libloading.workspace = true
 # Fork of librashader 0.11.4, branch `demarc`: three preset-parser fixes demarc
 # needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
@@ -104,21 +89,14 @@ librashader = {
     "runtime-wgpu",
   ]
 }
-# musix = { path = "../musicplayer" }
-musix = { git = "https://github.com/sasq64/musicplayer", branch = "demarc-version" }
-percent-encoding = "2"
 rand = "0.10.1"
 ringbuf = "0.5.0"
 rubato = "0.16"
 sha2.workspace = true
-suppaftp = "10"
-symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 tempfile.workspace = true
 thiserror = "2"
 tracing.workspace = true
 tracing-subscriber.workspace = true
-ureq = "3"
-url = "2"
 # The window and input for the `c64` binary, which has no Bevy in it. Same
 # version Bevy 0.19 uses, so it costs nothing extra to build.
 winit.workspace = true
@@ -141,19 +119,21 @@ bevy_egui = {
     "render",
   ]
 }
-# Luau, for the music visualization script (src/music_vis.rs). Luau rather than
-# PUC-Lua for its native `buffer` type: the script draws into a byte-addressed
-# block with `buffer.writeu32` instead of crossing the FFI once per pixel.
-# `luau` builds the interpreter from C++ source via `luau0-src`; no `vendored`
-# feature is needed (that one is for PUC-Lua). `send` makes `Lua` `Send`, which
-# `MusicEmu`'s hand-written `unsafe impl Send` needs to stay honest.
-mlua = { version = "0.11", features = ["luau", "send"] }
 nucleo-matcher = "0.3"
 # `block_on` for wgpu's adapter/device requests in the `c64` binary; also used
 # by the Flash backend.
 pollster.workspace = true
 # `--filter`: matched against each raw db line while collecting (see collect_db).
 regex = "1"
+image.workspace = true
+mlua.workspace = true
+percent-encoding.workspace = true
+suppaftp.workspace = true
+ureq.workspace = true
+# `src/overrides.rs`: db URLs, and the bsdiff deltas an override can carry.
+url = "2"
+qbsdiff = "1.4.4"
+
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
 #
 # That pulls wgpu-hal 27 into the lock file even with `flash` off, and wgpu-hal 27
@@ -181,19 +161,7 @@ ruffle_core = {
 ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
-unarc-rs = "0.6.1"
-sevenz-rust2 = "0.20.2"
-walkdir = "2.5.0"
 
-# The `contents` of a patch, which is binary and so is written base64 in the toml.
-base64 = "0.23.1"
-# `format = "bsdiff"` patches, applied in `newsys::apply_patches`. bsdiff 4
-# compatible, so the patch can be made with any bsdiff tool.
-qbsdiff = "1.4.4"
-# Hot-reload for that script. Already in the tree via bevy's `file_watcher`.
-notify = "8"
-# `get_spectrum()` for the script. Already in the tree via `rubato`.
-realfft = "3.5"
 resvg = "0.48.1"
 serde = { version = "1.0.229", features = ["derive"] }
 # `overrides.toml`, the per-release fixups read at startup (src/overrides.rs).
@@ -203,10 +171,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 # (src/shader_dialog.rs).
 toml = { version = "1.1.4", features = ["preserve_order"] }
 
-[build-dependencies]
-cc.workspace = true
-sha2.workspace = true
-zip = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
@@ -225,6 +189,10 @@ zbus = { version = "5", features = ["tokio"] }
 # Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
 # keeping the original stdout for tracing (see `silence_stdout` in main.rs).
 libc.workspace = true
+
+[dev-dependencies]
+# Encoding a patch the way overrides.toml carries one, in overrides_tests.
+base64 = "0.23.1"
 
 [features]
 default = []

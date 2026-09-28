@@ -11,7 +11,7 @@ use crate::music_emu::{self, MusicEmu};
 use crate::system_dir;
 use crate::utils::get_ext;
 use crate::workfile::WorkFile;
-use crate::{Args, libloader, retro_emu};
+use crate::{SysOpts, libloader, retro_emu};
 
 use super::System;
 
@@ -84,7 +84,7 @@ pub struct MusicSystem {
 }
 
 impl MusicSystem {
-    pub fn new(args: &Args) -> Self {
+    pub fn new(args: &SysOpts) -> Self {
         Self {
             lua: args.lua.clone(),
         }

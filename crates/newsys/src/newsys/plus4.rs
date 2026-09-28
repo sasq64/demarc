@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use super::System;
-use crate::config::CbmSystem;
+use crate::opts::CbmSystem;
 use crate::newsys::{collect_disk_images, walk_dir};
-use crate::{Args, workfile::WorkFile};
+use crate::{SysOpts, workfile::WorkFile};
 
 /// yapesdl, built as a libretro core out of `external/yapesdl` — see its
 /// `Makefile.libretro`. VICE's plus/4 emulation is incomplete enough that
@@ -24,7 +24,7 @@ pub struct Plus4System {
 }
 
 impl Plus4System {
-    pub fn new(args: &Args) -> Self {
+    pub fn new(args: &SysOpts) -> Self {
         Self {
             selected: matches!(args.cbm_variant, CbmSystem::C16),
         }

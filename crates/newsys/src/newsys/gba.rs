@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{Args, utils::read_header};
+use crate::{SysOpts, utils::read_header};
 
 use super::System;
 
@@ -55,7 +55,7 @@ pub fn is_gba_rom(header: &[u8]) -> bool {
 pub struct GBASystem {}
 
 impl GBASystem {
-    pub fn new(_args: &Args) -> Self {
+    pub fn new(_args: &SysOpts) -> Self {
         Self {}
     }
 }
