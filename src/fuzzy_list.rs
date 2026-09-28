@@ -51,6 +51,7 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         id
     }
 
+    #[cfg(test)]
     fn get_all_strings(&self) -> Vec<String> {
         let mut result = vec![];
         for i in self.search("", usize::MAX) {

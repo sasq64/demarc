@@ -102,6 +102,7 @@ pub trait Backend {
         0.5
     }
 
+    #[allow(dead_code)]
     fn audio_activity(&self) -> f32 {
         0.5
     }

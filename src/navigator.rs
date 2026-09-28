@@ -11,13 +11,10 @@ use crate::egui_ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 
-enum ListAction {
-    OpenFile,
-}
-
 pub(crate) struct NavList {
     id: usize,
     source: ListSource,
+    path: String,
 }
 
 impl NavList {
@@ -72,20 +69,22 @@ pub(crate) struct Navigator {
     pub(crate) stack: Vec<NavList>,
     files: HashMap<&'static str, &'static [EmuFile]>,
     mapping: Vec<(Regex, DbCallback)>,
-    path: String,
 }
 
 impl Navigator {
     pub(crate) fn new() -> Self {
         let source = Arc::new(RootSource::new());
-        let root = NavList { id: 0, source };
+        let root = NavList {
+            id: 0,
+            source,
+            path: "".into(),
+        };
         Self {
             pos: -1,
             showing: -1,
             files: HashMap::new(),
             stack: vec![root],
             mapping: Vec::new(),
-            path: "".into(),
         }
     }
     fn push(&mut self, nav_list: NavList) -> &mut Self {
@@ -120,15 +119,14 @@ impl Navigator {
         self.stack.push(NavList {
             id: 0,
             source: Arc::new(AllWordsSource::new(["Demozoo".to_string()].into())),
+            path: "".into(),
         });
         self
     }
 
     fn goto(&mut self, path: &str) -> &mut Self {
         if path.is_empty() {
-            self.go_root();
-            self.path = "".into();
-            return self;
+            return self.go_root();
         }
         debug!("Goto: '{}'", path);
         let (db, rest) = path.split_once('/').unwrap_or((path, ""));
@@ -140,21 +138,33 @@ impl Navigator {
             if let Some(m) = key.captures(rest) {
                 let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
                 let source = val(&groups, files);
-                self.push(NavList { id: 0, source });
-                self.path = path.into();
+                self.push(NavList {
+                    id: 0,
+                    source,
+                    path: path.into(),
+                });
                 return self;
             }
         }
         self
     }
 
-    fn enter(&mut self, path: &str) -> &mut Self {
-        if self.path.is_empty() {
-            return self.goto(path);
+    fn current_path(&self) -> &str {
+        if self.pos < 0 {
+            return "";
         }
-        self.goto(&(self.path.clone() + "/" + path))
+        &self.stack[self.pos as usize].path
     }
 
+    fn enter(&mut self, path: &str) -> &mut Self {
+        let current = self.current_path().to_string();
+        if current.is_empty() {
+            return self.goto(path);
+        }
+        self.goto(&(current + "/" + path))
+    }
+
+    #[cfg(test)]
     fn get_showing(&self) -> Vec<String> {
         if self.pos < 0 {
             return vec![];
@@ -231,13 +241,25 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
             files
                 .iter()
                 .map(|f| f.get_meta("platform"))
-                .filter(|p| !p.is_empty())
+                .filter(|p| !p.is_empty() && !p.contains(";"))
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .map(String::from)
                 .collect(),
         )
     })?;
+    navigator.register(
+        "Platforms/{platform}",
+        |path: &[&str], files: &'static [EmuFile]| {
+            let subset: Vec<u32> = files
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.get_meta("platform") == path[1])
+                .map(|(i, _)| i as u32)
+                .collect();
+            PickerSource::new(files, &subset)
+        },
+    )?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -267,9 +289,18 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
             PickerSource::new(files, &subset)
         },
     )?;
-    navigator.register("", |_path: &[&str], files: &'static [EmuFile]| {
+    navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         return AllWordsSource::new(["All".into(), "Parties".into(), "Platforms".into()].into());
     })?;
+
+    navigator.register(
+        "/{release}/dls",
+        |_path: &[&str], files: &'static [EmuFile]| {
+            let subset: Vec<u32> = files.iter().enumerate().map(|(i, _)| i as u32).collect();
+            PickerSource::new(files, &subset)
+        },
+    )?;
+
     Ok(())
 }
 
@@ -304,7 +335,12 @@ pub(crate) fn handle_navigator(
     for msg in reader.read() {
         if msg.id == id {
             debug!("Selected {:?}", msg);
-            if let Some(ef) = &msg.emu_file {
+            if let Some(_ef) = &msg.emu_file {
+                if msg.alt {
+                    navigator.enter("dls").show(&mut list_writer);
+                    continue;
+                }
+
                 settings.current_game = msg.item as isize;
                 writer.write(CmdMessage(Cmd::Reload));
             } else {

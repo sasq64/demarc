@@ -269,6 +269,7 @@ impl Emulator {
     /// synchronous path left it on failure: still asking to move on, so tv mode
     /// steps past the broken entry, while an interactive session clears them
     /// itself and stops on the error message.
+    #[allow(dead_code)]
     fn failed_load(
         &mut self,
         advance: (bool, bool),

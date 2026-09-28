@@ -184,7 +184,7 @@ fn an_override_picks_the_download_it_names() {
     let FileSource::Url(urls) = &source else {
         panic!("still a URL list, {source:?}")
     };
-    assert_eq!(urls.len(), 2);
+    assert_eq!(urls.as_slice().len(), 2);
 }
 
 /// The name is matched against the end of the whole URL, so an override can

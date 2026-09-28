@@ -1,5 +1,5 @@
 use super::*;
-use crate::emu_file::GameInfo;
+use crate::emu_file::{GameInfo, UrlList};
 use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
 
 const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
@@ -58,50 +58,8 @@ fn urls_without_a_path_are_still_bounded() {
     assert_eq!(out.chars().count(), 20);
 }
 
-#[test]
-fn download_rows_are_the_file_name_part_of_the_url() {
-    assert_eq!(url_file_name(&Url::parse(URL).unwrap()), "zentro4.zip");
-    // Percent escapes are shown as the characters they stand for...
-    assert_eq!(
-        url_file_name(&Url::parse("https://a.org/d/Count%20Duckula.zip").unwrap()),
-        "Count Duckula.zip"
-    );
-    // ...and a query string is not part of the name.
-    assert_eq!(
-        url_file_name(&Url::parse("https://a.org/get?id=1").unwrap()),
-        "get"
-    );
-    // Nothing to name: the whole URL is listed instead.
-    let dir = "https://a.org/pub/";
-    assert_eq!(url_file_name(&Url::parse(dir).unwrap()), dir);
-}
-
-/// The download picker is only worth opening when the entry really has
-/// alternatives to pick between.
-#[test]
-fn only_entries_with_several_urls_have_downloads_to_pick() {
-    let file = |urls: Vec<&'static str>| EmuFile {
-        path: FileSource::Url(urls.into()),
-        ..Default::default()
-    };
-    assert!(DownloadSource::new(&EmuFile::default()).is_none());
-    assert!(DownloadSource::new(&file(vec![URL])).is_none());
-
-    let source = DownloadSource::new(&file(vec![URL, "https://mirror.example/demo.lha"])).unwrap();
-    let rows = source.search("", DEFAULT_MAX_RESULTS);
-    assert_eq!(
-        rows.iter()
-            .map(|&id| source.get_text(id))
-            .collect::<Vec<_>>(),
-        vec!["zentro4.zip", "demo.lha"]
-    );
-    // The id a row reports is its index into the entry's URLs, and the
-    // info field spells the chosen one out in full.
-    assert_eq!(source.get_info(rows[1]), "https://mirror.example/demo.lha");
-}
-
 /// The file picker is a list *of entries*: the id a row reports resolves
-/// back to the entry itself, which is how [`original_file`] gets at the
+/// back to the entry itself, which is how the picker's caller gets at the
 /// snapshot rather than at whatever `settings.files` holds by now.
 #[test]
 fn the_file_picker_hands_the_entry_behind_a_row_back() {

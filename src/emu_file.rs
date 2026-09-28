@@ -94,10 +94,6 @@ impl UrlList {
         self.0.is_empty()
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
     pub fn first(&self) -> Option<&'static str> {
         self.get(0)
     }
@@ -112,13 +108,6 @@ impl UrlList {
 
     pub fn as_slice(&self) -> &[&'static str] {
         &self.0
-    }
-
-    /// The URLs parsed, for a caller that needs more than the text — taking a
-    /// URL apart into its path segments, say. Every entry parsed once already
-    /// (see [`Self::parse_field`]), so this cannot fail.
-    pub fn urls(&self) -> Vec<Url> {
-        self.iter().filter_map(|u| Url::parse(u).ok()).collect()
     }
 }
 
@@ -497,10 +486,6 @@ impl Awards {
     pub fn cdc(&self) -> usize {
         (self.0 & 0xff) as usize
     }
-    pub fn viewing_tip(&self) -> bool {
-        (self.0 & 0x100) != 0
-    }
-
     pub fn new(cdc: u32, vt: bool) -> Self {
         Self((cdc & 0xff) | if vt { 0x100 } else { 0 })
     }
