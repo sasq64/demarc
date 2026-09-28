@@ -194,6 +194,8 @@ pub struct ShowFuzzyList {
     pub id: usize,
     pub source: ListSource,
     pub prompt: Option<String>,
+    /// Shown above the search box, and hidden while empty.
+    pub title: String,
 }
 
 /// Emitted when the user picks a row (Enter, or Shift+Enter — see
@@ -256,6 +258,8 @@ pub struct HudState {
     /// Set when the list is (re-)opened: forces one re-query of the source and
     /// one scroll back to the restored selection.
     list_reopened: bool,
+    /// Text of the line above the search box, from [`ShowFuzzyList::title`].
+    list_title: String,
     list_info: String,
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
@@ -299,6 +303,9 @@ const ROW_SIZE: f32 = 28.0;
 const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
 /// Fraction of the screen height the list box is allowed to take up.
 const LIST_HEIGHT_FRACTION: f32 = 0.6;
+
+const TITLE_SIZE: f32 = 26.0;
+const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xaa, 0x7c);
 
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
@@ -573,6 +580,13 @@ fn render_list(
             panel_frame().show(ui, |ui| {
                 let inner_width = ui.available_width();
                 ui.set_width(inner_width);
+                if !state.list_title.is_empty() {
+                    ui.add(egui::Label::new(
+                        egui::RichText::new(&state.list_title)
+                            .size(TITLE_SIZE)
+                            .color(TITLE_COLOR),
+                    ));
+                }
                 // The picker is modal, so the search box keeps focus the whole
                 // time it is up: egui only routes key events to a focused
                 // widget, and a click on the emulator behind would otherwise
@@ -926,6 +940,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
         if let Some(prompt) = &msg.prompt {
             state.list_query = prompt.into();
         }
+        state.list_title = msg.title.clone();
         state.list_source = Some(msg.source.clone());
         // The source may be a different instance than last time (rebuilt, or
         // just re-measured for the info field), so re-query and re-describe.

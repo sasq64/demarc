@@ -23,6 +23,7 @@ impl NavList {
             id: self.id,
             source: self.source.clone(),
             prompt: Some("".into()),
+            title: self.path.clone(),
         });
     }
 }

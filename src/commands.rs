@@ -265,6 +265,7 @@ fn handle_textlist(
                 id: 99,
                 source: Arc::new(source),
                 prompt: None,
+                title: String::new(),
             });
         }
     }
