@@ -25,6 +25,7 @@ impl NavList {
         show_list.write(ShowFuzzyList {
             id: self.id,
             source: self.source.clone(),
+            prompt: Some("".into()),
         });
     }
 
@@ -71,6 +72,7 @@ pub(crate) struct Navigator {
     pub(crate) stack: Vec<NavList>,
     files: HashMap<&'static str, &'static [EmuFile]>,
     mapping: Vec<(Regex, DbCallback)>,
+    path: String,
 }
 
 impl Navigator {
@@ -83,6 +85,7 @@ impl Navigator {
             files: HashMap::new(),
             stack: vec![root],
             mapping: Vec::new(),
+            path: "".into(),
         }
     }
     fn push(&mut self, nav_list: NavList) -> &mut Self {
@@ -111,15 +114,52 @@ impl Navigator {
         }
     }
 
-    fn goto(&mut self, path: &str) {
+    fn go_root(&mut self) -> &mut Self {
+        self.stack.clear();
+        self.pos = 0;
+        self.stack.push(NavList {
+            id: 0,
+            source: Arc::new(AllWordsSource::new(["Demozoo".to_string()].into())),
+        });
+        self
+    }
+
+    fn goto(&mut self, path: &str) -> &mut Self {
+        if path.is_empty() {
+            self.go_root();
+            self.path = "".into();
+            return self;
+        }
+        debug!("Goto: '{}'", path);
+        let (db, rest) = path.split_once('/').unwrap_or((path, ""));
+        let Some(files) = self.files.get(db).copied() else {
+            warn!("No such database: {db}");
+            return self;
+        };
         for (key, val) in &self.mapping {
-            if let Some(m) = key.captures(path) {
+            if let Some(m) = key.captures(rest) {
                 let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
-                let source = val(&groups, self.files["Demozoo"]);
+                let source = val(&groups, files);
                 self.push(NavList { id: 0, source });
-                return;
+                self.path = path.into();
+                return self;
             }
         }
+        self
+    }
+
+    fn enter(&mut self, path: &str) -> &mut Self {
+        if self.path.is_empty() {
+            return self.goto(path);
+        }
+        self.goto(&(self.path.clone() + "/" + path))
+    }
+
+    fn get_showing(&self) -> Vec<String> {
+        if self.pos < 0 {
+            return vec![];
+        }
+        self.stack[self.pos as usize].source.get_all_strings()
     }
 
     /// Add a top level entry to the Navigator. It must be backed by a static
@@ -133,41 +173,75 @@ impl Navigator {
     // ie: "DemoZoo/Parties/Revision 2022" will match "Parties\/([^\/]*)\" and the callback
     // will be called with ["DemoZoo/Parties/Revision 2022", "Revision 2022"] and the EmuFiles
     // added for database "Demozoo"
+    pub fn register_regex<S: FuzzySource<EmuFile>>(
+        &mut self,
+        pattern: Regex,
+        callback: impl Fn(&[&str], &'static [EmuFile]) -> S + Send + Sync + 'static,
+    ) -> Result<()> {
+        debug!("Regex: {pattern:?}");
+        self.mapping.push((
+            pattern,
+            Box::new(move |groups, files| Arc::new(callback(groups, files))),
+        ));
+        Ok(())
+    }
+
+    // Register with simpler pattern; "Parties/{party}/{combo}" should become "Parties\/([^\/]*)\/([^\/]*)"
     pub fn register<S: FuzzySource<EmuFile>>(
         &mut self,
         pattern: &str,
         callback: impl Fn(&[&str], &'static [EmuFile]) -> S + Send + Sync + 'static,
     ) -> Result<()> {
-        self.mapping.push((
-            Regex::new(pattern)?,
-            Box::new(move |groups, files| Arc::new(callback(groups, files))),
-        ));
-        Ok(())
+        let mut rx = String::from("^.*");
+        for (i, part) in pattern.split('/').enumerate() {
+            if i > 0 {
+                rx.push('/');
+            }
+            if part.starts_with('{') && part.ends_with('}') {
+                rx.push_str("([^\\/]*)");
+            } else {
+                rx.push_str(&regex::escape(part));
+            }
+        }
+        rx.push('$');
+        self.register_regex(Regex::new(&rx)?, callback)
     }
 }
 
-fn setup_navigator(settings: Res<AppSettings>, mut navigator: ResMut<Navigator>) {
-    navigator.add_db("Demozoo", settings.files);
+pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> Result<()> {
+    navigator.add_db("Demozoo", files);
 
+    navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
+        FilePickerSource::new(files)
+    })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
         AllWordsSource::new(
             files
                 .iter()
-                .filter_map(|f| f.meta.get("party").copied())
+                .map(|f| f.get_party())
                 .filter(|p| !p.is_empty())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .map(String::from)
                 .collect(),
         )
-    });
-    navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
-        FilePickerSource::new(files)
-    });
-
+    })?;
+    navigator.register("Platforms", |_path: &[&str], files: &'static [EmuFile]| {
+        AllWordsSource::new(
+            files
+                .iter()
+                .map(|f| f.get_meta("platform"))
+                .filter(|p| !p.is_empty())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        )
+    })?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
+            println!("PATH: {}", path[1]);
             AllWordsSource::new(
                 files
                     .iter()
@@ -180,7 +254,7 @@ fn setup_navigator(settings: Res<AppSettings>, mut navigator: ResMut<Navigator>)
                     .collect(),
             )
         },
-    );
+    )?;
     navigator.register(
         "Parties/{name}/{compo}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -192,8 +266,22 @@ fn setup_navigator(settings: Res<AppSettings>, mut navigator: ResMut<Navigator>)
                 .collect();
             PickerSource::new(files, &subset)
         },
-    );
+    )?;
+    navigator.register("", |_path: &[&str], files: &'static [EmuFile]| {
+        return AllWordsSource::new(["All".into(), "Parties".into(), "Platforms".into()].into());
+    })?;
+    Ok(())
 }
+
+pub fn setup_navigator_bevy(
+    settings: Res<AppSettings>,
+    mut navigator: ResMut<Navigator>,
+) -> Result<()> {
+    setup_navigator(settings.files, &mut navigator)?;
+    navigator.go_root();
+    Ok(())
+}
+
 pub(crate) fn handle_navigator(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
@@ -215,69 +303,63 @@ pub(crate) fn handle_navigator(
     let id = current.id;
     for msg in reader.read() {
         if msg.id == id {
-            debug!("Selected {}", msg.text);
-            if msg.id == 98 {
-                // Selected party
-                let files = settings.files;
-                let subset: Vec<u32> = files
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, f)| f.meta.get("party").copied().unwrap_or("") == msg.text)
-                    .map(|(i, _)| i as u32)
-                    .collect();
-                navigator
-                    .push(NavList {
-                        id: 99,
-                        source: Arc::new(PickerSource::new(files, &subset)),
-                    })
-                    .show(&mut list_writer);
-            } else if msg.text == "Demozoo" {
-                navigator
-                    .push(NavList {
-                        id: 99,
-                        source: Arc::new(FilePickerSource::new(settings.files)),
-                    })
-                    .show(&mut list_writer);
-            } else if msg.text == "Parties" {
-                let parties: Vec<String> = settings
-                    .files
-                    .iter()
-                    .filter_map(|f| f.meta.get("party").copied())
-                    .filter(|p| !p.is_empty())
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
-                navigator
-                    .push(NavList {
-                        id: 98,
-                        source: Arc::new(AllWordsSource::new(parties)),
-                    })
-                    .show(&mut list_writer);
-            } else {
-                if msg.id == 99 {
-                    settings.current_game = msg.item as isize;
-                } else {
-                    settings.current_game = msg.item as isize;
-                }
+            debug!("Selected {:?}", msg);
+            if let Some(ef) = &msg.emu_file {
+                settings.current_game = msg.item as isize;
                 writer.write(CmdMessage(Cmd::Reload));
-                // Selected item in Navigator
-                // Either push new Navigator or handle EmuFile
+            } else {
+                navigator.enter(&msg.text).show(&mut list_writer);
             }
+            // settings.current_game = msg.item as isize;
+            // Selected item in Navigator
+            // Either push new Navigator or handle EmuFile
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::files::{DbFilter, collect_db};
+    use crate::{
+        emu_file::EmuFile,
+        files::{DbFilter, collect_db},
+        navigator::{Navigator, setup_navigator},
+    };
     use std::path::PathBuf;
 
     #[test]
     fn test_navigator() {
         let filter = DbFilter::default();
         let mut files = vec![];
-        let path: PathBuf = "../demodb/demozoo.txt".into();
+        let path: PathBuf = "demos.txt".into();
         collect_db(&path, &filter, &mut files).unwrap();
+        let files: &'static [EmuFile] = files.leak();
+        let mut navigator = Navigator::new();
+        setup_navigator(files, &mut navigator).unwrap();
+
+        navigator.goto("");
+        println!(">>Root");
+        for line in navigator.get_showing() {
+            println!("{line}");
+        }
+        println!(">>Demozoo");
+        navigator.goto("Demozoo");
+        for line in navigator.get_showing() {
+            println!("{line}");
+        }
+        println!(">>Demozoo/Parties");
+        navigator.goto("Demozoo/Parties");
+        for line in navigator.get_showing() {
+            println!("{line}");
+        }
+        println!(">>Compos");
+        navigator.goto("Demozoo/Parties/Evoke 2005");
+        for line in navigator.get_showing() {
+            println!("{line}");
+        }
+        println!(">>Demo");
+        navigator.goto("Demozoo/Parties/Evoke 2005/Demo");
+        for line in navigator.get_showing() {
+            println!("{line}");
+        }
     }
 }

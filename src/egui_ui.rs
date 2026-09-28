@@ -193,6 +193,7 @@ pub enum HudLocation {
 pub struct ShowFuzzyList {
     pub id: usize,
     pub source: ListSource,
+    pub prompt: Option<String>,
 }
 
 /// Emitted when the user picks a row (Enter, or Shift+Enter — see
@@ -539,7 +540,7 @@ fn render_list(
     if pick && let Some(&item) = state.list_items.get(selected) {
         writer.write(FuzzyListSelect {
             id: state.list_id,
-            item : source.get_item(item),
+            item: source.get_item(item),
             text: source.get_text(item),
             alt,
             emu_file: source.get_data(item).cloned(),
@@ -915,6 +916,9 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
             state.list_query.clear();
             state.list_selected = 0;
             state.list_scroll = 0.0;
+        }
+        if let Some(prompt) = &msg.prompt {
+            state.list_query = prompt.into();
         }
         state.list_source = Some(msg.source.clone());
         // The source may be a different instance than last time (rebuilt, or

@@ -51,6 +51,14 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         id
     }
 
+    fn get_all_strings(&self) -> Vec<String> {
+        let mut result = vec![];
+        for i in self.search("", usize::MAX) {
+            result.push(self.get_text(i));
+        }
+        result
+    }
+
     /// Free-form detail about the item with this id, shown in the
     /// multi-line field below the list as the selection moves. Newlines are
     /// honoured and long lines wrap. The default returns nothing, which hides

@@ -23,8 +23,9 @@ use crate::frontend::FrontendSet;
 use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
-use crate::post_process::{BorderMode, ScaleMode};
+use crate::navigator::setup_navigator_bevy;
 use crate::navigator::{Navigator, handle_navigator};
+use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
@@ -260,6 +261,7 @@ fn handle_textlist(
                     show_list.write(ShowFuzzyList {
                         id: DOWNLOAD_PICKER_ID,
                         source: Arc::new(source),
+                        prompt: None,
                     });
                     continue;
                 }
@@ -320,6 +322,7 @@ fn handle_textlist(
             show_list.write(ShowFuzzyList {
                 id: 99,
                 source: Arc::new(source),
+                prompt: None,
             });
         }
     }
@@ -967,7 +970,7 @@ impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>()
             .insert_resource(Navigator::new())
-            .add_systems(Startup, init_media_keys)
+            .add_systems(Startup, (init_media_keys, setup_navigator_bevy))
             .add_systems(OnEnter(AppState::Running), open_select_menu)
             .add_systems(
                 Update,
