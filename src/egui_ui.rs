@@ -364,8 +364,14 @@ fn scroll_area<T>(
     let id = ui.id();
     panel_frame()
         .show(ui, |ui| {
+            // An anchored `Area` hands its content last frame's size as the
+            // space available, so a scroll area that only caps its height
+            // stays stuck at whatever the area started out as. Pinning the
+            // minimum too makes the box exactly `view_height` from the first
+            // frame on, however little the rest of the picker asks for.
             let mut scroll = egui::ScrollArea::vertical()
                 .max_height(view_height)
+                .min_scrolled_height(view_height)
                 .auto_shrink([false, false]);
 
             let top = selected as f32 * ROW_HEIGHT;
@@ -970,3 +976,7 @@ impl Plugin for EguiUiPlugin {
             .insert_resource(HudState::default());
     }
 }
+
+#[cfg(test)]
+#[path = "tests/egui_ui_tests.rs"]
+mod tests;
