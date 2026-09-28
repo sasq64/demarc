@@ -1,6 +1,16 @@
 use super::*;
 
-use crate::post_process::DOWNSAMPLE_PRESET;
+use std::path::{Path, PathBuf};
+
+use crate::chains::should_start;
+
+/// The bundled downsample preset, relative to the `system` tree.
+const DOWNSAMPLE_PRESET: &str = "shaders/slangp/downsample/drez_1x.slangp";
+
+/// The repo's `system/` directory, which is what demarc ships and unpacks.
+fn system_dir(rel: &str) -> PathBuf {
+    Path::new(env!("DEMARC_ROOT")).join("system").join(rel)
+}
 
 /// The bundled downsample preset has to parse and reference a shader that
 /// is actually in the `system` tree — a preset that only fails at
@@ -9,7 +19,7 @@ use crate::post_process::DOWNSAMPLE_PRESET;
 #[test]
 fn bundled_downsample_preset_resolves() {
     use librashader::presets::ShaderPreset;
-    let path = crate::system_dir().join(DOWNSAMPLE_PRESET);
+    let path = system_dir(DOWNSAMPLE_PRESET);
     let preset = ShaderPreset::try_parse(&path, ShaderFeatures::NONE)
         .unwrap_or_else(|err| panic!("{path:?} should parse: {err}"));
     let pass = preset.passes.first().expect("preset should have a pass");
@@ -33,7 +43,7 @@ fn preset_references_follow_retroarch_rules() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir");
 
-    let stock = crate::system_dir().join("shaders/slangp/stock.slangp");
+    let stock = system_dir("shaders/slangp/stock.slangp");
     let mut root = format!("#reference \"{}\" // the passes\n", stock.display());
     // Well past SHADER_MAX_REFERENCE_DEPTH (16) files, but only one level deep:
     // a pack preset pulls in this many .params siblings, each one annotated.

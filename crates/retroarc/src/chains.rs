@@ -1,50 +1,43 @@
-//! The librashader side: one filter chain per emulator source per preset, built
-//! off the render thread, rendered into an intermediate texture the composite
-//! pass then samples. The only module that knows librashader exists.
+//! One filter chain per source per preset, built off the render thread and
+//! rendered into an intermediate texture the caller's composite pass samples.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
-use bevy::{
-    asset::AssetId,
-    image::Image,
-    prelude::*,
-    render::{
-        render_resource::{
-            CommandEncoder, Extent3d, Texture, TextureDescriptor, TextureDimension, TextureUsages,
-            TextureView, TextureViewDescriptor,
-        },
-        renderer::{RenderDevice, RenderQueue},
-    },
-    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
+use tracing::{debug, error};
+use wgpu::{
+    CommandEncoder, Device, Extent3d, Queue, Texture, TextureDescriptor, TextureDimension,
+    TextureUsages, TextureView, TextureViewDescriptor,
 };
+
 use librashader::presets::ShaderFeatures;
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
 use librashader::runtime::{Size, Viewport};
 
-use super::{ShaderPath, TARGET_FORMAT};
+use crate::TARGET_FORMAT;
 
 /// A librashader intermediate render target: the emulator framebuffer with the
 /// filter chain applied, at display resolution and preserving the source aspect
-/// ratio. Sized to the [`ScaleMode::Fit`](super::ScaleMode::Fit) image rectangle
-/// of the view; recreated when that size changes (window resize / core
-/// resolution change).
+/// ratio. Sized to the image rectangle the caller asks for; recreated when that
+/// size changes (window resize / core resolution change).
 struct IntermediateTarget {
-    size: UVec2,
+    size: (u32, u32),
     view: TextureView,
 }
 
 /// Create an [`IntermediateTarget`] of `size`, into which librashader renders
 /// and which the composite blit then samples.
-fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
+fn build_target(device: &Device, size: (u32, u32)) -> IntermediateTarget {
     let texture = device.create_texture(&TextureDescriptor {
         label: Some("slang_intermediate"),
         size: Extent3d {
-            width: size.x,
-            height: size.y,
+            width: size.0,
+            height: size.1,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -59,21 +52,24 @@ fn build_target(device: &RenderDevice, size: UVec2) -> IntermediateTarget {
 }
 
 /// Which of a source's presets a view wants to run. There is no passthrough
-/// variant: a view that wants neither of these skips librashader entirely (see
-/// [`post_process_pass`](super::composite::post_process_pass)).
+/// variant: a view that wants neither of these does not call in here at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ChainKind {
-    /// The visible effect preset (CRT/LCD), selected on the command line.
+pub enum ChainKind {
+    /// The visible effect preset (CRT/LCD).
     Effect,
-    /// The DREZ downsample preset, run instead of the effect when the view
-    /// magnifies the source less than `--downsample`.
+    /// The downsample preset, run instead of the effect when the view magnifies
+    /// the source too little for the effect to be worth running.
     Downsample,
 }
 
-/// What [`SlangChains::render`] left for the composite pass to sample.
-pub(super) enum ChainOutput<'a> {
+/// What [`Chains::render`] left for the composite pass to sample.
+///
+/// The view comes back owned: a `TextureView` is a reference-counted handle, so
+/// the clone is cheap, and it keeps the borrow on [`Chains`] from outliving the
+/// call.
+pub enum ChainOutput {
     /// The intermediate the chain rendered into.
-    Filtered(&'a TextureView),
+    Filtered(TextureView),
     /// Nothing to render with — the first build for this source is still
     /// compiling, or its preset failed to load. Composite the emulator
     /// framebuffer unshaded rather than dropping the view for a second or two.
@@ -94,17 +90,20 @@ enum BuildResult {
     Cancelled,
 }
 
-/// One filter-chain build, running on the async compute pool.
+/// One filter-chain build, running on a thread of its own.
 struct Build {
     /// Preset being compiled.
     path: PathBuf,
-    /// Set once the selection has moved on. The task checks it before starting,
-    /// so a build still queued behind other sources' builds costs nothing; once
-    /// glslang has the shaders there is no way to interrupt it (the same caveat
-    /// [`crate::jobs`] documents), so a build already running just finishes and
-    /// has its result dropped.
+    /// Set once the selection has moved on. The thread checks it before
+    /// starting, so a build that has not begun costs nothing; once glslang has
+    /// the shaders there is no way to interrupt it, so a build already running
+    /// just finishes and has its result dropped.
     cancelled: Arc<AtomicBool>,
-    task: Task<BuildResult>,
+    /// Where the thread leaves its one result. A `Mutex<Option<_>>` rather
+    /// than a channel because the caller keeps this inside whatever it holds
+    /// its render state in, and `mpsc::Receiver` is not `Sync`. Nothing ever
+    /// contends for it: one store, then one take.
+    result: Arc<Mutex<Option<BuildResult>>>,
     /// When the build was spawned, for the debug line it logs on arrival.
     started: Instant,
     /// Frames the view drew while this build ran, for that same line: the whole
@@ -114,42 +113,55 @@ struct Build {
 
 impl Build {
     /// Start compiling `path` off the render thread.
-    fn spawn(path: PathBuf, device: &RenderDevice, queue: &RenderQueue) -> Self {
+    ///
+    /// A plain thread rather than a pool: a build is rare (a preset change, or
+    /// the first frame of a new source) and blocking from end to end, so there
+    /// is nothing for a pool to interleave it with.
+    fn spawn(path: PathBuf, device: &Device, queue: &Queue) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
         // wgpu's device and queue are reference-counted handles and creating
         // resources through them from another thread is supported, so the whole
         // load — glslang, naga, LUT decode, pipeline creation — runs on the
         // worker. The `device.poll(Wait)` librashader ends with blocks that
         // worker only.
-        let device = device.wgpu_device().clone();
+        let device = device.clone();
         let queue = queue.clone();
         debug!("building chain for {}", path.display());
-        let task = {
+        let result = Arc::new(Mutex::new(None));
+        {
             let path = path.clone();
             let cancelled = Arc::clone(&cancelled);
-            AsyncComputeTaskPool::get().spawn(async move {
-                // Not an async body in any real sense: nothing below awaits,
-                // the blocking compile just occupies one pool thread until it
-                // returns.
-                if cancelled.load(Ordering::Relaxed) {
-                    return BuildResult::Cancelled;
-                }
-                #[allow(clippy::result_large_err)]
-                let loaded =
-                    FilterChain::load_from_path(&path, ShaderFeatures::NONE, &device, &queue, None);
-                match loaded {
-                    Ok(chain) => BuildResult::Built(Box::new(chain)),
-                    Err(err) => {
-                        error!("failed to load preset {}: {err}", path.display());
-                        BuildResult::Failed
-                    }
-                }
-            })
-        };
+            let slot = Arc::clone(&result);
+            std::thread::Builder::new()
+                .name("retroarc-build".into())
+                .spawn(move || {
+                    let outcome = if cancelled.load(Ordering::Relaxed) {
+                        BuildResult::Cancelled
+                    } else {
+                        #[allow(clippy::result_large_err)]
+                        let loaded = FilterChain::load_from_path(
+                            &path,
+                            ShaderFeatures::NONE,
+                            &device,
+                            &queue,
+                            None,
+                        );
+                        match loaded {
+                            Ok(chain) => BuildResult::Built(Box::new(chain)),
+                            Err(err) => {
+                                error!("failed to load preset {}: {err}", path.display());
+                                BuildResult::Failed
+                            }
+                        }
+                    };
+                    *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(outcome);
+                })
+                .expect("spawn chain build thread");
+        }
         Self {
             path,
             cancelled,
-            task,
+            result,
             started: Instant::now(),
             frames: 0,
         }
@@ -163,7 +175,7 @@ impl Build {
 /// (naga and the wgpu pipelines are ~0.1 s on top, and the 32 LUT images ~0.1 s
 /// — the images are not the cost). Running that inline on the render thread is
 /// what made a shader change freeze the whole app for a second or two, so it
-/// runs on [`AsyncComputeTaskPool`] instead and nothing here ever waits on it:
+/// runs on a thread of its own instead and nothing here ever waits on it:
 /// until the new chain lands, the view keeps rendering with the previous one,
 /// or composites the emulator framebuffer unshaded if there is no previous one.
 #[derive(Default)]
@@ -190,8 +202,8 @@ impl AsyncChain {
     fn get(
         &mut self,
         want: &Path,
-        device: &RenderDevice,
-        queue: &RenderQueue,
+        device: &Device,
+        queue: &Queue,
         failed: &mut HashSet<PathBuf>,
     ) -> Option<&mut FilterChain> {
         // Superseded: tell the task to skip the compile if it has not started.
@@ -202,11 +214,15 @@ impl AsyncChain {
         }
         // Count the frames this view drew while the build ran — the whole
         // point of building off the render thread — then collect it if it has
-        // landed. `check_ready` never blocks.
+        // landed. Taking the slot never blocks for any useful length of time.
         let mut finished = None;
         if let Some(build) = &mut self.building {
             build.frames += 1;
-            finished = check_ready(&mut build.task);
+            finished = build
+                .result
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
         }
         if let Some(result) = finished {
             let build = self.building.take().expect("polled above");
@@ -262,7 +278,7 @@ impl AsyncChain {
 /// per source is ever in flight, every intermediate selection is skipped
 /// outright, and the selection current when the running build lands is the one
 /// that gets compiled next.
-fn should_start(
+pub(crate) fn should_start(
     ready: Option<&Path>,
     building: Option<&Path>,
     want: &Path,
@@ -298,48 +314,63 @@ struct SourceChains {
 /// isolated. Each chain is built in the background, the first time a view
 /// actually selects it (see [`AsyncChain`]).
 ///
-/// `FilterChainWgpu` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
-/// so this lives as a render-world resource, accessed via `ResMut`.
-#[derive(Resource)]
-pub(super) struct SlangChains {
-    /// Path of the effect preset (`--shader`/`--slangp`), built per source.
-    /// `None` on the WGSL backend, which has no chain to build.
+/// `FilterChain` owns clones of the wgpu `Device`/`Queue` and is `Send`/`Sync`,
+/// so this can be held wherever the caller's render state lives.
+///
+/// `K` identifies a source — whatever handle the caller already has for one.
+pub struct Chains<K> {
+    /// Path of the effect preset, built per source. `None` when the caller runs
+    /// no effect chain at all.
     effect_path: Option<PathBuf>,
-    /// Path of the DREZ downsample preset.
+    /// Path of the downsample preset.
     downsample_path: PathBuf,
-    /// Magnification below which `downsample_path` replaces the effect;
-    /// `0` (from `--downsample 0`) never runs it. See
-    /// [`wants_downsample`](super::geometry::wants_downsample).
-    pub(super) downsample_limit: f32,
+    /// Magnification below which `downsample_path` replaces the effect; `0`
+    /// never runs it. Kept here for the caller to read back; nothing in this
+    /// crate decides with it.
+    pub downsample_limit: f32,
     /// Presets whose build failed, so they are neither retried nor re-logged.
     /// Shared by every source: a broken preset is broken for all of them.
     failed: HashSet<PathBuf>,
-    /// One set of chains + target per emulator, keyed by its source image.
-    /// A source that has never needed a chain has no entry at all.
-    sources: HashMap<AssetId<Image>, SourceChains>,
+    /// One set of chains + target per source. A source that has never needed a
+    /// chain has no entry at all.
+    sources: HashMap<K, SourceChains>,
 }
 
-impl SlangChains {
+impl<K: Eq + Hash> Chains<K> {
+    /// A fresh set of chains. Nothing is compiled until a source asks for one.
+    pub fn new(effect: Option<PathBuf>, downsample: PathBuf, downsample_limit: f32) -> Self {
+        Self {
+            effect_path: effect,
+            downsample_path: downsample,
+            downsample_limit,
+            failed: HashSet::new(),
+            sources: HashMap::new(),
+        }
+    }
+
     /// Run the `kind` chain for `source` over `texture` into an intermediate of
     /// `size`, recording into `encoder`, and hand back the intermediate for the
     /// composite pass to sample.
-    pub(super) fn render(
+    // Every one of them is a distinct thing the caller has to supply; bundling
+    // some into a struct would only move the list.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
         &mut self,
-        device: &RenderDevice,
-        queue: &RenderQueue,
+        device: &Device,
+        queue: &Queue,
         encoder: &mut CommandEncoder,
-        source: AssetId<Image>,
+        source: K,
         texture: &Texture,
-        size: UVec2,
+        size: (u32, u32),
         kind: ChainKind,
         params: &HashMap<String, f32>,
-    ) -> ChainOutput<'_> {
+    ) -> ChainOutput {
         let Some((chain, target, frame_count)) = self.chain(device, queue, source, size, kind)
         else {
             return ChainOutput::Unfiltered;
         };
         if kind == ChainKind::Effect {
-            nudge_triad(chain, size.x as f32);
+            nudge_triad(chain, size.0 as f32);
             // What the shader dialog has changed, applied after the nudge so an
             // explicit triad size still wins.
             if !params.is_empty() {
@@ -353,7 +384,7 @@ impl SlangChains {
                 });
             }
         }
-        let lr_size = Size::new(size.x, size.y);
+        let lr_size = Size::new(size.0, size.1);
         let output = WgpuOutputView::new_from_raw(&target.view, lr_size, TARGET_FORMAT);
         let viewport = Viewport {
             x: 0.0,
@@ -367,7 +398,7 @@ impl SlangChains {
             return ChainOutput::Failed;
         }
         *frame_count += 1;
-        ChainOutput::Filtered(&target.view)
+        ChainOutput::Filtered(target.view.clone())
     }
 
     /// The `kind` chain for `source`, plus its intermediate target and frame
@@ -376,10 +407,10 @@ impl SlangChains {
     /// caller composites the source unshaded.
     fn chain(
         &mut self,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        source: AssetId<Image>,
-        size: UVec2,
+        device: &Device,
+        queue: &Queue,
+        source: K,
+        size: (u32, u32),
         kind: ChainKind,
     ) -> Option<(&mut FilterChain, &IntermediateTarget, &mut usize)> {
         // Destructured so the preset paths stay readable while `sources` is
@@ -414,9 +445,9 @@ impl SlangChains {
     /// unchanged, which is every frame but the one the settings dialog changes
     /// it on.
     ///
-    /// Only the effect is repointed: the downsample preset is `--downsample`,
-    /// so those chains stay valid across a shader change.
-    pub(super) fn set_effect(&mut self, path: Option<&Path>) {
+    /// Only the effect is repointed: the downsample preset does not change, so
+    /// those chains stay valid across a shader change.
+    pub fn set_effect(&mut self, path: Option<&Path>) {
         if self.effect_path.as_deref() != path {
             self.effect_path = path.map(Path::to_path_buf);
         }
@@ -450,24 +481,3 @@ fn nudge_triad(chain: &mut FilterChain, width: f32) {
         .parameters()
         .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
 }
-
-/// Record the `.slangp` preset paths for [`SlangChains`]; the chains themselves
-/// are built lazily, once per emulator source and only for the presets a view
-/// actually selects (see [`SlangChains::chain`]).
-///
-/// Inserted even on the WGSL backend, which runs no chains: the settings dialog
-/// can switch to a `.slangp` preset later, and there is nothing to build until
-/// it does.
-pub(super) fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
-    commands.insert_resource(SlangChains {
-        effect_path: shader_path.effect.slangp().map(Path::to_path_buf),
-        downsample_path: shader_path.downsample.clone(),
-        downsample_limit: shader_path.downsample_limit,
-        failed: HashSet::new(),
-        sources: HashMap::new(),
-    });
-}
-
-#[cfg(test)]
-#[path = "tests/chains_tests.rs"]
-mod tests;

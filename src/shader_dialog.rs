@@ -532,6 +532,8 @@ struct ShaderParam {
     min: f32,
     max: f32,
     step: f32,
+    /// Which pass declared it; rows are ordered by pass, then by label.
+    pass: usize,
 }
 
 /// The option list a description ends in, if the parameter is a choice of
@@ -567,54 +569,26 @@ fn split_options(description: &str, min: f32, max: f32, step: f32) -> (String, V
 /// overridden by the preset's own `#parameter` lines -- the same precedence
 /// librashader's `RuntimeParameters` applies when it builds the chain.
 fn preset_params(path: &Path) -> Vec<ShaderParam> {
-    use librashader::preprocess::ShaderSource;
-    use librashader::presets::{ShaderFeatures, ShaderPreset};
-
-    let preset = match ShaderPreset::try_parse(path, ShaderFeatures::NONE) {
-        Ok(preset) => preset,
-        Err(err) => {
-            warn!("{}: {err}", path.display());
-            return Vec::new();
-        }
-    };
-    let mut params: Vec<ShaderParam> = Vec::new();
-    for pass in &preset.passes {
-        let Ok(source) = ShaderSource::load(&pass.path, preset.features) else {
-            continue;
-        };
-        let mut declared: Vec<ShaderParam> = source
-            .parameters
-            .values()
-            // A pragma with a blank description is one of the spacers the Mega
-            // Bezel packs lay their RetroArch menu out with; there is nothing
-            // to label a row with.
-            .filter(|p| !p.description.trim().is_empty())
-            .filter(|p| !params.iter().any(|old| old.name == p.id.as_ref()))
-            .map(|p| {
-                let (label, options) = split_options(&p.description, p.minimum, p.maximum, p.step);
-                ShaderParam {
-                    name: p.id.to_string(),
-                    label,
-                    options,
-                    value: p.initial,
-                    default: p.initial,
-                    min: p.minimum,
-                    max: p.maximum,
-                    step: p.step,
-                }
-            })
-            .collect();
-        // The source hands them over in a hash map, so a pass's parameters have
-        // no order of their own to keep.
-        declared.sort_by(|a, b| a.label.cmp(&b.label));
-        params.extend(declared);
-    }
-    for over in &preset.parameters {
-        if let Some(param) = params.iter_mut().find(|p| p.name == over.name.as_ref()) {
-            param.value = over.value;
-            param.default = over.value;
-        }
-    }
+    let mut params: Vec<ShaderParam> = retroarc::preset_parameters(path)
+        .into_iter()
+        .map(|p| {
+            let (label, options) = split_options(&p.description, p.minimum, p.maximum, p.step);
+            ShaderParam {
+                name: p.name,
+                label,
+                options,
+                value: p.initial,
+                default: p.initial,
+                min: p.minimum,
+                max: p.maximum,
+                step: p.step,
+                pass: p.pass,
+            }
+        })
+        .collect();
+    // A pass hands its parameters over in a hash map, so they have no order of
+    // their own to keep; the passes themselves do.
+    params.sort_by(|a, b| a.pass.cmp(&b.pass).then_with(|| a.label.cmp(&b.label)));
     params
 }
 

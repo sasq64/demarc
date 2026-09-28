@@ -3065,7 +3065,6 @@ dependencies = [
  "image",
  "libc",
  "libloading 0.9.0",
- "librashader",
  "mlua",
  "newsys",
  "nucleo-matcher",
@@ -3077,6 +3076,7 @@ dependencies = [
  "regex",
  "resvg",
  "retro-core",
+ "retroarc",
  "ringbuf",
  "rubato",
  "ruffle_core",
@@ -6989,6 +6989,15 @@ dependencies = [
  "tracing-subscriber",
  "wgpu 29.0.4",
  "winit",
+]
+
+[[package]]
+name = "retroarc"
+version = "1.7.0"
+dependencies = [
+ "librashader",
+ "tracing",
+ "wgpu 29.0.4",
 ]
 
 [[package]]

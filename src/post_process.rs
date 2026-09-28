@@ -2,8 +2,9 @@
 //!
 //! - [`geometry`] — where a view's picture lands on screen, and the uniform the
 //!   composite shader reads.
-//! - [`chains`] — the librashader filter chains, built off the render thread.
-//!   Nothing else in the crate touches librashader.
+//! - [`SlangChains`] — a thin Bevy wrapper over `retroarc`, which owns the
+//!   `.slangp` filter chains and is the only thing in the tree that knows
+//!   librashader exists.
 //! - [`composite`] — the render pass that draws one quad per view.
 
 use std::collections::HashMap;
@@ -24,16 +25,36 @@ use bevy::{
 
 use crate::config::RenderSettings;
 
-mod chains;
 mod composite;
 mod geometry;
 
 pub use geometry::view_transform;
 
-/// Format of both the librashader intermediate target and the composite blit's
+/// Format of both the chain's intermediate target and the composite blit's
 /// output. Matches Bevy's view-target main texture (formerly
 /// `TextureFormat::bevy_default()`).
-const TARGET_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
+const TARGET_FORMAT: TextureFormat = retroarc::TARGET_FORMAT;
+
+/// The filter chains, keyed by the source image each view draws from.
+///
+/// Only a render-world resource wrapper: everything it does lives in
+/// [`retroarc::Chains`].
+#[derive(Resource, Deref, DerefMut)]
+pub(crate) struct SlangChains(retroarc::Chains<AssetId<Image>>);
+
+/// Record the preset paths; the chains themselves are built lazily, once per
+/// source and only for the presets a view actually selects.
+///
+/// Inserted even on the WGSL backend, which runs no chains: the settings dialog
+/// can switch to a `.slangp` preset later, and there is nothing to build until
+/// it does.
+fn init_filter_chains(mut commands: Commands, shader_path: Res<ShaderPath>) {
+    commands.insert_resource(SlangChains(retroarc::Chains::new(
+        shader_path.effect.slangp().map(Path::to_path_buf),
+        shader_path.downsample.clone(),
+        shader_path.downsample_limit,
+    )));
+}
 
 /// The bundled DREZ downsample preset, relative to the `system` dir. Swapped in
 /// for the effect preset on views that magnify the source less than
@@ -88,7 +109,7 @@ impl ShaderEffect {
 /// [`ExtractResource`] so a change made in the main world reaches the render
 /// world, which rebuilds whatever it invalidated: the composite pipeline in
 /// [`composite::post_process_pass`] and the filter chains in
-/// [`chains::SlangChains::set_effect`]. It is also inserted into the render
+/// [`SlangChains::set_effect`]. It is also inserted into the render
 /// world directly, so `RenderStartup` — one extract too early to see it — has
 /// it.
 #[derive(Resource, Clone, ExtractResource)]
@@ -146,7 +167,7 @@ impl Plugin for PostProcessPlugin {
         render_app
             .add_systems(
                 RenderStartup,
-                (composite::init_blit_pipeline, chains::init_filter_chains),
+                (composite::init_blit_pipeline, init_filter_chains),
             )
             .add_systems(
                 Core2d,

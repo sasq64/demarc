@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/newsys", "crates/retro-core"]
+members = ["crates/newsys", "crates/retro-core", "crates/retroarc"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -15,6 +15,17 @@ cc = "1"
 dirs = "6.0.0"
 libc = "0.2"
 libloading = "0.9"
+librashader = {
+  git = "https://github.com/sasq64/librashader",
+  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
+  default-features = false,
+  features = [
+    "preprocess",
+    "presets",
+    "reflect-naga",
+    "runtime-wgpu",
+  ]
+}
 # `image` for the still-image backend and the frontend's screenshots; the rest
 # are used on both sides of the newsys boundary.
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga", "tiff"] }
@@ -58,6 +69,8 @@ anyhow.workspace = true
 retro-core = { path = "crates/retro-core" }
 # Unpacking a release, working out which machine it is, and getting it booted.
 newsys = { path = "crates/newsys" }
+# The `.slangp` filter chains, and the only thing that links librashader.
+retroarc = { path = "crates/retroarc" }
 bevy = {
   version = "0.19.0",
   default-features = false,
@@ -72,23 +85,6 @@ clap = { version = "4.6.1", features = ["color", "derive"] }
 cpal = "0.17.1"
 dirs.workspace = true
 libloading.workspace = true
-# Fork of librashader 0.11.4, branch `demarc`: three preset-parser fixes demarc
-# needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
-# reference depth counted per chain instead of per file, and unresolvable
-# references skipped the way RetroArch skips them), the modf/frexp result types
-# naga's SPIR-V frontend forgets to register, and a parallel `compile_preset_passes`
-# so a 42-pass bezel preset does not spend 1.4 s in glslang. See docs/SHADERS.md.
-librashader = {
-  git = "https://github.com/sasq64/librashader",
-  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
-  default-features = false,
-  features = [
-    "preprocess",
-    "presets",
-    "reflect-naga",
-    "runtime-wgpu",
-  ]
-}
 rand = "0.10.1"
 ringbuf = "0.5.0"
 rubato = "0.16"

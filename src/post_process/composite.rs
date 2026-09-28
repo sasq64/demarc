@@ -27,7 +27,9 @@ use bevy::{
 // `SamplerBorderColor` isn't re-exported by Bevy; pull it from wgpu directly.
 use wgpu::SamplerBorderColor;
 
-use super::chains::{ChainKind, ChainOutput, SlangChains};
+use retroarc::{ChainKind, ChainOutput};
+
+use super::SlangChains;
 use super::geometry::{view_transform, wants_downsample};
 use super::{
     BorderMode, BorderScissor, EmuCamera, PostProcess, PostProcessUniform, ShaderEffect,
@@ -234,17 +236,18 @@ pub(super) fn post_process_pass(
                 };
 
                 let device = render_context.render_device().clone();
-                match chains.render(
-                    &device,
+                let filtered = chains.render(
+                    device.wgpu_device(),
                     &render_queue,
                     render_context.command_encoder(),
                     post_process.source.id(),
                     &source_image.texture,
-                    inter_size,
+                    (inter_size.x, inter_size.y),
                     kind,
                     &shader_path.params,
-                ) {
-                    ChainOutput::Filtered(view) => view,
+                );
+                match filtered {
+                    ChainOutput::Filtered(view) => &TextureView::from(view),
                     ChainOutput::Unfiltered => &source_image.texture_view,
                     ChainOutput::Failed => continue 'views,
                 }

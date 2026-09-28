@@ -14,6 +14,11 @@ unsafe extern "C" {
     fn demarc_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
 }
 
+/// Where `retro_log_shim.c` sends a core's formatted log line.
+///
+/// # Safety
+/// `msg` must be null or a valid NUL-terminated C string that stays alive for
+/// the call. Only `retro_log_shim.c` calls this.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn demarc_retro_log_rust(level: c_int, msg: *const c_char) {
     if msg.is_null() {
