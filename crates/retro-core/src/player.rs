@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use tracing::info;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -227,11 +228,12 @@ impl Gfx {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("c64"),
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            ..Default::default()
-        }))?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("c64"),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                ..Default::default()
+            }))?;
 
         let caps = surface.get_capabilities(&adapter);
         // The shader outputs linear light and lets the target encode it.
@@ -255,7 +257,9 @@ impl Gfx {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("lottes"),
-            source: wgpu::ShaderSource::Wgsl(LOTTES_WGSL.replace(BEVY_IMPORT, FULLSCREEN_VS).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                LOTTES_WGSL.replace(BEVY_IMPORT, FULLSCREEN_VS).into(),
+            ),
         });
 
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -495,8 +499,12 @@ impl App {
         }
     }
 
-    /// Step the core one frame and hand the result to the GPU.
+    /// Step the core one frame and hand the result to the GPU. Does nothing
+    /// without a surface: on Android that is the app being in the background.
     fn step(&mut self) {
+        if self.gfx.is_none() {
+            return;
+        }
         self.core.run();
         // Nothing plays the samples yet, but they have to be taken or the
         // core's buffer grows without bound.
@@ -590,8 +598,39 @@ pub fn load_core() -> Result<RetroCoreDirect> {
         )
     })?;
     let system = system_dir();
-    println!("Core: {}", path.display());
-    println!("System dir: {}", system.display());
+    info!("Core: {}", path.display());
+    info!("System dir: {}", system.display());
     RetroCoreDirect::new(&path, &system, None, HashMap::new())
         .with_context(|| format!("could not start {}", path.display()))
+}
+
+// -------------------------------------------------------------------------
+// Android entry point
+// -------------------------------------------------------------------------
+
+/// What `android-activity`'s NativeActivity glue calls on its own thread, in
+/// place of `main`. Declared `extern "Rust"` there, so no `extern "C"` here.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    use winit::event_loop::EventLoop;
+    use winit::platform::android::EventLoopBuilderExtAndroid;
+
+    crate::android::init_logging();
+
+    // The app's private data directory is the only writable place, and is what
+    // the core gets as its system and save directory.
+    if let Some(dir) = app.internal_data_path() {
+        crate::set_system_dir(dir);
+    }
+
+    let run = || -> Result<()> {
+        let core = load_core()?;
+        let event_loop = EventLoop::builder().with_android_app(app).build()?;
+        event_loop.run_app(&mut App::new(core))?;
+        Ok(())
+    };
+    if let Err(e) = run() {
+        tracing::error!("{e:#}");
+    }
 }

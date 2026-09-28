@@ -6,15 +6,18 @@
 //! See `docs/ANDROID.md`.
 
 pub mod backend;
+mod find;
 #[allow(warnings)]
 pub mod libretro;
-mod find;
 mod path;
 pub mod pixels;
 pub mod retro_emu;
 
+#[cfg(target_os = "android")]
+pub mod android;
+
 #[cfg(feature = "player")]
 pub mod player;
 
-pub use find::{dylib_name, find_core, system_dir};
+pub use find::{dylib_name, find_core, set_system_dir, system_dir};
 pub use path::strip_verbatim_prefix;

@@ -1,8 +1,14 @@
 # Android
 
-How to get the minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
-`src/bin/c64.rs` on the desktop — onto a phone, and what has to change first. The
-workspace split and the cross-build are done; the app itself is not.
+The minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
+`crates/retro-core/src/bin/c64.rs` on the desktop — as an Android app. It boots to the
+BASIC banner on a device; touch input and audio are what is missing.
+
+```sh
+scripts/run-android.sh --logcat
+```
+
+builds it, fetches the core if needed, installs and launches it.
 
 ## Starting position
 
@@ -78,9 +84,9 @@ Two rules keep this working, and both are easy to break by accident:
   `utils.rs` stayed behind in `newsys`.
 - **Nothing under `crates/` may mention Bevy.**
 
-### Step 2 — make the libretro layer Android-safe
+### Step 2 — make the libretro layer Android-safe — done
 
-Three concrete things in `retro_emu`:
+Three concrete things in `retro_emu`, all now in place:
 
 1. **Core duping must be skippable.** `RetroCoreDirect::new` copies the `.so` into a
    private temp dir and `dlopen`s the copy, so two instances get independent globals. On
@@ -88,87 +94,98 @@ Three concrete things in `retro_emu`:
    platform blocks (W^X). The core has to be `dlopen`ed from the APK's native library
    directory instead, by bare soname. Add a "load in place" path (an argument, or
    `#[cfg(target_os = "android")]`) that skips the copy — with one view there is nothing to
-   dupe anyway.
+   dupe anyway. `RetroCoreDirect::new` now holds its temp dir as an `Option` and loads the
+   core in place on Android.
 2. **`mod process` has to go on Android.** `RetroCoreProcess` re-executes the current
    executable and uses `memfd_create`; an APK has no standalone executable to re-exec.
-   Gate it `#[cfg(all(unix, not(target_os = "android")))]`.
+   Gated `#[cfg(all(unix, not(target_os = "android")))]`, as is the `use_proc` arm of
+   `create_core`.
 3. **Nothing may print to stdout.** Cores `printf` freely and demarc silences that with a
    `dup2` on fd 1; on Android stdout goes nowhere at all, so core logging has to reach
    logcat through `RETRO_ENVIRONMENT_GET_LOG_INTERFACE` (already implemented) with a
-   tracing subscriber that writes to `__android_log_write` — `tracing-android`, or
-   `android_logger` behind `tracing-log`. `tracing_subscriber::fmt()` in `main` becomes
-   platform-specific.
+   tracing subscriber that writes to `__android_log_write`. That is
+   `crates/retro-core/src/android.rs`: a `MakeWriter` mapping each event's level onto a
+   logcat priority under the tag `demarc`, plus a panic hook, so
+   `adb logcat demarc:V` shows both our tracing and the core's own log lines. No new
+   dependency — liblog is already linked in through `android-activity`.
 
-### Step 3 — the entry point
+### Step 3 — the entry point — done
 
-`main()` becomes a `run()` that both entry points call:
+`android_main` is at the bottom of `player.rs`. `android-activity` declares it
+`extern "Rust"`, not `extern "C"`:
 
 ```rust
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-fn android_main(app: android_activity::AndroidApp) {
-    use winit::platform::android::EventLoopBuilderExtAndroid;
-    let event_loop = EventLoop::builder().with_android_app(app.clone()).build().unwrap();
-    run(event_loop, app.internal_data_path());
+pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    crate::android::init_logging();
+    if let Some(dir) = app.internal_data_path() {
+        crate::set_system_dir(dir);
+    }
+    let event_loop = EventLoop::builder().with_android_app(app).build()?;
+    event_loop.run_app(&mut App::new(load_core()?))?;
 }
 ```
 
-winit's `android-native-activity` feature (or `android-game-activity`, see *Input*) is
-already set for the Android target in `crates/retro-core/Cargo.toml`, which is what pulls
-`android-activity` in. `android_main` itself still has to be written.
- `AndroidApp::internal_data_path()` is the
-system/save directory to hand the core — `dirs::cache_dir()` is not meaningful here — and
+winit re-exports the `android_activity` API, so naming `AndroidApp` needs no extra
+dependency. `AndroidApp::internal_data_path()` is the system/save directory to hand the
+core — `dirs::cache_dir()` is not meaningful here — and it reaches `system_dir()` through
+`find::set_system_dir`, a `OnceLock` override checked ahead of the environment.
 `asset_manager()` is how any bundled `.d64`/`.prg` would be read.
 
-### Step 4 — the APK
+`App::step` now returns early without a surface, so the emulator does not run while the
+app is in the background.
 
-A small Gradle project, with the Rust `cdylib` and the core dropped into `jniLibs`:
+### Step 4 — the APK — done
+
+`android/` is a Gradle project shaped like the one in `../band`, with the Rust `cdylib` and
+the core in `jniLibs` (which is gitignored — both `.so` files are build output):
 
 ```
 android/
-  settings.gradle.kts, build.gradle.kts
+  settings.gradle.kts, build.gradle.kts, gradle.properties, gradlew
   app/build.gradle.kts
   app/src/main/AndroidManifest.xml
-  app/src/main/jniLibs/arm64-v8a/libretro_core.so          <- cargo ndk output
-  app/src/main/jniLibs/arm64-v8a/libvice_x64sc.so          <- renamed buildbot core
+  app/src/main/res/values/strings.xml
+  app/src/main/jniLibs/arm64-v8a/libretro_core.so           <- cargo ndk output
+  app/src/main/jniLibs/arm64-v8a/libvice_x64sc_libretro.so  <- renamed buildbot core
 ```
 
-With `android-native-activity` no Java is needed; the manifest points at
-`android.app.NativeActivity` and names the library:
+With `android-native-activity` no Java is needed: `hasCode="false"`, and the manifest points
+at `android.app.NativeActivity` with `android.app.lib_name` = `retro_core`. No orientation is
+pinned — `configChanges` keeps the activity alive across a rotation and the player letterboxes
+to whatever it is given, which is what `../band`'s README argues for.
 
-```xml
-<activity android:name="android.app.NativeActivity"
-          android:exported="true"
-          android:configChanges="orientation|keyboardHidden|screenSize|density"
-          android:screenOrientation="sensorLandscape">
-  <meta-data android:name="android.app.lib_name" android:value="retro_core" />
-  <intent-filter>
-    <action android:name="android.intent.action.MAIN" />
-    <category android:name="android.intent.category.LAUNCHER" />
-  </intent-filter>
-</activity>
-```
+The core keeps the name `find_core` builds, with a `lib` prefix
+(`libvice_x64sc_libretro.so`): Gradle packages it, the loader puts it on the app's search
+path, and `dlopen` by bare name then works. `find.rs`'s Android arm returns exactly that
+name instead of searching `$DEMARC_CORE_DIR` and the demarc cache. Note the buildbot core's
+`SONAME` is a bare `libretro.so` — fine for one core, but two cores loaded at once would
+collide in the linker's namespace.
 
-Give the core the `lib` prefix (`libvice_x64sc.so`): Gradle packages it, the loader puts it
-on the default search path, and `dlopen("libvice_x64sc.so")` by bare name then works with
-`extractNativeLibs` either way. `find_core()` — now `crates/retro-core/src/find.rs`, which
-is where it was moved for exactly this — gets an Android arm that returns that bare name
-instead of searching `$DEMARC_CORE_DIR` and the demarc cache.
-
-Build and install:
+`scripts/run-android.sh` does the whole loop — fetch the core if it is missing, `cargo ndk`,
+`gradlew`, `adb install`, launch, optionally `logcat`:
 
 ```sh
-cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
-    build -p retro-core --features player --lib --release
-(cd android && ./gradlew installDebug)
-adb logcat -s retro_core:V RustStdoutStderr:V
+scripts/run-android.sh               # release
+scripts/run-android.sh --debug
+scripts/run-android.sh --logcat
 ```
+
+It defaults to release because a debug wgpu build is both slow and enormous, and sets
+`JAVA_HOME` to Android Studio's JDK 21 when the shell has none — AGP does not run on this
+machine's JDK 26.
+
+Measured on the Titan 2 (Android 16, arm64): a 10 MB release APK, wgpu on the GLES backend
+("EGL says it can present to the window but not natively"), VICE reporting 384x272 at
+50.12 fps, and ~55% of one core.
 
 ### Step 5 — input
 
-Physical keys already work — a USB/Bluetooth keyboard arrives as ordinary winit
-`KeyboardInput` and goes straight through the existing `retro_key` table. Touch does not,
-and that is the real work:
+Physical keys already work — a keyboard arrives as ordinary winit `KeyboardInput` and goes
+straight through the existing `retro_key` table; `adb shell input text` reaches BASIC, though
+injected keys are faster than the emulated keyboard matrix scans and some are dropped. Touch
+does not work at all, and that is the real work:
 
 - An on-screen C64 keyboard and/or a virtual joystick, drawn by the app. Everything on
   screen is ours already, so this is one more textured quad plus hit-testing on
@@ -216,9 +233,8 @@ RetroArch ships its cores inside the APK.
 1. ~~Workspace split (`retro-core`, `newsys`, `retroarc`), desktop build still green.~~ done
 2. ~~`cargo ndk -t arm64-v8a check -p retro-core --features player` — compiling for the
    target.~~ done, and it links too
-3. Android logging + `internal_data_path` + load-in-place `dlopen`, still on desktop
-   (step 2 above).
-4. `android_main`, Gradle project, first APK. Target: the BASIC banner on a device.
+3. ~~Android logging + `internal_data_path` + load-in-place `dlopen` (step 2 above).~~ done
+4. ~~`android_main`, Gradle project, first APK. Target: the BASIC banner on a device.~~ done
 5. Touch input.
 6. Audio.
 7. Performance pass, content loading.

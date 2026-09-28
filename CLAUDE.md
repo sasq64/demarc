@@ -99,8 +99,9 @@ cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
 ```
 
 which produces a 16 KB-page-aligned `libretro_core.so` needing only
-libdl/libandroid/liblog/libc. See `docs/ANDROID.md` for what is still missing
-(`android_main`, the APK, touch input, audio).
+libdl/libandroid/liblog/libc. `scripts/run-android.sh` packages that plus the VICE core
+into an APK (the Gradle project is `android/`), installs and launches it; it boots to the
+BASIC banner. See `docs/ANDROID.md` for what is still missing (touch input, audio).
 
 ### System detection — `crates/newsys/src/newsys.rs` + `src/newsys/*`
 

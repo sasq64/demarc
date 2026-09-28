@@ -141,7 +141,8 @@ pub struct RetroCoreDirect {
     save_path: CString,
     /// Temp dir holding this instance's private copy of the core .so. Held so
     /// the copy lives as long as the loaded library and is removed on drop.
-    _core_tempdir: tempfile::TempDir,
+    /// `None` when the core was loaded in place (Android).
+    _core_tempdir: Option<tempfile::TempDir>,
     skip_frames: u32,
     retro_frame_time: Option<unsafe extern "C" fn(i64)>,
     time_reference: i64,
@@ -623,12 +624,21 @@ impl RetroCoreDirect {
         // frontends use for "core duping" — so every instance gets its own
         // mapping with independent globals. The temp dir is held in the struct
         // and removed when the core is dropped.
-        let core_tempdir = tempfile::Builder::new().prefix("demarc-core-").tempdir()?;
-        let file_name = core_path
-            .file_name()
-            .ok_or_else(|| anyhow!("core path has no file name: {}", core_path.display()))?;
-        let loaded_core_path = core_tempdir.path().join(file_name);
-        std::fs::copy(core_path, &loaded_core_path)?;
+        //
+        // Android bans loading code out of the app's writable data dir, and the
+        // core lives in the APK's native library dir, so there it is loaded in
+        // place — there is only ever one view to dupe for anyway.
+        let (loaded_core_path, core_tempdir) = if cfg!(target_os = "android") {
+            (core_path.to_owned(), None)
+        } else {
+            let dir = tempfile::Builder::new().prefix("demarc-core-").tempdir()?;
+            let file_name = core_path
+                .file_name()
+                .ok_or_else(|| anyhow!("core path has no file name: {}", core_path.display()))?;
+            let path = dir.path().join(file_name);
+            std::fs::copy(core_path, &path)?;
+            (path, Some(dir))
+        };
 
         let lib = unsafe { Library::new(&loaded_core_path)? };
         unsafe {
@@ -945,9 +955,10 @@ impl Backend for RetroCoreDirect {
 mod threaded;
 pub use threaded::RetroCoreThreaded;
 
-#[cfg(unix)]
+// `RetroCoreProcess` re-executes the current executable; an APK has none.
+#[cfg(all(unix, not(target_os = "android")))]
 mod process;
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 pub use process::{RetroCoreProcess, process_worker_main};
 
 /// Build the backend for a libretro core: on a thread of its own, or in a
@@ -963,12 +974,12 @@ pub fn create_core(
         .get("use_proc")
         .is_some_and(|v| v == "1" || v == "true")
     {
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "android")))]
         return Ok(Box::new(RetroCoreProcess::new(
             core_path, system_dir, game, meta, speed_test,
         )?));
-        #[cfg(not(unix))]
-        warn!("use_proc is only supported on unix, running the core on a thread");
+        #[cfg(not(all(unix, not(target_os = "android"))))]
+        warn!("use_proc is not supported here, running the core on a thread");
     }
     Ok(Box::new(RetroCoreThreaded::new(
         core_path, system_dir, game, meta, speed_test,

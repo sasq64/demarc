@@ -16,3 +16,8 @@ __pycache__/
 /test_*png
 /system/musix/sc68/sc68.cfg
 /files/win/*.gz
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/app/src/main/jniLibs/
