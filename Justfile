@@ -1,15 +1,22 @@
 
+# --workspace, or only the root `demarc` package is covered and the three
+# crates under crates/ are skipped.
 test:
-    cargo test
+    cargo test --workspace
 
 clippy:
-    cargo clippy
+    cargo clippy --workspace --all-targets
 
 coverage:
-    cargo llvm-cov --ignore-run-fail --html --open
+    cargo llvm-cov --workspace --ignore-run-fail --html --open
 
 coverage_text:
-    cargo llvm-cov ---ignore-run-fail
+    cargo llvm-cov --workspace ---ignore-run-fail
+
+# Cross-compile the c64 player for a phone. See docs/ANDROID.md.
+android:
+    cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
+        build -p retro-core --features player --lib --release
 
 RUST_SYSROOT := `rustc --print sysroot`
 

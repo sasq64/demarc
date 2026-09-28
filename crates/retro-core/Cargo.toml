@@ -45,6 +45,12 @@ cc.workspace = true
 [target."cfg(unix)".dependencies]
 libc.workspace = true
 
+# winit needs to be told which Android activity to build against, and pulls in
+# `android-activity` to do it; without this it does not compile for the target
+# at all. `android_main` (docs/ANDROID.md step 3) is what will use it.
+[target."cfg(target_os = \"android\")".dependencies]
+winit = { workspace = true, features = ["android-native-activity"], optional = true }
+
 [features]
 default = []
 player = ["dep:winit", "dep:wgpu", "dep:pollster"]

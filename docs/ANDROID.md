@@ -1,12 +1,12 @@
 # Android
 
-How to get `src/bin/c64.rs` — the minimal one-window VICE player — running on a phone,
-and what has to change first. Nothing here has been built for Android yet; this is the
-plan, with the parts that were actually checked marked as checked.
+How to get the minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
+`src/bin/c64.rs` on the desktop — onto a phone, and what has to change first. The
+workspace split and the cross-build are done; the app itself is not.
 
 ## Starting position
 
-`c64` is already shaped for it: winit + wgpu with no Bevy and no librashader, the window
+The player is already shaped for it: winit + wgpu with no Bevy and no librashader, the window
 and the wgpu surface are created in `resumed()` and dropped in `suspended()` (the Android
 lifecycle), the frame texture is a plain `Rgba8Unorm` upload, and the device is requested
 with `Limits::downlevel_defaults()` so a GLES 3 fallback is in reach. Letterboxing uses
@@ -23,59 +23,60 @@ The core is available and clean (checked):
   pages. Worth re-checking for any other core: a 4 KB-aligned one will not load there.
 - It is built against API 21, and by the same NDK (r29) installed here.
 
-## The structural blocker: one package builds all of its dependencies
+## The structural blocker: one package builds all of its dependencies — done
 
 Cargo compiles every non-optional dependency of a package when building *any* target in
-it, whether that target uses them or not (verified with a scratch crate: a bin that never
-mentions `libc` still caused `libc` to be compiled). So `cargo ndk build --bin c64` asks
-the whole demarc dependency set — Bevy, librashader, `musix` (C++), `mlua`/Luau (C++),
-resvg, symphonia, ureq, suppaftp — plus `build.rs`'s vendored C (cbmconvert, ADFlib,
-xDMS) to cross-compile to `aarch64-linux-android`. Most of that has nothing to do with the
-Android app, and any one of it failing blocks the build.
+it, whether that target uses them or not. So `cargo ndk build --bin c64` used to ask the
+whole demarc dependency set — Bevy, librashader, `musix` (C++), `mlua`/Luau (C++), resvg,
+symphonia, ureq, suppaftp — plus `build.rs`'s vendored C (cbmconvert, ADFlib, xDMS) to
+cross-compile to `aarch64-linux-android`, and it died in `unrar_sys` 0.5.8
+(`vendor/unrar/ulinks.cpp:39: error: use of undeclared identifier 'lutimes'` — bionic has
+`utimes` but not `lutimes`).
 
-`cargo ndk -t arm64-v8a -P 24 check --bin c64` was run to see how far it gets. It fails,
-on two things that have nothing to do with the player:
+### Step 1 — split into a workspace (done)
 
-- **`unrar_sys` 0.5.8** (pulled in by `unarc-rs`, which `utils.rs` uses for archives):
-  `vendor/unrar/ulinks.cpp:39: error: use of undeclared identifier 'lutimes'` — bionic has
-  `utimes` but not `lutimes`. Not fixable from here; the dependency has to be out of the
-  Android build. Note this is why `retro-core` should take only
-  `utils::strip_verbatim_prefix` (the one thing `retro_emu` needs from that module) rather
-  than `utils.rs` whole.
-- **`android-activity` 0.6.1**: "Either game-activity or native-activity must be enabled as
-  features" — expected, and fixed by giving winit its Android feature (step 3).
-
-It died on those before reaching `musix`, Luau or librashader, so assume there is more
-behind them.
-
-### Step 1 — split into a workspace
-
-The minimum split, which also gives Android the `cdylib` target it needs:
+The repo is now a workspace whose root is still the `demarc` package:
 
 ```
-Cargo.toml                 [workspace] members = ["demarc", "crates/retro-core", "crates/c64"]
-crates/retro-core/         lib: backend.rs, libretro.rs, pixels.rs, retro_emu/,
-                           strip_verbatim_prefix out of utils.rs (and *only* that — the rest
-                           of utils.rs brings unarc-rs, which does not build for Android),
-                           and retro_log_shim.c in its build.rs
-                           deps: anyhow, libloading, tempfile, tracing, libc (unix)
-crates/c64/                lib + bin: the player.
-                           [lib] crate-type = ["rlib", "cdylib"]   (cdylib is what the APK loads)
-                           deps: retro-core, winit, wgpu, pollster, dirs
-demarc/                    everything else, depending on retro-core
+Cargo.toml           [workspace] members = ["crates/newsys", "crates/retro-core", "crates/retroarc"]
+crates/retro-core/   lib: backend.rs, libretro.rs, pixels.rs, retro_emu/, find.rs, path.rs
+                     (`strip_verbatim_prefix` — the one thing retro_emu wanted from utils.rs,
+                     whose rest pulls unarc-rs), retro_log_shim.c in its build.rs, and the
+                     player behind an optional `player` feature.
+                     [lib] crate-type = ["rlib", "cdylib"]   (cdylib is what the APK loads)
+                     deps: anyhow, libloading, tempfile, tracing, dirs, libc (unix)
+crates/newsys/       everything between a file on disk and a Box<dyn Backend>
+crates/retroarc/     the .slangp filter chains; the only crate that links librashader
+src/                 demarc: the Bevy app
 ```
 
-`src/bin/c64.rs` then drops its five `#[path]` includes and `use`s `retro_core::` instead;
-the `#[path]` trick and the `retro_emu/mod.rs` layout it forced exist only because the two
-binaries currently share one package, so both can go away.
+`src/bin/c64.rs` is now a thin `main` over `retro_core::player`; the `#[path]` includes and
+the `retro_emu/mod.rs` layout they forced are gone.
 
-This is the bulk of the work and it is mechanical: `demarc`'s modules keep their
-`crate::backend` / `crate::retro_emu` paths only if the re-export is kept, otherwise it is
-a find-and-replace to `retro_core::`.
+**This works.** Both of these pass:
 
-A cheaper interim, if the split is not wanted yet: give `crates/c64` its own package and
-`#[path]`-include the shared sources from `../../src/`. It builds, but every module they
-both touch has to stay dependency-free by hand, so it only pays off as a spike.
+```sh
+cargo ndk -t arm64-v8a -P 24 check -p retro-core                     # the core layer alone
+cargo ndk -t arm64-v8a -P 24 check -p retro-core --features player --lib
+```
+
+and the library actually builds:
+
+```sh
+cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
+    build -p retro-core --features player --lib --release
+```
+
+giving an ~800 KB `libretro_core.so` that needs only `libdl`, `libandroid`, `liblog` and
+`libc`, with 16 KB-aligned `LOAD` segments (so it loads on Android 15+). winit already
+has its `android-native-activity` feature wired up for the Android target, which is what
+pulls `android-activity` in.
+
+Two rules keep this working, and both are easy to break by accident:
+
+- **`retro-core` may not gain a dependency that does not build for bionic.** That is why
+  `utils.rs` stayed behind in `newsys`.
+- **Nothing under `crates/` may mention Bevy.**
 
 ### Step 2 — make the libretro layer Android-safe
 
@@ -112,14 +113,9 @@ fn android_main(app: android_activity::AndroidApp) {
 }
 ```
 
-winit needs the `android-native-activity` feature (or `android-game-activity`, see
-*Input*), which pulls `android-activity` in — for the Android target only:
-
-```toml
-[target.'cfg(target_os = "android")'.dependencies]
-winit = { version = "0.30", features = ["android-native-activity"] }
-android-activity = "0.6"
-```
+winit's `android-native-activity` feature (or `android-game-activity`, see *Input*) is
+already set for the Android target in `crates/retro-core/Cargo.toml`, which is what pulls
+`android-activity` in. `android_main` itself still has to be written.
  `AndroidApp::internal_data_path()` is the
 system/save directory to hand the core — `dirs::cache_dir()` is not meaningful here — and
 `asset_manager()` is how any bundled `.d64`/`.prg` would be read.
@@ -133,7 +129,7 @@ android/
   settings.gradle.kts, build.gradle.kts
   app/build.gradle.kts
   app/src/main/AndroidManifest.xml
-  app/src/main/jniLibs/arm64-v8a/libc64.so                 <- cargo ndk output
+  app/src/main/jniLibs/arm64-v8a/libretro_core.so          <- cargo ndk output
   app/src/main/jniLibs/arm64-v8a/libvice_x64sc.so          <- renamed buildbot core
 ```
 
@@ -145,7 +141,7 @@ With `android-native-activity` no Java is needed; the manifest points at
           android:exported="true"
           android:configChanges="orientation|keyboardHidden|screenSize|density"
           android:screenOrientation="sensorLandscape">
-  <meta-data android:name="android.app.lib_name" android:value="c64" />
+  <meta-data android:name="android.app.lib_name" android:value="retro_core" />
   <intent-filter>
     <action android:name="android.intent.action.MAIN" />
     <category android:name="android.intent.category.LAUNCHER" />
@@ -155,15 +151,17 @@ With `android-native-activity` no Java is needed; the manifest points at
 
 Give the core the `lib` prefix (`libvice_x64sc.so`): Gradle packages it, the loader puts it
 on the default search path, and `dlopen("libvice_x64sc.so")` by bare name then works with
-`extractNativeLibs` either way. `find_core()` in `c64.rs` gets an Android arm that returns
-that bare name instead of searching `$DEMARC_CORE_DIR` and the demarc cache.
+`extractNativeLibs` either way. `find_core()` — now `crates/retro-core/src/find.rs`, which
+is where it was moved for exactly this — gets an Android arm that returns that bare name
+instead of searching `$DEMARC_CORE_DIR` and the demarc cache.
 
 Build and install:
 
 ```sh
-cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs build --release
+cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
+    build -p retro-core --features player --lib --release
 (cd android && ./gradlew installDebug)
-adb logcat -s c64:V RustStdoutStderr:V
+adb logcat -s retro_core:V RustStdoutStderr:V
 ```
 
 ### Step 5 — input
@@ -215,9 +213,11 @@ RetroArch ships its cores inside the APK.
 
 ## Order of work
 
-1. Workspace split (`retro-core`, `c64`), desktop build still green.
-2. `cargo ndk -t arm64-v8a check` on `crates/c64` — get it compiling for the target.
-3. Android logging + `internal_data_path` + load-in-place `dlopen`, still on desktop.
+1. ~~Workspace split (`retro-core`, `newsys`, `retroarc`), desktop build still green.~~ done
+2. ~~`cargo ndk -t arm64-v8a check -p retro-core --features player` — compiling for the
+   target.~~ done, and it links too
+3. Android logging + `internal_data_path` + load-in-place `dlopen`, still on desktop
+   (step 2 above).
 4. `android_main`, Gradle project, first APK. Target: the BASIC banner on a device.
 5. Touch input.
 6. Audio.
