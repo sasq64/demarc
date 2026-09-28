@@ -7,6 +7,10 @@ use std::{
 };
 use unarc_rs::unified::ArchiveFormat;
 
+// Lives in `retro-core`: the libretro core needs it, and nothing else in this
+// module may reach a build where `unarc-rs` does not compile.
+pub use retro_core::strip_verbatim_prefix;
+
 pub fn has_extension(path: &Path, ext: &str) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -499,32 +503,6 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         .zip(b.chars())
         .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
         .count()
-}
-
-/// Strip Windows' `\\?\` extended-length path prefix, which `fs::canonicalize`
-/// always adds there.
-///
-/// Nothing but Win32 itself understands those paths. A libretro core reaches
-/// the filesystem through the C runtime and its own path joining, and neither
-/// copes: amiberry's ROM scan `opendir()`s the directory it is handed, and on a
-/// `\\?\` path that call fails outright, so it finds no Kickstart, boots a
-/// romless machine and renders a black screen (its path joining also uses `/`,
-/// which a verbatim path does *not* accept as a separator — under `\\?\` the
-/// string goes to the object manager unparsed). Hand out plain `C:\...` paths.
-///
-/// A verbatim UNC path (`\\?\UNC\server\share`) becomes `\\server\share`.
-/// No-op on paths that don't carry the prefix, and on non-Windows.
-pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
-    let Some(s) = path.to_str() else {
-        return path.to_owned();
-    };
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) => match rest.strip_prefix(r"UNC\") {
-            Some(unc) => PathBuf::from(format!(r"\\{unc}")),
-            None => PathBuf::from(rest),
-        },
-        None => path.to_owned(),
-    }
 }
 
 #[cfg(test)]

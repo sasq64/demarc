@@ -1,0 +1,6 @@
+# Repo root, for tests that reach the `system/` and `testdata/` directories
+# beside this file. `CARGO_MANIFEST_DIR` no longer answers that question: since
+# the workspace split it points at the crate, which for `crates/*` is two levels
+# down. `relative = true` resolves against this file's parent, i.e. the root.
+[env]
+DEMARC_ROOT = { value = ".", relative = true }

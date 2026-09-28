@@ -6,9 +6,16 @@ use std::{
 };
 
 use crate::backend::frame_bytes;
-use crate::libloader;
 
 use super::*;
+
+/// The cores these tests boot, looked up the way the `c64` player does. demarc
+/// downloads them on first use; nothing here does, so run demarc once (or point
+/// `DEMARC_CORE_DIR` at a build) before running these.
+fn core(name: &str) -> PathBuf {
+    crate::find_core(name)
+        .unwrap_or_else(|| panic!("{name} is not in the core cache; run demarc once to fetch it"))
+}
 
 pub fn save_png(emu: &RetroCoreDirect, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let width = emu.state.frame_width as u32;
@@ -23,11 +30,11 @@ pub fn save_png(emu: &RetroCoreDirect, path: &Path) -> Result<(), Box<dyn std::e
     buf.save(path)?;
     Ok(())
 }
-/// Paths here are rooted at the crate directory rather than left relative:
+/// Paths here are rooted at the repo directory rather than left relative:
 /// a conversion running in another test switches the process-wide working
 /// directory for its duration (see `cbmconvert::CwdGuard`).
 fn root(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+    Path::new(env!("DEMARC_ROOT")).join(rel)
 }
 
 /// The threaded `run()` is non-blocking, so the main loop must give the
@@ -47,7 +54,7 @@ fn run_until_frame(emu: &mut dyn Backend, timeout: Duration) {
 
 #[test]
 fn retro_amiga_works() {
-    let core_path = libloader::get_libretro("puae").unwrap();
+    let core_path = core("puae");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
@@ -67,7 +74,7 @@ fn retro_amiga_works() {
 /// a command that doesn't exist under 1.3, and the boot fails.
 #[test]
 fn retro_amiga_dir_works() {
-    let core_path = libloader::get_libretro("puae").unwrap();
+    let core_path = core("puae");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/o2-intro");
 
@@ -85,7 +92,7 @@ fn retro_amiga_dir_works() {
 
 #[test]
 fn retro_threaded_works() {
-    let core_path = libloader::get_libretro("puae").unwrap();
+    let core_path = core("puae");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
@@ -111,8 +118,8 @@ fn retro_threaded_works() {
 
 #[test]
 fn retro_threaded_multi_works() {
-    let uae_core = libloader::get_libretro("puae").unwrap();
-    let vice_core = libloader::get_libretro("vice_x64").unwrap();
+    let uae_core = core("puae");
+    let vice_core = core("vice_x64");
     // The two cores no longer share a system dir — the Amiga one is a subdir of
     // it (see `amiga_system_dir()`).
     let uae_system = root("system/amiga");
@@ -188,7 +195,7 @@ fn retro_threaded_multi_works() {
 /// libc's `strtok` and jump to a null opcode handler — see `LOAD_LOCK`.
 #[test]
 fn retro_amiga_concurrent_loads_work() {
-    let core = libloader::get_libretro("puae").unwrap();
+    let core = core("puae");
     let barrier = &std::sync::Barrier::new(4);
     let core = &core;
     std::thread::scope(|s| {
@@ -221,7 +228,7 @@ fn retro_amiga_concurrent_loads_work() {
 /// is the one way this default could break a disc that booted on `auto`.
 #[test]
 fn retro_psx_works() {
-    let core_path = libloader::get_libretro("mednafen_psx").unwrap();
+    let core_path = core("mednafen_psx");
     // A temp dir, not `system/`: PSX needs nothing from it, and the core
     // writes memory-card files into the system dir — which `build.rs` would
     // then pack into the embedded `system.zip`.
@@ -261,7 +268,7 @@ fn retro_psx_works() {
 
 #[test]
 fn retro_vice_works() {
-    let core_path = libloader::get_libretro("vice_x64").unwrap();
+    let core_path = core("vice_x64");
     let system_dir = &root("system");
     let game_path = root("testdata/c64/quantum.prg");
 
@@ -276,7 +283,7 @@ fn retro_vice_works() {
 
 #[test]
 fn settings_reach_the_core() {
-    let core_path = libloader::get_libretro("puae").unwrap();
+    let core_path = core("puae");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 

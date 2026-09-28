@@ -3081,6 +3081,7 @@ dependencies = [
  "realfft",
  "regex",
  "resvg",
+ "retro-core",
  "ringbuf",
  "rubato",
  "ruffle_core",
@@ -6945,6 +6946,24 @@ dependencies = [
  "tiny-skia 0.12.0",
  "usvg",
  "zune-jpeg",
+]
+
+[[package]]
+name = "retro-core"
+version = "1.7.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "dirs",
+ "image",
+ "libc",
+ "libloading 0.9.0",
+ "pollster",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "wgpu 29.0.4",
+ "winit",
 ]
 
 [[package]]

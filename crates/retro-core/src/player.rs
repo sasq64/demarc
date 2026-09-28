@@ -2,28 +2,13 @@
 //! and the lottes CRT shader on top.
 //!
 //! No Bevy, no librashader, no CLI: winit + wgpu only, which is the stack an
-//! Android port needs. It shares demarc's libretro plumbing (`retro_emu`,
-//! `libretro`, `pixels`, `backend`) by including those modules directly, and
-//! nothing else. A `#[path]`-included file looks for its own submodules beside
-//! itself, which is why `retro_emu` is a `mod.rs`.
+//! Android port needs — see `docs/ANDROID.md`.
 
 #![allow(dead_code)]
 
-#[path = "../backend.rs"]
-mod backend;
-#[allow(warnings)]
-#[path = "../libretro.rs"]
-mod libretro;
-#[path = "../pixels.rs"]
-mod pixels;
-#[allow(unused_imports)]
-#[path = "../retro_emu/mod.rs"]
-mod retro_emu;
-#[path = "../utils.rs"]
-mod utils;
+use crate::libretro;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,71 +16,16 @@ use anyhow::{Context, Result, anyhow};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use crate::backend::frame_bytes;
 use crate::retro_emu::RetroCoreDirect;
+use crate::{dylib_name, find_core, system_dir};
 
 const CORE_NAME: &str = "vice_x64sc";
 const WINDOW_SIZE: (u32, u32) = (720, 576);
-
-// -------------------------------------------------------------------------
-// Core and system directory
-// -------------------------------------------------------------------------
-
-fn dylib_name(name: &str) -> String {
-    let ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    };
-    format!("{name}_libretro.{ext}")
-}
-
-/// Find a libretro core without any of demarc's download machinery: the
-/// `DEMARC_CORE_DIR` list, the directory holding this executable, then the
-/// per-url subdirectories of demarc's own core cache.
-fn find_core(name: &str) -> Option<PathBuf> {
-    let file = dylib_name(name);
-    let mut dirs: Vec<PathBuf> = std::env::var_os("DEMARC_CORE_DIR")
-        .iter()
-        .flat_map(|list| std::env::split_paths(list).collect::<Vec<_>>())
-        .collect();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.to_owned());
-    }
-    let cache = dirs::cache_dir().unwrap_or_default().join("demarc/cores");
-    dirs.extend(
-        std::fs::read_dir(cache)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path()),
-    );
-    dirs.into_iter()
-        .map(|dir| dir.join(&file))
-        .find(|path| path.is_file())
-}
-
-/// Directory handed to the core as its libretro system and save directory.
-fn system_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("DEMARC_SYSTEM_DIR") {
-        return PathBuf::from(dir);
-    }
-    let local = PathBuf::from("system");
-    if local.is_dir() {
-        return local;
-    }
-    let dir = dirs::cache_dir().unwrap_or_default().join("demarc/system");
-    _ = std::fs::create_dir_all(&dir);
-    dir
-}
 
 // -------------------------------------------------------------------------
 // Keyboard
@@ -216,7 +146,7 @@ fn retro_mods(mods: winit::keyboard::ModifiersState) -> u16 {
 // Rendering
 // -------------------------------------------------------------------------
 
-const LOTTES_WGSL: &str = include_str!("../../system/shaders/lottes.wgsl");
+const LOTTES_WGSL: &str = include_str!("../../../system/shaders/lottes.wgsl");
 
 /// The one Bevy-ism in lottes.wgsl: a fullscreen vertex shader it imports.
 const BEVY_IMPORT: &str =
@@ -545,7 +475,7 @@ fn create_bind_group(
 // App
 // -------------------------------------------------------------------------
 
-struct App {
+pub struct App {
     core: RetroCoreDirect,
     gfx: Option<Gfx>,
     mods: u16,
@@ -554,7 +484,7 @@ struct App {
 }
 
 impl App {
-    fn new(core: RetroCoreDirect) -> Self {
+    pub fn new(core: RetroCoreDirect) -> Self {
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         Self {
             core,
@@ -651,7 +581,7 @@ impl ApplicationHandler for App {
     }
 }
 
-fn load_core() -> Result<RetroCoreDirect> {
+pub fn load_core() -> Result<RetroCoreDirect> {
     let path = find_core(CORE_NAME).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \
@@ -665,15 +595,3 @@ fn load_core() -> Result<RetroCoreDirect> {
     RetroCoreDirect::new(&path, &system, None, HashMap::new())
         .with_context(|| format!("could not start {}", path.display()))
 }
-
-fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
-    let core = load_core()?;
-    let event_loop = EventLoop::new()?;
-    event_loop.run_app(&mut App::new(core))?;
-    Ok(())
-}
-

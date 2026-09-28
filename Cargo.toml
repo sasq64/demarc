@@ -1,10 +1,36 @@
-[package]
-name = "demarc"
+[workspace]
+members = ["crates/retro-core"]
+
+# Shared by every crate in the workspace, so a version bump happens in one place.
+[workspace.package]
 version = "1.7.0"
 edition = "2024"
+repository = "https://github.com/sasq64/demarc"
+
+# Only the dependencies more than one crate needs. Crate-local ones stay in the
+# crate that uses them.
+[workspace.dependencies]
+anyhow = "1.0.102"
+cc = "1"
+dirs = "6.0.0"
+libc = "0.2"
+libloading = "0.9"
+pollster = "0.4"
+sha2 = "0.11"
+tempfile = "3.27.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+wgpu = "29"
+winit = "0.30"
+zip = { version = "8", default-features = false, features = ["deflate", "deflate64"] }
+
+[package]
+name = "demarc"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
 description = "A command line emulator frontend for the demoscene"
 readme = "README.md"
-repository = "https://github.com/sasq64/demarc"
 
 # Lets `cargo binstall --git https://github.com/sasq64/demarc demarc` find the
 # archives that `dist` uploads to the GitHub release. The default patterns
@@ -18,15 +44,11 @@ pkg-fmt = "txz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
 
-# The minimal single-core player. `test = false`: it includes demarc's libretro
-# modules, and their unit tests reach for parts of the main binary it leaves out.
-[[bin]]
-name = "c64"
-path = "src/bin/c64.rs"
-test = false
-
 [dependencies]
-anyhow = "1.0.102"
+anyhow.workspace = true
+# The libretro layer, split out so it can be built for targets the rest of
+# demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
+retro-core = { path = "crates/retro-core" }
 bevy = {
   version = "0.19.0",
   default-features = false,
@@ -39,7 +61,7 @@ bevy = {
 }
 clap = { version = "4.6.1", features = ["color", "derive"] }
 cpal = "0.17.1"
-dirs = "6.0.0"
+dirs.workspace = true
 fatfs = "0.3.6"
 image = {
   version = "0.25.10",
@@ -64,7 +86,7 @@ image-extras = {
     "pcx",
   ]
 }
-libloading = "0.9"
+libloading.workspace = true
 # Fork of librashader 0.11.4, branch `demarc`: three preset-parser fixes demarc
 # needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
 # reference depth counted per chain instead of per file, and unresolvable
@@ -88,29 +110,22 @@ percent-encoding = "2"
 rand = "0.10.1"
 ringbuf = "0.5.0"
 rubato = "0.16"
-sha2 = "0.11"
+sha2.workspace = true
 suppaftp = "10"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
-tempfile = "3.27.0"
+tempfile.workspace = true
 thiserror = "2"
-tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 ureq = "3"
 url = "2"
 # The window and input for the `c64` binary, which has no Bevy in it. Same
 # version Bevy 0.19 uses, so it costs nothing extra to build.
-winit = "0.30"
+winit.workspace = true
 # Matches the wgpu version Bevy 0.19 uses; needed to name `SamplerBorderColor`,
 # which Bevy doesn't re-export, and to render without Bevy in the `c64` binary.
-wgpu = "29"
-zip = {
-  version = "8",
-  default-features = false,
-  features = [
-    "deflate",
-    "deflate64",
-  ]
-}
+wgpu.workspace = true
+zip.workspace = true
 
 # egui, for the ongoing port of the frontend UI (src/egui_ui.rs). 0.42 is the
 # release built against Bevy 0.19 and wgpu-types 29, matching the versions above.
@@ -136,7 +151,7 @@ mlua = { version = "0.11", features = ["luau", "send"] }
 nucleo-matcher = "0.3"
 # `block_on` for wgpu's adapter/device requests in the `c64` binary; also used
 # by the Flash backend.
-pollster = "0.4"
+pollster.workspace = true
 # `--filter`: matched against each raw db line while collecting (see collect_db).
 regex = "1"
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
@@ -189,9 +204,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = { version = "1.1.4", features = ["preserve_order"] }
 
 [build-dependencies]
-cc = "1"
-sha2 = "0.11"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+cc.workspace = true
+sha2.workspace = true
+zip = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
@@ -209,7 +224,7 @@ zbus = { version = "5", features = ["tokio"] }
 [target."cfg(unix)".dependencies]
 # Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
 # keeping the original stdout for tracing (see `silence_stdout` in main.rs).
-libc = "0.2"
+libc.workspace = true
 
 [features]
 default = []

@@ -772,7 +772,7 @@ impl RetroCoreDirect {
         let abs_path = std::fs::canonicalize(game_path).unwrap_or_else(|_| game_path.to_path_buf());
         // Windows canonicalize() adds \\?\ (extended-length path prefix) which most
         // C libraries including libretro cores don't understand — strip it.
-        let abs_path = crate::utils::strip_verbatim_prefix(&abs_path);
+        let abs_path = crate::strip_verbatim_prefix(&abs_path);
         let path_str = abs_path.to_string_lossy();
         let game_path_c = CString::new(path_str.as_bytes())?;
         let game_info = retro_game_info {

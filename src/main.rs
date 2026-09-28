@@ -8,11 +8,12 @@ use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
 use clap::Parser;
 
-#[allow(warnings)]
-mod libretro;
+
+// The libretro layer lives in its own crate now; re-exported here so the rest
+// of demarc keeps its `crate::backend` / `crate::retro_emu` paths.
+pub use retro_core::{backend, libretro, pixels, retro_emu};
 
 mod audio;
-mod backend;
 mod cache;
 mod cbmconvert;
 mod commands;
@@ -44,10 +45,8 @@ mod music_vis;
 mod navigator;
 mod newsys;
 mod overrides;
-mod pixels;
 mod post_process;
 mod remote_control;
-mod retro_emu;
 mod screensaver;
 mod shader_dialog;
 mod speed_test;
