@@ -25,39 +25,6 @@ impl NavList {
             prompt: Some("".into()),
         });
     }
-
-    // fn getSource(&self) -> ListSource<EmuFile> {}
-}
-
-struct RootSource {
-    names: AllWordsSource,
-}
-
-impl RootSource {
-    pub(crate) fn new() -> Self {
-        Self {
-            names: AllWordsSource::new(vec![
-                "Demozoo".into(),
-                "CSDb".into(),
-                "Parties".into(),
-                "Favorites".into(),
-            ]),
-        }
-    }
-}
-
-impl FuzzySource<EmuFile> for RootSource {
-    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
-        self.names.search(query, limit)
-    }
-
-    fn get_text(&self, id: usize) -> String {
-        self.names.get_text(id)
-    }
-
-    fn get_info(&self, _id: usize) -> String {
-        "".into()
-    }
 }
 
 type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> ListSource + Send + Sync>;
@@ -73,17 +40,11 @@ pub(crate) struct Navigator {
 
 impl Navigator {
     pub(crate) fn new() -> Self {
-        let source = Arc::new(RootSource::new());
-        let root = NavList {
-            id: 0,
-            source,
-            path: "".into(),
-        };
         Self {
             pos: -1,
             showing: -1,
             files: HashMap::new(),
-            stack: vec![root],
+            stack: vec![],
             mapping: Vec::new(),
         }
     }
@@ -196,22 +157,31 @@ impl Navigator {
         Ok(())
     }
 
-    // Register with simpler pattern; "Parties/{party}/{combo}" should become "Parties\/([^\/]*)\/([^\/]*)"
+    // Register with simpler pattern; "Parties/{party}/{combo}" becomes "^Parties/([^/]*)/([^/]*)$".
+    // A "*" part matches any number of leading path components, so "*/{id}/dls" also
+    // matches "Platforms/C64/12345/dls".
     pub fn register<S: FuzzySource<EmuFile>>(
         &mut self,
         pattern: &str,
         callback: impl Fn(&[&str], &'static [EmuFile]) -> S + Send + Sync + 'static,
     ) -> Result<()> {
-        let mut rx = String::from("^.*");
-        for (i, part) in pattern.split('/').enumerate() {
-            if i > 0 {
+        let mut rx = String::from("^");
+        let mut sep = false;
+        for part in pattern.split('/') {
+            if part == "*" {
+                rx.push_str("(?:[^/]+/)*");
+                sep = false;
+                continue;
+            }
+            if sep {
                 rx.push('/');
             }
             if part.starts_with('{') && part.ends_with('}') {
-                rx.push_str("([^\\/]*)");
+                rx.push_str("([^/]*)");
             } else {
                 rx.push_str(&regex::escape(part));
             }
+            sep = true;
         }
         rx.push('$');
         self.register_regex(Regex::new(&rx)?, callback)
@@ -260,6 +230,7 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
             PickerSource::new(files, &subset)
         },
     )?;
+
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -277,29 +248,35 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
             )
         },
     )?;
+
     navigator.register(
         "Parties/{name}/{compo}",
         |path: &[&str], files: &'static [EmuFile]| {
-            let subset: Vec<u32> = files
+            let mut subset: Vec<u32> = files
                 .iter()
                 .enumerate()
                 .filter(|(_, f)| f.get_party_and_compo() == (path[1], path[2]))
                 .map(|(i, _)| i as u32)
                 .collect();
+            subset.sort_by_key(|i| files[*i as usize].get_placement());
             PickerSource::new(files, &subset)
         },
     )?;
+
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         return AllWordsSource::new(["All".into(), "Parties".into(), "Platforms".into()].into());
     })?;
 
-    navigator.register(
-        "/{release}/dls",
-        |_path: &[&str], files: &'static [EmuFile]| {
-            let subset: Vec<u32> = files.iter().enumerate().map(|(i, _)| i as u32).collect();
-            PickerSource::new(files, &subset)
-        },
-    )?;
+    navigator.register("*/{id}/dls", |path: &[&str], files: &'static [EmuFile]| {
+        let id = path[1].parse::<usize>().unwrap_or(0);
+
+        let urls: Vec<String> = files[id]
+            .get_meta("download")
+            .split(";")
+            .map(|s| s.to_string())
+            .collect();
+        AllWordsSource::new(urls)
+    })?;
 
     Ok(())
 }
@@ -337,7 +314,8 @@ pub(crate) fn handle_navigator(
             debug!("Selected {:?}", msg);
             if let Some(_ef) = &msg.emu_file {
                 if msg.alt {
-                    navigator.enter("dls").show(&mut list_writer);
+                    let id = msg.item;
+                    navigator.enter(&format!("{id}/dls")).show(&mut list_writer);
                     continue;
                 }
 

@@ -601,18 +601,6 @@ pub(crate) fn handle_cmd(
                 if navigator.pos >= 0 {
                     navigator.stack[navigator.pos as usize].show(&mut show_list);
                 }
-                // let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
-                //settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
-                // if settings.file_source.is_none() {
-                //     settings.file_source = Some(FilePickerSource::new(&settings.files));
-                // }
-                // let height = window.as_ref().map_or(1080.0, |w| w.resolution.size().y);
-                // settings.file_source.as_mut().unwrap().width = (height / 12.0) as u32;
-                //
-                // show_list.write(ShowFuzzyList {
-                //     id: FILE_PICKER_ID,
-                //     source: Arc::new(settings.file_source.clone().unwrap()),
-                // });
             }
             Cmd::Settings => {
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));

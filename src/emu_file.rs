@@ -780,6 +780,18 @@ impl EmuFile {
         )
     }
 
+    pub fn get_placement(&self) -> i32 {
+        let Some(party) = self.meta.get("party") else {
+            return 255;
+        };
+        party
+            .splitn(3, ";")
+            .nth(2)
+            .unwrap_or("254")
+            .parse::<i32>()
+            .unwrap_or(253)
+    }
+
     pub fn cdc(&self) -> usize {
         self.game_info.awards.cdc()
     }
