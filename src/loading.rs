@@ -12,7 +12,7 @@ use crate::config::AppSettings;
 use crate::egui_ui::{HudLocation, SetHudText};
 use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, GameInfo, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
-use crate::frontend::FrontendSet;
+use crate::frontend::{EmuView, FrontendSet};
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
 use crate::newsys::{self, LoadResult, NewSys};
 use crate::workfile::WorkFile;
@@ -20,6 +20,12 @@ use crate::workfile::WorkFile;
 /// One emulator finished a load this frame.
 #[derive(Message)]
 pub struct LoadFinished(pub Entity);
+
+#[derive(Message)]
+pub struct LoadFile {
+    pub emu_file: EmuFile,
+    pub target_emulator: Option<usize>,
+}
 
 /// The two off-thread halves a load is made of, in the order they run.
 enum LoadPhase {
@@ -367,14 +373,43 @@ impl Emulator {
     }
 }
 
+pub fn load_file(
+    settings: ResMut<AppSettings>,
+    mut emus: Query<(&EmuView, &mut Emulator)>,
+    mut reader: MessageReader<LoadFile>,
+) {
+    for game in reader.read() {
+        debug!("Got load file message");
+        let over = settings.override_for_file(&game.emu_file);
+        if let Some(o) = &over {
+            debug!("Found override for {:?}: {o:?}", game.emu_file);
+        }
+
+        let emu_index = game.target_emulator.unwrap_or(settings.current_emu);
+
+        for (view, mut emu) in &mut emus {
+            if view.index == emu_index {
+                if let Some(previous) = &emu.pending_load {
+                    previous.phase.cancel();
+                    DOWNLOAD_COUNTER.ended();
+                }
+                emu.state = EmuState::Loading;
+                emu.pending_load = Some(load_async(&game.emu_file, over.as_ref()));
+                DOWNLOAD_COUNTER.started();
+            }
+        }
+    }
+}
+
 pub(crate) fn handle_loading(
-    mut emus: Query<(Entity, &mut Emulator)>,
+    mut emus: Query<(Entity, &EmuView, &mut Emulator)>,
     mut settings: ResMut<AppSettings>,
     mut writer: MessageWriter<SetHudText>,
+    mut load_writer: MessageWriter<LoadFile>,
     mut loaded: MessageWriter<LoadFinished>,
     time: Res<Time>,
 ) {
-    for (entity, mut emu) in &mut emus.iter_mut() {
+    for (entity, emuview, mut emu) in &mut emus.iter_mut() {
         let flen = settings.files.len() as isize;
 
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
@@ -387,20 +422,13 @@ pub(crate) fn handle_loading(
         if d != 0 {
             settings.current_game = (settings.current_game + d + flen) % flen;
             let index = settings.current_game as usize;
-            let game = &settings.files[index];
-            let over = settings.override_for(index);
-            if let Some(o) = &over {
-                debug!("Found override for {game:?}: {o:?}");
-            }
-            if let Some(previous) = &emu.pending_load {
-                previous.phase.cancel();
-                DOWNLOAD_COUNTER.ended();
-            }
-            emu.state = EmuState::Loading;
             emu.run_next = false;
             emu.run_prev = false;
-            emu.pending_load = Some(load_async(game, over.as_ref()));
-            DOWNLOAD_COUNTER.started();
+            debug!("Send load file");
+            load_writer.write(LoadFile {
+                emu_file: settings.files[index].clone(),
+                target_emulator: Some(emuview.index),
+            });
             continue;
         }
 
@@ -458,7 +486,14 @@ pub(crate) fn handle_loading(
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<LoadFinished>()
-            .add_systems(Update, handle_loading.in_set(FrontendSet::Loading));
+            .add_message::<LoadFile>()
+            .add_systems(
+                Update,
+                (
+                    handle_loading.in_set(FrontendSet::Loading),
+                    load_file.run_if(on_message::<LoadFile>),
+                ),
+            );
     }
 }
 

@@ -1,11 +1,11 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use bevy::{color::Color, ecs::resource::Resource, render::extract_resource::ExtractResource};
-use newsys::{CbmSystem, SysOpts};
 use clap::{
     ColorChoice, Parser,
     builder::{Styles, styling},
 };
+use newsys::{CbmSystem, SysOpts};
 use regex::Regex;
 
 use crate::{
@@ -579,26 +579,12 @@ pub struct AppSettings {
     /// An overrides file can only name one per demozoo id, so this is how a
     /// local archive or directory — which has no id — gets the same treatment.
     pub boot_file: Option<&'static str>,
-
-    /// Downloads picked by hand in the file picker (Shift+Enter), keyed on the
-    /// index into [`Self::files`]. The list itself is immutable, so the choice
-    /// lives here and reaches the load as an [`Override::download_url`].
-    pub picked_downloads: HashMap<usize, &'static str>,
 }
 
 impl AppSettings {
     /// The override to load the entry at `index` with: whatever
     /// `overrides.toml` said about the release it is, with `--boot-file` and a
     /// hand-picked download written over the top.
-    ///
-    /// Entries are matched on the `id` field a db line carries, so the file
-    /// only ever finds anything for a release loaded out of a db; a file named
-    /// on the command line has no id. The ids are demozoo's, so a db from
-    /// somewhere else can in principle collide with one — the overrides exist
-    /// for demos demarc gets wrong, and are written against the demozoo db they
-    /// were tried on. `--boot-file` is not keyed on anything and so applies to
-    /// every release loaded, which is what makes it usable on a local archive
-    /// or directory; being asked for by hand, it also beats the file.
     pub fn override_for(&self, index: usize) -> Option<Override> {
         let from_file = if self.demozoo_overrides.is_empty() {
             None
@@ -608,16 +594,31 @@ impl AppSettings {
                 .and_then(|file| file.get_meta("id").parse::<usize>().ok())
                 .and_then(|id| self.demozoo_overrides.get(&id))
         };
-        let picked = self.picked_downloads.get(&index).copied();
-        if from_file.is_none() && self.boot_file.is_none() && picked.is_none() {
+        if from_file.is_none() && self.boot_file.is_none() {
             return None;
         }
         let mut over = from_file.cloned().unwrap_or_default();
         if self.boot_file.is_some() {
             over.boot_file = self.boot_file;
         }
-        if picked.is_some() {
-            over.download_url = picked;
+        Some(over)
+    }
+    pub fn override_for_file(&self, emu_file: &EmuFile) -> Option<Override> {
+        let from_file = if self.demozoo_overrides.is_empty() {
+            None
+        } else {
+            emu_file
+                .get_meta("id")
+                .parse::<usize>()
+                .ok()
+                .and_then(|id| self.demozoo_overrides.get(&id))
+        };
+        if from_file.is_none() && self.boot_file.is_none() {
+            return None;
+        }
+        let mut over = from_file.cloned().unwrap_or_default();
+        if self.boot_file.is_some() {
+            over.boot_file = self.boot_file;
         }
         Some(over)
     }

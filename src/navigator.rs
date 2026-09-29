@@ -5,12 +5,12 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use regex::Regex;
 
-use crate::commands::DownloadSource;
-use crate::commands::{Cmd, CmdMessage, PickerSource};
+use crate::commands::{DownloadSource, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::{FuzzyListSelect, HudState, ListSource, ShowFuzzyList};
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
+use crate::loading::LoadFile;
 
 pub(crate) struct NavList {
     id: usize,
@@ -310,11 +310,10 @@ pub fn setup_navigator_bevy(
 }
 
 pub(crate) fn handle_navigator(
-    mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
-    mut writer: MessageWriter<CmdMessage>,
     mut navigator: ResMut<Navigator>,
     mut reader: MessageReader<FuzzyListSelect>,
+    mut load_writer: MessageWriter<LoadFile>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
     hud: Res<HudState>,
 ) {
@@ -333,21 +332,19 @@ pub(crate) fn handle_navigator(
     for msg in reader.read() {
         if msg.id == id {
             debug!("Selected {:?}", msg);
-            if let Some(_ef) = &msg.emu_file {
+            if let Some(emu_file) = msg.emu_file.clone() {
                 if msg.alt {
                     let id = msg.item;
                     navigator.enter(&format!("{id}/dls")).show(&mut list_writer);
                     continue;
                 }
-
-                settings.current_game = msg.item as isize;
-                writer.write(CmdMessage(Cmd::Reload));
+                load_writer.write(LoadFile {
+                    emu_file,
+                    target_emulator: None,
+                });
             } else {
                 navigator.enter(&msg.text).show(&mut list_writer);
             }
-            // settings.current_game = msg.item as isize;
-            // Selected item in Navigator
-            // Either push new Navigator or handle EmuFile
         }
     }
 }
