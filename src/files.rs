@@ -82,9 +82,11 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// Each non-blank line holds `key:value` fields separated by tabs, in any order
 /// (`id:1\ttitle:Zentro 4\tauthor:Zenith\t…`). Every field becomes meta on the
 /// entry; `title`, `author` and the year — the first `-`/`/`/`.`-delimited part
-/// of `date` — additionally fill in its [`GameInfo`]. The `download` field
-/// becomes the entry's path and is fetched on demand the first time it's loaded
-/// (see [`FileSource::resolve`]). Lines with no URL are skipped.
+/// of `date` — additionally fill in its [`GameInfo`]. A field with nothing
+/// after its colon is ignored, so a db may either write it empty or leave it
+/// out. The `download` field becomes the entry's path and is fetched on demand
+/// the first time it's loaded (see [`FileSource::resolve`]). Lines with no URL
+/// are skipped.
 ///
 /// A `# Platform:<name>` header line applies to every line below it, becoming a
 /// `platform` meta on each entry that doesn't name one itself. A header line
@@ -236,10 +238,12 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
         }
         let mut urls = UrlList::default();
         for (key, val) in fields {
+            // An empty field says nothing, so it means the same as one that
+            // isn't there — and doesn't override the header meta.
+            if val.trim().is_empty() {
+                continue;
+            }
             if key == "download" {
-                if val.trim().is_empty() {
-                    continue;
-                }
                 urls = UrlList::parse_field(val);
             }
             meta.insert(key, val);
@@ -255,7 +259,9 @@ pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut V
             .split(['-', '/', '.'])
             .next()
             .unwrap_or("");
-        meta.insert("year", &year);
+        if !year.is_empty() {
+            meta.insert("year", year);
+        }
 
         let game_info = GameInfo::new(&meta);
 
