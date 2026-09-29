@@ -120,6 +120,14 @@ const LINK_BASES: &[(&str, &[&str])] = &[
     ("SixteenColorsPack", &["https://16colo.rs/pack/"]),
 ];
 
+/// Spelled-out urls on the dead amigascne host, treated as `AmigascneFile`
+/// links (the first [`LINK_BASES`] entry).
+const AMIGASCNE_URLS: &[&str] = &[
+    "http://ftp.amigascne.org/pub/amiga",
+    "https://ftp.amigascne.org/pub/amiga",
+    "ftp://ftp.amigascne.org/pub/amiga",
+];
+
 /// Fixups applied to every resolved url, as `(prefix, replacement)` pairs; the
 /// first matching rule wins.
 ///
@@ -181,6 +189,9 @@ struct Candidate {
 /// The [`LINK_BASES`] entry and the parameter to append to its mirrors, if `s`
 /// names a link class rather than spelling a url out.
 fn link_class(s: &str) -> Option<(usize, &str)> {
+    if let Some(parameter) = AMIGASCNE_URLS.iter().find_map(|p| s.strip_prefix(p)) {
+        return Some((0, parameter));
+    }
     let (class, parameter) = s.split_once(':')?;
     let index = LINK_BASES
         .iter()
@@ -323,6 +334,43 @@ pub fn prune_cache() {
 /// Every failure is logged and the last one is returned if nothing works, as
 /// the one that ran out of alternatives.
 fn download_to(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    let result = download_candidates(url, path, on_progress);
+    if result.is_err()
+        && let Some((class, _)) = link_class(url)
+        && LINK_BASES[class].0 == "AmigascneFile"
+        && let Some(fixed) = fix_case(url)
+    {
+        info!("Retrying {url} as {fixed}");
+        return download_candidates(&fixed, path, on_progress);
+    }
+    result
+}
+
+/// `url` with its file name replaced by the one in the parent directory's
+/// listing that matches it case-insensitively, if that differs.
+fn fix_case(url: &str) -> Option<String> {
+    let (dir, name) = url.rsplit_once('/')?;
+    let wanted = percent_decode_str(name).decode_utf8_lossy();
+    let listing = candidates(&format!("{dir}/"))
+        .into_iter()
+        .filter(|c| !c.url.starts_with("ftp://"))
+        .find_map(|c| {
+            let mut body = Vec::new();
+            download(&c.url, &mut body, &|_, _| {}).ok()?;
+            Some(String::from_utf8_lossy(&body).into_owned())
+        })?;
+    listing
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|s| s.split_once('"').map(|(href, _)| href))
+        .find(|href| {
+            let href = percent_decode_str(href).decode_utf8_lossy();
+            href != wanted && href.eq_ignore_ascii_case(&wanted)
+        })
+        .map(|href| format!("{dir}/{href}"))
+}
+
+fn download_candidates(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
     let mut last_error = None;
     for candidate in candidates(url) {
         match download_part(&candidate.url, path, on_progress) {

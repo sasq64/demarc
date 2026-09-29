@@ -197,3 +197,31 @@ fn extracts_filename() {
     assert_eq!(url_filename("https://x.com/"), "download");
     assert_eq!(url_filename("game.zip"), "game.zip");
 }
+
+#[test]
+#[ignore = "hits the network"]
+fn fixes_amigascne_file_name_case() {
+    assert_eq!(
+        fix_case("AmigascneFile:/Groups/A/Andromeda/Andromeda-dos.dms").as_deref(),
+        Some("AmigascneFile:/Groups/A/Andromeda/ANDROMEDA-DOS.dms")
+    );
+}
+
+/// Demozoo 10347 spells out the dead amigascne host, in the wrong case.
+#[test]
+#[ignore = "hits the network"]
+fn fixes_spelled_out_amigascne_url() {
+    assert_eq!(
+        fix_case("http://ftp.amigascne.org/pub/amiga/Groups/A/Anarchy/ANARCHY-Smoker").as_deref(),
+        Some("http://ftp.amigascne.org/pub/amiga/Groups/A/Anarchy/Anarchy-Smoker")
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("smoker");
+    download_to(
+        "http://ftp.amigascne.org/pub/amiga/Groups/A/Anarchy/ANARCHY-Smoker",
+        &path,
+        &|_, _| {},
+    )
+    .unwrap();
+    assert!(std::fs::metadata(&path).unwrap().len() > 0);
+}
