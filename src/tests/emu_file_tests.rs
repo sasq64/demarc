@@ -150,6 +150,22 @@ fn a_missing_disk_fails_the_whole_set() {
     assert_eq!(result.unwrap().file_name().unwrap(), "hardwired.zip");
 }
 
+/// Two differently named images may be one disk from two archives: Turmoil
+/// by Sanity is on amigascne and in The Scene Archives. With the first dead,
+/// the second loads on its own, and the dead one is not tried again.
+#[test]
+fn a_failed_set_falls_back_to_each_disk_alone() {
+    let (tried, result) = load(
+        &[
+            "AmigascneFile:/Groups/S/Sanity/SANITY-Turmoil.dms",
+            "SceneOrgFile:/mirrors/the_scene_archives/0694-turmoil.dms",
+        ],
+        &["SANITY-Turmoil.dms"],
+    );
+    assert_eq!(names(&result.unwrap()), vec!["0694-turmoil.dms"]);
+    assert_eq!(tried.len(), 2, "{tried:?}");
+}
+
 /// An override naming one of a release's downloads narrows the list to it,
 /// so the load fetches the demo rather than the soundtrack beside it. The
 /// name is matched against the URL's own file name, whatever the scheme —

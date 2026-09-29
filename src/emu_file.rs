@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use std::{
-    collections::HashMap,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -237,6 +238,9 @@ impl Download<'_> {
 /// soundtrack because the demo 404'd is worse than failing. Dropping everything
 /// would leave nothing to fetch at all, so a filter that empties the list is
 /// itself dropped and every URL becomes an attempt.
+///
+/// Last come the disks of a multi-disk set one by one, since two differently
+/// named images may just as well be the same disk from two archives.
 pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 3] = ["sid", "pdf", "rtf"];
@@ -250,6 +254,13 @@ pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
         }
     }
 
+    let singles: Vec<Download<'a>> = match disks.len() {
+        0 | 1 => Vec::new(),
+        _ => disks
+            .iter()
+            .map(|(_, disk)| Download::Disks(vec![disk.clone()]))
+            .collect(),
+    };
     let mut downloads = Vec::new();
     if !disks.is_empty() {
         downloads.push(Download::Disks(
@@ -266,6 +277,7 @@ pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
     if downloads.is_empty() {
         downloads = urls.iter().copied().map(Download::File).collect();
     }
+    downloads.extend(singles);
     downloads
 }
 
@@ -344,8 +356,19 @@ fn fetch_release(
     on_progress: OnProgress<'_>,
     mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
+    let failed = RefCell::new(HashSet::new());
+    let mut fetch = |url: &str, on_progress: OnProgress<'_>| {
+        fetch(url, on_progress).inspect_err(|_| {
+            failed.borrow_mut().insert(url.to_owned());
+        })
+    };
     let mut last_error = None;
     for download in downloads {
+        if let Download::Disks(disks) = download
+            && disks.iter().flatten().all(|url| failed.borrow().contains(&cache_key(url)))
+        {
+            continue;
+        }
         match fetch_download(download, on_progress, &mut fetch) {
             Ok(path) => return Ok(path),
             Err(e) => {

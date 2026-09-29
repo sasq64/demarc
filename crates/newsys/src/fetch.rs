@@ -102,8 +102,10 @@ const LINK_BASES: &[(&str, &[&str])] = &[
             // The bare `/get/` link 302-redirects to a slow FTP mirror, so name
             // a mirror directly. (`URL_REWRITES` below rewrites `/get/` the same
             // way, for the plain urls a db holds for the same files.)
+            "https://files.scene.org/get:no-http",
             "https://files.scene.org/get:de-https",
             "https://files.scene.org/get:fi-ftp",
+            "https://files.scene.org/get:se2-http",
         ],
     ),
     ("ModlandFile", &["https://ftp.modland.com"]),
