@@ -5,9 +5,10 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use regex::Regex;
 
-use crate::commands::{Cmd, CmdMessage, FilePickerSource, PickerSource};
+use crate::commands::DownloadSource;
+use crate::commands::{Cmd, CmdMessage, PickerSource};
 use crate::config::AppSettings;
-use crate::egui_ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
+use crate::egui_ui::{FuzzyListSelect, HudState, ListSource, ShowFuzzyList};
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 
@@ -15,6 +16,8 @@ pub(crate) struct NavList {
     id: usize,
     source: ListSource,
     path: String,
+    /// Search text this list was left with, restored when it comes back up.
+    prompt: String,
 }
 
 impl NavList {
@@ -22,7 +25,7 @@ impl NavList {
         show_list.write(ShowFuzzyList {
             id: self.id,
             source: self.source.clone(),
-            prompt: Some("".into()),
+            prompt: Some(self.prompt.clone()),
             title: self.path.clone(),
         });
     }
@@ -40,6 +43,11 @@ pub(crate) struct Navigator {
 }
 
 impl Navigator {
+    // pub fn get_selected(&self) -> Option<EmuFile> {
+    //     let nl = &self.stack[self.pos as usize];
+    //     nl.source.get_data(nl.index)
+    // }
+
     pub(crate) fn new() -> Self {
         Self {
             pos: -1,
@@ -68,6 +76,20 @@ impl Navigator {
         self
     }
 
+    /// Take the search text out of the open list, so going back to this level
+    /// later brings it back instead of an empty prompt.
+    fn remember_prompt(&mut self, hud: &HudState) {
+        if self.pos < 0 {
+            return;
+        }
+        let list = &mut self.stack[self.pos as usize];
+        if let Some(query) = hud.list_query(list.id)
+            && list.prompt != query
+        {
+            list.prompt = query.into();
+        }
+    }
+
     pub(crate) fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
         if self.pos != self.showing {
             self.stack[self.pos as usize].show(lw);
@@ -82,6 +104,7 @@ impl Navigator {
             id: 0,
             source: Arc::new(AllWordsSource::new(["Demozoo".to_string()].into())),
             path: "".into(),
+            prompt: String::new(),
         });
         self
     }
@@ -104,6 +127,7 @@ impl Navigator {
                     id: 0,
                     source,
                     path: path.into(),
+                    prompt: String::new(),
                 });
                 return self;
             }
@@ -193,7 +217,7 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
     navigator.add_db("Demozoo", files);
 
     navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
-        FilePickerSource::new(files)
+        PickerSource::new(files, None)
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
         AllWordsSource::new(
@@ -228,7 +252,7 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
                 .filter(|(_, f)| f.get_meta("platform") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            PickerSource::new(files, &subset)
+            PickerSource::new(files, Some(subset))
         },
     )?;
 
@@ -259,8 +283,8 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
                 .filter(|(_, f)| f.get_party_and_compo() == (path[1], path[2]))
                 .map(|(i, _)| i as u32)
                 .collect();
-            subset.sort_by_key(|i| files[*i as usize].get_placement());
-            PickerSource::new(files, &subset)
+            subset.sort_by_key(|i| files[*i as usize].get_numeric_place());
+            PickerSource::new(files, Some(subset))
         },
     )?;
 
@@ -270,13 +294,7 @@ pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> 
 
     navigator.register("*/{id}/dls", |path: &[&str], files: &'static [EmuFile]| {
         let id = path[1].parse::<usize>().unwrap_or(0);
-
-        let urls: Vec<String> = files[id]
-            .get_meta("download")
-            .split(";")
-            .map(|s| s.to_string())
-            .collect();
-        AllWordsSource::new(urls)
+        DownloadSource::new(&files[id])
     })?;
 
     Ok(())
@@ -298,7 +316,9 @@ pub(crate) fn handle_navigator(
     mut navigator: ResMut<Navigator>,
     mut reader: MessageReader<FuzzyListSelect>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
+    hud: Res<HudState>,
 ) {
+    navigator.remember_prompt(&hud);
     if input.just_pressed(KeyCode::ArrowLeft) {
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {

@@ -365,7 +365,10 @@ fn fetch_release(
     let mut last_error = None;
     for download in downloads {
         if let Download::Disks(disks) = download
-            && disks.iter().flatten().all(|url| failed.borrow().contains(&cache_key(url)))
+            && disks
+                .iter()
+                .flatten()
+                .all(|url| failed.borrow().contains(&cache_key(url)))
         {
             continue;
         }
@@ -742,6 +745,20 @@ impl GameInfo {
     }
 }
 
+fn strip_first(s: &str, c: char) -> &str {
+    s.strip_prefix(c).unwrap_or(s)
+}
+
+trait StripFirst {
+    fn strip_first(&self, c: char) -> &str;
+}
+
+impl StripFirst for str {
+    fn strip_first(&self, c: char) -> &str {
+        self.strip_prefix(c).unwrap_or(self)
+    }
+}
+
 // EmuFile can be:
 // * Single PRG, ADF or other
 // * Parsed M3U for loading
@@ -791,7 +808,7 @@ impl EmuFile {
         )
     }
 
-    pub fn get_placement(&self) -> i32 {
+    pub fn get_numeric_place(&self) -> i32 {
         let Some(party) = self.meta.get("party") else {
             return 255;
         };
@@ -799,8 +816,15 @@ impl EmuFile {
             .splitn(3, ";")
             .nth(2)
             .unwrap_or("254")
+            .strip_first('=')
             .parse::<i32>()
             .unwrap_or(253)
+    }
+    pub fn get_placement(&self) -> Option<String> {
+        let Some(party) = self.meta.get("party") else {
+            return None;
+        };
+        party.splitn(3, ";").nth(2).map(|s| s.to_owned())
     }
 
     pub fn cdc(&self) -> usize {

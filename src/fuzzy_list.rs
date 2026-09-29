@@ -72,7 +72,7 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
     /// `None` when there is nothing behind it (the default) or the id is not
     /// one of ours. Borrowed rather than cloned: the picker asks for it as the
     /// selection moves, and a record can be a good deal bigger than a row.
-    fn get_data(&self, _id: usize) -> Option<&T> {
+    fn get_data(&self, _id: usize) -> Option<T> {
         None
     }
 }

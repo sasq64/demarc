@@ -276,6 +276,11 @@ impl HudState {
         self.show_list || self.open_dialogs > 0
     }
 
+    /// The search box text, when the list currently open is `id`'s.
+    pub fn list_query(&self, id: usize) -> Option<&str> {
+        (self.show_list && self.list_id == id).then_some(self.list_query.as_str())
+    }
+
     /// Told by a dialog as it opens and closes. Each dialog reports each
     /// transition once, so the count only has to survive a stray close.
     pub fn set_settings_open(&mut self, open: bool) {
@@ -556,7 +561,7 @@ fn render_list(
             item: source.get_item(item),
             text: source.get_text(item),
             alt,
-            emu_file: source.get_data(item).cloned(),
+            emu_file: source.get_data(item),
         });
         state.show_list = false;
         return;
@@ -833,6 +838,9 @@ pub(crate) fn draw_picker(
         let mut winner = 0;
         let mut nominee = 0;
         if let Some(emu_file) = source.get_data(id) {
+            // if let Some(place) = emu_file.get_placement() {
+            //     text = format!("{place:-4} : {text}");
+            // }
             cdc = emu_file.cdc();
             for award in emu_file.get_wins() {
                 match award {

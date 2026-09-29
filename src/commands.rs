@@ -14,6 +14,7 @@ use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
 use crate::egui_ui::HudLocation;
 use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
+use crate::emu_file::UrlList;
 use crate::emu_file::{EmuFile, FileSource};
 use crate::emulator::{Emulator, InputMode};
 use crate::frontend::EmuView;
@@ -271,33 +272,47 @@ fn handle_textlist(
     }
 }
 
+/// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
+/// the list, paired with the entries themselves — the fuller detail (year,
+/// type, party, …) shown in the info field below the list, and the entry a
+/// selection is *of*, handed back by [`FuzzySource::get_data`].
 #[derive(Clone)]
 pub struct PickerSource {
     names: IndexedSource,
     /// Index into `emu_files` per row, in the order `names` holds them: the ids
-    /// a search reports are rows of this subset, not of the whole list.
-    subset: Vec<u32>,
+    /// a search reports are rows of this subset, not of the whole list. `None`
+    /// means every entry, in order, so a row id *is* its index.
+    subset: Option<Vec<u32>>,
     emu_files: &'static [EmuFile],
     width: u32,
 }
 
 impl PickerSource {
-    pub(crate) fn new(files: &'static [EmuFile], subset: &[u32]) -> Self {
-        let names = subset
-            .iter()
-            .map(|&index| entry_name(&files[index as usize]))
-            .collect();
+    pub(crate) fn new(files: &'static [EmuFile], subset: Option<Vec<u32>>) -> Self {
+        let names: Vec<String> = match &subset {
+            Some(subset) => subset
+                .iter()
+                .map(|&index| entry_name(&files[index as usize]))
+                .collect(),
+            None => files.iter().map(entry_name).collect(),
+        };
         Self {
             names: IndexedSource::new(names),
-            subset: subset.into(),
+            subset,
             emu_files: files,
             width: 70,
         }
     }
 
+    fn index(&self, id: usize) -> Option<usize> {
+        match &self.subset {
+            Some(subset) => subset.get(id).map(|&i| i as usize),
+            None => Some(id),
+        }
+    }
+
     fn file(&self, id: usize) -> Option<&EmuFile> {
-        let index = *self.subset.get(id)? as usize;
-        self.emu_files.get(index)
+        self.emu_files.get(self.index(id)?)
     }
 }
 
@@ -316,46 +331,42 @@ impl FuzzySource<EmuFile> for PickerSource {
             .unwrap_or_default()
     }
 
-    fn get_data(&self, id: usize) -> Option<&EmuFile> {
-        self.file(id)
+    fn get_data(&self, id: usize) -> Option<EmuFile> {
+        self.file(id).cloned()
     }
+
     fn get_item(&self, id: usize) -> usize {
-        self.subset[id] as usize
+        self.index(id).unwrap_or(id)
     }
 }
 
-/// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
-/// the list, paired with the entries themselves — the fuller detail (year,
-/// type, party, …) shown in the info field below the list, and the entry a
-/// selection is *of*, handed back by [`FuzzySource::get_data`].
-///
-/// Both are built once, on first open, and reused on every open after that —
-/// cloning is a pair of `Arc` bumps, not a re-index.
 #[derive(Clone)]
-pub struct FilePickerSource {
+pub struct DownloadSource {
     names: IndexedSource,
-    /// The entries themselves, indexed by the same id `names` reports.
-    info: Arc<Vec<EmuFile>>,
+    downloads: Vec<&'static str>,
+    emu_file: EmuFile,
     width: u32,
 }
 
-impl FilePickerSource {
-    pub(crate) fn new(files: &[EmuFile]) -> Self {
-        let mut names = Vec::with_capacity(files.len());
-        let mut info = Vec::with_capacity(files.len());
-        for file in files {
-            names.push(entry_name(file));
-            info.push(file.clone());
-        }
+impl DownloadSource {
+    pub fn new(emu_file: &EmuFile) -> Self {
+        let downloads: Vec<&'static str> = emu_file.get_meta("download").split(";").collect();
+        let names: Vec<String> = emu_file
+            .get_meta("download")
+            .split(";")
+            .map(|s| s.rsplit('/').next().unwrap_or(s))
+            .map(|s| s.to_string())
+            .collect();
         Self {
             names: IndexedSource::new(names),
-            info: Arc::new(info),
-            width: 70,
+            downloads,
+            emu_file: emu_file.clone(),
+            width: 72,
         }
     }
 }
 
-impl FuzzySource<EmuFile> for FilePickerSource {
+impl FuzzySource<EmuFile> for DownloadSource {
     fn search(&self, query: &str, limit: usize) -> Vec<usize> {
         self.names.search(query, limit)
     }
@@ -365,11 +376,21 @@ impl FuzzySource<EmuFile> for FilePickerSource {
     }
 
     fn get_info(&self, id: usize) -> String {
-        entry_info(&self.info[id], self.width as usize)
+        let mut emu_file = self.emu_file.clone();
+        emu_file.meta.insert("download", self.downloads[id]);
+        emu_file.path = FileSource::Url(UrlList::one(self.downloads[id]));
+        entry_info(&emu_file, self.width as usize)
     }
 
-    fn get_data(&self, id: usize) -> Option<&EmuFile> {
-        self.info.get(id)
+    fn get_data(&self, id: usize) -> Option<EmuFile> {
+        let mut emu_file = self.emu_file.clone();
+        emu_file.meta.insert("download", self.downloads[id]);
+        emu_file.path = FileSource::Url(UrlList::one(self.downloads[id]));
+        Some(emu_file)
+    }
+
+    fn get_item(&self, id: usize) -> usize {
+        id
     }
 }
 

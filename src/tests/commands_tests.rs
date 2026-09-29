@@ -71,11 +71,11 @@ fn the_file_picker_hands_the_entry_behind_a_row_back() {
         },
         ..Default::default()
     };
-    let files = [
+    let files: &'static [EmuFile] = Box::leak(Box::new([
         file("Zentrophy", URL),
         file("Deus Ex Machina", "https://a.org/d.lha"),
-    ];
-    let source = FilePickerSource::new(&files);
+    ]));
+    let source = PickerSource::new(files, None);
 
     let rows = source.search("machina", DEFAULT_MAX_RESULTS);
     assert_eq!(rows.len(), 1);
