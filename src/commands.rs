@@ -266,6 +266,7 @@ fn handle_textlist(
                 id: 99,
                 source: Arc::new(source),
                 prompt: None,
+                selected: None,
                 title: String::new(),
             });
         }
@@ -337,6 +338,10 @@ impl FuzzySource<EmuFile> for PickerSource {
 
     fn get_item(&self, id: usize) -> usize {
         self.index(id).unwrap_or(id)
+    }
+
+    fn file_index(&self, id: usize) -> Option<usize> {
+        self.index(id)
     }
 }
 

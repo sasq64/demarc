@@ -75,6 +75,11 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
     fn get_data(&self, _id: usize) -> Option<T> {
         None
     }
+
+    /// Index of the item into the backing `[EmuFile]` array, if it has one.
+    fn file_index(&self, _id: usize) -> Option<usize> {
+        None
+    }
 }
 
 /// Simple in-memory source: case-insensitive substring match over a

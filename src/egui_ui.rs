@@ -194,6 +194,8 @@ pub struct ShowFuzzyList {
     pub id: usize,
     pub source: ListSource,
     pub prompt: Option<String>,
+    /// Source id of the row to highlight, if it is among the results.
+    pub selected: Option<usize>,
     /// Shown above the search box, and hidden while empty.
     pub title: String,
 }
@@ -251,6 +253,8 @@ pub struct HudState {
     list_items: Vec<usize>,
     /// Index into `list_items` of the highlighted row.
     list_selected: usize,
+    /// Source id to highlight once the reopened list has been re-queried.
+    list_pending_select: Option<usize>,
     /// The list's scroll offset in points, mirrored out of the [`egui::ScrollArea`]
     /// so [`render_list`] can steer it when the selection moves out of view
     /// while leaving the wheel free otherwise.
@@ -279,6 +283,14 @@ impl HudState {
     /// The search box text, when the list currently open is `id`'s.
     pub fn list_query(&self, id: usize) -> Option<&str> {
         (self.show_list && self.list_id == id).then_some(self.list_query.as_str())
+    }
+
+    /// Source id of the highlighted row in list `id`, while it is open.
+    pub fn list_selected_item(&self, id: usize) -> Option<usize> {
+        if !self.show_list || self.list_id != id {
+            return None;
+        }
+        self.list_items.get(self.list_selected).copied()
     }
 
     /// Told by a dialog as it opens and closes. Each dialog reports each
@@ -356,6 +368,11 @@ fn sync_results(state: &mut HudState, source: &ListSource) {
         // A new filter starts at the top; a re-open keeps where the user was.
         state.list_selected = 0;
         state.list_scroll = 0.0;
+    }
+    if let Some(item) = state.list_pending_select.take()
+        && let Some(pos) = state.list_items.iter().position(|&i| i == item)
+    {
+        state.list_selected = pos;
     }
 }
 
@@ -948,6 +965,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
         if let Some(prompt) = &msg.prompt {
             state.list_query = prompt.into();
         }
+        state.list_pending_select = msg.selected;
         state.list_title = msg.title.clone();
         state.list_source = Some(msg.source.clone());
         // The source may be a different instance than last time (rebuilt, or

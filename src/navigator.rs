@@ -18,6 +18,8 @@ pub(crate) struct NavList {
     path: String,
     /// Search text this list was left with, restored when it comes back up.
     prompt: String,
+    /// Source id of the row this list was left on.
+    selected: Option<usize>,
 }
 
 impl NavList {
@@ -26,6 +28,7 @@ impl NavList {
             id: self.id,
             source: self.source.clone(),
             prompt: Some(self.prompt.clone()),
+            selected: self.selected,
             title: self.path.clone(),
         });
     }
@@ -43,11 +46,6 @@ pub(crate) struct Navigator {
 }
 
 impl Navigator {
-    // pub fn get_selected(&self) -> Option<EmuFile> {
-    //     let nl = &self.stack[self.pos as usize];
-    //     nl.source.get_data(nl.index)
-    // }
-
     pub(crate) fn new() -> Self {
         Self {
             pos: -1,
@@ -76,18 +74,34 @@ impl Navigator {
         self
     }
 
-    /// Take the search text out of the open list, so going back to this level
-    /// later brings it back instead of an empty prompt.
-    fn remember_prompt(&mut self, hud: &HudState) {
+    /// Take the search text and selection out of the open list, so going back
+    /// to this level later restores them.
+    fn remember_state(&mut self, hud: &HudState) {
         if self.pos < 0 {
             return;
         }
         let list = &mut self.stack[self.pos as usize];
-        if let Some(query) = hud.list_query(list.id)
-            && list.prompt != query
-        {
-            list.prompt = query.into();
+        if let Some(query) = hud.list_query(list.id) {
+            if list.prompt != query {
+                list.prompt = query.into();
+            }
+            list.selected = hud.list_selected_item(list.id);
         }
+    }
+
+    /// Index into the `[EmuFile]` array of the selected entry in the current list.
+    pub(crate) fn selected_file_index(&self) -> Option<usize> {
+        let list = self.stack.get(usize::try_from(self.pos).ok()?)?;
+        debug!(
+            "Selected {} {:?}",
+            list.selected?,
+            list.source.file_index(list.selected?)
+        );
+        list.source.file_index(list.selected?)
+    }
+    pub(crate) fn next_index(&self) -> Option<usize> {
+        let list = self.stack.get(usize::try_from(self.pos + 1).ok()?)?;
+        list.source.file_index(list.selected?)
     }
 
     pub(crate) fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
@@ -105,6 +119,7 @@ impl Navigator {
             source: Arc::new(AllWordsSource::new(["Demozoo".to_string()].into())),
             path: "".into(),
             prompt: String::new(),
+            selected: None,
         });
         self
     }
@@ -128,6 +143,7 @@ impl Navigator {
                     source,
                     path: path.into(),
                     prompt: String::new(),
+                    selected: None,
                 });
                 return self;
             }
@@ -317,7 +333,7 @@ pub(crate) fn handle_navigator(
     mut list_writer: MessageWriter<ShowFuzzyList>,
     hud: Res<HudState>,
 ) {
-    navigator.remember_prompt(&hud);
+    navigator.remember_state(&hud);
     if input.just_pressed(KeyCode::ArrowLeft) {
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {
