@@ -3097,7 +3097,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wgpu 29.0.4",
- "winit",
  "zbus",
  "zip",
 ]
