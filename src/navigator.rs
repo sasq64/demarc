@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 
 use crate::commands::{DownloadSource, PickerSource};
@@ -229,6 +229,19 @@ impl Navigator {
     }
 }
 
+static CATS: [&str; 10] = [
+    "Demo",
+    "One-File Demo",
+    "Intro",
+    "64K Intro",
+    "4K Intro",
+    "256b Intro",
+    "1K Intro",
+    "Graphics",
+    "Music",
+    "Tracked Music",
+];
+
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,
@@ -265,16 +278,17 @@ pub fn setup_navigator(
         )
     })?;
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
-        AllWordsSource::new(
-            files
-                .iter()
-                .map(|f| f.get_meta("category"))
-                .filter(|p| !p.is_empty() && !p.contains(";"))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .map(String::from)
-                .collect(),
-        )
+        let mut cats: Vec<String> = files
+            .iter()
+            .map(|f| f.get_meta("category"))
+            .filter(|p| !p.is_empty() && !p.contains(";"))
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        // Known categories in CATS order, the rest after in the order they appeared.
+        cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
+        AllWordsSource::new(cats)
     })?;
     navigator.register(
         "Platforms/{platform}",
