@@ -712,11 +712,13 @@ impl GameInfo {
 
         let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
 
-        let rank = meta
-            .get("pouet")
-            .copied()
-            .and_then(parse_pouet_rank)
-            .unwrap_or(0);
+        let mut rank = 0;
+        if let Some(pouet) = meta.get("pouet") {
+            rank = parse_pouet_rank(pouet).unwrap_or(0);
+        } else if let Some(rating) = meta.get("rating") {
+            let rating = rating.parse::<f32>().unwrap_or(0.0);
+            rank = ((10.1 - rating) * 100.0) as u32;
+        }
 
         let mut cdc = 0;
         let mut vt = false;
