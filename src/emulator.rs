@@ -574,7 +574,11 @@ impl Emulator {
         };
         let idle = core.is_idle();
         let t = time.elapsed_secs();
-        if !idle {
+        // A paused core stands still because it was asked to, so the timer is
+        // held armed instead: an idle timeout switching the demo out from under
+        // a pause is never what was wanted. Still images are paused by default
+        // and do rely on the timeout to advance, hence `!self.is_image`.
+        if !idle || (self.paused && !self.is_image) {
             self.last_active_time = t;
         }
         self.idle_time = t - self.last_active_time;
@@ -586,6 +590,11 @@ impl Emulator {
         }
         if self.paused {
             self.next_frame = time.elapsed_secs_f64();
+            // Same reasoning as the idle timer above: paused time does not
+            // count towards `max_time` either.
+            if !self.is_image {
+                self.start_time += delta;
+            }
             return true;
         }
 
