@@ -5,6 +5,7 @@ use clap::{
     ColorChoice, Parser,
     builder::{Styles, styling},
 };
+use indexmap::IndexMap;
 use newsys::{CbmSystem, SysOpts};
 use regex::Regex;
 
@@ -542,11 +543,15 @@ pub struct AppSettings {
     /// [`Emulator::update_load`](crate::emulator::Emulator::update_load).
     pub system: Arc<NewSys>,
     pub show_info: bool,
-    /// The whole file list, leaked at startup: the entries hold `&'static str`
-    /// slices into the leaked db text (see [`crate::files`]) and are read for
-    /// the length of the run, so the list is `'static` too and can be handed
-    /// out without borrowing this resource.
-    pub files: &'static [EmuFile],
+    /// Every loaded database by name, in the order it was given on the command
+    /// line — a db file, a db on stdin, or the plain files and directories
+    /// collected under `Files`.
+    ///
+    /// Each list is leaked at startup: the entries hold `&'static str` slices
+    /// into the leaked db text (see [`crate::files`]) and are read for the
+    /// length of the run, so a list is `'static` too and can be handed out
+    /// without borrowing this resource.
+    pub files: IndexMap<String, &'static [EmuFile]>,
     pub current_game: isize,
     pub current_emu: usize,
     pub maximized: bool,
@@ -582,6 +587,15 @@ pub struct AppSettings {
 }
 
 impl AppSettings {
+    /// The db to work in when nothing says which one an index or an id belongs
+    /// to, and the list `current_game` walks.
+    ///
+    /// NOTE: ids are only unique within one db, so entries have to carry the db
+    /// they came from before a lookup can pick the right one out of several.
+    pub fn default_db(&self) -> &'static [EmuFile] {
+        self.files.values().next().copied().unwrap_or(&[])
+    }
+
     /// The override to load the entry at `index` with: whatever
     /// `overrides.toml` said about the release it is, with `--boot-file` and a
     /// hand-picked download written over the top.
@@ -589,7 +603,7 @@ impl AppSettings {
         let from_file = if self.demozoo_overrides.is_empty() {
             None
         } else {
-            self.files
+            self.default_db()
                 .get(index)
                 .and_then(|file| file.get_meta("id").parse::<usize>().ok())
                 .and_then(|id| self.demozoo_overrides.get(&id))

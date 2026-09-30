@@ -3063,6 +3063,7 @@ dependencies = [
  "cpal",
  "dirs",
  "image",
+ "indexmap",
  "libc",
  "libloading 0.9.0",
  "mlua",

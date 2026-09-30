@@ -7,7 +7,7 @@ use std::path::Path;
 use bevy::window::{PrimaryWindow, WindowMode};
 use bevy::{prelude::*, window::PresentMode};
 use clap::Parser;
-
+use indexmap::IndexMap;
 
 // The libretro layer lives in its own crate now; re-exported here so the rest
 // of demarc keeps its `crate::backend` / `crate::retro_emu` paths.
@@ -73,6 +73,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::{AppSettings, Args, InfoDisplay, RenderSettings, ShaderArg, SortArg};
 use crate::egui_ui::EguiUiPlugin;
+use crate::emu_file::EmuFile;
 use crate::jobs::JobsPlugin;
 use crate::shader_dialog::ShaderDialogPlugin;
 
@@ -376,8 +377,8 @@ fn main() {
     libloader::prune_cache();
     newsys::prune_caches();
 
-    // Expand any directory in `games` into the `.m3u` files found within it.
-    let mut files = Vec::with_capacity(args.files.len());
+    // Each db becomes one entry; plain files and directories share `Files`.
+    let mut dbs: IndexMap<String, Vec<EmuFile>> = IndexMap::new();
 
     let exclude = args.exclude.clone();
     let filter = DbFilter {
@@ -390,53 +391,71 @@ fn main() {
             println(format!("** Error: Can't load database {path:?}"));
             return;
         }
-        collect_db(path, &filter, &mut files).unwrap();
+        let mut files = vec![];
+        let name = collect_db(path, &filter, &mut files).unwrap();
+        dbs.entry(name).or_default().append(&mut files);
     }
 
     // Anything piped in is a db too, so it can be filtered before loading.
-    collect_db_stdin(&filter, &mut files).unwrap();
+    let mut files = vec![];
+    if let Some(name) = collect_db_stdin(&filter, &mut files).unwrap() {
+        dbs.entry(name).or_default().append(&mut files);
+    }
 
+    // Expand any directory in `games` into the `.m3u` files found within it.
     for file in std::mem::take(&mut args.files) {
         let name = file.to_string_lossy().to_lowercase();
-        if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
-            collect_db(&file, &filter, &mut files).unwrap();
-        } else if file.is_dir() && args.collect {
-            collect_files(&file, &mut files, args.many).unwrap();
+        let mut files = vec![];
+        let db_name = if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
+            collect_db(&file, &filter, &mut files).unwrap()
         } else {
-            files.push(collect_file(&file).unwrap());
+            if file.is_dir() && args.collect {
+                collect_files(&file, &mut files, args.many).unwrap();
+            } else {
+                files.push(collect_file(&file).unwrap());
+            }
+            "Files".into()
+        };
+        dbs.entry(db_name).or_default().append(&mut files);
+    }
+
+    // Every list is ordered, limited and shuffled on its own.
+    for files in dbs.values_mut() {
+        if !wine_enabled() {
+            files.retain(|file| !is_windows_only(file));
         }
-    }
 
-    if !wine_enabled() {
-        files.retain(|file| !is_windows_only(file));
-    }
+        match args.sort {
+            Some(SortArg::Random) => {
+                use rand::seq::SliceRandom;
+                files.shuffle(&mut rand::rng());
+            }
+            // Ranks are positions, so the best comes first. Entries without a rank
+            // sort last, keeping the order they were collected in.
+            Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
+            Some(SortArg::Date) => files.sort_by_key(|f| Reverse(f.game_info.date)),
+            None => {}
+        }
 
-    match args.sort {
-        Some(SortArg::Random) => {
+        if args.limit > 0 {
+            files.truncate(args.limit);
+        }
+
+        if args.skip_count > 0 {
+            files.drain(0..args.skip_count.min(files.len()));
+        }
+
+        if args.shuffle {
             use rand::seq::SliceRandom;
             files.shuffle(&mut rand::rng());
         }
-        // Ranks are positions, so the best comes first. Entries without a rank
-        // sort last, keeping the order they were collected in.
-        Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
-        Some(SortArg::Date) => files.sort_by_key(|f| Reverse(f.game_info.date)),
-        None => {}
     }
 
-    if args.limit > 0 {
-        files.truncate(args.limit);
-    }
+    // A db left with nothing — everything filtered out, or Windows-only with no
+    // wine — would otherwise be what `default_db` picks.
+    dbs.retain(|_, files| !files.is_empty());
 
-    if args.skip_count > 0 {
-        files.drain(0..args.skip_count);
-    }
-
-    if args.shuffle {
-        use rand::seq::SliceRandom;
-        files.shuffle(&mut rand::rng());
-    }
-
-    let multiple = files.len() > 1;
+    let multiple = dbs.values().map(Vec::len).sum::<usize>() > 1;
     let mut window = Window {
         title: "Demarc".into(),
         present_mode: if args.speed_test {
@@ -489,7 +508,10 @@ fn main() {
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
-        files: files.leak(),
+        files: dbs
+            .into_iter()
+            .map(|(name, files)| (name, &*files.leak()))
+            .collect(),
         maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
         tv_mode: args.tv_mode,

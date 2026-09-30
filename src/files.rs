@@ -97,14 +97,39 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// first, so it can be loaded exactly like the plain text file.
 ///
 /// `filter` narrows down which lines are collected — see [`DbFilter`].
-pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
+///
+/// Returns the name the db goes by — see [`db_name`].
+pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<String> {
     let data = match fs::read(path) {
         Ok(data) => data,
         Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
     };
     let text = db_text(data, &format!("db file {}", path.display()))?;
+    let fallback = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "db".into());
     collect_db_text(text, filter, out);
-    Ok(())
+    Ok(db_name(text, fallback))
+}
+
+/// What to call a db: the first word of its first comment line, so
+/// `# Demozoo release database (https://demozoo.org/)` is `Demozoo`.
+///
+/// Falls back to `fallback` (the file name) when there is no comment, or when
+/// the first one is a `key:value` header rather than prose — see
+/// [`parse_db_header`].
+fn db_name(text: &str, fallback: String) -> String {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .find_map(|l| l.strip_prefix('#'))
+        .and_then(|c| c.split_whitespace().next());
+    match first {
+        Some(word) if !word.contains(':') => word.into(),
+        _ => fallback,
+    }
 }
 
 /// Turn the raw bytes of a db into its text, unpacking it first when it is a
@@ -165,9 +190,9 @@ fn matches_field(re: &Regex, line: &str) -> bool {
 ///
 /// Does nothing when stdin is a terminal — there's nothing piped in then, and
 /// reading would just block waiting for the user to type a db.
-pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()> {
+pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<Option<String>> {
     if io::stdin().is_terminal() {
-        return Ok(());
+        return Ok(None);
     }
     let mut data = Vec::new();
     if let Err(err) = io::stdin().read_to_end(&mut data) {
@@ -175,7 +200,7 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<()>
     }
     let text = db_text(data, "db from stdin")?;
     collect_db_text(text, filter, out);
-    Ok(())
+    Ok(Some(db_name(text, "stdin".into())))
 }
 
 /// Read a header comment such as `# Platform:Amiga puae_model:A500`, which

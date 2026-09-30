@@ -410,7 +410,8 @@ pub(crate) fn handle_loading(
     time: Res<Time>,
 ) {
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
-        let flen = settings.files.len() as isize;
+        let db = settings.default_db();
+        let flen = db.len() as isize;
 
         let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
             1
@@ -426,7 +427,7 @@ pub(crate) fn handle_loading(
             emu.run_prev = false;
             debug!("Send load file");
             load_writer.write(LoadFile {
-                emu_file: settings.files[index].clone(),
+                emu_file: db[index].clone(),
                 target_emulator: Some(emuview.index),
             });
             continue;

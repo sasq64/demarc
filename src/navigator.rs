@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use indexmap::IndexMap;
 use regex::Regex;
 
 use crate::commands::{DownloadSource, PickerSource};
@@ -41,7 +41,7 @@ pub(crate) struct Navigator {
     pub(crate) pos: isize,
     showing: isize,
     pub(crate) stack: Vec<NavList>,
-    files: HashMap<&'static str, &'static [EmuFile]>,
+    files: IndexMap<String, &'static [EmuFile]>,
     mapping: Vec<(Regex, DbCallback)>,
 }
 
@@ -50,7 +50,7 @@ impl Navigator {
         Self {
             pos: -1,
             showing: -1,
-            files: HashMap::new(),
+            files: IndexMap::new(),
             stack: vec![],
             mapping: Vec::new(),
         }
@@ -116,7 +116,7 @@ impl Navigator {
         self.pos = 0;
         self.stack.push(NavList {
             id: 0,
-            source: Arc::new(AllWordsSource::new(["Demozoo".to_string()].into())),
+            source: Arc::new(AllWordsSource::new(self.files.keys().cloned().collect())),
             path: "".into(),
             prompt: String::new(),
             selected: None,
@@ -176,8 +176,8 @@ impl Navigator {
 
     /// Add a top level entry to the Navigator. It must be backed by a static
     /// list of EmuFiles that other Navigator parts filter from
-    pub fn add_db(&mut self, name: &'static str, files: &'static [EmuFile]) {
-        self.files.insert(name, files);
+    pub fn add_db(&mut self, name: &str, files: &'static [EmuFile]) {
+        self.files.insert(name.to_string(), files);
     }
 
     // Add a new path pattern.
@@ -229,8 +229,13 @@ impl Navigator {
     }
 }
 
-pub fn setup_navigator(files: &'static [EmuFile], navigator: &mut Navigator) -> Result<()> {
-    navigator.add_db("Demozoo", files);
+pub fn setup_navigator(
+    dbs: &IndexMap<String, &'static [EmuFile]>,
+    navigator: &mut Navigator,
+) -> Result<()> {
+    for (name, files) in dbs {
+        navigator.add_db(name, files);
+    }
 
     navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
         PickerSource::new(files, None)
@@ -320,7 +325,7 @@ pub fn setup_navigator_bevy(
     settings: Res<AppSettings>,
     mut navigator: ResMut<Navigator>,
 ) -> Result<()> {
-    setup_navigator(settings.files, &mut navigator)?;
+    setup_navigator(&settings.files, &mut navigator)?;
     navigator.go_root();
     Ok(())
 }
@@ -372,6 +377,7 @@ mod test {
         files::{DbFilter, collect_db},
         navigator::{Navigator, setup_navigator},
     };
+    use indexmap::IndexMap;
     use std::path::PathBuf;
 
     #[test]
@@ -379,10 +385,12 @@ mod test {
         let filter = DbFilter::default();
         let mut files = vec![];
         let path: PathBuf = "demos.txt".into();
-        collect_db(&path, &filter, &mut files).unwrap();
+        let name = collect_db(&path, &filter, &mut files).unwrap();
+        assert_eq!(name, "Demozoo");
         let files: &'static [EmuFile] = files.leak();
+        let dbs: IndexMap<String, &'static [EmuFile]> = [(name, files)].into();
         let mut navigator = Navigator::new();
-        setup_navigator(files, &mut navigator).unwrap();
+        setup_navigator(&dbs, &mut navigator).unwrap();
 
         navigator.goto("");
         println!(">>Root");
@@ -409,5 +417,40 @@ mod test {
         for line in navigator.get_showing() {
             println!("{line}");
         }
+    }
+
+    fn db(text: &'static str) -> &'static [EmuFile] {
+        let mut files = vec![];
+        crate::files::collect_db_text(text, &DbFilter::default(), &mut files);
+        files.leak()
+    }
+
+    /// Every db registers under its own name and the root lists them in the
+    /// order they were given, each one navigable on its own.
+    #[test]
+    fn every_db_gets_its_own_root_entry() {
+        let dbs: IndexMap<String, &'static [EmuFile]> = [
+            (
+                "Demozoo".to_string(),
+                db("id:1\ttitle:A\tplatform:Amiga\tdownload:http://x/a.zip\n"),
+            ),
+            (
+                "CSDb".to_string(),
+                db("id:2\ttitle:B\tplatform:C64\tdownload:http://x/b.zip\n\
+                    id:3\ttitle:C\tplatform:C64\tdownload:http://x/c.zip\n"),
+            ),
+        ]
+        .into();
+        let mut navigator = Navigator::new();
+        setup_navigator(&dbs, &mut navigator).unwrap();
+
+        navigator.goto("");
+        assert_eq!(navigator.get_showing(), vec!["Demozoo", "CSDb"]);
+
+        navigator.goto("CSDb/Platforms");
+        assert_eq!(navigator.get_showing(), vec!["C64"]);
+
+        navigator.goto("Demozoo/Platforms");
+        assert_eq!(navigator.get_showing(), vec!["Amiga"]);
     }
 }

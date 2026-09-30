@@ -743,11 +743,19 @@ pub(crate) fn handle_cmd(
                     }
                     Cmd::NextFile => {
                         emu.run_next = true;
-                        debug!("{} vs {}", settings.current_game, settings.files.len());
+                        debug!(
+                            "{} vs {}",
+                            settings.current_game,
+                            settings.default_db().len()
+                        );
                     }
                     Cmd::PrevFile => {
                         emu.run_prev = true;
-                        debug!("{} vs {}", settings.current_game, settings.files.len());
+                        debug!(
+                            "{} vs {}",
+                            settings.current_game,
+                            settings.default_db().len()
+                        );
                     }
                     Cmd::Warp10 => {
                         let text = "\u{f0d71}".to_string();

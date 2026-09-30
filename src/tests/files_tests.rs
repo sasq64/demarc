@@ -383,3 +383,30 @@ fn all_filtered_keeps_input() {
         ]
     );
 }
+
+/// The first word of the first comment names the db, so several loaded at
+/// once can be told apart. A header comment is meta, not a name, and leaves
+/// the file name in place.
+#[test]
+fn a_db_is_named_after_its_first_comment() {
+    assert_eq!(
+        db_name(
+            "# Demozoo release database (https://demozoo.org/)\n\
+             # puae_model:date\n\
+             id:1\ttitle:A\tdownload:http://x/a.zip\n",
+            "demos".into()
+        ),
+        "Demozoo"
+    );
+    assert_eq!(
+        db_name(
+            "# Platform:Amiga\nid:1\ttitle:A\tdownload:http://x/a.zip\n",
+            "aminet".into()
+        ),
+        "aminet"
+    );
+    assert_eq!(
+        db_name("id:1\ttitle:A\tdownload:http://x/a.zip\n", "csdb".into()),
+        "csdb"
+    );
+}

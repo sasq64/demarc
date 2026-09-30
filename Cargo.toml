@@ -118,6 +118,8 @@ pollster = { workspace = true, optional = true }
 # `--filter`: matched against each raw db line while collecting (see collect_db).
 regex = "1"
 image.workspace = true
+# `AppSettings::files`: the loaded databases, in the order they were given.
+indexmap = "2"
 mlua.workspace = true
 percent-encoding.workspace = true
 suppaftp.workspace = true

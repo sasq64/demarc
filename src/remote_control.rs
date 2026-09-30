@@ -378,7 +378,10 @@ fn run_script(
                 commands.spawn(shot).observe(save_to_disk(path));
             }
             Action::LoadDemo(id) => {
-                let index = settings.files.iter().position(|f| f.get_meta("id") == id);
+                let index = settings
+                    .default_db()
+                    .iter()
+                    .position(|f| f.get_meta("id") == id);
                 match index {
                     // Same two steps as picking a row in the file picker: point
                     // `current_game` at the entry and let `Reload` boot it.
