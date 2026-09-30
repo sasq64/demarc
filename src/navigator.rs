@@ -264,6 +264,18 @@ pub fn setup_navigator(
                 .collect(),
         )
     })?;
+    navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
+        AllWordsSource::new(
+            files
+                .iter()
+                .map(|f| f.get_meta("category"))
+                .filter(|p| !p.is_empty() && !p.contains(";"))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        )
+    })?;
     navigator.register(
         "Platforms/{platform}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -277,6 +289,18 @@ pub fn setup_navigator(
         },
     )?;
 
+    navigator.register(
+        "Categories/{category}",
+        |path: &[&str], files: &'static [EmuFile]| {
+            let subset: Vec<u32> = files
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.get_meta("category") == path[1])
+                .map(|(i, _)| i as u32)
+                .collect();
+            PickerSource::new(files, Some(subset))
+        },
+    )?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -310,7 +334,15 @@ pub fn setup_navigator(
     )?;
 
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
-        return AllWordsSource::new(["All".into(), "Parties".into(), "Platforms".into()].into());
+        return AllWordsSource::new(
+            [
+                "All".into(),
+                "Parties".into(),
+                "Platforms".into(),
+                "Categories".into(),
+            ]
+            .into(),
+        );
     })?;
 
     navigator.register("*/{id}/dls", |path: &[&str], files: &'static [EmuFile]| {
