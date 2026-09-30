@@ -34,6 +34,29 @@ impl NavList {
     }
 }
 
+/// The list an entry was launched from, in the order it was shown, so
+/// NextFile/PrevFile walk it instead of the whole db.
+pub(crate) struct Launch {
+    source: ListSource,
+    ids: Vec<usize>,
+    pub(crate) index: isize,
+}
+
+impl Launch {
+    /// Move `d` steps and return the entry there, with its index into the db.
+    pub(crate) fn step(&mut self, d: isize, wrap: bool) -> Option<(EmuFile, Option<usize>)> {
+        let len = self.ids.len() as isize;
+        let mut index = self.index + d;
+        if wrap && len > 0 {
+            index = index.rem_euclid(len);
+        }
+        let &id = self.ids.get(usize::try_from(index).ok()?)?;
+        let file = self.source.get_data(id)?;
+        self.index = index;
+        Some((file, self.source.file_index(id)))
+    }
+}
+
 type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> ListSource + Send + Sync>;
 
 #[derive(Resource)]
@@ -43,6 +66,7 @@ pub(crate) struct Navigator {
     pub(crate) stack: Vec<NavList>,
     files: IndexMap<String, &'static [EmuFile]>,
     mapping: Vec<(Regex, DbCallback)>,
+    pub(crate) current_launch: Option<Launch>,
 }
 
 impl Navigator {
@@ -53,6 +77,7 @@ impl Navigator {
             files: IndexMap::new(),
             stack: vec![],
             mapping: Vec::new(),
+            current_launch: None,
         }
     }
     fn push(&mut self, nav_list: NavList) -> &mut Self {
@@ -382,6 +407,7 @@ pub(crate) fn handle_navigator(
     mut reader: MessageReader<FuzzyListSelect>,
     mut load_writer: MessageWriter<LoadFile>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
+    mut settings: ResMut<AppSettings>,
     hud: Res<HudState>,
 ) {
     navigator.remember_state(&hud);
@@ -396,6 +422,8 @@ pub(crate) fn handle_navigator(
 
     let current = &navigator.stack[navigator.pos as usize];
     let id = current.id;
+    let source = current.source.clone();
+    let prompt = current.prompt.clone();
     for msg in reader.read() {
         if msg.id == id {
             debug!("Selected {:?}", msg);
@@ -404,6 +432,17 @@ pub(crate) fn handle_navigator(
                     let id = msg.item;
                     navigator.enter(&format!("{id}/dls")).show(&mut list_writer);
                     continue;
+                }
+                let ids = source.search(&prompt, usize::MAX);
+                if let Some(index) = ids.iter().position(|&i| source.get_item(i) == msg.item) {
+                    if let Some(file_index) = source.file_index(ids[index]) {
+                        settings.current_game = file_index as isize;
+                    }
+                    navigator.current_launch = Some(Launch {
+                        source: source.clone(),
+                        ids,
+                        index: index as isize,
+                    });
                 }
                 load_writer.write(LoadFile {
                     emu_file,

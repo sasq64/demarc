@@ -525,7 +525,7 @@ pub(crate) fn handle_cmd(
     mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
-    navigator: ResMut<Navigator>,
+    mut navigator: ResMut<Navigator>,
     // Optional: `--headless` has no window, and a bare `Single` would skip the
     // whole system, dropping every command a remote-control script sends.
     mut window: Option<Single<&mut Window, With<PrimaryWindow>>>,
@@ -681,6 +681,9 @@ pub(crate) fn handle_cmd(
                     }
                     Cmd::Reload => {
                         settings.current_game -= 1;
+                        if let Some(launch) = navigator.current_launch.as_mut() {
+                            launch.index -= 1;
+                        }
                         emu.run_next = true;
                     }
                     Cmd::PauseResume => {

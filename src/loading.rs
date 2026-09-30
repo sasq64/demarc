@@ -14,6 +14,7 @@ use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, GameInfo, Override,
 use crate::emulator::{EmuState, Emulator, InputMode};
 use crate::frontend::{EmuView, FrontendSet};
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
+use crate::navigator::Navigator;
 use crate::newsys::{self, LoadResult, NewSys};
 use crate::workfile::WorkFile;
 
@@ -374,9 +375,9 @@ impl Emulator {
 }
 
 pub fn load_file(
-    settings: ResMut<AppSettings>,
     mut emus: Query<(&EmuView, &mut Emulator)>,
     mut reader: MessageReader<LoadFile>,
+    settings: ResMut<AppSettings>,
 ) {
     for game in reader.read() {
         debug!("Got load file message");
@@ -407,27 +408,49 @@ pub(crate) fn handle_loading(
     mut writer: MessageWriter<SetHudText>,
     mut load_writer: MessageWriter<LoadFile>,
     mut loaded: MessageWriter<LoadFinished>,
+    mut navigator: ResMut<Navigator>,
     time: Res<Time>,
 ) {
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
-        let db = settings.default_db();
-        let flen = db.len() as isize;
-
-        let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
-            1
-        } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
-            -1
+        let next = if let Some(launch) = navigator.current_launch.as_mut() {
+            let d = if emu.run_next {
+                1
+            } else if emu.run_prev {
+                -1
+            } else {
+                0
+            };
+            if d == 0 {
+                None
+            } else {
+                launch.step(d, settings.tv_mode).map(|(file, index)| {
+                    if let Some(index) = index {
+                        settings.current_game = index as isize;
+                    }
+                    file
+                })
+            }
         } else {
-            0
+            let db = settings.default_db();
+            let flen = db.len() as isize;
+            let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
+                1
+            } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
+                -1
+            } else {
+                0
+            };
+            (d != 0).then(|| {
+                settings.current_game = (settings.current_game + d + flen) % flen;
+                db[settings.current_game as usize].clone()
+            })
         };
-        if d != 0 {
-            settings.current_game = (settings.current_game + d + flen) % flen;
-            let index = settings.current_game as usize;
+        if let Some(emu_file) = next {
             emu.run_next = false;
             emu.run_prev = false;
             debug!("Send load file");
             load_writer.write(LoadFile {
-                emu_file: db[index].clone(),
+                emu_file,
                 target_emulator: Some(emuview.index),
             });
             continue;
