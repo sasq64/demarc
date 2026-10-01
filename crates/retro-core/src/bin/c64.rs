@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use retro_core::player::{App, load_core};
+use std::collections::HashMap;
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {
@@ -10,7 +11,7 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let core = load_core()?;
+    let core = load_core(None, HashMap::new())?;
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut App::new(core))?;
     Ok(())

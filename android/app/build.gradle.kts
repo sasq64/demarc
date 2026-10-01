@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = "com.demarc.c64"
         // Matches the `-P` handed to cargo-ndk in scripts/run-android.sh.
-        minSdk = 24
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"

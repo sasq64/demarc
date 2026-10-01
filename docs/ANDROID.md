@@ -2,7 +2,7 @@
 
 The minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
 `crates/retro-core/src/bin/c64.rs` on the desktop — as an Android app. It boots to the
-BASIC banner on a device; touch input and audio are what is missing.
+BASIC banner on a device; touch input is what is missing.
 
 ```sh
 scripts/run-android.sh --logcat
@@ -62,14 +62,14 @@ the `retro_emu/mod.rs` layout they forced are gone.
 **This works.** Both of these pass:
 
 ```sh
-cargo ndk -t arm64-v8a -P 24 check -p retro-core                     # the core layer alone
-cargo ndk -t arm64-v8a -P 24 check -p retro-core --features player --lib
+cargo ndk -t arm64-v8a -P 26 check -p retro-core                     # the core layer alone
+cargo ndk -t arm64-v8a -P 26 check -p retro-core --features player --lib
 ```
 
 and the library actually builds:
 
 ```sh
-cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
+cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs \
     build -p retro-core --features player --lib --release
 ```
 
@@ -199,14 +199,22 @@ does not work at all, and that is the real work:
 Also worth having early: a way to reset, and something that maps the volume/back keys, or
 the app becomes hard to leave.
 
-### Step 6 — audio
+### Step 6 — audio — done
 
-The desktop binary drains the core's samples and drops them. On Android the natural path is
-`cpal` 0.17's oboe host (`target_os = "android"` deps `oboe`, `ndk`, `ndk-context`, plus the
-`oboe-shared-stdcxx` feature unless libc++ is linked statically) — which is also what the
-desktop build would use, so one audio path serves both. `ndk_context` must be initialized
-before the stream opens; `android-activity` does that as part of `android_main`. Expect to
-resample: VICE asks for ~44.1 kHz, the device will want 48 kHz.
+`Audio` in `player.rs`: one cpal output stream reading a ring buffer that `App::step` fills
+from `with_audio`, resampling the core's rate to the device's by linear interpolation (VICE
+asks for 48 kHz here and the desktop device runs at 44.1). It is opened in `resumed()` and
+dropped in `suspended()` with the surface, and a failure to open one only logs — the player
+still runs silent.
+
+cpal 0.17 reaches Android through AAudio (the `ndk` crate) rather than the oboe host earlier
+versions used, so no C++ runtime has to be shipped beside the core. AAudio is API 26, and
+`libaaudio.so` only exists in the 26+ sysroot, so `-P 26` and `minSdk = 26` — both were 24.
+
+There is no drift control: the core is paced by the wall clock and the device by its own,
+so the ring slowly fills or empties and glitches when it hits an end. demarc's own sink
+(`src/audio.rs`) corrects that by nudging a rubato resample ratio from the ring's occupancy,
+which is the thing to port here if it turns out to matter.
 
 ### Step 7 — rendering and performance
 
@@ -221,12 +229,35 @@ resample: VICE asks for ~44.1 kHz, the device will want 48 kHz.
 - Do not step the core while suspended: `step()` currently runs the emulator even with no
   `Gfx`. Gate it, or the app burns battery in the background.
 
-### Step 8 — what comes after it boots
+### Step 8 — content — media bundled
 
-Loading actual demos needs a content path: bundle a few `.d64`/`.prg` as assets first
-(`AssetManager`), and only then consider the Storage Access Framework for the user's own
-files. Downloading cores at runtime stays off the table — the W^X rule in step 2 is why
-RetroArch ships its cores inside the APK.
+`android/app/src/main/assets/` is packaged into the APK and is where the media lives:
+
+```
+android/app/src/main/assets/tar_v2_pal.crt   Turbo Action ROM v2, a Retro Replay cartridge
+android/app/src/main/assets/disk.d64
+```
+
+Both are checked in, and Gradle repackages the APK whenever either file's contents change.
+
+A core cannot read out of the APK, so `android_main` copies each asset into the app's data
+directory before loading the core (`ASSETS` in `player.rs`, overwriting every launch so a
+rebuilt APK wins). VICE looks for cartridge images under `<system dir>/vice/<machine>/`,
+which is why the `.crt` lands in `vice/C64/`; the `.d64` is handed to the core as the game.
+`vice_cartridge` names the cartridge and `vice_autostart` is `disabled`, so the machine
+comes up in the cartridge's own boot menu with the disk in drive 8.
+
+VICE only attaches cartridges as `.crt`, and a flash dump like Turbo Action ROM is a bare
+64 KiB of eight 8 KiB banks, so `scripts/rr_bin2crt.py` wraps one in the CRT container
+(hardware type 36, Retro Replay) — the same shape as `system/vice/C64/rr38ppal.crt`:
+
+```sh
+scripts/rr_bin2crt.py tar_v2_pal.bin android/app/src/main/assets/tar_v2_pal.crt
+```
+
+What is still missing is the user's own files, which means the Storage Access Framework.
+Downloading cores at runtime stays off the table — the W^X rule in step 2 is why RetroArch
+ships its cores inside the APK.
 
 ## Order of work
 
@@ -236,8 +267,9 @@ RetroArch ships its cores inside the APK.
 3. ~~Android logging + `internal_data_path` + load-in-place `dlopen` (step 2 above).~~ done
 4. ~~`android_main`, Gradle project, first APK. Target: the BASIC banner on a device.~~ done
 5. Touch input.
-6. Audio.
-7. Performance pass, content loading.
+6. ~~Audio.~~ done
+7. Performance pass.
+8. ~~Bundled cartridge + disk as APK assets.~~ done; the user's own files are left.
 
 ## Toolchain on this machine
 

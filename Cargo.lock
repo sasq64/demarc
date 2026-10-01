@@ -6979,11 +6979,13 @@ version = "1.7.0"
 dependencies = [
  "anyhow",
  "cc",
+ "cpal",
  "dirs",
  "image",
  "libc",
  "libloading 0.9.0",
  "pollster",
+ "ringbuf",
  "tempfile",
  "tracing",
  "tracing-subscriber",

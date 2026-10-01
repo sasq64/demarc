@@ -1,8 +1,8 @@
 //! `c64` — a minimal C64 player: one 720x576 window, the VICE libretro core,
 //! and the lottes CRT shader on top.
 //!
-//! No Bevy, no librashader, no CLI: winit + wgpu only, which is the stack an
-//! Android port needs — see `docs/ANDROID.md`.
+//! No Bevy, no librashader, no CLI: winit, wgpu and cpal only, which is the
+//! stack an Android port needs — see `docs/ANDROID.md`.
 
 #![allow(dead_code)]
 
@@ -13,10 +13,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::HeapProd;
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use tracing::info;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -27,6 +30,11 @@ use crate::{dylib_name, find_core, system_dir};
 
 const CORE_NAME: &str = "vice_x64sc";
 const WINDOW_SIZE: (u32, u32) = (720, 576);
+
+/// How far a finger has to travel, in physical pixels, before it is a swipe,
+/// and how long it may take to get there.
+const SWIPE_DIST: f64 = 80.0;
+const SWIPE_TIME: Duration = Duration::from_millis(500);
 
 // -------------------------------------------------------------------------
 // Keyboard
@@ -125,22 +133,65 @@ fn retro_key(key: KeyCode) -> Option<libretro::retro_key> {
     })
 }
 
-fn retro_mods(mods: winit::keyboard::ModifiersState) -> u16 {
+/// The keys a C64 needs that a compact keyboard does not have: Alt picks a
+/// digit, Shift+Alt the function key above it.
+fn alt_key(key: KeyCode, shift: bool) -> Option<libretro::retro_key> {
+    use KeyCode::*;
     use libretro::*;
-    let mut out = RETROKMOD_NONE;
-    if mods.shift_key() {
-        out |= RETROKMOD_SHIFT;
+    let i = match key {
+        KeyQ => 0,
+        KeyW => 1,
+        KeyE => 2,
+        KeyR => 3,
+        KeyS => 4,
+        KeyD => 5,
+        KeyF => 6,
+        KeyZ => 7,
+        KeyX => 8,
+        KeyC => 9,
+        _ => return None,
+    };
+    let digits = [
+        RETROK_0, RETROK_1, RETROK_2, RETROK_3, RETROK_4, RETROK_5, RETROK_6, RETROK_7, RETROK_8,
+        RETROK_9,
+    ];
+    let fkeys = [
+        RETROK_ESCAPE,
+        RETROK_F1,
+        RETROK_F2,
+        RETROK_F3,
+        RETROK_F4,
+        RETROK_F5,
+        RETROK_F6,
+        RETROK_F7,
+    ];
+    if shift {
+        fkeys.get(i).copied()
+    } else {
+        Some(digits[i])
     }
-    if mods.control_key() {
-        out |= RETROKMOD_CTRL;
-    }
-    if mods.alt_key() {
-        out |= RETROKMOD_ALT;
-    }
-    if mods.super_key() {
-        out |= RETROKMOD_META;
-    }
-    out as u16
+}
+
+/// The punctuation the other Alt combos reach, as the C64 key at that place
+/// plus whether shift is part of the symbol. VICE's default keymap is
+/// positional and has no entry for RETROK_DOLLAR and friends, so a shifted
+/// symbol has to arrive as a genuine shifted keypress.
+fn alt_symbol(key: KeyCode) -> Option<(libretro::retro_key, bool)> {
+    use KeyCode::*;
+    use libretro::*;
+    Some(match key {
+        KeyP => (RETROK_4, true),          // $
+        KeyJ => (RETROK_3, true),          // #
+        KeyL => (RETROK_2, true),          // "
+        KeyN => (RETROK_COMMA, false),     // ,
+        KeyM => (RETROK_PERIOD, false),    // .
+        KeyO => (RETROK_MINUS, false),     // +
+        KeyI => (RETROK_EQUALS, false),    // -
+        KeyH => (RETROK_SEMICOLON, false), // :
+        KeyK => (RETROK_QUOTE, false),     // ;
+        KeyU => (RETROK_BACKQUOTE, false), // the C64's own left-arrow key
+        _ => return None,
+    })
 }
 
 // -------------------------------------------------------------------------
@@ -476,13 +527,144 @@ fn create_bind_group(
 }
 
 // -------------------------------------------------------------------------
+// Audio
+// -------------------------------------------------------------------------
+
+/// Stereo `f32` samples the callback has not taken yet. ~170 ms at 48 kHz.
+const RING_SIZE: usize = 16384;
+
+/// The core's samples, resampled to the device rate and handed to cpal through
+/// a ring buffer.
+///
+/// There is no drift control: an overrun drops samples and an underrun plays
+/// silence, which one window of one core does rarely enough to live with.
+struct Audio {
+    _stream: cpal::Stream,
+    prod: HeapProd<f32>,
+    rate: f64,
+    /// Where the next output frame falls between `last` and the input frame
+    /// being fed, in input frames.
+    pos: f64,
+    last: (f32, f32),
+}
+
+impl Audio {
+    fn new() -> Result<Self> {
+        let device = cpal::default_host()
+            .default_output_device()
+            .ok_or_else(|| anyhow!("no output device"))?;
+        // Whatever the device itself runs at: nothing a core emits is sourced
+        // above 48 kHz, so asking for more only adds a resample somewhere else.
+        let target = device
+            .default_output_config()
+            .map(|c| c.sample_rate())
+            .unwrap_or(48000);
+        // Every advertised range is clamped against rather than filtered on its
+        // minimum: cpal's WASAPI backend lists each common rate as its own
+        // single-rate range, and the first of those is 5512 Hz.
+        let supported = device
+            .supported_output_configs()?
+            .filter(|c| c.channels() == 2 && c.sample_format() == cpal::SampleFormat::F32)
+            .min_by_key(|c| target.abs_diff(target.clamp(c.min_sample_rate(), c.max_sample_rate())))
+            .ok_or_else(|| anyhow!("no stereo f32 output config"))?;
+        let rate = target.clamp(supported.min_sample_rate(), supported.max_sample_rate());
+        let config: cpal::StreamConfig = supported.with_sample_rate(rate).into();
+
+        let (prod, mut cons) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
+        let stream = device.build_output_stream(
+            &config,
+            move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let count = cons.pop_slice(out);
+                // cpal hands back the previous callback's buffer, so the tail
+                // has to be cleared or an underrun replays it.
+                out[count..].fill(0.0);
+            },
+            |e| tracing::warn!("audio stream error: {e}"),
+            None,
+        )?;
+        stream.play()?;
+        info!("Audio: {} Hz", config.sample_rate);
+
+        Ok(Self {
+            _stream: stream,
+            prod,
+            rate: config.sample_rate as f64,
+            pos: 0.0,
+            last: (0.0, 0.0),
+        })
+    }
+
+    /// Feed one frame's worth of interleaved `i16` captured at `from` Hz,
+    /// linearly interpolated to the device rate.
+    fn push(&mut self, from: f64, samples: &[i16]) {
+        if from <= 0.0 {
+            return;
+        }
+        let step = from / self.rate;
+        for frame in samples.chunks_exact(2) {
+            let cur = (frame[0] as f32 / 32768.0, frame[1] as f32 / 32768.0);
+            while self.pos < 1.0 {
+                let t = self.pos as f32;
+                // A full ring drops whole frames: half of one would swap the
+                // channels for good.
+                if self.prod.vacant_len() >= 2 {
+                    let _ = self.prod.try_push(self.last.0 + (cur.0 - self.last.0) * t);
+                    let _ = self.prod.try_push(self.last.1 + (cur.1 - self.last.1) * t);
+                }
+                self.pos += step;
+            }
+            self.pos -= 1.0;
+            self.last = cur;
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Touch
+// -------------------------------------------------------------------------
+
+/// One finger on the screen, and the cursor key its direction picked.
+struct Swipe {
+    id: u64,
+    start: (f64, f64),
+    began: Instant,
+    key: Option<libretro::retro_key>,
+}
+
+/// The cursor key a movement of `(dx, dy)` means, once it is long enough.
+fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
+    use libretro::*;
+    if dx.hypot(dy) < SWIPE_DIST {
+        return None;
+    }
+    Some(if dx.abs() > dy.abs() {
+        if dx > 0.0 { RETROK_RIGHT } else { RETROK_LEFT }
+    } else if dy > 0.0 {
+        RETROK_DOWN
+    } else {
+        RETROK_UP
+    })
+}
+
+// -------------------------------------------------------------------------
 // App
 // -------------------------------------------------------------------------
 
 pub struct App {
     core: RetroCoreDirect,
     gfx: Option<Gfx>,
-    mods: u16,
+    audio: Option<Audio>,
+    alt: bool,
+    shift: bool,
+    ctrl: bool,
+    /// What each held physical key sent, so its release cancels that key even
+    /// if the modifiers changed in between.
+    pressed: HashMap<KeyCode, (libretro::retro_key, bool)>,
+    /// A shifted symbol held back for one frame, see `send`.
+    shift_pending: Option<(KeyCode, libretro::retro_key)>,
+    /// Every finger currently down, so a second one can veto the swipe.
+    touches: Vec<u64>,
+    swipe: Option<Swipe>,
     frame_time: Duration,
     next_frame: Instant,
 }
@@ -493,9 +675,164 @@ impl App {
         Self {
             core,
             gfx: None,
-            mods: 0,
+            audio: None,
+            alt: false,
+            shift: false,
+            ctrl: false,
+            pressed: HashMap::new(),
+            shift_pending: None,
+            touches: Vec::new(),
+            swipe: None,
             frame_time: Duration::from_secs_f64(1.0 / fps),
             next_frame: Instant::now(),
+        }
+    }
+
+    fn mods(&self) -> u16 {
+        use libretro::*;
+        let mut out = RETROKMOD_NONE;
+        // Alt only selects a key here, and a shift held with it picks a
+        // function key, so neither reaches the core as a modifier.
+        if self.shift && !self.alt {
+            out |= RETROKMOD_SHIFT;
+        }
+        if self.ctrl {
+            out |= RETROKMOD_CTRL;
+        }
+        out as u16
+    }
+
+    fn mods_with_shift(&self, shifted: bool) -> u16 {
+        let extra = if shifted { libretro::RETROKMOD_SHIFT } else { 0 };
+        self.mods() | extra as u16
+    }
+
+    /// The key to send for `code`, and whether a shift has to go with it.
+    fn key_for(&self, code: KeyCode) -> Option<(libretro::retro_key, bool)> {
+        if self.alt {
+            return alt_key(code, self.shift)
+                .map(|key| (key, false))
+                .or_else(|| alt_symbol(code));
+        }
+        // A C64 has one Ctrl and no right shift.
+        if code == KeyCode::ShiftRight {
+            return Some((libretro::RETROK_LCTRL, false));
+        }
+        retro_key(code).map(|key| (key, false))
+    }
+
+    /// Modifiers are tracked here rather than taken from `ModifiersChanged`,
+    /// which never arrives.
+    fn key(&mut self, code: KeyCode, down: bool) {
+        // The touchpad is over the keyboard, so typing drags fingers across it
+        // and the lift of such a finger may never arrive. Drop the gesture and
+        // everything it was waiting for rather than leave a cursor key down.
+        self.cancel_touch();
+        match code {
+            KeyCode::AltLeft | KeyCode::AltRight => {
+                self.alt = down;
+                // Alt is a prefix, not a key, so a shift held across it has to
+                // be lifted and put back.
+                if down {
+                    self.send(KeyCode::ShiftLeft, false);
+                } else if self.shift {
+                    self.send(KeyCode::ShiftLeft, true);
+                }
+                return;
+            }
+            KeyCode::ShiftLeft => self.shift = down,
+            KeyCode::ShiftRight => self.ctrl = down,
+            KeyCode::Backspace if down && self.alt && self.shift => {
+                self.core.reset();
+                return;
+            }
+            _ => {}
+        }
+        self.send(code, down);
+    }
+
+    /// A shifted symbol goes in as shift now and the key one frame later: VICE
+    /// only sees the shift if it was already down when the key arrived, and
+    /// pressing both in one frame yields the unshifted character.
+    fn send(&mut self, code: KeyCode, down: bool) {
+        if !down {
+            if let Some((key, shifted)) = self.pressed.remove(&code) {
+                let mods = self.mods_with_shift(shifted);
+                if self.shift_pending.is_some_and(|(c, _)| c == code) {
+                    self.shift_pending = None;
+                } else {
+                    self.core.press_key(key, false, mods);
+                }
+                if shifted {
+                    self.core.press_key(libretro::RETROK_LSHIFT, false, mods);
+                }
+            }
+        } else if !self.pressed.contains_key(&code)
+            && let Some((key, shifted)) = self.key_for(code)
+        {
+            self.pressed.insert(code, (key, shifted));
+            let mods = self.mods_with_shift(shifted);
+            if shifted {
+                self.core.press_key(libretro::RETROK_LSHIFT, true, mods);
+                self.shift_pending = Some((code, key));
+            } else {
+                self.core.press_key(key, true, mods);
+            }
+        }
+    }
+
+    /// A swipe holds its cursor key down until the finger is lifted, so the
+    /// C64's own key repeat carries it. A second finger cancels it and blocks
+    /// another until the screen is clear: the touchpad sits on the keyboard, so
+    /// typing drags fingers across it.
+    fn touch(&mut self, t: Touch) {
+        match t.phase {
+            TouchPhase::Started => {
+                self.release_swipe();
+                if !self.touches.contains(&t.id) {
+                    self.touches.push(t.id);
+                }
+                if self.touches.len() == 1 {
+                    self.swipe = Some(Swipe {
+                        id: t.id,
+                        start: (t.location.x, t.location.y),
+                        began: Instant::now(),
+                        key: None,
+                    });
+                }
+            }
+            TouchPhase::Moved => {
+                let Some(swipe) = self.swipe.as_ref() else {
+                    return;
+                };
+                if swipe.id != t.id || swipe.key.is_some() || swipe.began.elapsed() > SWIPE_TIME {
+                    return;
+                }
+                let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
+                if let Some(key) = swipe_key(dx, dy) {
+                    self.core.press_key(key, true, self.mods());
+                    if let Some(swipe) = self.swipe.as_mut() {
+                        swipe.key = Some(key);
+                    }
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.touches.retain(|&id| id != t.id);
+                if self.swipe.as_ref().is_some_and(|s| s.id == t.id) {
+                    self.release_swipe();
+                }
+            }
+        }
+    }
+
+    fn cancel_touch(&mut self) {
+        self.touches.clear();
+        self.release_swipe();
+    }
+
+    fn release_swipe(&mut self) {
+        if let Some(key) = self.swipe.take().and_then(|s| s.key) {
+            self.core.press_key(key, false, self.mods());
         }
     }
 
@@ -506,9 +843,19 @@ impl App {
             return;
         }
         self.core.run();
-        // Nothing plays the samples yet, but they have to be taken or the
-        // core's buffer grows without bound.
-        self.core.with_audio(|_| {});
+        // After the run, so the shift gets a frame of its own first.
+        if let Some((_, key)) = self.shift_pending.take() {
+            self.core.press_key(key, true, self.mods_with_shift(true));
+        }
+        // Taken either way: dropping them is better than letting the core's
+        // buffer grow without bound.
+        let rate = self.core.sample_rate();
+        let audio = self.audio.as_mut();
+        self.core.with_audio(|samples| {
+            if let Some(audio) = audio {
+                audio.push(rate, samples);
+            }
+        });
         let Some(gfx) = self.gfx.as_mut() else {
             return;
         };
@@ -533,7 +880,14 @@ impl ApplicationHandler for App {
             .map_err(anyhow::Error::from)
             .and_then(|window| Gfx::new(Arc::new(window)))
         {
-            Ok(gfx) => self.gfx = Some(gfx),
+            Ok(gfx) => {
+                self.gfx = Some(gfx);
+                match Audio::new() {
+                    Ok(audio) => self.audio = Some(audio),
+                    // Watching without sound beats not starting.
+                    Err(e) => tracing::warn!("No audio: {e:#}"),
+                }
+            }
             Err(e) => {
                 eprintln!("Could not open a window: {e:#}");
                 event_loop.exit();
@@ -542,7 +896,9 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.cancel_touch();
         self.gfx = None;
+        self.audio = None;
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -553,7 +909,6 @@ impl ApplicationHandler for App {
                     gfx.resize(size);
                 }
             }
-            WindowEvent::ModifiersChanged(mods) => self.mods = retro_mods(mods.state()),
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -563,12 +918,9 @@ impl ApplicationHandler for App {
                         ..
                     },
                 ..
-            } => {
-                if let Some(key) = retro_key(code) {
-                    let down = state == ElementState::Pressed;
-                    self.core.press_key(key, down, self.mods);
-                }
-            }
+            } => self.key(code, state == ElementState::Pressed),
+            WindowEvent::Touch(touch) => self.touch(touch),
+            WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.render();
@@ -589,7 +941,10 @@ impl ApplicationHandler for App {
     }
 }
 
-pub fn load_core() -> Result<RetroCoreDirect> {
+pub fn load_core(
+    game: Option<&std::path::Path>,
+    settings: HashMap<String, String>,
+) -> Result<RetroCoreDirect> {
     let path = find_core(CORE_NAME).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \
@@ -600,13 +955,47 @@ pub fn load_core() -> Result<RetroCoreDirect> {
     let system = system_dir();
     info!("Core: {}", path.display());
     info!("System dir: {}", system.display());
-    RetroCoreDirect::new(&path, &system, None, HashMap::new())
+    RetroCoreDirect::new(&path, &system, game, settings)
         .with_context(|| format!("could not start {}", path.display()))
 }
 
 // -------------------------------------------------------------------------
 // Android entry point
 // -------------------------------------------------------------------------
+
+/// Media packaged in the APK (`android/app/src/main/assets/`), and where each
+/// one is unpacked under the app's data directory. A core cannot read out of
+/// the APK, and VICE looks for cartridge images in `<system dir>/vice/<machine>`.
+#[cfg(target_os = "android")]
+const ASSETS: [(&str, &str); 2] = [
+    ("tar_v2_pal.crt", "vice/C64/tar_v2_pal.crt"),
+    ("disk.d64", "disk.d64"),
+];
+
+/// Unconditionally, so a rebuilt APK replaces whatever the last one left behind.
+#[cfg(target_os = "android")]
+fn unpack_assets(
+    app: &winit::platform::android::activity::AndroidApp,
+    dir: &std::path::Path,
+) -> Result<()> {
+    use std::io::Read;
+
+    let assets = app.asset_manager();
+    for (name, dest) in ASSETS {
+        let mut asset = assets
+            .open(&std::ffi::CString::new(name)?)
+            .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
+        let mut data = Vec::new();
+        asset.read_to_end(&mut data)?;
+        let path = dir.join(dest);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, &data)?;
+        info!("Unpacked {} ({} bytes)", path.display(), data.len());
+    }
+    Ok(())
+}
 
 /// What `android-activity`'s NativeActivity glue calls on its own thread, in
 /// place of `main`. Declared `extern "Rust"` there, so no `extern "C"` here.
@@ -618,14 +1007,23 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
 
     crate::android::init_logging();
 
-    // The app's private data directory is the only writable place, and is what
-    // the core gets as its system and save directory.
-    if let Some(dir) = app.internal_data_path() {
-        crate::set_system_dir(dir);
-    }
-
     let run = || -> Result<()> {
-        let core = load_core()?;
+        // The app's private data directory is the only writable place, and is
+        // what the core gets as its system and save directory.
+        let data = app
+            .internal_data_path()
+            .ok_or_else(|| anyhow!("no internal data path"))?;
+        crate::set_system_dir(data.clone());
+        unpack_assets(&app, &data)?;
+
+        let settings = HashMap::from([
+            ("vice_cartridge".to_string(), "tar_v2_pal.crt".to_string()),
+            // The cartridge's boot menu is what we want to come up; autostarting
+            // the disk would run straight past it.
+            ("vice_autostart".to_string(), "disabled".to_string()),
+        ]);
+        let core = load_core(Some(&data.join("disk.d64")), settings)?;
+
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
         event_loop.run_app(&mut App::new(core))?;
         Ok(())

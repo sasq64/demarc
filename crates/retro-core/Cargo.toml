@@ -34,6 +34,11 @@ dirs.workspace = true
 pollster = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
+# Audio out for the player: the same pair demarc's sink is built on. cpal 0.17
+# reaches Android through AAudio (`ndk`, API 26+), so there is no C++ runtime to
+# ship beside the core.
+cpal = { version = "0.17.1", optional = true }
+ringbuf = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
 # PNG output for the tests that boot a real core and snapshot a frame.
@@ -53,4 +58,4 @@ winit = { workspace = true, features = ["android-native-activity"], optional = t
 
 [features]
 default = []
-player = ["dep:winit", "dep:wgpu", "dep:pollster"]
+player = ["dep:winit", "dep:wgpu", "dep:pollster", "dep:cpal", "dep:ringbuf"]

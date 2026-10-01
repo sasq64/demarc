@@ -19,7 +19,8 @@ fi
 ADB="$ANDROID_HOME/platform-tools/adb"
 
 ABI=arm64-v8a
-API=24
+# 26 is where AAudio — cpal's Android backend — starts.
+API=26
 PKG=com.demarc.c64
 ACTIVITY=android.app.NativeActivity
 CORE=vice_x64sc

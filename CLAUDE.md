@@ -94,7 +94,7 @@ a fullscreen vertex shader.
 Build it for a phone with:
 
 ```sh
-cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
+cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs \
     build -p retro-core --features player --lib --release
 ```
 
