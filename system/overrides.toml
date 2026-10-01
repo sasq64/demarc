@@ -45,12 +45,12 @@ fast = true
 [zoo.7378]
 events = [
   { frame = 130, key = "Enter" },
-  { frame = 135, key = "Down" },
-  { frame = 137, key = "Down" },
-  { frame = 139, key = "Down" },
+  { frame = 135, key = "ArrowDown" },
+  { frame = 137, key = "ArrowDown" },
+  { frame = 139, key = "ArrowDown" },
   { frame = 141, key = "Enter" },
-  { frame = 145, key = "Down" },
-  { frame = 147, key = "Down" },
+  { frame = 145, key = "ArrowDown" },
+  { frame = 147, key = "ArrowDown" },
   { frame = 150, key = "Enter" },
 ]
 
