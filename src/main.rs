@@ -52,6 +52,7 @@ mod remote_control;
 mod screensaver;
 mod shader_dialog;
 mod speed_test;
+mod ui;
 
 #[cfg(feature = "flash")]
 mod flash_emu;

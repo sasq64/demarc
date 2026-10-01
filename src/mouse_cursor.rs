@@ -7,8 +7,8 @@
 use bevy::prelude::*;
 use bevy::window::{CursorOptions, Monitor, PrimaryWindow};
 
-use crate::egui_ui::HudState;
 use crate::screensaver::is_fullscreen;
+use crate::ui::UiState;
 
 pub struct MouseCursorPlugin;
 
@@ -32,17 +32,17 @@ pub struct HideMouse(pub bool);
 /// Hides the OS pointer over a fullscreen emulator, and brings it back for any
 /// UI the user is expected to point at.
 ///
-/// The picker and the settings dialog are both mouse-driven, so [`HudState::modal`]
+/// The picker and the settings dialog are both mouse-driven, so [`UiState::modal`]
 /// vetoes the hide for as long as either is up.
 fn sync_cursor_visibility(
     window: Single<&Window, With<PrimaryWindow>>,
     monitors: Query<&Monitor>,
     mut cursor_options: Single<&mut CursorOptions>,
     hide_mouse: Res<HideMouse>,
-    hud: Res<HudState>,
+    ui_state: Res<UiState>,
     #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
 ) {
-    let hide = hide_mouse.0 && !hud.modal() && is_fullscreen(*window, &monitors);
+    let hide = hide_mouse.0 && !ui_state.modal && is_fullscreen(*window, &monitors);
 
     cursor_options.visible = !hide;
     #[cfg(target_os = "macos")]

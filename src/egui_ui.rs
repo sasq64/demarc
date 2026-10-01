@@ -3,19 +3,12 @@ use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
     egui::{self, Ui, scroll_area::ScrollAreaOutput},
 };
-use std::{collections::HashMap, ops::Range, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Range, sync::Arc};
 
-use crate::emu_file::{Award, EmuFile};
-use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource};
+use crate::emu_file::Award;
+use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
 use crate::headless::{HeadlessTarget, camera_target};
-
-/// What the pickers in this app are lists *of*. Every source handed to
-/// [`ShowFuzzyList`] agrees on this one type, so a caller holding the `item` of
-/// a [`FuzzyListSelect`] can ask the source for the entry behind it
-/// ([`FuzzySource::get_data`]) instead of keeping its own copy of the list.
-/// A source whose rows are not entries at all -- the hotkey list, say -- has no
-/// data to hand back and simply inherits the default.
-pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
+use crate::ui::{FuzzyListSelect, HudLocation, ListSource, SetHudText, ShowFuzzyList, UiState};
 
 use resvg::tiny_skia;
 use resvg::usvg::{self, Tree};
@@ -175,55 +168,6 @@ fn icons(ctx: &egui::Context) -> Option<(egui::TextureId, egui::TextureId)> {
     Some((pair.0.id(), pair.1.id()))
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum HudLocation {
-    #[default]
-    InfoText,
-    BottomLeft,
-    TopLeft,
-    TopRight,
-    Error,
-}
-
-/// Opens the searchable list over `source`. Picking a row emits a
-/// [`FuzzyListSelect`] carrying `id` back, so several callers can tell their
-/// pickers apart; re-opening the same `id` restores the search text and the
-/// selected row.
-#[derive(Message, Clone)]
-pub struct ShowFuzzyList {
-    pub id: usize,
-    pub source: ListSource,
-    pub prompt: Option<String>,
-    /// Source id of the row to highlight, if it is among the results.
-    pub selected: Option<usize>,
-    /// Shown above the search box, and hidden while empty.
-    pub title: String,
-}
-
-/// Emitted when the user picks a row (Enter, or Shift+Enter — see
-/// [`FuzzyListSelect::alt`]) in the list opened by [`ShowFuzzyList`].
-#[derive(Message, Debug, Clone)]
-pub struct FuzzyListSelect {
-    /// The list's `id`, so callers can tell their pickers apart.
-    pub id: usize,
-    /// Stable id of the chosen item, as reported by [`FuzzySource::search`].
-    pub item: usize,
-    #[allow(dead_code)]
-    pub text: String,
-    /// Set when the row was picked with Shift held (Shift+Enter), asking the
-    /// caller for its alternative action on the item rather than the default.
-    pub alt: bool,
-    pub emu_file: Option<EmuFile>,
-}
-
-#[derive(Default, Message, Clone)]
-pub struct SetHudText {
-    pub text: String,
-    pub delay: Duration,
-    pub duration: Duration,
-    pub location: HudLocation,
-}
-
 #[derive(Default, Debug, Clone)]
 pub struct HudText {
     pub text: String,
@@ -235,9 +179,7 @@ pub struct HudState {
     current_texts: HashMap<HudLocation, HudText>,
     show_list: bool,
     /// How many dialogs (`crate::egui_settings`, `crate::shader_dialog`) are up.
-    /// Kept here rather than on the generic `SettingsState<T>` so
-    /// [`HudState::modal`] can answer without naming the settings type, and
-    /// counted rather than a flag so closing one dialog while another is still
+    /// Counted rather than a flag so closing one dialog while another is still
     /// open does not hand the keyboard back to the emulated machine.
     open_dialogs: u32,
     /// Caller-chosen id of the open list, echoed back in [`FuzzyListSelect`].
@@ -272,14 +214,6 @@ pub struct HudState {
 }
 
 impl HudState {
-    /// Whether *any* modal UI owns the keyboard -- the picker or a settings
-    /// dialog. This is what the callers that feed keys to the emulated machine
-    /// check; a settings dialog with a focused text field would otherwise type
-    /// into the emulator as well.
-    pub fn modal(&self) -> bool {
-        self.show_list || self.open_dialogs > 0
-    }
-
     /// The search box text, when the list currently open is `id`'s.
     pub fn list_query(&self, id: usize) -> Option<&str> {
         (self.show_list && self.list_id == id).then_some(self.list_query.as_str())
@@ -976,6 +910,12 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
     }
 }
 
+fn sync_ui_state(hud: Res<HudState>, mut ui: ResMut<UiState>) {
+    ui.set_if_neq(UiState {
+        modal: hud.show_list || hud.open_dialogs > 0,
+    });
+}
+
 fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>) {
     // Camera for full res UI on top of screen.
     commands.spawn((
@@ -1007,6 +947,7 @@ impl Plugin for EguiUiPlugin {
             .add_message::<ShowFuzzyList>()
             .add_message::<FuzzyListSelect>()
             .add_systems(Startup, setup_ui_camera)
+            .add_systems(PreUpdate, sync_ui_state)
             .add_systems(
                 Update,
                 (
@@ -1014,7 +955,8 @@ impl Plugin for EguiUiPlugin {
                     open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
                 ),
             )
-            .insert_resource(HudState::default());
+            .insert_resource(HudState::default())
+            .insert_resource(UiState::default());
     }
 }
 

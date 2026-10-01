@@ -27,11 +27,10 @@ use bevy::{camera::visibility::RenderLayers, prelude::*};
 use bevy_egui::{EguiContexts, EguiSchedule};
 
 use crate::config::Args;
-use crate::egui_ui::{
-    AppFont, FuzzyListSelect, HudState, apply_style, draw_hud, draw_picker, set_scale,
-};
+use crate::egui_ui::{AppFont, HudState, apply_style, draw_hud, draw_picker, set_scale};
 use crate::emulator::Emulator;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
+use crate::ui::FuzzyListSelect;
 
 /// Present only in DJ mode, so its absence is what the rest of the app tests.
 #[derive(Resource)]

@@ -12,8 +12,6 @@ use crate::AppState;
 use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
-use crate::egui_ui::HudLocation;
-use crate::egui_ui::{FuzzyListSelect, HudState, SetHudText, ShowFuzzyList};
 use crate::emu_file::UrlList;
 use crate::emu_file::{EmuFile, FileSource};
 use crate::emulator::{Emulator, InputMode};
@@ -26,6 +24,7 @@ use crate::navigator::setup_navigator_bevy;
 use crate::navigator::{Navigator, handle_navigator};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
+use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
 
 /// A command triggered by a hotkey while the RightAlt/RightCtrl modifier is
 /// held. There is one variant per entry in [`HOTKEYS`].
@@ -207,11 +206,11 @@ fn handle_hotkey(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    hud: Res<HudState>,
+    ui_state: Res<UiState>,
     mut writer: MessageWriter<CmdMessage>,
 ) {
     let hot_key_pressed = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
-    if hot_key_pressed && !hud.modal() {
+    if hot_key_pressed && !ui_state.modal {
         settings.select_box_drawn_at = time.elapsed_secs_f64();
         if let Some(cmd) = check_hotkey(&input) {
             settings.hotkey_pressed_at = 0.0;
@@ -227,7 +226,7 @@ fn handle_textlist(
     mut writer: MessageWriter<CmdMessage>,
     mut show_list: MessageWriter<ShowFuzzyList>,
     time: Res<Time>,
-    hud: Res<HudState>,
+    ui_state: Res<UiState>,
     // The entry whose downloads the list opened by Shift+Enter is showing, kept
     // until that list reports back (its own `item` is a URL index, not a file).
 ) {
@@ -246,7 +245,7 @@ fn handle_textlist(
         settings.hotkey_pressed_at = time.elapsed_secs();
     } else if hot_key_released {
         // TODO: We sometimes get quick PRESS/RELEASE/PRESS for only press
-        let modal = hud.modal();
+        let modal = ui_state.modal;
         if modal {
             return;
         }

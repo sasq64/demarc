@@ -7,10 +7,11 @@ use regex::Regex;
 
 use crate::commands::{DownloadSource, PickerSource};
 use crate::config::AppSettings;
-use crate::egui_ui::{FuzzyListSelect, HudState, ListSource, ShowFuzzyList};
+use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 use crate::loading::LoadFile;
+use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 
 pub(crate) struct NavList {
     id: usize,

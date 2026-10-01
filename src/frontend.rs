@@ -12,13 +12,13 @@ use bevy::{
 
 use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
-use crate::egui_ui::{HudLocation, HudState, SetHudText};
 use crate::emulator::Emulator;
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
+use crate::ui::{HudLocation, SetHudText, UiState};
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FrontendSet {
@@ -428,7 +428,7 @@ pub(crate) fn run_frontend(
     mut images: ResMut<Assets<Image>>,
     window: Option<Single<&Window, With<PrimaryWindow>>>,
     headless: Option<Res<HeadlessTarget>>,
-    hud: Res<HudState>,
+    ui_state: Res<UiState>,
     // Bevy's input resources are app wide, so this is what keeps the keyboard
     // and mouse on the window that has focus -- see `crate::dj`.
     dj: Option<Res<crate::dj::DjWindow>>,
@@ -436,7 +436,7 @@ pub(crate) fn run_frontend(
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let cursor = cursor_pos(window.as_deref().copied());
     let mut no_input =
-        input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || hud.modal();
+        input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight) || ui_state.modal;
     let mut show_info = false;
 
     // Handle double click maximize/unmaximize

@@ -9,13 +9,13 @@ use anyhow::Result;
 use bevy::prelude::*;
 
 use crate::config::AppSettings;
-use crate::egui_ui::{HudLocation, SetHudText};
 use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, GameInfo, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
 use crate::frontend::{EmuView, FrontendSet};
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
 use crate::navigator::Navigator;
 use crate::newsys::{self, LoadResult, NewSys};
+use crate::ui::{HudLocation, SetHudText};
 use crate::workfile::WorkFile;
 
 /// One emulator finished a load this frame.
