@@ -14,7 +14,7 @@ use tracing::{error, trace};
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus};
 use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
-use super::RetroCoreDirect;
+use super::{FrameTarget, RetroCoreDirect};
 
 /// Stack for the thread a core runs on. See the `stack_size` call in
 /// [`RetroCoreThreaded::new`] for why the default is not enough.
@@ -249,6 +249,9 @@ fn worker_loop(
     // it adds costs a couple of extra passes over the framebuffer.
     let mut stats_log = FrameStatsLog::from_env();
     let mut last_frame: Arc<Vec<u32>> = Arc::default();
+    // Frame buffers the core converts straight into; one is free again once
+    // the frontend has dropped every other reference to it.
+    let mut pool: Vec<Arc<Vec<u32>>> = Vec::new();
     let mut aggregated_diff = 0.0f32;
     loop {
         let frame = frames.load(Ordering::Relaxed);
@@ -278,10 +281,23 @@ fn worker_loop(
         }
 
         if core.visible {
+            let mut frame = match pool.iter_mut().position(|b| Arc::get_mut(b).is_some()) {
+                Some(i) => pool.swap_remove(i),
+                None => Arc::default(),
+            };
+            let (width, height) = core.get_frame_size();
+            let pixels = Arc::get_mut(&mut frame).unwrap();
+            pixels.resize(width * height, 0);
+            core.frame_target = Some(FrameTarget {
+                ptr: pixels.as_mut_ptr(),
+                len: pixels.len(),
+            });
             core.run();
+            let written = core.frame_target.take().is_none();
             // Count every emulated frame the core steps, including skipped ones.
             frames.fetch_add(1, Ordering::Relaxed);
             if core.skip_frames > 0 {
+                pool.push(frame);
                 core.skip_frames -= 1;
                 if core.skip_frames == 0 {
                     set_state_bit(state, STATE_SKIPPING, false);
@@ -293,9 +309,21 @@ fn worker_loop(
 
             let (width, height) = core.get_frame_size();
             let (used_width, used_height) = core.get_used_frame_size();
-            let mut frame = Vec::new();
-            core.with_frame(|_, _, fr| frame.extend_from_slice(fr));
-            let frame = Arc::new(frame);
+            let pixels = Arc::get_mut(&mut frame).unwrap();
+            if written {
+                pixels.truncate(width * height);
+            } else if pixels.len() != width * height {
+                // The frame outgrew the buffer and went to `state.frame`.
+                pixels.clear();
+                core.with_frame(|_, _, fr| pixels.extend_from_slice(fr));
+            } else {
+                // The core produced no frame this run.
+                pool.push(frame);
+                frame = Arc::clone(&last_frame);
+            }
+            if !Arc::ptr_eq(&frame, &last_frame) {
+                pool.push(Arc::clone(&frame));
+            }
 
             let frame_diff;
             if let Some(log) = &mut stats_log {

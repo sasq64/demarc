@@ -121,8 +121,13 @@ const CHUNK: usize = 8;
 /// and a regular sample estimates them just as well for a fraction of the work.
 const SAMPLE_TARGET: usize = 1 << 18;
 
-/// Chunks to step for a frame of `count` pixels. Kept odd so the stride cannot
-/// line up with a power-of-two row width and sample the same few columns.
+/// Pixels [`get_frame_diff`] samples in one contiguous run. Sampling single
+/// chunks still pulls in nearly every cache line once the prefetcher joins in.
+const SAMPLE_RUN: usize = 1024;
+
+/// Chunks, or [`SAMPLE_RUN`]s, to step for a frame of `count` pixels. Kept odd
+/// so the stride cannot line up with a power-of-two row width and sample the
+/// same few columns.
 fn sample_skip(count: usize) -> usize {
     (count / SAMPLE_TARGET).max(1) | 1
 }
@@ -264,7 +269,12 @@ pub fn get_frame_diff(frame: &[u32], last_frame: &[u32], prev_aggregated: f32) -
         return (0.0, decayed);
     }
 
-    let (changed, moved, sampled) = diff_pixels(frame, last_frame, sample_skip(frame.len()));
+    let (mut changed, mut moved, mut sampled) = (0, 0, 0);
+    let runs = frame.chunks(SAMPLE_RUN).zip(last_frame.chunks(SAMPLE_RUN));
+    for (a, b) in runs.step_by(sample_skip(frame.len())) {
+        let (c, m, s) = diff_pixels(a, b, 1);
+        (changed, moved, sampled) = (changed + c, moved + m, sampled + s);
+    }
     // Fewer pixels than one chunk: nothing was looked at.
     if sampled == 0 {
         return (0.0, decayed);
