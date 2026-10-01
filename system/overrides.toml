@@ -430,3 +430,13 @@ meta = { amiga_core = "puae" }
 
 [zoo.311767]
 download = "https://github.com/sasq64/demodb/releases/download/demo-arc/area5150_86box.zip"
+
+# Coronoid / Still: Tooll treats any compiler warning as failure and wine-mono's mcs warns
+# where csc did not, so swap its "/optimize" for "/o+ /w:0 " (same UTF-16 length)
+[zoo.135211]
+patch = {
+  info = "mcs warnings",
+  target = "Core.dll",
+  offset = 366507,
+  contents = "LwBvACsAIAAvAHcAOgAwACAA",
+}
