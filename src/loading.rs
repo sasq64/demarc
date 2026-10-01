@@ -363,6 +363,7 @@ impl Emulator {
 
         self.core = Some(res.backend);
         self.frame_queue.clear();
+        self.shown_frame = None;
         self.work_file = res.work_file;
 
         self.run_next = false;

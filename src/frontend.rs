@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowMode};
@@ -53,7 +54,7 @@ pub(crate) struct EmuView {
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
 /// How many frames the picture lags behind the core.
-const FRAME_DELAY: usize = 4;
+const FRAME_DELAY: usize = 8;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
@@ -556,6 +557,29 @@ pub(crate) fn run_frontend(
         }
         let frame = emu.frame_queue.front().unwrap().clone();
 
+        // The display refreshes faster than a core produces frames, so copying
+        // the same pixels again would only make Bevy re-upload the texture.
+        let fresh = emu
+            .shown_frame
+            .as_ref()
+            .is_none_or(|shown| !Arc::ptr_eq(shown, &frame.pixels));
+        if fresh
+            && let Some(mut image) = images.get_mut(&emu.image)
+            && let Some(dst) = image.data.as_mut()
+        {
+            let (w, h) = (frame.width, frame.height);
+            let src = crate::backend::frame_bytes(&frame.pixels);
+            let copy_w = w.min(bg_w);
+            let copy_h = h.min(bg_h);
+            for y in 0..copy_h {
+                let src_off = y * w * 4;
+                let dst_off = y * bg_w * 4;
+                dst[dst_off..dst_off + copy_w * 4]
+                    .copy_from_slice(&src[src_off..src_off + copy_w * 4]);
+            }
+            emu.shown_frame = Some(Arc::clone(&frame.pixels));
+        }
+
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
@@ -573,6 +597,7 @@ pub(crate) fn run_frontend(
             debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
+            emu.shown_frame = None;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(

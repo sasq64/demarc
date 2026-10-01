@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
@@ -117,10 +118,13 @@ pub struct Emulator {
     pub state: EmuState,
     /// Frames waiting to be shown, oldest first.
     pub frame_queue: VecDeque<VideoFrame>,
+    /// Pixels last copied into [`Self::image`], so an unchanged frame is not
+    /// copied and re-uploaded again.
+    pub shown_frame: Option<Arc<Vec<u32>>>,
 }
 
-const AUDIO_BUF_MIN: usize = 3000;
-const AUDIO_BUF_MAX: usize = 15000;
+const AUDIO_BUF_MIN: usize = 9000;
+const AUDIO_BUF_MAX: usize = 25000;
 
 impl Emulator {
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
