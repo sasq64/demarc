@@ -59,6 +59,9 @@ pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 #[cfg(target_os = "linux")]
 pub const META_GLSL_VERSION: &str = "wine_glsl_version";
 
+/// Meta key: yes runs the demo with wine's `X11 Driver\EmulateModeset` on.
+pub const META_EMULATE_MODESET: &str = "wine_emulate_modeset";
+
 /// Meta key: yes turns on Mesa's `allow_glsl_120_subset_in_110` for the demo.
 pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 
@@ -265,6 +268,7 @@ struct Config {
     height: u32,
     dialog: Dialog,
     widescreen: bool,
+    emulate_modeset: bool,
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
     #[cfg(target_os = "linux")]
@@ -309,6 +313,7 @@ impl Config {
                 .get(crate::newsys::META_WIDESCREEN)
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_WIDESCREEN),
+            emulate_modeset: meta.get(META_EMULATE_MODESET).is_some_and(|v| is_yes(v)),
             #[cfg(target_os = "linux")]
             desktop: meta
                 .get(META_DESKTOP)
@@ -353,6 +358,9 @@ impl Config {
             "--timeout".into(),
             DIALOG_TIMEOUT.to_string(),
         ]);
+        if self.emulate_modeset {
+            args.push("--emulate-modeset".into());
+        }
         match &self.dialog {
             Dialog::Drive(modes) => {
                 // Before the modes, since picking an aspect can change the list.

@@ -124,6 +124,21 @@ core restates it as the geometry's base size with `SET_GEOMETRY` whenever it cha
 display aspect stays the session's, because the frame still arrives whole. That is what
 `Backend::get_used_frame_size` reports.
 
+A demo that sets a fixed display mode (`ChangeDisplaySettings` to 640x480, say) must not
+reach XRandR: Xwayland's `-force-xrandr-emulation` fakes the mode for the one X connection
+that set it, wine re-reads the display from another and sees the session size again, and
+resizes the fullscreen window to it under a demo still drawing at the old size — into a
+corner. Such a release gets its resolution from a tag or an override instead.
+
+`X11 Driver\EmulateModeset=Y` in the prefix would fix that generally (wine keeps the mode to
+itself and scales the demo's GL/Vulkan child window; gamescope's `scale_to_child_window`
+then scales that child), but it is deliberately not set: wine draws the scaled window
+through its "framebuffer OpenGL surface", which fails with a GLX `BadMatch` on NVIDIA for
+16-bit DirectDraw modes (Live Evil) and leaves a black screen. A demo in a corner is
+obvious and fixed with an override; a black screen is hard to diagnose. An entry can still
+ask for it with `wine_emulate_modeset=yes`: `demarc-autodlg.exe --emulate-modeset` writes
+the key just before it launches the demo, into the session's throwaway prefix.
+
 ### Audio
 
 gamescope has none, and a client left to itself plays to whatever sink the desktop points

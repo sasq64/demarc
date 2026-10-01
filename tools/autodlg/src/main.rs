@@ -64,6 +64,17 @@ unsafe extern "system" {
     fn WaitForSingleObject(h: isize, ms: u32) -> u32;
     fn CloseHandle(h: isize) -> Bool32;
 }
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    fn RegSetKeyValueW(
+        key: isize,
+        subkey: *const u16,
+        name: *const u16,
+        kind: u32,
+        data: *const u8,
+        len: u32,
+    ) -> i32;
+}
 
 #[repr(C)]
 #[derive(Default)]
@@ -230,6 +241,29 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
     }
     unsafe { CloseHandle(pi.thread) };
     Some((pi.process, pi.process_id))
+}
+
+/// Turn on wine's `EmulateModeset` for the demo about to be launched. The
+/// sandboxed prefix is thrown away afterwards, so the write does not outlive the run.
+fn emulate_modeset() {
+    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+    const REG_SZ: u32 = 1;
+    let key = wide(r"Software\Wine\X11 Driver");
+    let name = wide("EmulateModeset");
+    let value = wide("Y");
+    let err = unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            REG_SZ,
+            value.as_ptr() as *const u8,
+            (value.len() * 2) as u32,
+        )
+    };
+    if err != 0 {
+        eprintln!("could not set EmulateModeset: error {err}");
+    }
 }
 
 const STARTF_USESHOWWINDOW: u32 = 0x1;
@@ -477,6 +511,7 @@ struct Args {
     /// starts the demo, and what tells demarc when the demo is over — but the
     /// dialog belongs to whoever is sitting in front of it.
     no_go: bool,
+    emulate_modeset: bool,
     timeout: f64,
     /// One fallback chain per `--prefer`: the alternatives of a chain are tried
     /// in order and the first one the dialog actually offers wins, so a demo
@@ -495,6 +530,7 @@ fn parse_args() -> Args {
         no_fallback: false,
         no_fill: false,
         no_go: false,
+        emulate_modeset: false,
         timeout: 20.0,
         prefer: vec![],
         check: vec![],
@@ -525,6 +561,10 @@ fn parse_args() -> Args {
             }
             "--no-go" => {
                 args.no_go = true;
+                takes_value = false;
+            }
+            "--emulate-modeset" => {
+                args.emulate_modeset = true;
                 takes_value = false;
             }
             "--launch" => args.launch = Some(value),
@@ -714,6 +754,9 @@ fn main() {
     let hiding = !args.no_go && !args.list;
     if hiding {
         report("hiding");
+    }
+    if args.emulate_modeset {
+        emulate_modeset();
     }
     let demo = args.launch.as_ref().map(|exe| {
         let Some((handle, pid)) = launch(exe) else {
