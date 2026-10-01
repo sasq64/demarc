@@ -37,6 +37,7 @@ mod egui_ui;
 mod emu_file;
 mod emulator;
 mod files;
+mod frame_upload;
 mod frontend;
 mod fuzzy_list;
 mod headless;

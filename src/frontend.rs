@@ -13,6 +13,7 @@ use bevy::{
 use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, RenderSettings};
 use crate::emulator::Emulator;
+use crate::frame_upload::FrameUploadPlugin;
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
@@ -555,21 +556,6 @@ pub(crate) fn run_frontend(
         }
         let frame = emu.frame_queue.front().unwrap().clone();
 
-        if let Some(mut image) = images.get_mut(&emu.image)
-            && let Some(dst) = image.data.as_mut()
-        {
-            let (w, h) = (frame.width, frame.height);
-            let src = crate::backend::frame_bytes(&frame.pixels);
-            let copy_w = w.min(bg_w);
-            let copy_h = h.min(bg_h);
-            for y in 0..copy_h {
-                let src_off = y * w * 4;
-                let dst_off = y * bg_w * 4;
-                dst[dst_off..dst_off + copy_w * 4]
-                    .copy_from_slice(&src[src_off..src_off + copy_w * 4]);
-            }
-        }
-
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
@@ -624,6 +610,6 @@ impl Plugin for FrontendPlugin {
             (run_frontend, update_view_rects, draw_current_emu_outline),
         );
         app.add_systems(PostStartup, detect_screen);
-        app.add_plugins((LoadingPlugin,));
+        app.add_plugins((LoadingPlugin, FrameUploadPlugin));
     }
 }
