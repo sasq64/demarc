@@ -48,6 +48,7 @@ mod media_keys;
 mod mouse_cursor;
 mod navigator;
 mod overrides;
+mod playlists;
 mod post_process;
 mod remote_control;
 mod screensaver;

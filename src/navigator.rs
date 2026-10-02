@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -11,6 +11,7 @@ use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 use crate::loading::LoadFile;
+use crate::playlists::Playlists;
 use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 
 pub(crate) struct NavList {
@@ -67,6 +68,7 @@ pub(crate) struct Navigator {
     pub(crate) stack: Vec<NavList>,
     files: IndexMap<String, &'static [EmuFile]>,
     mapping: Vec<(Regex, DbCallback)>,
+    playlists: HashSet<String>,
     pub(crate) current_launch: Option<Launch>,
 }
 
@@ -78,6 +80,7 @@ impl Navigator {
             files: IndexMap::new(),
             stack: vec![],
             mapping: Vec::new(),
+            playlists: HashSet::new(),
             current_launch: None,
         }
     }
@@ -160,6 +163,16 @@ impl Navigator {
             warn!("No such database: {db}");
             return self;
         };
+        if rest.is_empty() && self.playlists.contains(db) {
+            self.push(NavList {
+                id: 0,
+                source: Arc::new(PickerSource::new(files, None)),
+                path: path.into(),
+                prompt: String::new(),
+                selected: None,
+            });
+            return self;
+        }
         for (key, val) in &self.mapping {
             if let Some(m) = key.captures(rest) {
                 let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
@@ -204,6 +217,12 @@ impl Navigator {
     /// list of EmuFiles that other Navigator parts filter from
     pub fn add_db(&mut self, name: &str, files: &'static [EmuFile]) {
         self.files.insert(name.to_string(), files);
+    }
+
+    /// Add a db whose top level is the list of its entries.
+    pub fn add_playlist(&mut self, name: &str, files: &'static [EmuFile]) {
+        self.playlists.insert(name.to_string());
+        self.add_db(name, files);
     }
 
     // Add a new path pattern.
@@ -395,8 +414,12 @@ pub fn setup_navigator(
 
 pub fn setup_navigator_bevy(
     settings: Res<AppSettings>,
+    playlists: Res<Playlists>,
     mut navigator: ResMut<Navigator>,
 ) -> Result<()> {
+    for list in &playlists.lists {
+        navigator.add_playlist(&list.name, list.files);
+    }
     setup_navigator(&settings.files, &mut navigator)?;
     navigator.go_root();
     Ok(())
@@ -538,5 +561,20 @@ mod test {
 
         navigator.goto("Demozoo/Platforms");
         assert_eq!(navigator.get_showing(), vec!["Amiga"]);
+    }
+
+    #[test]
+    fn playlist_shows_its_entries_directly() {
+        let mut navigator = Navigator::new();
+        navigator.add_playlist(
+            "Favorites",
+            db("id:1\ttitle:A\tauthor:G\tdownload:http://x/a.zip\n"),
+        );
+        setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+
+        navigator.goto("");
+        assert_eq!(navigator.get_showing(), vec!["Favorites"]);
+        navigator.goto("Favorites");
+        assert_eq!(navigator.get_showing(), vec!["A / G"]);
     }
 }

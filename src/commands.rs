@@ -22,6 +22,7 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::setup_navigator_bevy;
 use crate::navigator::{Navigator, handle_navigator};
+use crate::playlists::{FAVORITES, Playlists};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
@@ -56,6 +57,7 @@ pub enum Cmd {
     Settings,
     ShaderDialog,
     StartOther,
+    AddFavorite,
 }
 
 impl Cmd {
@@ -86,6 +88,7 @@ impl Cmd {
         Cmd::Settings,
         Cmd::ShaderDialog,
         Cmd::StartOther,
+        Cmd::AddFavorite,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -164,6 +167,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyX, "Edit settings", Cmd::Settings),
     KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
+    KeyMapping::new(KeyCode::KeyH, "Toggle favorite", Cmd::AddFavorite),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(
         KeyCode::KeyT,
@@ -536,6 +540,7 @@ pub(crate) fn handle_cmd(
     mut demo_settings: ResMut<DemarcSettings>,
     mut commands: Commands,
     dj: Option<Res<crate::dj::DjWindow>>,
+    mut playlists: ResMut<Playlists>,
 ) {
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let mut show_info = false;
@@ -727,6 +732,29 @@ pub(crate) fn handle_cmd(
                     Cmd::Reset => {
                         emu.reset();
                     }
+                    Cmd::AddFavorite if emu.core.is_some() => {
+                        emu.favorite = playlists.toggle_favorite(&emu.emu_file);
+                        navigator.add_db(FAVORITES, playlists.favorites().files);
+                        writer.write(SetHudText {
+                            text: if emu.favorite {
+                                "Added to favorites"
+                            } else {
+                                "Removed from favorites"
+                            }
+                            .into(),
+                            delay: Duration::from_secs(0),
+                            duration: Duration::from_secs(1),
+                            location: HudLocation::TopLeft,
+                        });
+                        if emu.show_info {
+                            writer.write(SetHudText {
+                                text: emu.get_info(),
+                                delay: Duration::from_secs(0),
+                                duration: Duration::from_secs(5000),
+                                location: HudLocation::InfoText,
+                            });
+                        }
+                    }
                     Cmd::ToggleInfo => {
                         if emu.show_info {
                             writer.write(SetHudText {
@@ -862,6 +890,7 @@ impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>()
             .insert_resource(Navigator::new())
+            .insert_resource(Playlists::load(&crate::playlists::default_dir()))
             .add_systems(Startup, (init_media_keys, setup_navigator_bevy))
             .add_systems(OnEnter(AppState::Running), open_select_menu)
             .add_systems(

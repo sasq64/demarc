@@ -9,12 +9,13 @@ use anyhow::Result;
 use bevy::prelude::*;
 
 use crate::config::AppSettings;
-use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, GameInfo, Override, UrlList};
+use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
 use crate::frontend::{EmuView, FrontendSet};
 use crate::jobs::{Job, JobError, JobProgress, drop_on_pool};
 use crate::navigator::Navigator;
 use crate::newsys::{self, LoadResult, NewSys};
+use crate::playlists::Playlists;
 use crate::ui::{HudLocation, SetHudText};
 use crate::workfile::WorkFile;
 
@@ -55,7 +56,7 @@ pub(crate) struct PendingLoad {
     /// What the entry is called, kept here because the job reports only a
     /// [`WorkFile`] and the entry itself is gone by the time it lands — and on
     /// failure there is nowhere else left to read the title from.
-    info: GameInfo,
+    file: EmuFile,
     phase: LoadPhase,
 }
 
@@ -125,7 +126,7 @@ pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
     });
 
     PendingLoad {
-        info: emu_file.game_info,
+        file: emu_file.clone(),
         phase: LoadPhase::Unpacking {
             job,
             over: over.cloned(),
@@ -152,20 +153,20 @@ impl Emulator {
                 let Some(resolved) = job.poll() else {
                     return LoadStatus::Pending;
                 };
-                let PendingLoad { info, phase } =
+                let PendingLoad { file, phase } =
                     self.pending_load.take().expect("checked just above");
                 let LoadPhase::Unpacking { over, .. } = phase else {
                     unreachable!("matched just above");
                 };
                 match resolved {
                     Ok(work_file) => {
-                        self.start_create(sys, info, work_file, over);
+                        self.start_create(sys, file, work_file, over);
                         LoadStatus::Pending
                     }
                     Err(err) => {
                         DOWNLOAD_COUNTER.ended();
                         LoadStatus::Done {
-                            title: info.title.to_string(),
+                            title: file.game_info.title.to_string(),
                             result: Err(Self::job_error(err)),
                         }
                         //self.failed_load(advance, info.title.to_string(), Self::job_error(err))
@@ -176,16 +177,16 @@ impl Emulator {
                 let Some(resolved) = job.poll() else {
                     return LoadStatus::Pending;
                 };
-                let PendingLoad { info, .. } =
+                let PendingLoad { file, .. } =
                     self.pending_load.take().expect("checked just above");
                 // Past the `poll` above the load is over one way or another --
                 // landed, failed or cancelled -- so it stops counting here,
                 // whichever of the branches below the outcome takes.
                 DOWNLOAD_COUNTER.ended();
-                let title = info.title.to_string();
+                let title = file.game_info.title.to_string();
                 match resolved {
                     Ok(res) => {
-                        self.finish_load(time, res, info);
+                        self.finish_load(time, res, file);
                         LoadStatus::Done {
                             title,
                             result: Ok(()),
@@ -233,16 +234,16 @@ impl Emulator {
     fn start_create(
         &mut self,
         sys: &Arc<NewSys>,
-        info: GameInfo,
+        file: EmuFile,
         work_file: WorkFile,
         over: Option<Override>,
     ) {
         let old_core = self.core.take();
         let sys = Arc::clone(sys);
-        let name = if info.title.is_empty() {
+        let name = if file.game_info.title.is_empty() {
             "load"
         } else {
-            info.title
+            file.game_info.title
         };
         let job = Job::spawn(name, move |_| {
             // Both of these block for long enough to be seen as a dropped frame
@@ -253,7 +254,7 @@ impl Emulator {
             sys.load_prepared(work_file, over.as_ref())
         });
         self.pending_load = Some(PendingLoad {
-            info,
+            file,
             phase: LoadPhase::Creating(job),
         });
     }
@@ -344,7 +345,7 @@ impl Emulator {
         // [`start_create`](Self::start_create)).
         self.core = None;
         let res = sys.load_prepared(work_file, over)?;
-        self.finish_load(time, res, emu_file.game_info);
+        self.finish_load(time, res, emu_file.clone());
         Ok(())
     }
 
@@ -352,8 +353,8 @@ impl Emulator {
     /// [`NewSys::load_prepared`](crate::newsys::NewSys::load_prepared) —
     /// everything about starting a release that has to happen on the main
     /// thread, which is only this bookkeeping.
-    fn finish_load(&mut self, time: &Time, res: LoadResult, info: GameInfo) {
-        self.title_info = info;
+    fn finish_load(&mut self, time: &Time, res: LoadResult, file: EmuFile) {
+        self.emu_file = file;
         if res.is_console {
             self.input_mode = InputMode::Joystick1;
         }
@@ -410,6 +411,7 @@ pub(crate) fn handle_loading(
     mut load_writer: MessageWriter<LoadFile>,
     mut loaded: MessageWriter<LoadFinished>,
     mut navigator: ResMut<Navigator>,
+    playlists: Res<Playlists>,
     time: Res<Time>,
 ) {
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
@@ -486,6 +488,7 @@ pub(crate) fn handle_loading(
                 continue;
             }
             LoadStatus::Done { result: Ok(()), .. } => {
+                emu.favorite = playlists.is_favorite(&emu.emu_file);
                 emu.run_next = false;
                 emu.run_prev = false;
                 loaded.write(LoadFinished(entity));

@@ -11,7 +11,7 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
-use crate::emu_file::GameInfo;
+use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
 use crate::loading::PendingLoad;
 use crate::workfile::WorkFile;
@@ -107,7 +107,8 @@ pub struct Emulator {
     pub buttons: u32,
     pub last_active_time: f32,
     pub idle_time: f32,
-    pub title_info: GameInfo,
+    pub emu_file: EmuFile,
+    pub favorite: bool,
     /// This is the spare emulator loads are diverted into, not a view the user
     /// sees. Travels with the role, not the entity: the swap at the end of a
     /// cross-faded load moves it to the emulator that just left the screen.
@@ -485,13 +486,13 @@ impl Emulator {
 
     pub fn get_info(&self) -> String {
         let system = self.work_file.get_meta_or("system", "???");
-        let year = self.title_info.year();
+        let year = self.emu_file.game_info.year();
         let GameInfo {
             title,
             group,
             category,
             ..
-        } = self.title_info;
+        } = self.emu_file.game_info;
         let year = if year == 0 {
             "".into()
         } else {
@@ -507,7 +508,8 @@ impl Emulator {
             }
         };
 
-        format!("\"{title}\"\n{group}{year}\n{desc}")
+        let heart = if self.favorite { " \u{f02d1}" } else { "" };
+        format!("\"{title}\"{heart}\n{group}{year}\n{desc}")
     }
 
     pub fn skip(&mut self, frames: u32) {

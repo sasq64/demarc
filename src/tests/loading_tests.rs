@@ -4,7 +4,7 @@ use bevy::MinimalPlugins;
 use ::newsys::SysOpts;
 
 use super::*;
-use crate::emu_file::{DOWNLOAD_COUNTER, FileSource, UrlList};
+use crate::emu_file::{DOWNLOAD_COUNTER, FileSource, GameInfo, UrlList};
 
 /// Spins up the task pools `load_async` needs, and nothing else.
 fn task_pools() -> App {
