@@ -4,6 +4,14 @@
 # 'fast = true' runs an Amiga release on an accelerated A1200 (68030+FPU, 8MB fast, 128MB Z3, JIT);
 # options written in the same entry are applied on top of it.
 
+# For Norah
+[csdb.197970]
+meta = { vice_sid_extra = "0xd420" }
+
+# Mensch Machine
+[csdb.256782]
+meta = { vice_sid_extra = "0xd420" }
+
 [zoo.20]
 meta = { wine_res = "1024x768" }
 
@@ -25,6 +33,9 @@ file = "variform_by_kewlers.zip"
 
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
+
+[zoo.713]
+events = [{ frame = 10, key = "Enter" }]
 
 # fr-063: Magellan / Farbrausch. Its task scheduler asserts with many cores.
 [zoo.829]
@@ -79,6 +90,12 @@ file = "tbc+mainloop_micropolis-party.zip"
 [zoo.8960]
 file = "petroleo_boah.zip"
 
+[zoo.17996]
+events = [
+  { frame = 20, key = "1" },
+  { frame = 60, key = "2" },
+]
+
 # Killer / CNCD
 [zoo.19401]
 assign = { Killer = "SYS:" }
@@ -91,6 +108,20 @@ patch = {
   contents = "U0RJR1VTLkRTRAAAAAoAAAAGAAAAQAIAAAMAAAAFAAAAfAY2HQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMAAAABAAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 }
 file = "inside.zip"
+
+[zoo.32542]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 41, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
+
+[zoo.39572]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 41, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
 
 [zoo.55180]
 file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
