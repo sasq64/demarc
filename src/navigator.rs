@@ -9,10 +9,16 @@ use crate::commands::{DownloadSource, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
-use crate::fuzzy_list::{AllWordsSource, FuzzySource};
+use crate::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 use crate::loading::LoadFile;
-use crate::playlists::Playlists;
+use crate::playlists::{FAVORITES, Playlists};
 use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
+
+/// Icons for the root list, as nerd font glyphs: the favorites playlist, the
+/// other playlists, and the databases.
+const FAVORITES_ICON: ListIcon = ListIcon::Glyph('\u{f004}', 0xff4040);
+const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('\u{f0cb9}', 0x4080ff);
+const DATABASE_ICON: ListIcon = ListIcon::Glyph('\u{f01bc}', 0xa0d8ff);
 
 pub(crate) struct NavList {
     id: usize,
@@ -143,7 +149,21 @@ impl Navigator {
     }
 
     fn root_source(&self) -> ListSource {
-        Arc::new(AllWordsSource::new(self.files.keys().cloned().collect()))
+        Arc::new(WordsIconSource::new(
+            self.files
+                .keys()
+                .map(|name| {
+                    let icon = if name == FAVORITES {
+                        FAVORITES_ICON
+                    } else if self.playlists.contains(name) {
+                        PLAYLIST_ICON
+                    } else {
+                        DATABASE_ICON
+                    };
+                    (name.clone(), icon)
+                })
+                .collect(),
+        ))
     }
 
     fn go_root(&mut self) -> &mut Self {
@@ -424,12 +444,12 @@ pub fn setup_navigator(
     )?;
 
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
-        return AllWordsSource::new(
+        return WordsIconSource::new(
             [
-                "All".into(),
-                "Parties".into(),
-                "Platforms".into(),
-                "Categories".into(),
+                ("All".into(), ListIcon::Glyph('\u{f069}', 0xffff00)),
+                ("Parties".into(), ListIcon::Glyph('\u{f1056}', 0xff00ff)),
+                ("Platforms".into(), ListIcon::Glyph('\u{f0379}', 0xc0f0c0)),
+                ("Categories".into(), ListIcon::Glyph('\u{f03a}', 0xf0a080)),
             ]
             .into(),
         );

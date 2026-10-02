@@ -80,6 +80,22 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
     fn file_index(&self, _id: usize) -> Option<usize> {
         None
     }
+
+    /// Icon drawn at the left of the item's row, or `None` for an empty icon
+    /// column (the default).
+    fn get_icon(&self, _id: usize) -> Option<ListIcon> {
+        None
+    }
+}
+
+/// What a row's icon is: either a glyph from the app font in a colour, or an
+/// image registered with [`crate::egui_ui::add_list_icon`] under that id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ListIcon {
+    /// Character to draw, and its colour as `0xRRGGBB`.
+    Glyph(char, u32),
+    Image(u32),
 }
 
 /// Simple in-memory source: case-insensitive substring match over a
@@ -181,6 +197,57 @@ impl<T> FuzzySource<T> for AllWordsSource {
 
     fn get_text(&self, id: usize) -> String {
         self.get_text(id)
+    }
+}
+
+/// [`AllWordsSource`] with an icon per row: built from `(text, icon)` pairs and
+/// matching on the texts exactly as that source does.
+pub struct WordsIconSource {
+    words: AllWordsSource,
+    icons: Vec<ListIcon>,
+}
+
+impl WordsIconSource {
+    #[allow(dead_code)]
+    pub fn new(items: Vec<(String, ListIcon)>) -> Self {
+        let (texts, icons) = items.into_iter().unzip();
+        Self {
+            words: AllWordsSource::new(texts),
+            icons,
+        }
+    }
+
+    /// See [`SubstringSource::search`] for why this is inherent too.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.words.search(query, limit)
+    }
+
+    pub fn get_text(&self, id: usize) -> String {
+        self.words.get_text(id)
+    }
+
+    pub fn get_icon(&self, id: usize) -> Option<ListIcon> {
+        self.icons.get(id).copied()
+    }
+}
+
+impl From<Vec<(String, ListIcon)>> for WordsIconSource {
+    fn from(items: Vec<(String, ListIcon)>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl<T> FuzzySource<T> for WordsIconSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        self.search(query, limit)
+    }
+
+    fn get_text(&self, id: usize) -> String {
+        self.get_text(id)
+    }
+
+    fn get_icon(&self, id: usize) -> Option<ListIcon> {
+        self.get_icon(id)
     }
 }
 

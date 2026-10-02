@@ -3,10 +3,14 @@ use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
     egui::{self, Ui, scroll_area::ScrollAreaOutput},
 };
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use crate::emu_file::Award;
-use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
+use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, ListIcon};
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::ui::{FuzzyListSelect, HudLocation, ListSource, SetHudText, ShowFuzzyList, UiState};
 
@@ -47,7 +51,7 @@ static STAR_SVG: &[u8] = include_bytes!("../files/viewingtip.svg");
 
 /// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
 /// pixel size. `target_size` is in physical pixels.
-fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui::ColorImage> {
+pub(crate) fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui::ColorImage> {
     let opt = usvg::Options::default();
 
     // If your SVG uses system fonts (text elements), you need a fontdb.
@@ -168,6 +172,54 @@ fn icons(ctx: &egui::Context) -> Option<(egui::TextureId, egui::TextureId)> {
     Some((pair.0.id(), pair.1.id()))
 }
 
+/// Images available to [`ListIcon::Image`], by the id it names them with.
+static LIST_ICONS: LazyLock<Mutex<HashMap<u32, Arc<egui::ColorImage>>>> =
+    LazyLock::new(Default::default);
+
+/// Registers `image` as the icon for `id`. Rows whose source returns
+/// [`ListIcon::Image`] with that id draw it in their icon column.
+#[allow(dead_code)]
+pub(crate) fn add_list_icon(id: u32, image: egui::ColorImage) {
+    if let Ok(mut icons) = LIST_ICONS.lock() {
+        icons.insert(id, Arc::new(image));
+    }
+}
+
+/// The texture for list icon `id` in `ctx`, uploaded on first use and cached
+/// there -- one window's textures are no good to another's context.
+fn list_icon_texture(ctx: &egui::Context, id: u32) -> Option<egui::TextureId> {
+    let key = egui::Id::new(("list_icon", id));
+    if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
+        return Some(handle.id());
+    }
+    let image = LIST_ICONS.lock().ok()?.get(&id).cloned()?;
+    let handle = ctx.load_texture(format!("list_icon_{id}"), image, egui::TextureOptions::LINEAR);
+    let texture_id = handle.id();
+    ctx.data_mut(|d| d.insert_temp(key, handle));
+    Some(texture_id)
+}
+
+/// Paints `icon` centred in `rect`.
+fn draw_list_icon(ui: &Ui, painter: &egui::Painter, rect: egui::Rect, icon: ListIcon) {
+    match icon {
+        ListIcon::Glyph(ch, rgb) => {
+            let [_, r, g, b] = rgb.to_be_bytes();
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                ch,
+                egui::FontId::proportional(ICON_SIZE),
+                egui::Color32::from_rgb(r, g, b),
+            );
+        }
+        ListIcon::Image(id) => {
+            if let Some(texture) = list_icon_texture(ui.ctx(), id) {
+                egui::Image::new((texture, rect.size())).paint_at(ui, rect);
+            }
+        }
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct HudText {
     pub text: String,
@@ -254,6 +306,10 @@ const ROW_SIZE: f32 = 28.0;
 const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
 /// Fraction of the screen height the list box is allowed to take up.
 const LIST_HEIGHT_FRACTION: f32 = 0.6;
+/// Side of the square icon column at the left of every row, and the gap between
+/// it and the row's text. Fixed, so rows line up whether they have an icon or not.
+const ICON_SIZE: f32 = ROW_SIZE;
+const ICON_GAP: f32 = 8.0;
 
 const TITLE_SIZE: f32 = 26.0;
 const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xaa, 0x7c);
@@ -834,10 +890,18 @@ pub(crate) fn draw_picker(
         }
 
         let galley = ui.painter().layout_job(job);
+        let text_left = rect.left_center() + egui::vec2(ICON_SIZE + ICON_GAP, 0.0);
         let pos = egui::Align2::LEFT_CENTER
-            .anchor_size(rect.left_center(), galley.size())
+            .anchor_size(text_left, galley.size())
             .min;
         let painter = ui.painter().with_clip_rect(clip);
+        if let Some(icon) = source.get_icon(id) {
+            let icon_rect = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + ICON_SIZE / 2.0, rect.center().y),
+                egui::Vec2::splat(ICON_SIZE),
+            );
+            draw_list_icon(ui, &painter, icon_rect, icon);
+        }
         painter.galley(pos, galley.clone(), TEXT_COLOR);
         // Position the image right after the last glyph's end.
         let end_x = pos.x + galley.rect.width() + 10.0 + extra;

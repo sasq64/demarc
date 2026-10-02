@@ -218,3 +218,24 @@ fn indexed_source_is_at_least_10x_faster() {
         "expected >=10x speedup, got {speedup:.1}x (old {old_t:?}, new {idx_t:?})"
     );
 }
+
+#[test]
+fn words_icon_source_matches_like_all_words_and_keeps_its_icons() {
+    let src = WordsIconSource::new(
+        items()
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (s, ListIcon::Glyph('*', i as u32)))
+            .collect(),
+    );
+    let src: &dyn FuzzySource = &src;
+
+    let hits = src.search("ap", 256);
+    assert_eq!(
+        hits.iter().map(|&id| src.get_text(id)).collect::<Vec<_>>(),
+        vec!["apple", "apricot", "grape"]
+    );
+    // The icon follows the source id, not the row's place in the results.
+    assert_eq!(src.get_icon(hits[2]), Some(ListIcon::Glyph('*', 4)));
+    assert_eq!(src.get_icon(99), None);
+}

@@ -18,6 +18,7 @@ use crate::emulator::{Emulator, InputMode};
 use crate::frontend::EmuView;
 use crate::frontend::FrontendSet;
 use crate::fuzzy_list::AllWordsSource;
+use crate::fuzzy_list::ListIcon;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::setup_navigator_bevy;
@@ -345,6 +346,54 @@ impl FuzzySource<EmuFile> for PickerSource {
 
     fn file_index(&self, id: usize) -> Option<usize> {
         self.index(id)
+    }
+    fn get_icon(&self, id: usize) -> Option<ListIcon> {
+        let p = self
+            .file(id)
+            .unwrap()
+            .get_meta("platform")
+            .split(';')
+            .next()
+            .expect("Split must give one element");
+        let c = self
+            .file(id)
+            .unwrap()
+            .get_meta("category")
+            .split(';')
+            .next()
+            .expect("Split must give one element");
+        if false {
+            match (p, c) {
+                (_, "Music") => Some(ListIcon::Glyph('\u{f001}', 0x40c0f0)),
+                (_, "Graphics") => Some(ListIcon::Glyph('\u{f1fc}', 0xf0c0f0)),
+                (_, "Demo") => Some(ListIcon::Glyph('\u{f1104}', 0xe0e0ff)),
+                (_, "Intro") => Some(ListIcon::Glyph('\u{f1104}', 0xc0c0c0)),
+                (_, "4K Intro" | "8K Intro") => Some(ListIcon::Glyph('\u{f1104}', 0x759525)),
+                (_, "64K Intro") => Some(ListIcon::Glyph('\u{f1104}', 0x60a060)),
+                (_, "256b Intro" | "128b Intro" | "64b Intro") => {
+                    Some(ListIcon::Glyph('\u{f1104}', 0x505090))
+                }
+                (_, "Invitation") => Some(ListIcon::Glyph('\u{f1104}', 0x40c000)),
+                _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
+            }
+        } else {
+            match (p, c) {
+                ("Windows", _) => Some(ListIcon::Glyph('\u{e70f}', 0x40c0f0)),
+                ("MS-Dos", _) => Some(ListIcon::Glyph('\u{e629}', 0xe09090)),
+                ("Atari 2600", _) => Some(ListIcon::Glyph('\u{f11b}', 0xa0a0a0)),
+                ("ZX Spectrum", _) => Some(ListIcon::Glyph('\u{f0a1b}', 0xe0e030)),
+                ("SNES", _) => Some(ListIcon::Glyph('\u{f11b}', 0xa0a0a0)),
+                ("Gameboy" | "GBA", _) => Some(ListIcon::Glyph('\u{f1393}', 0xa0a0a0)),
+                ("Amiga" | "Amiga AGA", _) => Some(ListIcon::Glyph('\u{f0249}', 0xff7070)),
+                ("Atari ST", _) => Some(ListIcon::Glyph('\u{f0249}', 0x7070ff)),
+                ("C16", _) => Some(ListIcon::Glyph('\u{f09ef}', 0x906090)),
+                ("C64", _) => Some(ListIcon::Glyph('\u{f09ef}', 0x909060)),
+                ("PlayStation" | "PSP" | "Megadrive", _) => {
+                    Some(ListIcon::Glyph('\u{f0296}', 0x20df30))
+                }
+                _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
+            }
+        }
     }
 }
 
