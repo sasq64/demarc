@@ -1,5 +1,9 @@
 use super::*;
 
+fn zoo(id: u32) -> DemoId {
+    DemoId::new("zoo", id).unwrap()
+}
+
 /// The file as it is actually written: which download to take, which
 /// program inside it to start, core options and a patch.
 #[test]
@@ -25,17 +29,17 @@ fn parses_an_override_per_release() {
     .unwrap();
     assert_eq!(overrides.len(), 4);
 
-    let elevated = &overrides[&102];
+    let elevated = &overrides[&zoo(102)];
     assert_eq!(elevated.download, Some("rgba_tbc_elevated.zip"));
     assert_eq!(elevated.boot_file, Some("elevated_1280x720.exe"));
     assert!(elevated.patches.is_empty());
 
-    assert_eq!(overrides[&68604].meta["dosbox_pure_cycles"], "max");
+    assert_eq!(overrides[&zoo(68604)].meta["dosbox_pure_cycles"], "max");
     // A number written unquoted is still a meta value, as is a bool.
-    assert_eq!(overrides[&57849].meta["dosbox_pure_cycles"], "150000");
-    assert_eq!(overrides[&57849].meta["dos4gw"], "true");
+    assert_eq!(overrides[&zoo(57849)].meta["dosbox_pure_cycles"], "150000");
+    assert_eq!(overrides[&zoo(57849)].meta["dos4gw"], "true");
 
-    let inside = &overrides[&18030];
+    let inside = &overrides[&zoo(18030)];
     assert_eq!(inside.patches.len(), 1);
     assert_eq!(inside.patches[0].target, "SOUND.CFG");
     assert_eq!(inside.patches[0].info, "GUS 0x240");
@@ -57,11 +61,11 @@ fn folds_assigns_into_one_meta_value() {
         "#,
     )
     .unwrap();
-    assert_eq!(overrides[&119665].meta["assign"], "Love=SYS:");
-    assert_eq!(overrides[&2].meta["assign"], "Data=DH0:data;Music=DH0:mod");
+    assert_eq!(overrides[&zoo(119665)].meta["assign"], "Love=SYS:");
+    assert_eq!(overrides[&zoo(2)].meta["assign"], "Data=DH0:data;Music=DH0:mod");
     // Nothing written, nothing set — the Amiga side never sees the key.
     assert!(
-        !parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&3]
+        !parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&zoo(3)]
             .meta
             .contains_key("assign")
     );
@@ -81,8 +85,8 @@ fn takes_the_fast_amiga_configuration() {
         "#,
     )
     .unwrap();
-    assert!(overrides[&7236].fast);
-    assert!(!overrides[&108].fast);
+    assert!(overrides[&zoo(7236)].fast);
+    assert!(!overrides[&zoo(108)].fast);
 }
 
 /// A release needing more than one file written gets an array of patches,
@@ -102,7 +106,7 @@ fn parses_several_patches() {
         "#,
     )
     .unwrap();
-    let patches = &overrides[&1].patches;
+    let patches = &overrides[&zoo(1)].patches;
     assert_eq!(patches.len(), 2);
     assert_eq!(patches[0].offset, None);
     assert_eq!(patches[1].offset, Some(1024));
@@ -126,7 +130,7 @@ fn drops_only_the_bad_entry() {
     )
     .unwrap();
     assert_eq!(overrides.len(), 1);
-    assert_eq!(overrides[&3].download, Some("c.zip"));
+    assert_eq!(overrides[&zoo(3)].download, Some("c.zip"));
 }
 
 /// A section outside `zoo` is a typo rather than a feature, so it is
@@ -155,7 +159,7 @@ fn patch_from_system_dir_source() {
     )
     .unwrap();
     assert_eq!(overrides.len(), 1);
-    let patch = &overrides[&1].patches[0];
+    let patch = &overrides[&zoo(1)].patches[0];
     assert_eq!(patch.source, Some("overrides.toml"));
     assert!(!patch.bytes().unwrap().is_empty());
 }
@@ -174,7 +178,7 @@ fn parses_key_events() {
     )
     .unwrap();
     assert_eq!(
-        overrides[&108].events,
+        overrides[&zoo(108)].events,
         [
             (50, crate::libretro::RETROK_RETURN),
             (60, crate::libretro::RETROK_a),
@@ -182,7 +186,7 @@ fn parses_key_events() {
             (80, crate::libretro::RETROK_b)
         ]
     );
-    assert!(!overrides.contains_key(&2));
+    assert!(!overrides.contains_key(&zoo(2)));
 }
 
 /// `download` replaces the release's own links, and has to be a URL.
@@ -196,7 +200,7 @@ fn download_overrides_the_url() {
     )
     .unwrap();
     assert_eq!(
-        overrides[&311767].download_url,
+        overrides[&zoo(311767)].download_url,
         Some("https://example.org/area5150_86box.zip")
     );
 
@@ -224,7 +228,7 @@ fn parses_a_bsdiff_patch() {
         "#
     ))
     .unwrap();
-    let patch = &overrides[&301363].patches[0];
+    let patch = &overrides[&zoo(301363)].patches[0];
     assert!(patch.bsdiff);
     assert_eq!(patch.target, "demo.dat");
     // Wrapped over several lines in the file, and still the delta it was.
@@ -260,4 +264,25 @@ fn bsdiff(source: &[u8], target: &[u8]) -> String {
         .map(|line| String::from_utf8_lossy(line).into_owned())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Ids are only unique within one db, so the same number in two sections is
+/// two different releases.
+#[test]
+fn keys_overrides_on_db_and_id() {
+    let overrides = parse(
+        r#"
+        [zoo.5]
+        file = "a.zip"
+
+        [csdb.5]
+        file = "b.zip"
+        "#,
+    )
+    .unwrap();
+    assert_eq!(overrides[&zoo(5)].download, Some("a.zip"));
+    let csdb = DemoId::new("csdb.txt", 5).unwrap();
+    assert_eq!(overrides[&csdb].download, Some("b.zip"));
+    assert_eq!(DemoId::new("Demozoo", 5), Some(zoo(5)));
+    assert_eq!(DemoId::new("Files", 5), None);
 }

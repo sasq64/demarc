@@ -504,7 +504,7 @@ fn main() {
     };
     let sys = std::sync::Arc::new(NewSys::new(&(&args).into()));
     let settings = AppSettings {
-        demozoo_overrides: overrides::load_default(),
+        overrides: overrides::load_default(),
         boot_file: args.boot_file.clone().map(files::leak),
         system: sys,
         current_game: -1,

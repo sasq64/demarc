@@ -38,6 +38,27 @@ pub use newsys::{Override, Patch};
 // The byte gauge itself lives with the only thing that writes it, `fetch`.
 pub use newsys::fetch::bytes_in_progress;
 
+/// A release id, which is only unique within the db it comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DemoId {
+    pub db: &'static str,
+    pub id: u32,
+}
+
+impl DemoId {
+    /// `db` is a db name (`Demozoo`, `csdb.txt`) or an overrides section (`zoo`);
+    /// None for a db that has no ids to key on.
+    pub fn new(db: &str, id: u32) -> Option<Self> {
+        let stem = db.split('.').next().unwrap_or("");
+        let db = match stem.to_ascii_lowercase().as_str() {
+            "zoo" | "demozoo" => "zoo",
+            "csdb" => "csdb",
+            _ => return None,
+        };
+        Some(Self { db, id })
+    }
+}
+
 /// The download URLs of one release, kept as the `&'static str` slices they
 /// were parsed out of rather than as [`Url`]s.
 ///
@@ -785,6 +806,10 @@ pub struct EmuFile {
 impl EmuFile {
     pub fn get_meta(&self, name: &str) -> &'static str {
         self.meta.get(name).copied().unwrap_or("")
+    }
+
+    pub fn demo_id(&self) -> Option<DemoId> {
+        DemoId::new(self.get_meta("db"), self.get_meta("id").parse().ok()?)
     }
 
     pub fn get_party(&self) -> &'static str {

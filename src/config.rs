@@ -10,7 +10,7 @@ use newsys::{CbmSystem, SysOpts};
 use regex::Regex;
 
 use crate::{
-    emu_file::{EmuFile, Override},
+    emu_file::{DemoId, EmuFile, Override},
     newsys::NewSys,
     post_process::{BorderMode, ScaleMode, ShaderEffect},
     system_dir::system_dir,
@@ -576,12 +576,12 @@ pub struct AppSettings {
     pub crt_limit: f32,
 
     /// Per-release fixups read from `overrides.toml` at startup, keyed on the
-    /// demozoo id of the release each one is for — see [`crate::overrides`].
+    /// db id of the release each one is for — see [`crate::overrides`].
     /// Empty when there is no such file, which is the normal case.
-    pub demozoo_overrides: HashMap<usize, Override>,
+    pub overrides: HashMap<DemoId, Override>,
 
     /// `--boot-file`: the program to start, for every release loaded this run.
-    /// An overrides file can only name one per demozoo id, so this is how a
+    /// An overrides file can only name one per db id, so this is how a
     /// local archive or directory — which has no id — gets the same treatment.
     pub boot_file: Option<&'static str>,
 }
@@ -600,14 +600,11 @@ impl AppSettings {
     /// `overrides.toml` said about the release it is, with `--boot-file` and a
     /// hand-picked download written over the top.
     pub fn override_for(&self, index: usize) -> Option<Override> {
-        let from_file = if self.demozoo_overrides.is_empty() {
-            None
-        } else {
-            self.default_db()
-                .get(index)
-                .and_then(|file| file.get_meta("id").parse::<usize>().ok())
-                .and_then(|id| self.demozoo_overrides.get(&id))
-        };
+        let from_file = self
+            .default_db()
+            .get(index)
+            .and_then(EmuFile::demo_id)
+            .and_then(|id| self.overrides.get(&id));
         if from_file.is_none() && self.boot_file.is_none() {
             return None;
         }
@@ -618,15 +615,9 @@ impl AppSettings {
         Some(over)
     }
     pub fn override_for_file(&self, emu_file: &EmuFile) -> Option<Override> {
-        let from_file = if self.demozoo_overrides.is_empty() {
-            None
-        } else {
-            emu_file
-                .get_meta("id")
-                .parse::<usize>()
-                .ok()
-                .and_then(|id| self.demozoo_overrides.get(&id))
-        };
+        let from_file = emu_file
+            .demo_id()
+            .and_then(|id| self.overrides.get(&id));
         if from_file.is_none() && self.boot_file.is_none() {
             return None;
         }

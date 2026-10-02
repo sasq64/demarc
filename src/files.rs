@@ -109,8 +109,19 @@ pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Res
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "db".into());
+    let start = out.len();
     collect_db_text(text, filter, out);
-    Ok(db_name(text, fallback))
+    let name = db_name(text, fallback);
+    tag_db(&mut out[start..], &name);
+    Ok(name)
+}
+
+/// Record which db the entries came from, since ids are only unique within one.
+fn tag_db(files: &mut [EmuFile], name: &str) {
+    let name = leak(name.to_string());
+    for file in files {
+        file.meta.entry("db").or_insert(name);
+    }
 }
 
 /// What to call a db: the first word of its first comment line, so
@@ -199,8 +210,11 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<Opt
         bail!("Failed to read db from stdin: {err}");
     }
     let text = db_text(data, "db from stdin")?;
+    let start = out.len();
     collect_db_text(text, filter, out);
-    Ok(Some(db_name(text, "stdin".into())))
+    let name = db_name(text, "stdin".into());
+    tag_db(&mut out[start..], &name);
+    Ok(Some(name))
 }
 
 /// Read a header comment such as `# Platform:Amiga puae_model:A500`, which

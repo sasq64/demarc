@@ -5,11 +5,15 @@
 //! files where only one is the demo, the archive holds two programs where only
 //! one is the one to start, or the release needs a config file it was never
 //! packed with. An override is where that knowledge is written down, keyed on
-//! the demozoo id of the release (the `id` field of a demozoo db line).
+//! the db and the id of the release (the `id` field of a db line): `zoo` for
+//! demozoo, `csdb` for csdb.
 //!
 //! The file looks like this:
 //!
 //! ```toml
+//! [csdb.197970]
+//! meta = { vice_sid_extra = "0xd420" }
+//!
 //! [zoo.102]
 //! file = "rgba_tbc_elevated.zip"      # which download to fetch
 //! boot = "elevated_1280x720.exe"      # which file inside it to start
@@ -60,7 +64,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
 
-use crate::emu_file::{Override, Patch};
+use crate::emu_file::{DemoId, Override, Patch};
 use crate::emulator::Emulator;
 use crate::files::leak;
 use crate::system_dir;
@@ -87,7 +91,7 @@ fn search_paths() -> Vec<PathBuf> {
 /// Overrides are a convenience, not a requirement: no file at all is the normal
 /// case and gives an empty map, and a file that doesn't parse is reported and
 /// then likewise ignored rather than taking the run down with it.
-pub fn load_default() -> HashMap<usize, Override> {
+pub fn load_default() -> HashMap<DemoId, Override> {
     let Some(path) = search_paths().into_iter().find(|p| p.is_file()) else {
         return HashMap::new();
     };
@@ -104,25 +108,13 @@ pub fn load_default() -> HashMap<usize, Override> {
 }
 
 /// Read and parse one overrides file.
-pub fn load(path: &Path) -> Result<HashMap<usize, Override>> {
+pub fn load(path: &Path) -> Result<HashMap<DemoId, Override>> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("Could not read {}", path.display()))?;
     parse(&text)
 }
 
-/// The whole file: the `zoo` table of overrides, plus whatever else was written
-/// at the top level, which is kept only so it can be warned about — a
-/// mistyped `[zoo_57849]` is a table of its own as far as toml is concerned,
-/// and silently doing nothing is the least helpful thing to do about it.
-#[derive(Deserialize)]
-struct OverrideFile {
-    #[serde(default)]
-    zoo: HashMap<String, RawOverride>,
-    #[serde(flatten)]
-    rest: toml::Table,
-}
-
-/// One `[zoo.<id>]` table, as written.
+/// One `[<db>.<id>]` table, as written.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOverride {
@@ -213,23 +205,30 @@ struct RawPatch {
 /// An entry that doesn't make sense (an id that isn't a number, base64 that
 /// doesn't decode) is reported and dropped on its own; the rest of the file
 /// still applies, since one bad entry says nothing about the others.
-pub fn parse(text: &str) -> Result<HashMap<usize, Override>> {
-    let file: OverrideFile = toml::from_str(text).context("Not a valid overrides file")?;
-    for key in file.rest.keys() {
-        warn!("Ignoring unknown section [{key}] — overrides go under [zoo.<id>]");
-    }
-
-    let mut overrides = HashMap::with_capacity(file.zoo.len());
-    for (id, raw) in file.zoo {
-        let Ok(id) = id.parse::<usize>() else {
-            warn!("Ignoring [zoo.{id}]: not a demozoo id");
+pub fn parse(text: &str) -> Result<HashMap<DemoId, Override>> {
+    let file: toml::Table = toml::from_str(text).context("Not a valid overrides file")?;
+    let mut overrides = HashMap::new();
+    for (db, table) in file {
+        // A mistyped `[zoo_57849]` is a table of its own as far as toml is
+        // concerned, and silently doing nothing about it is the least helpful.
+        if DemoId::new(&db, 0).is_none() {
+            warn!("Ignoring unknown section [{db}] — overrides go under [zoo.<id>] or [csdb.<id>]");
             continue;
-        };
-        match raw.build() {
-            Ok(over) => {
-                overrides.insert(id, over);
+        }
+        let entries: HashMap<String, RawOverride> = table
+            .try_into()
+            .with_context(|| format!("Bad overrides in [{db}]"))?;
+        for (id, raw) in entries {
+            let Some(demo_id) = id.parse::<u32>().ok().and_then(|n| DemoId::new(&db, n)) else {
+                warn!("Ignoring [{db}.{id}]: not an id");
+                continue;
+            };
+            match raw.build() {
+                Ok(over) => {
+                    overrides.insert(demo_id, over);
+                }
+                Err(err) => warn!("Ignoring [{db}.{id}]: {err:#}"),
             }
-            Err(err) => warn!("Ignoring [zoo.{id}]: {err:#}"),
         }
     }
     Ok(overrides)
