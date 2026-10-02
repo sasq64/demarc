@@ -53,3 +53,42 @@ fn every_json_is_a_playlist_with_favorites_first() {
         .collect();
     assert_eq!(names, ["Favorites", "Amiga", "Party"]);
 }
+
+#[test]
+fn create_adds_a_sorted_list_that_toggles_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("Party.json"), "[]").unwrap();
+    let file = entry("id:7\ttitle:A\tdownload:http://x/a.zip\n");
+
+    let mut lists = Playlists::load(dir.path());
+    let broken = lists.create(" Broken ").unwrap();
+    assert_eq!(broken, 1);
+    assert_eq!(lists.create("broken"), Some(broken));
+    assert_eq!(lists.create("../x"), None);
+    assert!(lists.toggle(broken, &file));
+    assert!(!lists.is_favorite(&file));
+
+    let reloaded = Playlists::load(dir.path());
+    let names: Vec<_> = reloaded.lists.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["Favorites", "Broken", "Party"]);
+    assert!(reloaded.lists[1].contains(&file));
+}
+
+#[test]
+fn picker_ticks_members_and_offers_new_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = entry("id:7\ttitle:A\tdownload:http://x/a.zip\n");
+    let mut lists = Playlists::load(dir.path());
+    lists.toggle_favorite(&file);
+    let broken = lists.create("Broken").unwrap();
+
+    let picker = PlaylistPicker::new(&lists, &file);
+    let source: &dyn FuzzySource<EmuFile> = &picker;
+    assert_eq!(source.search("", 10), [0, broken]);
+    assert!(source.get_text(0).starts_with("Favorites "));
+    assert_eq!(source.get_text(broken), "Broken");
+    assert_eq!(source.search("broken", 10), [broken]);
+    assert_eq!(source.search("bro", 10), [broken, 2]);
+    assert_eq!(source.get_text(2), "+ New \"bro\"");
+    assert_eq!(picker.query(), "bro");
+}

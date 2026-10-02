@@ -22,7 +22,7 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::setup_navigator_bevy;
 use crate::navigator::{Navigator, handle_navigator};
-use crate::playlists::{FAVORITES, Playlists};
+use crate::playlists::{FAVORITES, PlaylistPicker, Playlists};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
@@ -58,6 +58,7 @@ pub enum Cmd {
     ShaderDialog,
     StartOther,
     AddFavorite,
+    AddToPlaylist,
 }
 
 impl Cmd {
@@ -89,6 +90,7 @@ impl Cmd {
         Cmd::ShaderDialog,
         Cmd::StartOther,
         Cmd::AddFavorite,
+        Cmd::AddToPlaylist,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -168,6 +170,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyH, "Toggle favorite", Cmd::AddFavorite),
+    KeyMapping::shifted(KeyCode::KeyH, "Add to playlist", Cmd::AddToPlaylist),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(
         KeyCode::KeyT,
@@ -734,7 +737,7 @@ pub(crate) fn handle_cmd(
                     }
                     Cmd::AddFavorite if emu.core.is_some() => {
                         emu.favorite = playlists.toggle_favorite(&emu.emu_file);
-                        navigator.add_db(FAVORITES, playlists.favorites().files);
+                        navigator.add_playlist(FAVORITES, playlists.favorites().files);
                         writer.write(SetHudText {
                             text: if emu.favorite {
                                 "Added to favorites"
@@ -754,6 +757,20 @@ pub(crate) fn handle_cmd(
                                 location: HudLocation::InfoText,
                             });
                         }
+                    }
+                    Cmd::AddToPlaylist if emu.core.is_some() => {
+                        let picker = Arc::new(PlaylistPicker::new(&playlists, &emu.emu_file));
+                        show_list.write(ShowFuzzyList {
+                            id: PLAYLIST_PICKER,
+                            source: picker.clone(),
+                            prompt: Some(String::new()),
+                            selected: None,
+                            title: "Add to playlist".into(),
+                        });
+                        commands.insert_resource(PlaylistPick {
+                            file: emu.emu_file.clone(),
+                            picker,
+                        });
                     }
                     Cmd::ToggleInfo => {
                         if emu.show_info {
@@ -872,6 +889,67 @@ fn handle_media_keys(channel: Res<MediaKeyChannel>, mut writer: MessageWriter<Cm
     }
 }
 
+const PLAYLIST_PICKER: usize = 98;
+
+/// The release the open playlist picker is for.
+#[derive(Resource)]
+struct PlaylistPick {
+    file: EmuFile,
+    picker: Arc<PlaylistPicker>,
+}
+
+fn handle_playlist_pick(
+    mut reader: MessageReader<FuzzyListSelect>,
+    pick: Option<Res<PlaylistPick>>,
+    mut playlists: ResMut<Playlists>,
+    mut navigator: ResMut<Navigator>,
+    mut emus: Query<&mut Emulator>,
+    mut writer: MessageWriter<SetHudText>,
+) {
+    let Some(pick) = pick else {
+        return;
+    };
+    for msg in reader.read() {
+        if msg.id != PLAYLIST_PICKER {
+            continue;
+        }
+        let index = if msg.item < playlists.lists.len() {
+            msg.item
+        } else {
+            match playlists.create(&pick.picker.query()) {
+                Some(index) => index,
+                None => {
+                    writer.write(SetHudText {
+                        text: "Bad playlist name".into(),
+                        duration: Duration::from_secs(1),
+                        location: HudLocation::TopLeft,
+                        ..Default::default()
+                    });
+                    continue;
+                }
+            }
+        };
+        let added = playlists.toggle(index, &pick.file);
+        let list = &playlists.lists[index];
+        navigator.add_playlist(&list.name, list.files);
+        if index == 0 {
+            for mut emu in &mut emus {
+                emu.favorite = playlists.is_favorite(&emu.emu_file);
+            }
+        }
+        writer.write(SetHudText {
+            text: if added {
+                format!("Added to {}", list.name)
+            } else {
+                format!("Removed from {}", list.name)
+            },
+            duration: Duration::from_secs(1),
+            location: HudLocation::TopLeft,
+            ..Default::default()
+        });
+    }
+}
+
 pub struct CommandPlugin;
 
 /// When `--select` is passed, open the file-open selector once we start running.
@@ -900,6 +978,7 @@ impl Plugin for CommandPlugin {
                     handle_media_keys.in_set(FrontendSet::Input),
                     handle_textlist,
                     handle_navigator,
+                    handle_playlist_pick,
                     handle_cmd.run_if(on_message::<CmdMessage>),
                 ),
             );

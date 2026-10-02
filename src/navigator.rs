@@ -59,6 +59,8 @@ impl Launch {
     }
 }
 
+const PLAYLIST_MENU: usize = 1;
+
 type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> ListSource + Send + Sync>;
 
 #[derive(Resource)]
@@ -140,12 +142,16 @@ impl Navigator {
         }
     }
 
+    fn root_source(&self) -> ListSource {
+        Arc::new(AllWordsSource::new(self.files.keys().cloned().collect()))
+    }
+
     fn go_root(&mut self) -> &mut Self {
         self.stack.clear();
         self.pos = 0;
         self.stack.push(NavList {
             id: 0,
-            source: Arc::new(AllWordsSource::new(self.files.keys().cloned().collect())),
+            source: self.root_source(),
             path: "".into(),
             prompt: String::new(),
             selected: None,
@@ -219,10 +225,35 @@ impl Navigator {
         self.files.insert(name.to_string(), files);
     }
 
-    /// Add a db whose top level is the list of its entries.
+    /// Add a db whose top level is the list of its entries, or update one.
     pub fn add_playlist(&mut self, name: &str, files: &'static [EmuFile]) {
-        self.playlists.insert(name.to_string());
+        let new = self.playlists.insert(name.to_string());
         self.add_db(name, files);
+        let root_source = self.root_source();
+        if new && let Some(root) = self.stack.first_mut() {
+            root.source = root_source;
+        }
+        for list in &mut self.stack {
+            if list.id == 0 && list.path == name {
+                list.source = Arc::new(PickerSource::new(files, None));
+            }
+        }
+    }
+
+    /// Shift+Enter on entry `id` of a playlist: remove it, or go on to its
+    /// downloads.
+    fn open_playlist_menu(&mut self, id: usize) -> &mut Self {
+        let list = self.current_path().to_string();
+        self.push(NavList {
+            id: PLAYLIST_MENU,
+            source: Arc::new(AllWordsSource::new(vec![
+                format!("\u{f0156} Remove from {list}"),
+                "Run...".into(),
+            ])),
+            path: format!("{list}/{id}"),
+            prompt: String::new(),
+            selected: None,
+        })
     }
 
     // Add a new path pattern.
@@ -432,6 +463,7 @@ pub(crate) fn handle_navigator(
     mut load_writer: MessageWriter<LoadFile>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
     mut settings: ResMut<AppSettings>,
+    mut playlists: ResMut<Playlists>,
     hud: Res<HudState>,
 ) {
     navigator.remember_state(&hud);
@@ -448,10 +480,34 @@ pub(crate) fn handle_navigator(
     let id = current.id;
     let source = current.source.clone();
     let prompt = current.prompt.clone();
+    let path = current.path.clone();
     for msg in reader.read() {
-        if msg.id == id {
+        if msg.id == id && id == PLAYLIST_MENU {
+            let Some((list, file_id)) = path.rsplit_once('/') else {
+                continue;
+            };
+            if msg.item == 0 {
+                let file = file_id
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| navigator.files.get(list)?.get(i));
+                if let (Some(file), Some(index)) = (file, playlists.find(list)) {
+                    playlists.toggle(index, file);
+                    navigator.add_playlist(list, playlists.lists[index].files);
+                }
+                navigator.back().show(&mut list_writer);
+            } else {
+                navigator.enter("dls").show(&mut list_writer);
+            }
+        } else if msg.id == id {
             debug!("Selected {:?}", msg);
             if let Some(emu_file) = msg.emu_file.clone() {
+                if msg.alt && navigator.playlists.contains(&path) {
+                    navigator
+                        .open_playlist_menu(msg.item)
+                        .show(&mut list_writer);
+                    continue;
+                }
                 if msg.alt {
                     let id = msg.item;
                     navigator.enter(&format!("{id}/dls")).show(&mut list_writer);
@@ -493,7 +549,7 @@ mod test {
     fn test_navigator() {
         let filter = DbFilter::default();
         let mut files = vec![];
-        let path: PathBuf = "demos.txt".into();
+        let path: PathBuf = "testdata/demos.txt".into();
         let name = collect_db(&path, &filter, &mut files).unwrap();
         assert_eq!(name, "Demozoo");
         let files: &'static [EmuFile] = files.leak();
@@ -576,5 +632,29 @@ mod test {
         assert_eq!(navigator.get_showing(), vec!["Favorites"]);
         navigator.goto("Favorites");
         assert_eq!(navigator.get_showing(), vec!["A / G"]);
+    }
+
+    #[test]
+    fn playlist_menu_and_refresh() {
+        let mut navigator = Navigator::new();
+        navigator.add_playlist(
+            "Broken",
+            db("id:1\ttitle:A\tauthor:G\tdownload:http://x/a.zip\n"),
+        );
+        setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+        navigator.go_root();
+        navigator.goto("Broken");
+        navigator.open_playlist_menu(0);
+        assert_eq!(navigator.current_path(), "Broken/0");
+        assert_eq!(navigator.get_showing()[1], "Run...");
+        navigator.enter("dls");
+        assert_eq!(navigator.get_showing(), vec!["a.zip"]);
+
+        navigator.back().back();
+        navigator.add_playlist("Broken", &[]);
+        assert!(navigator.get_showing().is_empty());
+        navigator.add_playlist("New", &[]);
+        navigator.back();
+        assert_eq!(navigator.get_showing(), vec!["Broken", "New"]);
     }
 }
