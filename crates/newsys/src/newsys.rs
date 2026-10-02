@@ -7,8 +7,8 @@ use std::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace, warn};
 
 use crate::backend::Backend;
-use crate::release_override::{Override, Patch};
 use crate::m3u::M3u;
+use crate::release_override::{Override, Patch};
 use crate::retro_emu;
 use crate::system_dir;
 use crate::workfile::WorkFile;
@@ -195,13 +195,15 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
             wf = WorkFile::new_dir_with_meta(meta.clone())?;
             debug!("Unpacking {path:?} to {wf:?}");
             unpack_into(path, &wf)?;
-            walk_dir(&wf, 4, |f, _, _| {
-                if has_archive_filename(f)? {
-                    debug!("File was double packed");
-                    unpack_into(f, &wf)?;
-                }
-                Ok(())
-            })?;
+            if meta.get("platform") == Some(&("C64".to_string())) {
+                walk_dir(&wf, 4, |f, _, _| {
+                    if has_archive_filename(f)? {
+                        debug!("File was double packed");
+                        unpack_into(f, &wf)?;
+                    }
+                    Ok(())
+                })?;
+            }
         } else if has_extension(path, "m3u") {
             // TODO: We should not collect m3us
             let m3u = M3u::from_file(path)?;
