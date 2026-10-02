@@ -114,10 +114,12 @@ pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
         source.pick_download(name);
     }
     let job = Job::spawn(name, move |progress| {
-        let path = source.resolve_with_progress(&|done, total| {
+        let (path, fetched) = source.resolve_with_progress(&|done, total| {
             progress.set_done(done);
             progress.set_total(total.unwrap_or(0));
         })?;
+        let mut meta = meta;
+        meta.insert("fetched".into(), fetched.join(";"));
         // Unpacking has no useful byte count; flip back to indeterminate so
         // a progress bar doesn't sit at 100% for the rest of the job.
         progress.set_total(0);

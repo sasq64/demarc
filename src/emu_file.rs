@@ -376,12 +376,15 @@ fn fetch_release(
     downloads: &[Download<'_>],
     on_progress: OnProgress<'_>,
     mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Vec<String>)> {
     let failed = RefCell::new(HashSet::new());
+    let fetched = RefCell::new(Vec::new());
     let mut fetch = |url: &str, on_progress: OnProgress<'_>| {
-        fetch(url, on_progress).inspect_err(|_| {
-            failed.borrow_mut().insert(url.to_owned());
-        })
+        fetch(url, on_progress)
+            .inspect(|_| fetched.borrow_mut().push(url.to_owned()))
+            .inspect_err(|_| {
+                failed.borrow_mut().insert(url.to_owned());
+            })
     };
     let mut last_error = None;
     for download in downloads {
@@ -393,8 +396,9 @@ fn fetch_release(
         {
             continue;
         }
+        fetched.borrow_mut().clear();
         match fetch_download(download, on_progress, &mut fetch) {
-            Ok(path) => return Ok(path),
+            Ok(path) => return Ok((path, fetched.take())),
             Err(e) => {
                 warn!("download failed for {}: {e:#}", download.label());
                 last_error = Some(e);
@@ -466,7 +470,7 @@ impl FileSource {
     /// network go through [`load_async`](crate::loading::load_async),
     /// which runs this on the I/O pool.
     pub fn resolve(&mut self) -> Result<&PathBuf> {
-        self.resolve_with_progress(&|_, _| {})
+        Ok(self.resolve_with_progress(&|_, _| {})?.0)
     }
 
     /// [`resolve`](Self::resolve) reporting download progress, for the
@@ -477,17 +481,26 @@ impl FileSource {
     /// A single file falling back to the next URL after a failure does restart
     /// it, which is the honest thing to show — that transfer really is starting
     /// over somewhere else.
-    pub fn resolve_with_progress(&mut self, on_progress: OnProgress<'_>) -> Result<&PathBuf> {
+    /// Also returns the URLs that were downloaded, as the db writes them.
+    pub fn resolve_with_progress(
+        &mut self,
+        on_progress: OnProgress<'_>,
+    ) -> Result<(&PathBuf, Vec<&'static str>)> {
+        let mut used = vec![];
         if let FileSource::Url(urls) = self {
             // The release's downloads as ways of getting at it, best first: a
             // disk set that sits together in one directory (built into an m3u
             // later), an archive, a reupload. The first that lands wins.
             let downloads = release_downloads(urls.as_slice());
-            let p = fetch_release(&downloads, on_progress, fetch_url_with_progress)?;
+            let (p, fetched) = fetch_release(&downloads, on_progress, fetch_url_with_progress)?;
+            used = urls
+                .iter()
+                .filter(|url| fetched.contains(&cache_key(url)))
+                .collect();
             *self = FileSource::Path(p);
         }
         match self {
-            FileSource::Path(p) => Ok(p),
+            FileSource::Path(p) => Ok((p, used)),
             FileSource::Url(_) => unreachable!("just converted to Path above"),
         }
     }

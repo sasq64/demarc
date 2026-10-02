@@ -22,7 +22,7 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::setup_navigator_bevy;
 use crate::navigator::{Navigator, handle_navigator};
-use crate::playlists::{FAVORITES, PlaylistPicker, Playlists};
+use crate::playlists::{PlaylistPicker, Playlists};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
@@ -57,7 +57,6 @@ pub enum Cmd {
     Settings,
     ShaderDialog,
     StartOther,
-    AddFavorite,
     AddToPlaylist,
 }
 
@@ -89,7 +88,6 @@ impl Cmd {
         Cmd::Settings,
         Cmd::ShaderDialog,
         Cmd::StartOther,
-        Cmd::AddFavorite,
         Cmd::AddToPlaylist,
     ];
 
@@ -169,8 +167,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyX, "Edit settings", Cmd::Settings),
     KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
     KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
-    KeyMapping::new(KeyCode::KeyH, "Toggle favorite", Cmd::AddFavorite),
-    KeyMapping::shifted(KeyCode::KeyH, "Add to playlist", Cmd::AddToPlaylist),
+    KeyMapping::new(KeyCode::KeyH, "Add to playlist", Cmd::AddToPlaylist),
     KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
     KeyMapping::new(
         KeyCode::KeyT,
@@ -543,7 +540,7 @@ pub(crate) fn handle_cmd(
     mut demo_settings: ResMut<DemarcSettings>,
     mut commands: Commands,
     dj: Option<Res<crate::dj::DjWindow>>,
-    mut playlists: ResMut<Playlists>,
+    playlists: Res<Playlists>,
 ) {
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let mut show_info = false;
@@ -735,29 +732,6 @@ pub(crate) fn handle_cmd(
                     Cmd::Reset => {
                         emu.reset();
                     }
-                    Cmd::AddFavorite if emu.core.is_some() => {
-                        emu.favorite = playlists.toggle_favorite(&emu.emu_file);
-                        navigator.add_playlist(FAVORITES, playlists.favorites().files);
-                        writer.write(SetHudText {
-                            text: if emu.favorite {
-                                "Added to favorites"
-                            } else {
-                                "Removed from favorites"
-                            }
-                            .into(),
-                            delay: Duration::from_secs(0),
-                            duration: Duration::from_secs(1),
-                            location: HudLocation::TopLeft,
-                        });
-                        if emu.show_info {
-                            writer.write(SetHudText {
-                                text: emu.get_info(),
-                                delay: Duration::from_secs(0),
-                                duration: Duration::from_secs(5000),
-                                location: HudLocation::InfoText,
-                            });
-                        }
-                    }
                     Cmd::AddToPlaylist if emu.core.is_some() => {
                         let picker = Arc::new(PlaylistPicker::new(&playlists, &emu.emu_file));
                         show_list.write(ShowFuzzyList {
@@ -769,6 +743,7 @@ pub(crate) fn handle_cmd(
                         });
                         commands.insert_resource(PlaylistPick {
                             file: emu.emu_file.clone(),
+                            fetched: emu.work_file.get_meta_or("fetched", ""),
                             picker,
                         });
                     }
@@ -895,6 +870,7 @@ const PLAYLIST_PICKER: usize = 98;
 #[derive(Resource)]
 struct PlaylistPick {
     file: EmuFile,
+    fetched: String,
     picker: Arc<PlaylistPicker>,
 }
 
@@ -929,12 +905,23 @@ fn handle_playlist_pick(
                 }
             }
         };
-        let added = playlists.toggle(index, &pick.file);
+        let added = playlists.toggle(index, &pick.file, &pick.fetched);
         let list = &playlists.lists[index];
         navigator.add_playlist(&list.name, list.files);
         if index == 0 {
             for mut emu in &mut emus {
-                emu.favorite = playlists.is_favorite(&emu.emu_file);
+                let favorite = playlists.is_favorite(&emu.emu_file);
+                if emu.favorite != favorite {
+                    emu.favorite = favorite;
+                    if emu.show_info {
+                        writer.write(SetHudText {
+                            text: emu.get_info(),
+                            duration: Duration::from_secs(5000),
+                            location: HudLocation::InfoText,
+                            ..Default::default()
+                        });
+                    }
+                }
             }
         }
         writer.write(SetHudText {

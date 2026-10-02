@@ -22,8 +22,10 @@ pub struct PlaylistEntry {
 }
 
 impl PlaylistEntry {
-    pub fn new(file: &EmuFile) -> Self {
-        Self {
+    /// `fetched` are the `;`-separated URLs the release was loaded from, which
+    /// are moved first so loading the entry picks the same download.
+    pub fn new(file: &EmuFile, fetched: &str) -> Self {
+        let mut entry = Self {
             id: entry_id(file),
             path: match &file.path {
                 FileSource::Path(p) => Some(absolute(p)),
@@ -34,7 +36,15 @@ impl PlaylistEntry {
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
+        };
+        if let Some(download) = entry.meta.get_mut("download") {
+            let used: Vec<&str> = fetched.split(';').collect();
+            let (mut urls, rest): (Vec<&str>, Vec<&str>) =
+                download.split(';').partition(|url| used.contains(url));
+            urls.extend(rest);
+            *download = urls.join(";");
         }
+        entry
     }
 
     pub fn to_emu_file(&self) -> EmuFile {
@@ -111,14 +121,14 @@ impl Playlist {
 
     /// Add `file`, or remove it if it is already here. Returns whether it is
     /// in the list now.
-    fn toggle(&mut self, file: &EmuFile) -> bool {
+    fn toggle(&mut self, file: &EmuFile, fetched: &str) -> bool {
         let id = entry_id(file);
         let added = if self.ids.remove(&id) {
             self.entries.retain(|e| e.id != id);
             false
         } else {
             self.ids.insert(id);
-            self.entries.push(PlaylistEntry::new(file));
+            self.entries.push(PlaylistEntry::new(file, fetched));
             true
         };
         self.update_files();
@@ -185,20 +195,12 @@ impl Playlists {
         }
     }
 
-    pub fn favorites(&self) -> &Playlist {
-        &self.lists[0]
-    }
-
     pub fn is_favorite(&self, file: &EmuFile) -> bool {
         self.lists[0].contains(file)
     }
 
-    pub fn toggle_favorite(&mut self, file: &EmuFile) -> bool {
-        self.toggle(0, file)
-    }
-
-    pub fn toggle(&mut self, index: usize, file: &EmuFile) -> bool {
-        self.lists[index].toggle(file)
+    pub fn toggle(&mut self, index: usize, file: &EmuFile, fetched: &str) -> bool {
+        self.lists[index].toggle(file, fetched)
     }
 
     pub fn find(&self, name: &str) -> Option<usize> {

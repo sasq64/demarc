@@ -448,10 +448,10 @@ pub fn setup_navigator_bevy(
     playlists: Res<Playlists>,
     mut navigator: ResMut<Navigator>,
 ) -> Result<()> {
+    setup_navigator(&settings.files, &mut navigator)?;
     for list in &playlists.lists {
         navigator.add_playlist(&list.name, list.files);
     }
-    setup_navigator(&settings.files, &mut navigator)?;
     navigator.go_root();
     Ok(())
 }
@@ -492,7 +492,7 @@ pub(crate) fn handle_navigator(
                     .ok()
                     .and_then(|i| navigator.files.get(list)?.get(i));
                 if let (Some(file), Some(index)) = (file, playlists.find(list)) {
-                    playlists.toggle(index, file);
+                    playlists.toggle(index, file, "");
                     navigator.add_playlist(list, playlists.lists[index].files);
                 }
                 navigator.back().show(&mut list_writer);

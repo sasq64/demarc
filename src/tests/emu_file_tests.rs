@@ -30,7 +30,8 @@ fn load(urls: &[&str], dead: &[&str]) -> (Vec<String>, Result<PathBuf>) {
         let path = cache.path().join(url_file_name(url).expect("a file name"));
         std::fs::write(&path, url.as_bytes())?;
         Ok(path)
-    });
+    })
+    .map(|(path, _)| path);
     (tried.into_inner(), result)
 }
 
