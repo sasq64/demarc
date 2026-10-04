@@ -133,3 +133,72 @@ fn checks_iso_names() {
     assert_eq!(iso_name("has space.bin"), None);
     assert_eq!(iso_name(".prg"), None);
 }
+
+/// Wrap each 2048-byte sector of `image` in the XA subheader and error
+/// correction a Mode 2 sector carries, which is the 2336-byte layout a rip
+/// leaves behind when it drops the sync pattern and address.
+fn to_short_mode2(image: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(image.len() / ISO_SECTOR * 2336);
+    for sector in image.chunks(ISO_SECTOR) {
+        out.extend_from_slice(&[0, 0, 0x08, 0, 0, 0, 0x08, 0]);
+        out.extend_from_slice(sector);
+        out.resize(out.len() + 280, 0);
+    }
+    out
+}
+
+/// A `MODE2/2336` track is one no core reads, so it has to come back re-sectored
+/// to the raw 2352-byte layout, with the sheet naming the layout it now has.
+#[test]
+fn resectors_a_short_mode2_track() {
+    let files = spec_files(&[("TEST.BIN", 4000)]);
+    let image = build_iso(&IsoSpec {
+        system_id: "TEST",
+        volume_id: "TEST",
+        files: &files,
+        ..Default::default()
+    });
+    let short = to_short_mode2(&image);
+
+    let dir = std::env::temp_dir().join("demarc_resector_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let track = dir.join("demo.bin");
+    fs::write(&track, &short).unwrap();
+    assert!(is_short_mode2(&track), "the track should read as 2336");
+
+    let cue = dir.join("demo.cue");
+    fs::write(
+        &cue,
+        "FILE \"demo.bin\" BINARY\r\n  TRACK 01 MODE2/2336\r\n    INDEX 01 00:00:00\r\n",
+    )
+    .unwrap();
+
+    let out = prepare_disc(&cue)
+        .unwrap()
+        .expect("a 2336 track needs preparing");
+    let text = fs::read_to_string(&out).unwrap();
+    assert!(
+        text.contains("TRACK 01 MODE2/2352"),
+        "the track line should name the new layout: {text}"
+    );
+    // Under its own name, so a stale copy of the original in the working
+    // directory can't be picked up in its place.
+    assert!(text.contains("FILE \"demo-2352.bin\" BINARY"), "{text}");
+    assert!(text.contains("INDEX 01 00:00:00"), "{text}");
+
+    // Same sectors, each with the sync pattern and its address put back.
+    let built = out.parent().unwrap().join("demo-2352.bin");
+    let bytes = fs::read(&built).unwrap();
+    assert_eq!(bytes.len(), short.len() / 2336 * 2352);
+    assert_eq!(
+        &bytes[..12],
+        &[
+            0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0
+        ]
+    );
+    // The first sector is 00:02:00, in BCD, and Mode 2.
+    assert_eq!(&bytes[12..16], &[0x00, 0x02, 0x00, 2]);
+    assert_eq!(&bytes[2352 + 12..2352 + 16], &[0x00, 0x02, 0x01, 2]);
+    assert_eq!(DiscImage::open(&built).unwrap().sector_size(), 2352);
+}
