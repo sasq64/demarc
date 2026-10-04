@@ -29,6 +29,22 @@ cachegrind_debug:
 cachegrind:
   CARGO_MANIFEST_DIR=. valgrind --tool=cachegrind target/release-fast/demarc
 
+# `-D 1000` starts sampling after boot, so GL driver and shader setup don't bury
+# the emulation; `fp` call graphs because perf's dwarf unwinder only manages two
+# frames here (frame pointers come from .cargo/config.toml).
+PERF_REC := "record -F 999 --call-graph fp -g -D 1000"
+
+# CPU flamegraph of the --speed-test benchmark, written to flamegraph.svg and
+# opened in a browser -- the SVG is interactive there (click a frame to zoom,
+# ctrl-F to search), while xdg-open hands it to an image editor that just
+# rasterizes it. `--no-inline` is not optional: the C cores drag DWARF into the
+# binary and perf's inline expansion then takes minutes.
+flame file="testdata/amiga/rebels.adf" *args="":
+    cargo build --profile release-fast
+    flamegraph --no-inline --deterministic -c "{{PERF_REC}}" -o flamegraph.svg \
+        -- target/release-fast/demarc --speed-test --headless --no-silence {{file}} {{args}}
+    ${BROWSER:-firefox} flamegraph.svg
+
 run file="testdata/amiga/rebels.adf":
     cargo run --profile release-fast -- --shuffle {{file}}
 

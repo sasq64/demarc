@@ -21,3 +21,5 @@ __pycache__/
 /android/app/build/
 /android/local.properties
 /android/app/src/main/jniLibs/
+/perf.data*
+/flamegraph.svg

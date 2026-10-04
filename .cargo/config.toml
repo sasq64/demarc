@@ -4,3 +4,9 @@
 # down. `relative = true` resolves against this file's parent, i.e. the root.
 [env]
 DEMARC_ROOT = { value = ".", relative = true }
+
+# Frame pointers everywhere: perf's dwarf unwinder gets about two frames out of
+# this binary, so `just flame` -- and any other profiler -- needs `fp` call
+# graphs to see a stack at all. The --speed-test rate is the same either way.
+[build]
+rustflags = ["-C", "force-frame-pointers=yes"]
