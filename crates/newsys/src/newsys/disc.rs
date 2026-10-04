@@ -290,6 +290,15 @@ const SECTOR_LAYOUTS: &[(u64, usize)] = &[
     (2448, 16), // Mode 1 plus subchannel
 ];
 
+/// A Mode 2 sector as a rip stores it when the sync pattern and address in
+/// front of it were dropped: the XA subheader, the user data and the error
+/// correction, and nothing else.
+const MODE2_SECTOR: usize = 2336;
+
+/// The same sector as a real CD carries it, which is the only raw layout the
+/// cores read.
+const MODE2_RAW_SECTOR: usize = 2352;
+
 /// Sectors of the root directory [`DiscImage::root_names`] will read before
 /// giving up. Only enough to see the boot files matters, and a corrupt length
 /// field shouldn't turn a sniff into a long read.
@@ -306,6 +315,12 @@ pub struct DiscImage {
 }
 
 impl DiscImage {
+    /// The bytes one sector takes in the file — the [`SECTOR_LAYOUTS`] entry
+    /// the image turned out to match.
+    pub fn sector_size(&self) -> u64 {
+        self.sector_size
+    }
+
     /// Open `path` as a disc image, or `None` if no [`SECTOR_LAYOUTS`] entry
     /// puts a primary volume descriptor at sector 16 — which is to say, if it
     /// isn't a data disc at all.
@@ -397,18 +412,20 @@ impl DiscImage {
     }
 }
 
-/// One `FILE "<name>" <kind>` line from a cue sheet.
-pub struct CueFile<'a> {
-    pub line: &'a str,
+/// One `FILE "<name>" <kind>` line from a cue sheet, and which line of the
+/// sheet it was — the `TRACK` lines that follow it, up to the next `FILE`, are
+/// the ones describing it.
+pub struct CueFile {
+    pub index: usize,
     pub name: String,
     pub kind: String,
 }
 
 /// Pull the `FILE` lines out of a cue sheet. Handles both quoted and bare names
 /// (scene sheets use either); the kind is always the last token on the line.
-pub fn parse_cue_files(text: &str) -> Vec<CueFile<'_>> {
+pub fn parse_cue_files(text: &str) -> Vec<CueFile> {
     let mut out = vec![];
-    for line in text.lines() {
+    for (index, line) in text.lines().enumerate() {
         let rest = match line.trim().strip_prefix("FILE ") {
             Some(rest) => rest.trim(),
             None => continue,
@@ -424,7 +441,7 @@ pub fn parse_cue_files(text: &str) -> Vec<CueFile<'_>> {
                 None => continue,
             }
         };
-        out.push(CueFile { line, name, kind });
+        out.push(CueFile { index, name, kind });
     }
     out
 }
@@ -666,6 +683,79 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether `track` is a Mode 2 dump stored without the sync pattern and address
+/// a real CD puts in front of each sector — 2336 bytes a sector rather than
+/// 2352, which is what a `MODE2/2336` cue describes.
+///
+/// No core here reads that layout: pcsx_rearmed knows `MODE1/2352`,
+/// `MODE2/2352` and a plain 2048-byte image and nothing else, so it looks for
+/// the volume descriptor at the wrong offset and refuses the disc outright.
+fn is_short_mode2(track: &Path) -> bool {
+    DiscImage::open(track).is_some_and(|disc| disc.sector_size() == MODE2_SECTOR as u64)
+}
+
+/// Rebuild a [`MODE2_SECTOR`] track at `src` as the [`MODE2_RAW_SECTOR`] one
+/// the cores read, which only means putting back what the rip dropped: the
+/// 12-byte sync pattern and the sector's own address.
+///
+/// Lossless, and the sector count doesn't change, so every address the cue
+/// sheet gives still points where it did.
+fn resector_mode2(src: &Path, dest: &Path) -> Result<()> {
+    use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
+
+    const SYNC: [u8; 12] = [
+        0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0,
+    ];
+    /// A CD counts addresses from 00:02:00, so the first sector of a track at
+    /// the start of the disc is 150.
+    const FIRST_LBA: u32 = 150;
+    const MODE2: u8 = 2;
+
+    let bcd = |v: u32| (((v / 10) << 4) | (v % 10)) as u8;
+
+    let mut input = BufReader::new(fs::File::open(src)?);
+    let mut out = BufWriter::new(fs::File::create(dest)?);
+    let mut sector = [0u8; MODE2_SECTOR];
+    let mut lba = FIRST_LBA;
+    loop {
+        match input.read_exact(&mut sector) {
+            Ok(()) => {}
+            // A dump that doesn't divide evenly has a partial sector no reader
+            // could use; stopping here writes the whole ones and drops it.
+            Err(err) if err.kind() == ErrorKind::UnexpectedEof => break,
+            Err(err) => return Err(err.into()),
+        }
+        out.write_all(&SYNC)?;
+        out.write_all(&[
+            bcd(lba / (75 * 60)),
+            bcd((lba / 75) % 60),
+            bcd(lba % 75),
+            MODE2,
+        ])?;
+        out.write_all(&sector)?;
+        lba += 1;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+/// `line` with the mode a `TRACK n <mode>` line names changed to `mode`. An
+/// audio track, and anything that isn't a track line at all, comes back as it
+/// stands.
+fn retrack(line: &str, mode: &str) -> String {
+    let body = line.trim_start();
+    let Some((number, kind)) = body
+        .strip_prefix("TRACK ")
+        .and_then(|rest| rest.trim().split_once(char::is_whitespace))
+    else {
+        return line.to_string();
+    };
+    if kind.trim().eq_ignore_ascii_case("AUDIO") {
+        return line.to_string();
+    }
+    format!("{}TRACK {number} {mode}", &line[..line.len() - body.len()])
+}
+
 /// No libretro core here decodes MP3 audio tracks — they read the compressed
 /// bytes straight through as PCM, which comes out as full-scale noise. If a cue
 /// references any, build a parallel disc directory in the cache with those
@@ -674,7 +764,8 @@ fn link_or_copy(src: &Path, dest: &Path) -> Result<()> {
 ///
 /// The same rewrite fixes a sheet whose names don't match the files' actual
 /// case, which is what a disc burned from upper-case names and then unpacked
-/// onto a case-sensitive filesystem leaves behind.
+/// onto a case-sensitive filesystem leaves behind, and re-sectors a data track
+/// no core can read in the layout it arrived in — see [`is_short_mode2`].
 ///
 /// Returns the rewritten cue, or `None` if every track is already playable.
 pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
@@ -697,12 +788,14 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        resolved.push((f, src, actual));
+        let short_mode2 = !f.kind.eq_ignore_ascii_case("MP3") && is_short_mode2(&src);
+        resolved.push((f, src, actual, short_mode2));
     }
 
     let has_mp3 = files.iter().any(|f| f.kind.eq_ignore_ascii_case("MP3"));
-    let miscased = resolved.iter().any(|(f, _, actual)| f.name != *actual);
-    if !has_mp3 && !miscased {
+    let miscased = resolved.iter().any(|(f, _, actual, _)| f.name != *actual);
+    let resectoring = resolved.iter().any(|(.., short_mode2)| *short_mode2);
+    if !has_mp3 && !miscased && !resectoring {
         return Ok(None);
     }
     if miscased {
@@ -715,8 +808,11 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     // every launch and pile up another copy of the transcoded audio.
     let mut key = KeyHasher::new();
     key.add(&text);
-    for (f, src, actual) in &resolved {
+    for (f, src, actual, short_mode2) in &resolved {
         key.add(actual);
+        // Separates an entry built here from one an older build left behind for
+        // the same sheet with the track copied rather than re-sectored.
+        key.add([u8::from(*short_mode2)]);
         if let Ok(meta) = fs::metadata(src) {
             key.add(meta.len().to_le_bytes());
         }
@@ -731,8 +827,8 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
     }
 
     let entry = CACHE.get_dir(&key.finish(), DISC_CUE, |out_dir| {
-        let mut new_text = text.clone();
-        for (f, src, actual) in &resolved {
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        for (i, (f, src, actual, short_mode2)) in resolved.iter().enumerate() {
             if f.kind.eq_ignore_ascii_case("MP3") {
                 let wav_name = format!(
                     "{}.wav",
@@ -743,16 +839,40 @@ pub fn prepare_disc(cue_path: &Path) -> Result<Option<PathBuf>> {
                 );
                 info!("Transcoding CD audio track {actual:?} -> {wav_name}");
                 transcode_mp3_to_wav(src, &out_dir.join(&wav_name))?;
-                new_text = new_text.replace(f.line, &format!("FILE \"{wav_name}\" WAVE"));
+                lines[f.index] = format!("FILE \"{wav_name}\" WAVE");
+                continue;
+            }
+            // Quote the name so bare names parse, and use the on-disk spelling.
+            let mut name = actual.clone();
+            if *short_mode2 {
+                // A name of its own, because pcsx_rearmed looks for a cue's
+                // tracks in the process' working directory before the cue's own:
+                // under the track's given name it would find the unconverted
+                // original whenever demarc was started from the release's
+                // directory, and read that instead.
+                name = format!(
+                    "{}-2352.bin",
+                    Path::new(actual)
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                );
+                info!("Re-sectoring Mode 2 track {actual:?} -> {name}");
+                resector_mode2(src, &out_dir.join(&name))?;
+                // The track lines up to the next FILE are the ones describing
+                // this file, and they have to name the layout it now has.
+                let end = resolved.get(i + 1).map_or(lines.len(), |(n, ..)| n.index);
+                for line in &mut lines[f.index + 1..end] {
+                    *line = retrack(line, "MODE2/2352");
+                }
             } else {
                 link_or_copy(src, &out_dir.join(actual))?;
-                // Quote the name so bare names parse, and use the on-disk spelling.
-                new_text = new_text.replace(f.line, &format!("FILE \"{actual}\" {}", f.kind));
             }
+            lines[f.index] = format!("FILE \"{name}\" {}", f.kind);
         }
         // Last, so a build that died partway leaves an entry the cache knows to
         // rebuild rather than one that names tracks it never wrote.
-        fs::write(out_dir.join(DISC_CUE), new_text)?;
+        fs::write(out_dir.join(DISC_CUE), lines.join("\n") + "\n")?;
         Ok(())
     })?;
     Ok(Some(entry.join(DISC_CUE)))
