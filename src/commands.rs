@@ -277,12 +277,20 @@ fn handle_textlist(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconMode {
+    Platforms,
+    Categories,
+    All,
+}
+
 /// Backs the file picker: an [`IndexedSource`] over the one-line names shown in
 /// the list, paired with the entries themselves — the fuller detail (year,
 /// type, party, …) shown in the info field below the list, and the entry a
 /// selection is *of*, handed back by [`FuzzySource::get_data`].
 #[derive(Clone)]
 pub struct PickerSource {
+    mode: IconMode,
     names: IndexedSource,
     /// Index into `emu_files` per row, in the order `names` holds them: the ids
     /// a search reports are rows of this subset, not of the whole list. `None`
@@ -293,7 +301,11 @@ pub struct PickerSource {
 }
 
 impl PickerSource {
-    pub(crate) fn new(files: &'static [EmuFile], subset: Option<Vec<u32>>) -> Self {
+    pub(crate) fn new(
+        files: &'static [EmuFile],
+        subset: Option<Vec<u32>>,
+        icon_mode: IconMode,
+    ) -> Self {
         let names: Vec<String> = match &subset {
             Some(subset) => subset
                 .iter()
@@ -306,6 +318,7 @@ impl PickerSource {
             subset,
             emu_files: files,
             width: 70,
+            mode: icon_mode,
         }
     }
 
@@ -362,7 +375,7 @@ impl FuzzySource<EmuFile> for PickerSource {
             .split(';')
             .next()
             .expect("Split must give one element");
-        if false {
+        if self.mode == IconMode::Categories {
             match (p, c) {
                 (_, "Music") => Some(ListIcon::Glyph('\u{f001}', 0x40c0f0)),
                 (_, "Graphics") => Some(ListIcon::Glyph('\u{f1fc}', 0xf0c0f0)),
@@ -373,10 +386,10 @@ impl FuzzySource<EmuFile> for PickerSource {
                 (_, "256b Intro" | "128b Intro" | "64b Intro") => {
                     Some(ListIcon::Glyph('\u{f1104}', 0x505090))
                 }
-                (_, "Invitation") => Some(ListIcon::Glyph('\u{f1104}', 0x40c000)),
+                (_, "Invitation") => Some(ListIcon::Glyph('\u{f0ebb}', 0x40c000)),
                 _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
             }
-        } else {
+        } else if self.mode == IconMode::Platforms {
             match (p, c) {
                 ("Windows", _) => Some(ListIcon::Glyph('\u{e70f}', 0x40c0f0)),
                 ("MS-Dos", _) => Some(ListIcon::Glyph('\u{e629}', 0xe09090)),
@@ -393,6 +406,8 @@ impl FuzzySource<EmuFile> for PickerSource {
                 }
                 _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
             }
+        } else {
+            None
         }
     }
 }

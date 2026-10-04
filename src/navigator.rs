@@ -1,11 +1,12 @@
 use std::collections::{BTreeSet, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use bevy::prelude::*;
 use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 
-use crate::commands::{DownloadSource, PickerSource};
+use crate::commands::{DownloadSource, IconMode, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
@@ -19,6 +20,32 @@ use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 const FAVORITES_ICON: ListIcon = ListIcon::Glyph('\u{f004}', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('\u{f0cb9}', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('\u{f01bc}', 0xa0d8ff);
+
+const PARTY_ICON: char = '\u{f1056}';
+/// Saturation and brightness of the per-party colours; tweak to taste.
+const PARTY_SATURATION: f32 = 0.65;
+const PARTY_VALUE: f32 = 0.75;
+
+/// Colour a party row by hashing its name without the trailing year, so all
+/// editions of the same party share a colour.
+fn party_icon(name: &str) -> ListIcon {
+    let base = name
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end();
+    let mut hasher = DefaultHasher::new();
+    base.hash(&mut hasher);
+    let hue = (hasher.finish() % 360) as f32;
+    ListIcon::Glyph(PARTY_ICON, hsv_to_rgb(hue, PARTY_SATURATION, PARTY_VALUE))
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
+    let chan = |n: f32| {
+        let k = (n + h / 60.0) % 6.0;
+        let c = v - v * s * k.min(4.0 - k).clamp(0.0, 1.0);
+        (c * 255.0).round() as u32
+    };
+    chan(5.0) << 16 | chan(3.0) << 8 | chan(1.0)
+}
 
 pub(crate) struct NavList {
     id: usize,
@@ -192,7 +219,7 @@ impl Navigator {
         if rest.is_empty() && self.playlists.contains(db) {
             self.push(NavList {
                 id: 0,
-                source: Arc::new(PickerSource::new(files, None)),
+                source: Arc::new(PickerSource::new(files, None, IconMode::All)),
                 path: path.into(),
                 prompt: String::new(),
                 selected: None,
@@ -255,7 +282,7 @@ impl Navigator {
         }
         for list in &mut self.stack {
             if list.id == 0 && list.path == name {
-                list.source = Arc::new(PickerSource::new(files, None));
+                list.source = Arc::new(PickerSource::new(files, None, IconMode::All));
             }
         }
     }
@@ -347,17 +374,17 @@ pub fn setup_navigator(
     }
 
     navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
-        PickerSource::new(files, None)
+        PickerSource::new(files, None, IconMode::All)
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
-        AllWordsSource::new(
+        WordsIconSource::new(
             files
                 .iter()
                 .map(|f| f.get_party())
                 .filter(|p| !p.is_empty())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
-                .map(String::from)
+                .map(|p| (p.to_string(), party_icon(p)))
                 .collect(),
         )
     })?;
@@ -395,7 +422,7 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("platform") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            PickerSource::new(files, Some(subset))
+            PickerSource::new(files, Some(subset), IconMode::Categories)
         },
     )?;
 
@@ -408,7 +435,7 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("category") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            PickerSource::new(files, Some(subset))
+            PickerSource::new(files, Some(subset), IconMode::Platforms)
         },
     )?;
     navigator.register(
@@ -439,7 +466,7 @@ pub fn setup_navigator(
                 .map(|(i, _)| i as u32)
                 .collect();
             subset.sort_by_key(|i| files[*i as usize].get_numeric_place());
-            PickerSource::new(files, Some(subset))
+            PickerSource::new(files, Some(subset), IconMode::Platforms)
         },
     )?;
 
@@ -447,7 +474,7 @@ pub fn setup_navigator(
         return WordsIconSource::new(
             [
                 ("All".into(), ListIcon::Glyph('\u{f069}', 0xffff00)),
-                ("Parties".into(), ListIcon::Glyph('\u{f1056}', 0xff00ff)),
+                ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Platforms".into(), ListIcon::Glyph('\u{f0379}', 0xc0f0c0)),
                 ("Categories".into(), ListIcon::Glyph('\u{f03a}', 0xf0a080)),
             ]
