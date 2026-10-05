@@ -305,7 +305,8 @@ fn collect_db_applies_header_tags() {
 /// A disk image among the URLs makes the release disk based: the disk set
 /// is the first thing to try, whatever format its disks are in, and the
 /// extras are gone. Anything else that could be the release stays on as a
-/// fallback for when the disk links are dead.
+/// fallback for when the disk links are dead, and last come the disks of
+/// the set one by one, in case they were alternatives all along.
 #[test]
 fn disk_images_win() {
     assert_eq!(
@@ -325,6 +326,9 @@ fn disk_images_win() {
             ]),
             Download::File("https://x.com/a.zip"),
             Download::File("https://x.com/readme.txt"),
+            Download::Disks(vec![vec!["https://x.com/a1.d64"]]),
+            Download::Disks(vec![vec!["https://x.com/a2.D64"]]),
+            Download::Disks(vec![vec!["https://x.com/a.adf"]]),
         ]
     );
 }

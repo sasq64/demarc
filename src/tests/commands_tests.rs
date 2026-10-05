@@ -75,7 +75,7 @@ fn the_file_picker_hands_the_entry_behind_a_row_back() {
         file("Zentrophy", URL),
         file("Deus Ex Machina", "https://a.org/d.lha"),
     ]));
-    let source = PickerSource::new(files, None);
+    let source = PickerSource::new(files, None, IconMode::All);
 
     let rows = source.search("machina", DEFAULT_MAX_RESULTS);
     assert_eq!(rows.len(), 1);

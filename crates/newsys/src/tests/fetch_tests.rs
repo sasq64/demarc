@@ -22,8 +22,10 @@ fn resolves_a_link_class_to_its_mirrors() {
     assert_eq!(
         urls,
         vec![
+            "https://files.scene.org/get:no-http/parties/2006/assembly06/demo/x.zip",
             "https://files.scene.org/get:de-https/parties/2006/assembly06/demo/x.zip",
             "https://files.scene.org/get:fi-ftp/parties/2006/assembly06/demo/x.zip",
+            "https://files.scene.org/get:se2-http/parties/2006/assembly06/demo/x.zip",
         ]
     );
     // A base that is not a directory prefix joins just as directly.
