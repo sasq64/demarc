@@ -31,3 +31,11 @@
 
 - `--speed-test` prints its result with `println!`, which the fd silencing
   swallows: pass `--no-silence` or no fps line appears.
+
+- Never drive a windowed run with `wtype`: it types into whatever has focus, and
+  when demarc failed to start the keys went to the user's browser. Check the
+  process and window exist first, or stay with `--remote-control`.
+
+- A load only reaches the cross fade spare (and so the DJ window) as an
+  *advance* — `run_next`/`run_prev` on a view, which `hijack_load` moves over. A
+  `LoadFile` written directly loads onto the view on screen.
