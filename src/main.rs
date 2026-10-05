@@ -66,6 +66,7 @@ use egui_settings::AppSettingsExt;
 use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
 use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
+use navigator::NavigatorPlugin;
 use newsys::NewSys;
 use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
 use remote_control::RemoteControlPlugin;
@@ -607,6 +608,7 @@ fn main() {
             CrossFadePlugin,
             DjPlugin,
             CommandPlugin,
+            NavigatorPlugin,
             PostProcessPlugin {
                 shader: shader_path,
             },

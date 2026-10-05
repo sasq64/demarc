@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 
+use crate::AppState;
 use crate::commands::{DownloadSource, IconMode, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
@@ -94,7 +95,7 @@ impl Launch {
 
 const PLAYLIST_MENU: usize = 1;
 
-type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> ListSource + Send + Sync>;
+type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> Option<ListSource> + Send + Sync>;
 
 #[derive(Resource)]
 pub(crate) struct Navigator {
@@ -119,6 +120,11 @@ impl Navigator {
             current_launch: None,
         }
     }
+
+    fn is_setup(&self) -> bool {
+        self.pos >= 0
+    }
+
     fn push(&mut self, nav_list: NavList) -> &mut Self {
         self.pos += 1;
         self.stack.truncate(self.pos as usize);
@@ -141,9 +147,6 @@ impl Navigator {
     /// Take the search text and selection out of the open list, so going back
     /// to this level later restores them.
     fn remember_state(&mut self, hud: &HudState) {
-        if self.pos < 0 {
-            return;
-        }
         let list = &mut self.stack[self.pos as usize];
         if let Some(query) = hud.list_query(list.id) {
             if list.prompt != query {
@@ -214,7 +217,10 @@ impl Navigator {
         for (key, val) in &self.mapping {
             if let Some(m) = key.captures(rest) {
                 let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
-                let source = val(&groups, files);
+                // A callback returning None declines the path; keep looking.
+                let Some(source) = val(&groups, files) else {
+                    continue;
+                };
                 self.push(NavList {
                     id: 0,
                     source,
@@ -293,15 +299,17 @@ impl Navigator {
     // ie: "DemoZoo/Parties/Revision 2022" will match "Parties\/([^\/]*)\" and the callback
     // will be called with ["DemoZoo/Parties/Revision 2022", "Revision 2022"] and the EmuFiles
     // added for database "Demozoo"
+    // Returning None from the callback declines the path, so the next matching
+    // registration is tried instead.
     pub fn register_regex<S: FuzzySource<EmuFile>>(
         &mut self,
         pattern: Regex,
-        callback: impl Fn(&[&str], &'static [EmuFile]) -> S + Send + Sync + 'static,
+        callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
     ) -> Result<()> {
         debug!("Regex: {pattern:?}");
         self.mapping.push((
             pattern,
-            Box::new(move |groups, files| Arc::new(callback(groups, files))),
+            Box::new(move |groups, files| Some(Arc::new(callback(groups, files)?) as ListSource)),
         ));
         Ok(())
     }
@@ -312,7 +320,7 @@ impl Navigator {
     pub fn register<S: FuzzySource<EmuFile>>(
         &mut self,
         pattern: &str,
-        callback: impl Fn(&[&str], &'static [EmuFile]) -> S + Send + Sync + 'static,
+        callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
     ) -> Result<()> {
         let mut rx = String::from("^");
         let mut sep = false;
@@ -334,6 +342,12 @@ impl Navigator {
         }
         rx.push('$');
         self.register_regex(Regex::new(&rx)?, callback)
+    }
+
+    pub fn open(&mut self, show_list: &mut MessageWriter<ShowFuzzyList>) {
+        if self.pos >= 0 {
+            self.stack[self.pos as usize].show(show_list);
+        }
     }
 }
 
@@ -359,10 +373,10 @@ pub fn setup_navigator(
     }
 
     navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
-        PickerSource::new(files, None, IconMode::All)
+        Some(PickerSource::new(files, None, IconMode::All))
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
-        WordsIconSource::new(
+        Some(WordsIconSource::new(
             files
                 .iter()
                 .map(|f| f.get_party())
@@ -371,10 +385,10 @@ pub fn setup_navigator(
                 .into_iter()
                 .map(|p| (p.to_string(), party_icon(p)))
                 .collect(),
-        )
+        ))
     })?;
     navigator.register("Platforms", |_path: &[&str], files: &'static [EmuFile]| {
-        AllWordsSource::new(
+        Some(AllWordsSource::new(
             files
                 .iter()
                 .map(|f| f.get_meta("platform"))
@@ -383,7 +397,7 @@ pub fn setup_navigator(
                 .into_iter()
                 .map(String::from)
                 .collect(),
-        )
+        ))
     })?;
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
         let mut cats: Vec<String> = files
@@ -396,7 +410,7 @@ pub fn setup_navigator(
             .collect();
         // Known categories in CATS order, the rest after in the order they appeared.
         cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
-        AllWordsSource::new(cats)
+        Some(AllWordsSource::new(cats))
     })?;
     navigator.register(
         "Platforms/{platform}",
@@ -407,7 +421,7 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("platform") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            PickerSource::new(files, Some(subset), IconMode::Categories)
+            Some(PickerSource::new(files, Some(subset), IconMode::Categories))
         },
     )?;
 
@@ -420,14 +434,14 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("category") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            PickerSource::new(files, Some(subset), IconMode::Platforms)
+            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
         },
     )?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
             println!("PATH: {}", path[1]);
-            AllWordsSource::new(
+            Some(AllWordsSource::new(
                 files
                     .iter()
                     .filter(|f| f.get_party() == path[1])
@@ -437,7 +451,7 @@ pub fn setup_navigator(
                     .into_iter()
                     .map(String::from)
                     .collect(),
-            )
+            ))
         },
     )?;
 
@@ -451,12 +465,12 @@ pub fn setup_navigator(
                 .map(|(i, _)| i as u32)
                 .collect();
             subset.sort_by_key(|i| files[*i as usize].get_numeric_place());
-            PickerSource::new(files, Some(subset), IconMode::Platforms)
+            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
         },
     )?;
 
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
-        return WordsIconSource::new(
+        return Some(WordsIconSource::new(
             [
                 ("All".into(), ListIcon::Glyph('\u{f069}', 0xffff00)),
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
@@ -464,18 +478,20 @@ pub fn setup_navigator(
                 ("Categories".into(), ListIcon::Glyph('\u{f03a}', 0xf0a080)),
             ]
             .into(),
-        );
+        ));
     })?;
 
     navigator.register("*/{id}/dls", |path: &[&str], files: &'static [EmuFile]| {
-        let id = path[1].parse::<usize>().unwrap_or(0);
-        DownloadSource::new(&files[id])
+        if let Some(file) = path[1].parse::<usize>().ok().and_then(|id| files.get(id)) {
+            return Some(DownloadSource::new(file));
+        }
+        None
     })?;
 
     Ok(())
 }
 
-pub fn setup_navigator_bevy(
+fn setup_navigator_bevy(
     settings: Res<AppSettings>,
     playlists: Res<Playlists>,
     mut navigator: ResMut<Navigator>,
@@ -488,14 +504,10 @@ pub fn setup_navigator_bevy(
     Ok(())
 }
 
-pub(crate) fn handle_navigator(
+fn update_navigator(
     input: Res<ButtonInput<KeyCode>>,
     mut navigator: ResMut<Navigator>,
-    mut reader: MessageReader<FuzzyListSelect>,
-    mut load_writer: MessageWriter<LoadFile>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
-    mut settings: ResMut<AppSettings>,
-    mut playlists: ResMut<Playlists>,
     hud: Res<HudState>,
 ) {
     navigator.remember_state(&hud);
@@ -504,10 +516,16 @@ pub(crate) fn handle_navigator(
     } else if input.just_pressed(KeyCode::ArrowRight) {
         navigator.forward().show(&mut list_writer);
     }
-    if navigator.pos < 0 {
-        return;
-    }
+}
 
+fn handle_selection(
+    mut navigator: ResMut<Navigator>,
+    mut reader: MessageReader<FuzzyListSelect>,
+    mut load_writer: MessageWriter<LoadFile>,
+    mut list_writer: MessageWriter<ShowFuzzyList>,
+    mut settings: ResMut<AppSettings>,
+    mut playlists: ResMut<Playlists>,
+) {
     let current = &navigator.stack[navigator.pos as usize];
     let id = current.id;
     let source = current.source.clone();
@@ -564,6 +582,34 @@ pub(crate) fn handle_navigator(
                 navigator.enter(&msg.text).show(&mut list_writer);
             }
         }
+    }
+}
+
+/// When `--select` is passed, open the file-open selector once we start running.
+fn open_select_menu(
+    args: Res<crate::Args>,
+    mut navigator: ResMut<Navigator>,
+    mut writer: MessageWriter<ShowFuzzyList>,
+) {
+    if args.select {
+        navigator.show(&mut writer);
+    }
+}
+
+pub struct NavigatorPlugin;
+
+impl Plugin for NavigatorPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(Navigator::new())
+            .add_systems(Startup, setup_navigator_bevy)
+            .add_systems(OnEnter(AppState::Running), open_select_menu)
+            .add_systems(
+                Update,
+                (
+                    update_navigator,
+                    handle_selection.run_if(on_message::<FuzzyListSelect>),
+                ),
+            );
     }
 }
 

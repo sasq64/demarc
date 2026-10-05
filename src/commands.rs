@@ -8,7 +8,6 @@ use bevy::render::view::screenshot::Screenshot;
 use bevy::render::view::screenshot::save_to_disk;
 use bevy::window::{PrimaryWindow, WindowMode};
 
-use crate::AppState;
 use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
@@ -21,8 +20,7 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::fuzzy_list::ListIcon;
 use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
-use crate::navigator::setup_navigator_bevy;
-use crate::navigator::{Navigator, handle_navigator};
+use crate::navigator::Navigator;
 use crate::playlists::{PlaylistPicker, Playlists};
 use crate::post_process::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
@@ -693,9 +691,7 @@ pub(crate) fn handle_cmd(
                 }
             }
             Cmd::OpenFile => {
-                if navigator.pos >= 0 {
-                    navigator.stack[navigator.pos as usize].show(&mut show_list);
-                }
+                navigator.open(&mut show_list);
             }
             Cmd::Settings => {
                 show_settings.write(ShowSettings::new(demo_settings.clone(), "Settings"));
@@ -1003,32 +999,17 @@ fn handle_playlist_pick(
 
 pub struct CommandPlugin;
 
-/// When `--select` is passed, open the file-open selector once we start running.
-fn open_select_menu(
-    args: Res<crate::Args>,
-    mut navigator: ResMut<Navigator>,
-    mut writer: MessageWriter<ShowFuzzyList>,
-) {
-    if args.select {
-        //writer.write(CmdMessage(Cmd::OpenFile));
-        navigator.show(&mut writer);
-    }
-}
-
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<CmdMessage>()
-            .insert_resource(Navigator::new())
             .insert_resource(Playlists::load(&crate::playlists::default_dir()))
-            .add_systems(Startup, (init_media_keys, setup_navigator_bevy))
-            .add_systems(OnEnter(AppState::Running), open_select_menu)
+            .add_systems(Startup, init_media_keys)
             .add_systems(
                 Update,
                 (
                     handle_hotkey.in_set(FrontendSet::Input),
                     handle_media_keys.in_set(FrontendSet::Input),
                     handle_textlist,
-                    handle_navigator,
                     handle_playlist_pick,
                     handle_cmd.run_if(on_message::<CmdMessage>),
                 ),
