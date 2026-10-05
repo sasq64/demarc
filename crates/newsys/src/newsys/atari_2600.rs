@@ -16,7 +16,10 @@ impl System for Atari2600System {
 
         let ext = get_ext(path);
 
-        ext == "a26" || (ext == "bin" && l.is_power_of_two() && (2048..=32768).contains(&l))
+        ext == "a26"
+            || ((ext == "rom" || ext == "bin")
+                && l.is_power_of_two()
+                && (2048..=32768).contains(&l))
     }
 
     fn core_name(&self) -> &'static str {
