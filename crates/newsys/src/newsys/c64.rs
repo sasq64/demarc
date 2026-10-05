@@ -68,7 +68,7 @@ impl System for C64System {
         let mut images = vec![];
         let mut prgs = vec![];
 
-        if self.reu || file.has_tag("reu") {
+        if self.reu || file.has_tag("reu") || file.get_meta_or("category", "").contains("REU") {
             file.set_meta("vice_ram_expansion_unit", "16384kB");
         }
 
@@ -83,13 +83,16 @@ impl System for C64System {
 
         let conversions: HashMap<_, _> = [("t64", "-t"), ("lnx", "-l"), ("p00", "-p")].into();
         let mut need_conv = false;
+        let mut has_reu = false;
         walk_dir(file, 4, |_, ext, _| {
             if conversions.contains_key(ext) {
                 need_conv = true;
             }
+            has_reu |= ext == "reu";
             Ok(())
         })?;
-        if need_conv {
+        // The REU image gets renamed, so it must not be the user's own copy
+        if need_conv || has_reu {
             // NOTE:
             file.make_temp()?;
             // NOTE: If incoming was single file, we now switch to the parent dir
@@ -111,10 +114,13 @@ impl System for C64System {
             Ok(())
         })?;
 
+        let mut reus = vec![];
         walk_dir(file, 4, |path, ext, header| {
-            if ["d64", "d81"].contains(&ext) {
+            if ext == "reu" {
+                reus.push(path.to_owned());
+            } else if ["d64", "d81"].contains(&ext) {
                 images.push(path.to_owned());
-            } else if is_c64_prg(path, ext, header) {
+            } else if is_c64_prg(path, ext, header) || ext == "crt" {
                 prgs.push(path.to_owned());
             }
             Ok(())
@@ -130,6 +136,14 @@ impl System for C64System {
             file.path = prgs[0].clone();
         } else {
             return Ok(false);
+        }
+
+        // VICE picks up `<name>.reu` next to the loaded file as the REU image
+        if let Some(reu) = reus.first() {
+            let target = file.path.with_extension("reu");
+            if *reu != target {
+                fs::rename(reu, &target).with_context(|| format!("Renaming {reu:?}"))?;
+            }
         }
         Ok(true)
     }
