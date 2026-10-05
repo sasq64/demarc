@@ -81,10 +81,9 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         None
     }
 
-    /// Icon drawn at the left of the item's row, or `None` for an empty icon
-    /// column (the default).
-    fn get_icon(&self, _id: usize) -> Option<ListIcon> {
-        None
+    /// Icons drawn at the left and the far right of the item's row.
+    fn get_icon(&self, _id: usize) -> (Option<ListIcon>, Option<ListIcon>) {
+        (None, None)
     }
 }
 
@@ -246,8 +245,8 @@ impl<T> FuzzySource<T> for WordsIconSource {
         self.get_text(id)
     }
 
-    fn get_icon(&self, id: usize) -> Option<ListIcon> {
-        self.get_icon(id)
+    fn get_icon(&self, id: usize) -> (Option<ListIcon>, Option<ListIcon>) {
+        (self.get_icon(id), None)
     }
 }
 

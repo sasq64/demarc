@@ -895,12 +895,18 @@ fn draw_picker(
             .anchor_size(text_left, galley.size())
             .min;
         let painter = ui.painter().with_clip_rect(clip);
-        if let Some(icon) = source.get_icon(id) {
-            let icon_rect = egui::Rect::from_center_size(
-                egui::pos2(rect.left() + ICON_SIZE / 2.0, rect.center().y),
-                egui::Vec2::splat(ICON_SIZE),
-            );
-            draw_list_icon(ui, &painter, icon_rect, icon);
+        let (left_icon, right_icon) = source.get_icon(id);
+        for (icon, x) in [
+            (left_icon, rect.left() + ICON_SIZE / 2.0),
+            (right_icon, rect.right() - ICON_SIZE / 2.0),
+        ] {
+            if let Some(icon) = icon {
+                let icon_rect = egui::Rect::from_center_size(
+                    egui::pos2(x, rect.center().y),
+                    egui::Vec2::splat(ICON_SIZE),
+                );
+                draw_list_icon(ui, &painter, icon_rect, icon);
+            }
         }
         painter.galley(pos, galley.clone(), TEXT_COLOR);
         // Position the image right after the last glyph's end.

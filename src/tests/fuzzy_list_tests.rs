@@ -236,6 +236,6 @@ fn words_icon_source_matches_like_all_words_and_keeps_its_icons() {
         vec!["apple", "apricot", "grape"]
     );
     // The icon follows the source id, not the row's place in the results.
-    assert_eq!(src.get_icon(hits[2]), Some(ListIcon::Glyph('*', 4)));
-    assert_eq!(src.get_icon(99), None);
+    assert_eq!(src.get_icon(hits[2]), (Some(ListIcon::Glyph('*', 4)), None));
+    assert_eq!(src.get_icon(99), (None, None));
 }

@@ -360,33 +360,54 @@ impl FuzzySource<EmuFile> for PickerSource {
     fn file_index(&self, id: usize) -> Option<usize> {
         self.index(id)
     }
-    fn get_icon(&self, id: usize) -> Option<ListIcon> {
-        let file = self.file(id)?;
-        let p = file.get_meta("platform").split(';').next()?;
-        let c = file.get_meta("category").split(';').next()?;
+    fn get_icon(&self, id: usize) -> (Option<ListIcon>, Option<ListIcon>) {
+        let Some(file) = self.file(id) else {
+            return (None, None);
+        };
+        let p = file.get_meta("platform").split(';').next().unwrap_or("");
+        let c = file.get_meta("category").split(';').next().unwrap_or("");
+        let category = ListIcon::Glyph(category_icon(c), category_color(c));
+        let platform = ListIcon::Glyph(platform_icon(p), platform_color(p));
         match self.mode {
-            // IconMode::Categories => Some(ListIcon::Glyph(category_icon(c), platform_color(p))),
-            // IconMode::Platforms => Some(ListIcon::Glyph(platform_icon(p), category_color(c))),
-            IconMode::Categories => Some(ListIcon::Glyph(category_icon(c), category_color(p))),
-            IconMode::Platforms => Some(ListIcon::Glyph(platform_icon(p), platform_color(c))),
-            IconMode::CategoryOnly => Some(ListIcon::Glyph(category_icon(c), category_color(p))),
-            IconMode::PlatformOnly => Some(ListIcon::Glyph(platform_icon(p), platform_color(c))),
-            IconMode::All => None,
+            IconMode::Categories | IconMode::Platforms => (Some(category), Some(platform)),
+            IconMode::CategoryOnly => (Some(category), None),
+            IconMode::PlatformOnly => (None, Some(platform)),
+            IconMode::All => (None, None),
         }
     }
 }
 
 fn category_icon(category: &str) -> char {
+    // match category {
+    //     "Music" => '',
+    //     "Graphics" => '',
+    //     "Tool" | "Other Platform C64 Tool" => '󱁤',
+    //     "Game" | "Game Preview" => '󰊖',
+    //     "Crack" => '󰋮',
+    //     "Demo" | "Intro" | "4K Intro" | "8K Intro" | "64K Intro" | "40k Intro" | "256b Intro"
+    //     | "128b Intro" | "64b Intro" => '󱄄',
+    //     "Invitation" => '󰺻',
+    //     _ => '󰧯',
+    // }
     match category {
-        "Music" => '',
+        "Music" => '󰺢',
+        "Streaming Music" => '',
         "Graphics" => '',
         "Tool" | "Other Platform C64 Tool" => '󱁤',
-        "Game" | "Game Preview" => '󰊖',
-        "Crack" => '󰋮',
-        "Demo" | "Intro" | "4K Intro" | "8K Intro" | "64K Intro" | "40k Intro" | "256b Intro"
-        | "128b Intro" | "64b Intro" => '󱄄',
-        "Invitation" => '󰺻',
-        _ => '󰧯',
+        "Game" | "Game Preview" => '󰯽',
+        "Crack" => '󰯱',
+        "Intro" => '󰰃',
+        "Demo" => '󰯴',
+        "4K Intro" => '󰎮',
+        "1K Intro" => '󰎦',
+        "8K Intro" => '󰎻',
+        "32K Intro" => '󰰃',
+        "64K Intro" => '󰰃',
+        "40k Intro" => '󰰃',
+        "256b Intro" => '󰎩',
+        "128b Intro" | "64b Intro" => '󰰃',
+        "Invitation" => '󰰪',
+        _ => '󰗮',
     }
 }
 
@@ -394,13 +415,15 @@ fn category_color(category: &str) -> u32 {
     match category {
         "Music" => 0x40c0f0,
         "Graphics" => 0xf0c0f0,
-        "Demo" => 0xe0e0ff,
-        "Intro" => 0xc0c0c0,
-        "4K Intro" | "8K Intro" => 0x759525,
-        "64K Intro" => 0x60a060,
-        "40K Intro" => 0x30a060,
-        "256b Intro" | "128b Intro" | "64b Intro" => 0x505090,
-        "Invitation" => 0x40c000,
+        "Demo" => 0x80fffe,
+        "Intro" => 0xa06060,
+        "4K Intro" => 0x60e060,
+        "8K Intro" => 0x60e0e0,
+        "64K Intro" => 0xb07070,
+        "40K Intro" => 0xb08050,
+        "Crack" => 0x808080,
+        "256b Intro" | "128b Intro" | "64b Intro" => 0x905090,
+        "Invitation" => 0xe0e050,
         _ => 0xff00ff00,
     }
 }
@@ -409,7 +432,7 @@ fn platform_icon(platform: &str) -> char {
     match platform {
         "Windows" => '',
         "MS-Dos" => '',
-        "Atari 2600" | "SNES" => '',
+        "Atari 2600" | "SNES" | "Neo Geo" => '',
         "ZX Spectrum" => '󰨛',
         "Gameboy" | "GBA" | "Lynx" => '󱎓',
         "Amiga" | "Amiga AGA" | "Atari ST" => '󰉉',
