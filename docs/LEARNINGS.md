@@ -36,6 +36,7 @@
   when demarc failed to start the keys went to the user's browser. Check the
   process and window exist first, or stay with `--remote-control`.
 
-- A load only reaches the cross fade spare (and so the DJ window) as an
-  *advance* — `run_next`/`run_prev` on a view, which `hijack_load` moves over. A
-  `LoadFile` written directly loads onto the view on screen.
+- The cross fade takes a load in `load_file` (`cross_fade::redirect_load`), so
+  anything that should fade in — or land on the DJ cue — has to arrive as a
+  `LoadFile` message; check `git log -S` before blaming the change at hand for
+  a regression.

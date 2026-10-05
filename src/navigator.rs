@@ -11,8 +11,6 @@ use crate::commands::{DownloadSource, IconMode, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
-use crate::emulator::Emulator;
-use crate::frontend::{EmuView, FrontendSet};
 use crate::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 use crate::loading::LoadFile;
 use crate::playlists::{FAVORITES, Playlists};
@@ -524,7 +522,6 @@ fn handle_selection(
     mut navigator: ResMut<Navigator>,
     mut reader: MessageReader<FuzzyListSelect>,
     mut load_writer: MessageWriter<LoadFile>,
-    mut emus: Query<(&EmuView, &mut Emulator)>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
     mut settings: ResMut<AppSettings>,
     mut playlists: ResMut<Playlists>,
@@ -574,21 +571,13 @@ fn handle_selection(
                     navigator.current_launch = Some(Launch {
                         source: source.clone(),
                         ids,
-                        // One short, and booted as an advance onto it, so
-                        // the cross fade can take the load.
-                        index: index as isize - 1,
-                    });
-                    for (view, mut emu) in &mut emus {
-                        if view.index == settings.current_emu {
-                            emu.run_next = true;
-                        }
-                    }
-                } else {
-                    load_writer.write(LoadFile {
-                        emu_file,
-                        target_emulator: None,
+                        index: index as isize,
                     });
                 }
+                load_writer.write(LoadFile {
+                    emu_file,
+                    target_emulator: None,
+                });
             } else {
                 navigator.enter(&msg.text).show(&mut list_writer);
             }
@@ -618,9 +607,7 @@ impl Plugin for NavigatorPlugin {
                 Update,
                 (
                     update_navigator,
-                    handle_selection
-                        .run_if(on_message::<FuzzyListSelect>)
-                        .in_set(FrontendSet::Input),
+                    handle_selection.run_if(on_message::<FuzzyListSelect>),
                 ),
             );
     }

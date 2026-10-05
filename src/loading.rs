@@ -8,7 +8,8 @@ use std::time::Duration;
 use anyhow::Result;
 use bevy::prelude::*;
 
-use crate::config::AppSettings;
+use crate::config::{AppSettings, Args};
+use crate::cross_fade::{CrossFade, Views, redirect_load};
 use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
 use crate::frontend::{EmuView, FrontendSet};
@@ -301,6 +302,7 @@ impl Emulator {
     // [`FileSource::resolve_with_progress`] forwards).
 
     /// True while a [`load_async`] download is outstanding.
+    #[cfg(test)]
     pub fn is_loading(&self) -> bool {
         self.pending_load.is_some()
     }
@@ -379,9 +381,11 @@ impl Emulator {
 }
 
 pub fn load_file(
-    mut emus: Query<(&EmuView, &mut Emulator)>,
+    mut emus: Views,
     mut reader: MessageReader<LoadFile>,
     settings: ResMut<AppSettings>,
+    mut cross_fade: ResMut<CrossFade>,
+    args: Res<Args>,
 ) {
     for game in reader.read() {
         debug!("Got load file message");
@@ -391,8 +395,9 @@ pub fn load_file(
         }
 
         let emu_index = game.target_emulator.unwrap_or(settings.current_emu);
+        let emu_index = redirect_load(&mut cross_fade, &mut emus, emu_index, args.dj_mode);
 
-        for (view, mut emu) in &mut emus {
+        for (_, mut emu, view, ..) in &mut emus {
             if view.index == emu_index {
                 if let Some(previous) = &emu.pending_load {
                     previous.phase.cancel();

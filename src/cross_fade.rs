@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::Args;
 use crate::emulator::Emulator;
-use crate::frontend::{EmuView, FrontendSet, GridCell, grid_cells, spawn_emulator};
+use crate::frontend::{EmuView, GridCell, grid_cells, spawn_emulator};
 use crate::loading::LoadFinished;
 use crate::post_process::PostProcess;
 
@@ -18,7 +18,7 @@ const DELAY_TIME: f32 = 5.0;
 const FADE_TIME: f32 = 2.0;
 
 #[derive(Resource, Default)]
-struct CrossFade {
+pub(crate) struct CrossFade {
     spare: Option<Entity>,
     /// The view the load in flight was taken from.
     origin: Option<Entity>,
@@ -34,7 +34,7 @@ struct CrossFade {
     armed: bool,
 }
 
-type Views<'w, 's> = Query<
+pub(crate) type Views<'w, 's> = Query<
     'w,
     's,
     (
@@ -128,86 +128,45 @@ fn swap_roles(
     state.armed = false;
 }
 
-/// Move a pending advance off the view that asked for it and onto the spare, so
-/// `handle_loading` drives the load there instead.
-fn hijack_load(mut state: ResMut<CrossFade>, mut views: Views, args: Res<Args>) {
-    // An advance asked for while the fade is still running ends it early; the
-    // request moves to the view that just took over and is hijacked below.
+/// Take a load meant for view `index` and return the view to run it in: the
+/// spare, which then fades in over the view that asked.
+pub(crate) fn redirect_load(
+    state: &mut CrossFade,
+    views: &mut Views,
+    index: usize,
+    dj_mode: bool,
+) -> usize {
+    if state.spare.is_none() || index == CROSSFADE_INDEX {
+        return index;
+    }
+    // A load that is still fading in is cut short and takes the view at once.
+    // In DJ mode one that has not been brought over yet is simply replaced.
     if state.loaded_at.is_some() {
-        let (Some(origin), Some(takes_over)) = (state.origin, state.spare) else {
-            return;
-        };
-        let Ok((_, mut emu, ..)) = views.get_mut(origin) else {
-            return;
-        };
-        let advance = (emu.run_next, emu.run_prev);
-        if !(advance.0 || advance.1) {
-            return;
-        }
-        // In DJ mode a waiting load has not reached the screen at all, so the
-        // new one simply replaces it — the advance is left where it is and
-        // hijacked below.
-        if args.dj_mode && state.fade_at.is_none() {
+        if dj_mode && state.fade_at.is_none() {
             state.loaded_at = None;
         } else {
-            (emu.run_next, emu.run_prev) = (false, false);
-            swap_roles(&mut state, &mut views);
-            if let Ok((_, mut emu, ..)) = views.get_mut(takes_over) {
-                (emu.run_next, emu.run_prev) = advance;
-            }
+            swap_roles(state, views);
         }
     }
-
-    let Some(spare) = state.spare else {
-        return;
-    };
-    let Ok((_, emu, ..)) = views.get(spare) else {
-        return;
-    };
-    if emu.is_loading() || emu.run_next || emu.run_prev {
-        // The cue is busy. In DJ mode the request is dropped rather than left
-        // where it is: `handle_loading` would otherwise act on it where it
-        // stands and load over the view that is on screen.
-        if args.dj_mode {
-            for (_, mut emu, ..) in views.iter_mut() {
-                if !emu.is_crossfade {
-                    (emu.run_next, emu.run_prev) = (false, false);
-                }
-            }
-        }
-        return;
-    }
-
-    // Find any emulator (that is not the spare) that wants to load (ie run_next or run_prev = true)
-    let Some((origin, advance, index, cell)) = views
+    let Some((origin, cell)) = views
         .iter()
-        .find(|(_, emu, ..)| !emu.is_crossfade && (emu.run_next || emu.run_prev))
-        .map(|(e, emu, view, _, cell)| {
-            (e, (emu.run_next, emu.run_prev), view.index, cell.copied())
-        })
+        .find(|(_, _, view, ..)| view.index == index)
+        .map(|(entity, _, _, _, cell)| (entity, cell.copied()))
     else {
-        return;
+        return index;
     };
-
-    // Stop that emulator from loading
-    if let Ok((_, mut emu, ..)) = views.get_mut(origin) {
-        emu.run_next = false;
-        emu.run_prev = false;
-    }
-    let Ok((_, mut emu, _, _, spare_cell)) = views.get_mut(spare) else {
-        return;
-    };
-
-    // Copy over from origin -> spare
-    (emu.run_next, emu.run_prev) = advance;
     // Same rectangle as the view it is loading for, ready for the fade.
-    if let (Some(mut spare_cell), Some(cell)) = (spare_cell, cell) {
+    if let Some(spare) = state.spare
+        && let Ok((.., Some(mut spare_cell))) = views.get_mut(spare)
+        && let Some(cell) = cell
+    {
         *spare_cell = cell;
     }
-    debug!("Hijacked load for view {index} into the cross fade emulator");
+    debug!("Redirected load for view {index} into the cross fade emulator");
     state.origin = Some(origin);
     // A fade asked for before this load was started is not a fade of it.
     state.armed = false;
+    CROSSFADE_INDEX
 }
 
 /// [`Cmd::StartOther`]: bring the cue in by hand.
@@ -292,10 +251,6 @@ impl Plugin for CrossFadePlugin {
             .add_systems(
                 Update,
                 (
-                    // Between everything that arms an advance and the system
-                    // that acts on one, so a load is never started on the view
-                    // it was requested from.
-                    hijack_load.in_set(FrontendSet::Update),
                     start_fade.run_if(on_message::<LoadFinished>),
                     arm_fade.run_if(on_message::<CmdMessage>),
                     run_fade,
