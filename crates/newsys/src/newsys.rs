@@ -195,7 +195,8 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
             wf = WorkFile::new_dir_with_meta(meta.clone())?;
             debug!("Unpacking {path:?} to {wf:?}");
             unpack_into(path, &wf)?;
-            if meta.get("platform") == Some(&("C64".to_string())) {
+            // TODO: Better way of figuring out if we should recursively unpack.
+            if meta.get("platform") != Some(&("Windows".to_string())) {
                 walk_dir(&wf, 4, |f, _, _| {
                     if has_archive_filename(f)? {
                         debug!("File was double packed");
