@@ -781,10 +781,6 @@ impl GameInfo {
     }
 }
 
-fn strip_first(s: &str, c: char) -> &str {
-    s.strip_prefix(c).unwrap_or(s)
-}
-
 trait StripFirst {
     fn strip_first(&self, c: char) -> &str;
 }
@@ -859,12 +855,6 @@ impl EmuFile {
             .strip_first('=')
             .parse::<i32>()
             .unwrap_or(253)
-    }
-    pub fn get_placement(&self) -> Option<String> {
-        let Some(party) = self.meta.get("party") else {
-            return None;
-        };
-        party.splitn(3, ";").nth(2).map(|s| s.to_owned())
     }
 
     pub fn cdc(&self) -> usize {

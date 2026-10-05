@@ -297,6 +297,7 @@ const MODE2_SECTOR: usize = 2336;
 
 /// The same sector as a real CD carries it, which is the only raw layout the
 /// cores read.
+#[allow(dead_code)]
 const MODE2_RAW_SECTOR: usize = 2352;
 
 /// Sectors of the root directory [`DiscImage::root_names`] will read before

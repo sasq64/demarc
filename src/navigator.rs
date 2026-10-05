@@ -153,21 +153,6 @@ impl Navigator {
         }
     }
 
-    /// Index into the `[EmuFile]` array of the selected entry in the current list.
-    pub(crate) fn selected_file_index(&self) -> Option<usize> {
-        let list = self.stack.get(usize::try_from(self.pos).ok()?)?;
-        debug!(
-            "Selected {} {:?}",
-            list.selected?,
-            list.source.file_index(list.selected?)
-        );
-        list.source.file_index(list.selected?)
-    }
-    pub(crate) fn next_index(&self) -> Option<usize> {
-        let list = self.stack.get(usize::try_from(self.pos + 1).ok()?)?;
-        list.source.file_index(list.selected?)
-    }
-
     pub(crate) fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
         if self.pos != self.showing {
             self.stack[self.pos as usize].show(lw);

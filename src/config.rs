@@ -596,28 +596,8 @@ impl AppSettings {
         self.files.values().next().copied().unwrap_or(&[])
     }
 
-    /// The override to load the entry at `index` with: whatever
-    /// `overrides.toml` said about the release it is, with `--boot-file` and a
-    /// hand-picked download written over the top.
-    pub fn override_for(&self, index: usize) -> Option<Override> {
-        let from_file = self
-            .default_db()
-            .get(index)
-            .and_then(EmuFile::demo_id)
-            .and_then(|id| self.overrides.get(&id));
-        if from_file.is_none() && self.boot_file.is_none() {
-            return None;
-        }
-        let mut over = from_file.cloned().unwrap_or_default();
-        if self.boot_file.is_some() {
-            over.boot_file = self.boot_file;
-        }
-        Some(over)
-    }
     pub fn override_for_file(&self, emu_file: &EmuFile) -> Option<Override> {
-        let from_file = emu_file
-            .demo_id()
-            .and_then(|id| self.overrides.get(&id));
+        let from_file = emu_file.demo_id().and_then(|id| self.overrides.get(&id));
         if from_file.is_none() && self.boot_file.is_none() {
             return None;
         }
