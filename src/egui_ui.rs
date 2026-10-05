@@ -51,7 +51,10 @@ static STAR_SVG: &[u8] = include_bytes!("../files/viewingtip.svg");
 
 /// Rasterize an SVG (from bytes) into an egui::ColorImage at the given
 /// pixel size. `target_size` is in physical pixels.
-pub(crate) fn rasterize_svg(svg_bytes: &[u8], target_size: [u32; 2]) -> anyhow::Result<egui::ColorImage> {
+pub(crate) fn rasterize_svg(
+    svg_bytes: &[u8],
+    target_size: [u32; 2],
+) -> anyhow::Result<egui::ColorImage> {
     let opt = usvg::Options::default();
 
     // If your SVG uses system fonts (text elements), you need a fontdb.
@@ -193,7 +196,11 @@ fn list_icon_texture(ctx: &egui::Context, id: u32) -> Option<egui::TextureId> {
         return Some(handle.id());
     }
     let image = LIST_ICONS.lock().ok()?.get(&id).cloned()?;
-    let handle = ctx.load_texture(format!("list_icon_{id}"), image, egui::TextureOptions::LINEAR);
+    let handle = ctx.load_texture(
+        format!("list_icon_{id}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
     let texture_id = handle.id();
     ctx.data_mut(|d| d.insert_temp(key, handle));
     Some(texture_id)
