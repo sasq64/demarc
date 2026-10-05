@@ -75,7 +75,10 @@ fn set_meta_reaches_the_next_release() {
             .get_meta_or("latency", "")
     };
 
-    let sys = NewSys::new(&SysOpts { latency: 2, ..Default::default() });
+    let sys = NewSys::new(&SysOpts {
+        latency: 2,
+        ..Default::default()
+    });
     assert_eq!(latency_of(&sys), "2");
 
     sys.set_meta("latency", "5".into());

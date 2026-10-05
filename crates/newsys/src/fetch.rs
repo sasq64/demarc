@@ -29,7 +29,6 @@ pub fn bytes_in_progress() -> u64 {
     BYTES_IN_PROGRESS.load(Ordering::Relaxed)
 }
 
-
 /// Give up after this many HTTP redirects, matching typical browser limits.
 const MAX_REDIRECTS: usize = 10;
 

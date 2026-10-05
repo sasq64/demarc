@@ -15,16 +15,16 @@ pub use retro_core::{backend, libretro, pixels, retro_emu};
 
 // Likewise the loading pipeline and the backends that need no frontend. Both
 // re-export blocks keep the rest of demarc's `crate::<module>` paths working.
-pub use ::newsys::{
-    cache, cbmconvert, degas, fetch, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
-    system_dir, tiff_pal, utils, workfile, zx_scr,
-};
 #[cfg(target_os = "windows")]
 pub use ::newsys::win_runner;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub use ::newsys::wine;
 #[cfg(target_os = "linux")]
 pub use ::newsys::wine_sandbox;
+pub use ::newsys::{
+    cache, cbmconvert, degas, fetch, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
+    system_dir, tiff_pal, utils, workfile, zx_scr,
+};
 
 mod audio;
 mod commands;

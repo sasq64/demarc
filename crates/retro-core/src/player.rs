@@ -703,7 +703,11 @@ impl App {
     }
 
     fn mods_with_shift(&self, shifted: bool) -> u16 {
-        let extra = if shifted { libretro::RETROKMOD_SHIFT } else { 0 };
+        let extra = if shifted {
+            libretro::RETROKMOD_SHIFT
+        } else {
+            0
+        };
         self.mods() | extra as u16
     }
 

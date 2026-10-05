@@ -205,7 +205,9 @@ impl Playlists {
 
     pub fn find(&self, name: &str) -> Option<usize> {
         let name = name.trim().to_lowercase();
-        self.lists.iter().position(|l| l.name.to_lowercase() == name)
+        self.lists
+            .iter()
+            .position(|l| l.name.to_lowercase() == name)
     }
 
     /// Index of the list called `name`, created empty if there is none yet.

@@ -2,7 +2,6 @@ use super::*;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-
 use crate::SysOpts;
 use crate::newsys::NewSys;
 use crate::system_dir;

@@ -62,7 +62,10 @@ fn folds_assigns_into_one_meta_value() {
     )
     .unwrap();
     assert_eq!(overrides[&zoo(119665)].meta["assign"], "Love=SYS:");
-    assert_eq!(overrides[&zoo(2)].meta["assign"], "Data=DH0:data;Music=DH0:mod");
+    assert_eq!(
+        overrides[&zoo(2)].meta["assign"],
+        "Data=DH0:data;Music=DH0:mod"
+    );
     // Nothing written, nothing set — the Amiga side never sees the key.
     assert!(
         !parse("[zoo.3]\nfile = \"a.zip\"\n").unwrap()[&zoo(3)]

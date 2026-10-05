@@ -131,7 +131,11 @@ pub fn apply_settings(
         }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {
-            apply_wine(&new.wine, &current.wine, &mut app_settings.system.meta_mut());
+            apply_wine(
+                &new.wine,
+                &current.wine,
+                &mut app_settings.system.meta_mut(),
+            );
         }
         *current = new.clone();
     }

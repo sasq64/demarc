@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use super::System;
-use crate::opts::CbmSystem;
 use crate::newsys::{collect_disk_images, walk_dir};
+use crate::opts::CbmSystem;
 use crate::{SysOpts, workfile::WorkFile};
 
 /// yapesdl, built as a libretro core out of `external/yapesdl` — see its

@@ -1,9 +1,7 @@
 use super::*;
 
 fn testdata() -> PathBuf {
-    Path::new(env!("DEMARC_ROOT"))
-        .join("testdata")
-        .join("psx")
+    Path::new(env!("DEMARC_ROOT")).join("testdata").join("psx")
 }
 
 fn temp_dir(name: &str) -> PathBuf {

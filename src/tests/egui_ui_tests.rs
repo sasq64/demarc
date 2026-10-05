@@ -42,6 +42,9 @@ fn list_box_is_full_height_at_once() {
     let size = egui::vec2(1920.0, 1080.0);
     let want = (size.y * LIST_HEIGHT_FRACTION / ROW_HEIGHT).floor() * ROW_HEIGHT;
     for h in list_heights(size, 200, 3) {
-        assert!((h - want).abs() < 1.0, "list box {h} points tall, want {want}");
+        assert!(
+            (h - want).abs() < 1.0,
+            "list box {h} points tall, want {want}"
+        );
     }
 }

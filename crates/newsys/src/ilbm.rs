@@ -186,13 +186,7 @@ fn display_scale(form_type: &str, header: &BmHeader, camg: u32) -> (usize, usize
 /// Replicate each element of a `width` x `height` grid `sx` times horizontally
 /// and `sy` times vertically (nearest-neighbour upscale). Used to apply the
 /// aspect-ratio correction from [`display_scale`] to pixels or palette indices.
-pub fn scale_grid<T: Copy>(
-    src: &[T],
-    width: usize,
-    height: usize,
-    sx: usize,
-    sy: usize,
-) -> Vec<T> {
+pub fn scale_grid<T: Copy>(src: &[T], width: usize, height: usize, sx: usize, sy: usize) -> Vec<T> {
     if sx == 1 && sy == 1 {
         return src.to_vec();
     }

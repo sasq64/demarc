@@ -11,9 +11,12 @@ fn entry(line: &'static str) -> EmuFile {
 
 #[test]
 fn entry_round_trips_through_json() {
-    let file = entry("id:42\ttitle:Zentro\tauthor:Zenith\tdate:1992-04-01\tdownload:http://x/z.zip\n");
+    let file =
+        entry("id:42\ttitle:Zentro\tauthor:Zenith\tdate:1992-04-01\tdownload:http://x/z.zip\n");
     let json = serde_json::to_string(&PlaylistEntry::new(&file, "")).unwrap();
-    let back = serde_json::from_str::<PlaylistEntry>(&json).unwrap().to_emu_file();
+    let back = serde_json::from_str::<PlaylistEntry>(&json)
+        .unwrap()
+        .to_emu_file();
     assert_eq!(back.game_info.title, "Zentro");
     assert_eq!(back.game_info.group, "Zenith");
     assert_eq!(back.game_info.year(), 1992);

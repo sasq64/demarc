@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use bevy::MinimalPlugins;
 use ::newsys::SysOpts;
+use bevy::MinimalPlugins;
 
 use super::*;
 use crate::emu_file::{DOWNLOAD_COUNTER, FileSource, GameInfo, UrlList};
