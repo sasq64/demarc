@@ -18,11 +18,11 @@ use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 
 /// Icons for the root list, as nerd font glyphs: the favorites playlist, the
 /// other playlists, and the databases.
-const FAVORITES_ICON: ListIcon = ListIcon::Glyph('\u{f004}', 0xff4040);
-const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('\u{f0cb9}', 0x4080ff);
-const DATABASE_ICON: ListIcon = ListIcon::Glyph('\u{f01bc}', 0xa0d8ff);
+const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
+const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
+const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
 
-const PARTY_ICON: char = '\u{f1056}';
+const PARTY_ICON: char = '󰍖';
 /// Saturation and brightness of the per-party colours; tweak to taste.
 const PARTY_SATURATION: f32 = 0.65;
 const PARTY_VALUE: f32 = 0.75;
@@ -373,7 +373,7 @@ pub fn setup_navigator(
     }
 
     navigator.register("All", |_path: &[&str], files: &'static [EmuFile]| {
-        Some(PickerSource::new(files, None, IconMode::All))
+        Some(PickerSource::new(files, None, IconMode::Categories))
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
@@ -421,7 +421,11 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("platform") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            Some(PickerSource::new(files, Some(subset), IconMode::Categories))
+            Some(PickerSource::new(
+                files,
+                Some(subset),
+                IconMode::CategoryOnly,
+            ))
         },
     )?;
 
@@ -434,7 +438,11 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("category") == path[1])
                 .map(|(i, _)| i as u32)
                 .collect();
-            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
+            Some(PickerSource::new(
+                files,
+                Some(subset),
+                IconMode::PlatformOnly,
+            ))
         },
     )?;
     navigator.register(
@@ -472,10 +480,10 @@ pub fn setup_navigator(
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         return Some(WordsIconSource::new(
             [
-                ("All".into(), ListIcon::Glyph('\u{f069}', 0xffff00)),
+                ("All".into(), ListIcon::Glyph('', 0xffff00)),
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
-                ("Platforms".into(), ListIcon::Glyph('\u{f0379}', 0xc0f0c0)),
-                ("Categories".into(), ListIcon::Glyph('\u{f03a}', 0xf0a080)),
+                ("Platforms".into(), ListIcon::Glyph('󰍹', 0xc0f0c0)),
+                ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
             ]
             .into(),
         ));

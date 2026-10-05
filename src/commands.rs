@@ -279,6 +279,8 @@ fn handle_textlist(
 pub enum IconMode {
     Platforms,
     Categories,
+    PlatformOnly,
+    CategoryOnly,
     All,
 }
 
@@ -359,54 +361,76 @@ impl FuzzySource<EmuFile> for PickerSource {
         self.index(id)
     }
     fn get_icon(&self, id: usize) -> Option<ListIcon> {
-        let p = self
-            .file(id)
-            .unwrap()
-            .get_meta("platform")
-            .split(';')
-            .next()
-            .expect("Split must give one element");
-        let c = self
-            .file(id)
-            .unwrap()
-            .get_meta("category")
-            .split(';')
-            .next()
-            .expect("Split must give one element");
-        if self.mode == IconMode::Categories {
-            match (p, c) {
-                (_, "Music") => Some(ListIcon::Glyph('\u{f001}', 0x40c0f0)),
-                (_, "Graphics") => Some(ListIcon::Glyph('\u{f1fc}', 0xf0c0f0)),
-                (_, "Demo") => Some(ListIcon::Glyph('\u{f1104}', 0xe0e0ff)),
-                (_, "Intro") => Some(ListIcon::Glyph('\u{f1104}', 0xc0c0c0)),
-                (_, "4K Intro" | "8K Intro") => Some(ListIcon::Glyph('\u{f1104}', 0x759525)),
-                (_, "64K Intro") => Some(ListIcon::Glyph('\u{f1104}', 0x60a060)),
-                (_, "256b Intro" | "128b Intro" | "64b Intro") => {
-                    Some(ListIcon::Glyph('\u{f1104}', 0x505090))
-                }
-                (_, "Invitation") => Some(ListIcon::Glyph('\u{f0ebb}', 0x40c000)),
-                _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
-            }
-        } else if self.mode == IconMode::Platforms {
-            match (p, c) {
-                ("Windows", _) => Some(ListIcon::Glyph('\u{e70f}', 0x40c0f0)),
-                ("MS-Dos", _) => Some(ListIcon::Glyph('\u{e629}', 0xe09090)),
-                ("Atari 2600", _) => Some(ListIcon::Glyph('\u{f11b}', 0xa0a0a0)),
-                ("ZX Spectrum", _) => Some(ListIcon::Glyph('\u{f0a1b}', 0xe0e030)),
-                ("SNES", _) => Some(ListIcon::Glyph('\u{f11b}', 0xa0a0a0)),
-                ("Gameboy" | "GBA", _) => Some(ListIcon::Glyph('\u{f1393}', 0xa0a0a0)),
-                ("Amiga" | "Amiga AGA", _) => Some(ListIcon::Glyph('\u{f0249}', 0xff7070)),
-                ("Atari ST", _) => Some(ListIcon::Glyph('\u{f0249}', 0x7070ff)),
-                ("C16", _) => Some(ListIcon::Glyph('\u{f09ef}', 0x906090)),
-                ("C64", _) => Some(ListIcon::Glyph('\u{f09ef}', 0x909060)),
-                ("PlayStation" | "PSP" | "Megadrive", _) => {
-                    Some(ListIcon::Glyph('\u{f0296}', 0x20df30))
-                }
-                _ => Some(ListIcon::Glyph('x', 0xff00ff00)),
-            }
-        } else {
-            None
+        let file = self.file(id)?;
+        let p = file.get_meta("platform").split(';').next()?;
+        let c = file.get_meta("category").split(';').next()?;
+        match self.mode {
+            // IconMode::Categories => Some(ListIcon::Glyph(category_icon(c), platform_color(p))),
+            // IconMode::Platforms => Some(ListIcon::Glyph(platform_icon(p), category_color(c))),
+            IconMode::Categories => Some(ListIcon::Glyph(category_icon(c), category_color(p))),
+            IconMode::Platforms => Some(ListIcon::Glyph(platform_icon(p), platform_color(c))),
+            IconMode::CategoryOnly => Some(ListIcon::Glyph(category_icon(c), category_color(p))),
+            IconMode::PlatformOnly => Some(ListIcon::Glyph(platform_icon(p), platform_color(c))),
+            IconMode::All => None,
         }
+    }
+}
+
+fn category_icon(category: &str) -> char {
+    match category {
+        "Music" => '',
+        "Graphics" => '',
+        "Tool" | "Other Platform C64 Tool" => '󱁤',
+        "Game" | "Game Preview" => '󰊖',
+        "Crack" => '󰋮',
+        "Demo" | "Intro" | "4K Intro" | "8K Intro" | "64K Intro" | "40k Intro" | "256b Intro"
+        | "128b Intro" | "64b Intro" => '󱄄',
+        "Invitation" => '󰺻',
+        _ => '󰧯',
+    }
+}
+
+fn category_color(category: &str) -> u32 {
+    match category {
+        "Music" => 0x40c0f0,
+        "Graphics" => 0xf0c0f0,
+        "Demo" => 0xe0e0ff,
+        "Intro" => 0xc0c0c0,
+        "4K Intro" | "8K Intro" => 0x759525,
+        "64K Intro" => 0x60a060,
+        "40K Intro" => 0x30a060,
+        "256b Intro" | "128b Intro" | "64b Intro" => 0x505090,
+        "Invitation" => 0x40c000,
+        _ => 0xff00ff00,
+    }
+}
+
+fn platform_icon(platform: &str) -> char {
+    match platform {
+        "Windows" => '',
+        "MS-Dos" => '',
+        "Atari 2600" | "SNES" => '',
+        "ZX Spectrum" => '󰨛',
+        "Gameboy" | "GBA" | "Lynx" => '󱎓',
+        "Amiga" | "Amiga AGA" | "Atari ST" => '󰉉',
+        "C16" | "Amstrad CPC" | "C64" | "Atari XL" => '󰧯',
+        "PlayStation" | "PSP" | "Megadrive" => '󰊖',
+        _ => ' ',
+    }
+}
+
+fn platform_color(platform: &str) -> u32 {
+    match platform {
+        "Windows" => 0x40c0f0,
+        "MS-Dos" => 0xe09090,
+        "Atari 2600" | "SNES" | "Gameboy" | "GBA" => 0xa0a0a0,
+        "ZX Spectrum" => 0xe0e030,
+        "Amiga" | "Amiga AGA" | "C64" => 0xe0e070,
+        "Atari ST" | "Atari XL" => 0xe08080,
+        "C16" => 0x906060,
+        "Amstrad CPC" => 0x40a070,
+        "PlayStation" | "PSP" | "Megadrive" => 0x20df30,
+        _ => 0xff00ff00,
     }
 }
 
