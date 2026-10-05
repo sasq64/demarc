@@ -12,32 +12,27 @@
 //!
 //! Bevy's keyboard and mouse state is one set of resources for the whole app,
 //! not one per window, so [`DjWindow::focused`] is what the consumers of it
-//! test: while this window has focus the picker is drawn here, per-emulator
-//! commands go to the cue, and the main window's view is left alone.
+//! test: while this window has focus per-emulator commands go to the cue, and
+//! the main window's view is left alone.
 //!
-//! The HUD overlay moves here for good: in DJ mode the main window is what the
-//! audience sees, so warp indicators, info text and download progress belong on
-//! this side of the desk.
+//! The app's one Egui context lives here instead of on the main window: in DJ
+//! mode the main window is what the audience sees, so the HUD, the picker and
+//! the dialogs belong on this side of the desk.
 
 use bevy::camera::RenderTarget;
-use bevy::ecs::schedule::ScheduleLabel;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::window::WindowRef;
 use bevy::{camera::visibility::RenderLayers, prelude::*};
-use bevy_egui::{EguiContexts, EguiSchedule};
+use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext, input::FocusedNonWindowEguiContext};
 
 use crate::config::Args;
-use crate::egui_ui::{AppFont, HudState, apply_style, draw_hud, draw_picker, set_scale};
 use crate::emulator::Emulator;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
-use crate::ui::FuzzyListSelect;
 
 /// Present only in DJ mode, so its absence is what the rest of the app tests.
 #[derive(Resource)]
 pub struct DjWindow {
     window: Entity,
-    /// The camera holding this window's Egui context.
-    ui: Entity,
     /// Whether this window, rather than the main one, has the keyboard.
     pub focused: bool,
 }
@@ -45,6 +40,12 @@ pub struct DjWindow {
 /// Whether the DJ window owns the input this frame.
 pub fn has_focus(dj: Option<&DjWindow>) -> bool {
     dj.is_some_and(|dj| dj.focused)
+}
+
+/// Whether `--dj-mode` opens its window: there is none to open it next to
+/// headless.
+pub fn enabled(args: &Args) -> bool {
+    args.dj_mode && !args.headless
 }
 
 /// Marks the camera that draws the DJ window.
@@ -55,13 +56,9 @@ pub struct DjCamera;
 #[derive(Component, Clone, Copy, ExtractComponent)]
 pub struct DjView;
 
-/// The Egui pass of the DJ window's context.
-#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
-struct DjContextPass;
-
 const DJ_SIZE: (u32, u32) = (720, 540);
 
-fn setup_dj(mut commands: Commands) {
+fn setup_dj(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
     let window = commands
         .spawn(Window {
             title: "Demarc DJ".into(),
@@ -92,9 +89,13 @@ fn setup_dj(mut commands: Commands) {
             },
             target,
             RenderLayers::layer(3),
-            EguiSchedule::new(DjContextPass),
+            PrimaryEguiContext,
         ))
         .id();
+    // Egui only hears the keyboard of its own window, and the picker has to
+    // work from the main one too.
+    egui.enable_focused_non_window_context_updates = false;
+    commands.insert_resource(FocusedNonWindowEguiContext(ui));
 
     // Pointed at the spare by `update_dj_view` on the first frame; until then
     // there is no source image and the view is simply skipped.
@@ -117,7 +118,6 @@ fn setup_dj(mut commands: Commands) {
 
     commands.insert_resource(DjWindow {
         window,
-        ui,
         focused: false,
     });
 }
@@ -149,45 +149,11 @@ fn update_dj_view(
     pp.used = src.used;
 }
 
-/// The DJ window's Egui pass: the HUD overlay, and the file picker while this
-/// window has focus — the main window draws the picker the rest of the time.
-fn dj_ui(
-    mut contexts: EguiContexts,
-    dj: Res<DjWindow>,
-    windows: Query<&Window>,
-    app_font: Res<AppFont>,
-    fonts: Res<Assets<Font>>,
-    mut state: ResMut<HudState>,
-    mut selected: MessageWriter<FuzzyListSelect>,
-    keys: Res<ButtonInput<KeyCode>>,
-    time: Res<Time>,
-    mut styled: Local<bool>,
-) -> Result {
-    let ctx = contexts.ctx_for_entity_mut(dj.ui)?;
-    if !*styled {
-        let Some(font) = fonts.get(&app_font.0) else {
-            return Ok(());
-        };
-        apply_style(ctx, font);
-        *styled = true;
-    }
-    if let Ok(window) = windows.get(dj.window) {
-        set_scale(ctx, window);
-    }
-    draw_hud(ctx, &state, &time);
-    if dj.focused {
-        draw_picker(ctx, &keys, &mut state, &mut selected);
-    }
-    Ok(())
-}
-
 pub struct DjPlugin;
 
 impl Plugin for DjPlugin {
     fn build(&self, app: &mut App) {
-        let args = app.world().resource::<Args>();
-        // No windows at all headless, so nothing to open a second one next to.
-        if !args.dj_mode || args.headless {
+        if !enabled(app.world().resource::<Args>()) {
             return;
         }
         app.add_plugins((
@@ -196,7 +162,6 @@ impl Plugin for DjPlugin {
         ))
         .add_systems(Startup, setup_dj)
         .add_systems(PreUpdate, track_focus)
-        .add_systems(PostUpdate, update_dj_view)
-        .add_systems(DjContextPass, dj_ui);
+        .add_systems(PostUpdate, update_dj_view);
     }
 }

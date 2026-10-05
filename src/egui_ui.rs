@@ -1,6 +1,6 @@
-use bevy::{camera::visibility::RenderLayers, prelude::*, window::PrimaryWindow};
+use bevy::{camera::visibility::RenderLayers, prelude::*};
 use bevy_egui::{
-    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,
+    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext,
     egui::{self, Ui, scroll_area::ScrollAreaOutput},
 };
 use std::{
@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use crate::config::Args;
 use crate::emu_file::Award;
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, ListIcon};
 use crate::headless::{HeadlessTarget, camera_target};
@@ -27,7 +28,7 @@ pub struct EguiUiPlugin;
 /// up the very same face -- and the same hot-reloaded bytes -- as the Bevy UI in
 /// [`crate::hud`] and [`crate::text_input`].
 #[derive(Resource)]
-pub(crate) struct AppFont(pub Handle<Font>);
+struct AppFont(Handle<Font>);
 
 fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(AppFont(asset_server.load("font.ttf")));
@@ -126,9 +127,8 @@ fn setup_egui(
     Ok(())
 }
 
-/// Give `ctx` the app font and text styles. Every window has its own context,
-/// and a context starts with egui's own defaults.
-pub(crate) fn apply_style(ctx: &egui::Context, font: &Font) {
+/// Give `ctx` the app font and text styles.
+fn apply_style(ctx: &egui::Context, font: &Font) {
     // egui owns its font bytes (it re-parses them for its own atlas), so this
     // copies out of the Bevy asset instead of sharing the `Blob`.
     let mut font_defs = egui::FontDefinitions::default();
@@ -734,27 +734,18 @@ pub(crate) fn update_ui(
     time: Res<Time>,
     mut selected: MessageWriter<FuzzyListSelect>,
     keys: Res<ButtonInput<KeyCode>>,
-    window: Single<&mut Window, With<PrimaryWindow>>,
-    // In DJ mode the overlay belongs on the cue window, and the picker is drawn
-    // on whichever of the two has the keyboard -- see `crate::dj`.
-    dj: Option<Res<crate::dj::DjWindow>>,
+    camera: Single<&Camera, With<PrimaryEguiContext>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
-    set_scale(ctx, &window);
-
-    if dj.is_none() {
-        draw_hud(ctx, &state, &time);
-    }
-    if !crate::dj::has_focus(dj.as_deref()) {
-        draw_picker(ctx, &keys, &mut state, &mut selected);
-    }
+    set_scale(ctx, &camera);
+    draw_hud(ctx, &state, &time);
+    draw_picker(ctx, &keys, &mut state, &mut selected);
     Ok(())
 }
 
 /// The corner texts and the download list: the app's own overlay, drawn over
-/// the picture. In DJ mode this is the cue window's, so the main window shows
-/// nothing but the demo.
-pub(crate) fn draw_hud(ctx: &egui::Context, state: &HudState, time: &Time) {
+/// the picture.
+fn draw_hud(ctx: &egui::Context, state: &HudState, time: &Time) {
     let rect = ctx.content_rect().shrink2(MARGIN);
 
     egui::Area::new(egui::Id::new("overlay"))
@@ -819,16 +810,18 @@ pub(crate) fn draw_hud(ctx: &egui::Context, state: &HudState, time: &Time) {
     render_downloads(ctx, rect.min);
 }
 
-/// Scale `ctx` to `window`, so the UI keeps its proportions whatever the window
-/// is sized at.
-pub(crate) fn set_scale(ctx: &egui::Context, window: &Window) {
-    let scale = (window.height() / 1600.0).clamp(0.2, 8.0);
-    ctx.set_pixels_per_point(window.scale_factor() * scale);
+/// Scale `ctx` to the window `camera` draws to, so the UI keeps its proportions
+/// whatever the window is sized at.
+fn set_scale(ctx: &egui::Context, camera: &Camera) {
+    let (Some(size), Some(factor)) = (camera.logical_target_size(), camera.target_scaling_factor())
+    else {
+        return;
+    };
+    let scale = (size.y / 1600.0).clamp(0.2, 8.0);
+    ctx.set_pixels_per_point(factor * scale);
 }
 
-/// Draws the file picker into `ctx`: the primary window's context, or the DJ
-/// window's under `--dj-mode`.
-pub(crate) fn draw_picker(
+fn draw_picker(
     ctx: &egui::Context,
     keys: &ButtonInput<KeyCode>,
     state: &mut HudState,
@@ -987,9 +980,9 @@ fn sync_ui_state(hud: Res<HudState>, mut ui: ResMut<UiState>) {
     });
 }
 
-fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>) {
+fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>, args: Res<Args>) {
     // Camera for full res UI on top of screen.
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera2d,
         Camera {
             order: 1,
@@ -998,10 +991,11 @@ fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>
         },
         camera_target(headless.as_deref()),
         RenderLayers::layer(2),
-        // egui draws into this camera's pass too, so its output lands on top of
-        // the emulators as well (see `crate::egui_ui`).
-        bevy_egui::PrimaryEguiContext,
     ));
+    // In DJ mode the cue window's camera hosts egui instead (see `crate::dj`).
+    if !crate::dj::enabled(&args) {
+        camera.insert(PrimaryEguiContext);
+    }
 }
 
 impl Plugin for EguiUiPlugin {
@@ -1013,7 +1007,14 @@ impl Plugin for EguiUiPlugin {
             .resource_mut::<EguiGlobalSettings>()
             .auto_create_primary_context = false;
         app.add_systems(Startup, load_font)
-            .add_systems(EguiPrimaryContextPass, (setup_egui, update_ui).chain())
+            .add_systems(
+                EguiPrimaryContextPass,
+                (
+                    setup_egui,
+                    update_ui.run_if(not(resource_exists::<HeadlessTarget>)),
+                )
+                    .chain(),
+            )
             .add_message::<SetHudText>()
             .add_message::<ShowFuzzyList>()
             .add_message::<FuzzyListSelect>()
