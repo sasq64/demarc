@@ -1,4 +1,4 @@
-//! `c64` — a minimal C64 player: one 720x576 window, the VICE libretro core,
+//! `minimarc` — a minimal C64 player: one 720x576 window, the VICE libretro core,
 //! and the lottes CRT shader on top.
 //!
 //! No Bevy, no librashader, no CLI: winit, wgpu and cpal only, which is the

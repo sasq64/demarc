@@ -11,9 +11,9 @@ coverage:
     cargo llvm-cov --workspace --ignore-run-fail --html --open
 
 coverage_text:
-    cargo llvm-cov --workspace ---ignore-run-fail
+    cargo llvm-cov --workspace --ignore-run-fail
 
-# Cross-compile the c64 player for a phone. See docs/ANDROID.md.
+# Cross-compile the minimarc player for a phone. See docs/ANDROID.md.
 android:
     cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
         build -p retro-core --features player --lib --release

@@ -14,8 +14,8 @@ doctest = false
 # The minimal single-core player. `test = false`: the modules it uses carry
 # their own unit tests, which the lib target already runs.
 [[bin]]
-name = "c64"
-path = "src/bin/c64.rs"
+name = "minimarc"
+path = "src/bin/minimarc.rs"
 required-features = ["player"]
 test = false
 
@@ -28,7 +28,7 @@ tracing-subscriber.workspace = true
 # `find_core`'s search of demarc's own core cache.
 dirs.workspace = true
 
-# The window, surface and input for the `c64` player. Optional so that a plain
+# The window, surface and input for the `minimarc` player. Optional so that a plain
 # `retro-core` — which is all demarc and an Android core host need — builds
 # none of it.
 pollster = { workspace = true, optional = true }

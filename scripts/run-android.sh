@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the `c64` player as an Android cdylib, package it into an APK with the
+# Build the `minimarc` player as an Android cdylib, package it into an APK with the
 # VICE core, install and launch it. See docs/ANDROID.md.
 #
 #   scripts/run-android.sh            release build (the default: debug Bevy-less

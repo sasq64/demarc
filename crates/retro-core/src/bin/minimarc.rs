@@ -1,4 +1,4 @@
-//! The `c64` player's entry point. Everything it does lives in
+//! The `minimarc` player's entry point. Everything it does lives in
 //! [`retro_core::player`]; this is only the desktop `main`.
 
 use anyhow::Result;

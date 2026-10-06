@@ -9,7 +9,7 @@ use crate::backend::frame_bytes;
 
 use super::*;
 
-/// The cores these tests boot, looked up the way the `c64` player does. demarc
+/// The cores these tests boot, looked up the way the `minimarc` player does. demarc
 /// downloads them on first use; nothing here does, so run demarc once (or point
 /// `DEMARC_CORE_DIR` at a build) before running these.
 fn core(name: &str) -> PathBuf {
