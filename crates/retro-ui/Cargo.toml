@@ -1,0 +1,14 @@
+[package]
+name = "retro-ui"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "The egui HUD, picker and dialogs, free of any engine or renderer"
+
+[dependencies]
+egui.workspace = true
+nucleo-matcher = "0.3"
+# The shader dialog: `shaders.toml` and its `<Tag>` patterns.
+regex = "1"
+toml = { version = "1.1.4", features = ["preserve_order"] }
+tracing.workspace = true

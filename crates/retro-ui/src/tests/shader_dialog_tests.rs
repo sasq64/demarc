@@ -375,7 +375,7 @@ fn reveal_selects_the_collection_the_preset_came_from() {
 /// which browses nothing.
 #[test]
 fn the_default_collection_is_always_there() {
-    let found = collections(None);
+    let found = collections(None, Path::new("."));
     assert_eq!(found[DEFAULT].label, "Default");
     assert!(found[DEFAULT].browser.is_none());
 }
@@ -386,7 +386,8 @@ fn the_default_collection_is_always_there() {
 #[test]
 #[ignore]
 fn the_installed_collections_browse() {
-    let mut found = collections(None);
+    let shaders = Path::new(env!("DEMARC_ROOT")).join("shaders");
+    let mut found = collections(Some(&shaders), Path::new("."));
     assert!(found.len() > 1, "no shaders.toml, or nothing in it matched");
 
     let pack = found
@@ -395,7 +396,7 @@ fn the_installed_collections_browse() {
         .expect("no Commodore collection");
     let browser = pack.browser.as_mut().expect("a collection with a tree");
 
-    let wanted = Path::new("shaders").join(
+    let wanted = shaders.join(
         "Mega_Bezel_Packs/TheNamec-Commodore/presets/Commodore_Amiga500/Commodore_C1084/MBZ_SHARP_STD/NEAR_CURVED_NIGHT.slangp",
     );
     assert!(browser.reveal(&wanted), "{wanted:?} should be in the pack");
@@ -419,35 +420,6 @@ fn hidden_directories_are_skipped() {
     );
     let browser = pack.browser();
     assert_eq!(raws(&browser.levels[0]), ["Machine"]);
-}
-
-/// The parameter rows of a real preset, which is also where the cost of reading
-/// them shows: a Mega Bezel preset is ~40 passes to preprocess.
-///
-/// `cargo test reads_preset_parameters -- --ignored --nocapture`.
-#[test]
-#[ignore = "needs the shaders/ working checkout"]
-fn reads_preset_parameters() {
-    let preset = Path::new(
-        "shaders/shaders_slang/bezel/Mega_Bezel/Presets/Base_CRT_Presets/MBZ__0__SMOOTH-ADV__GDV.slangp",
-    );
-    let start = std::time::Instant::now();
-    let params = preset_params(preset);
-    println!("{} parameters in {:.2?}", params.len(), start.elapsed());
-    assert!(!params.is_empty());
-    for param in params.iter().take(5) {
-        println!(
-            "{} [{}..{} /{}]",
-            param.name, param.min, param.max, param.step
-        );
-    }
-    assert!(params.iter().all(|p| p.min <= p.max));
-    // Every name is a row of its own.
-    let mut names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
-    names.sort_unstable();
-    let count = names.len();
-    names.dedup();
-    assert_eq!(names.len(), count);
 }
 
 /// A description whose tail lists exactly the values the parameter can take is
@@ -477,4 +449,217 @@ fn an_option_list_becomes_choices() {
         split_options("Brightness", 0.0, 1.0, 0.01).1,
         Vec::<String>::new()
     );
+}
+
+use crate::tests::{Harness, key};
+
+/// What the tests have the default collection described as.
+const DEFAULT_LABEL: &str = "built-in";
+
+fn show(h: &mut Harness, dialog: &mut ShaderDialog) -> Option<ShaderAction> {
+    h.frame(vec![], |ctx| dialog.show(ctx, DEFAULT_LABEL))
+}
+
+/// Clicks the text reading `text` and returns what the dialog did about it,
+/// if anything.
+fn click(h: &mut Harness, dialog: &mut ShaderDialog, text: &str) -> Option<ShaderAction> {
+    h.click_text(text, |ctx| dialog.show(ctx, DEFAULT_LABEL))
+        .into_iter()
+        .flatten()
+        .next()
+}
+
+/// An open dialog over `pack`, two frames in so it is on screen.
+fn open_over(h: &mut Harness, pack: &Pack) -> ShaderDialog {
+    let mut dialog = dialog_over(pack);
+    assert!(dialog.open(None, Path::new("."), None), "was closed");
+    assert!(!dialog.open(None, Path::new("."), None), "already open");
+    show(h, &mut dialog);
+    show(h, &mut dialog);
+    dialog
+}
+
+fn params() -> Vec<ShaderParam> {
+    vec![
+        ShaderParam::new("zoom".into(), "Zoom", 1.0, 0.0, 4.0, 0.5, 1),
+        ShaderParam::new("area".into(), "Area: LEFT | RIGHT", 0.0, 0.0, 1.0, 1.0, 0),
+        ShaderParam::new("bright".into(), "Brightness", 0.5, 0.0, 1.0, 0.01, 0),
+    ]
+}
+
+#[test]
+fn a_closed_dialog_draws_nothing() {
+    let mut h = Harness::new();
+    let mut dialog = ShaderDialog::default();
+    assert!(!dialog.is_open());
+    assert!(show(&mut h, &mut dialog).is_none());
+    assert!(!h.has("Shader"));
+}
+
+/// The default collection is one row, and the line under it says what it
+/// stands for.
+#[test]
+fn the_default_collection_has_no_levels() {
+    let pack = Pack::new("ui-default", SAMPLE);
+    let mut h = Harness::new();
+    let dialog = open_over(&mut h, &pack);
+    assert!(dialog.is_open());
+    for text in ["Shader", "Collection", "Default", DEFAULT_LABEL] {
+        assert!(h.has(text), "{text} missing");
+    }
+    assert!(!h.has("System") && !h.has("Parameters"));
+}
+
+/// Picking a collection reports its first preset, and brings up one combo box
+/// per level; picking in one of those reports the preset that names.
+#[test]
+fn picks_come_back_as_presets() {
+    let pack = Pack::new("ui-picks", SAMPLE);
+    let mut h = Harness::new();
+    let mut dialog = open_over(&mut h, &pack);
+
+    assert!(
+        click(&mut h, &mut dialog, "Default").is_none(),
+        "only opens the box"
+    );
+    let Some(ShaderAction::Preset(Some(path))) = click(&mut h, &mut dialog, "Commodore") else {
+        panic!("picking the collection should name its preset");
+    };
+    assert_eq!(path, pack.0.join(SAMPLE[0]));
+    // The panel grows over a few frames, clipping its new rows until it has.
+    for _ in 0..5 {
+        show(&mut h, &mut dialog);
+    }
+    for text in ["System", "Monitor", "Shader", "Type", "Time", SAMPLE[0]] {
+        assert!(h.has(text), "{text} missing");
+    }
+
+    click(&mut h, &mut dialog, "Bezel Black");
+    let Some(ShaderAction::Preset(Some(path))) = click(&mut h, &mut dialog, "Commodore C1084")
+    else {
+        panic!("picking a level should name the preset");
+    };
+    assert_eq!(path, pack.0.join(SAMPLE[1]));
+
+    click(&mut h, &mut dialog, "Commodore");
+    let picked = click(&mut h, &mut dialog, "Default");
+    assert!(matches!(picked, Some(ShaderAction::Preset(None))));
+}
+
+/// The parameters are read once per preset, sorted by pass and then label,
+/// and sit folded away until asked for.
+#[test]
+fn parameters_are_read_once_and_sorted() {
+    let pack = Pack::new("ui-params", SAMPLE);
+    let mut h = Harness::new();
+    let mut dialog = open_over(&mut h, &pack);
+    let preset = pack.0.join(SAMPLE[0]);
+
+    dialog.refresh_params(Some(&preset), |_| params());
+    dialog.refresh_params(Some(&preset), |_| panic!("already read"));
+    let names: Vec<&str> = dialog.params.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["area", "bright", "zoom"]);
+    assert_eq!(dialog.params[0].label, "Area");
+
+    show(&mut h, &mut dialog);
+    assert!(h.has("Parameters") && !h.has("Brightness"));
+    click(&mut h, &mut dialog, "Parameters");
+    for _ in 0..5 {
+        show(&mut h, &mut dialog);
+    }
+    for text in ["Reset", "Area", "LEFT", "Brightness", "Zoom"] {
+        assert!(h.has(text), "{text} missing");
+    }
+
+    dialog.refresh_params(None, |_| panic!("nothing to read"));
+    assert!(dialog.params.is_empty());
+}
+
+/// An option parameter is a combo box reporting the value of the option
+/// picked, and Reset puts every parameter back.
+#[test]
+fn parameter_edits_and_reset_are_reported() {
+    let pack = Pack::new("ui-edits", SAMPLE);
+    let mut h = Harness::new();
+    let mut dialog = open_over(&mut h, &pack);
+    dialog.refresh_params(Some(&pack.0.join(SAMPLE[0])), |_| params());
+    show(&mut h, &mut dialog);
+    click(&mut h, &mut dialog, "Parameters");
+    for _ in 0..5 {
+        show(&mut h, &mut dialog);
+    }
+
+    click(&mut h, &mut dialog, "LEFT");
+    let Some(ShaderAction::Param(name, value)) = click(&mut h, &mut dialog, "RIGHT") else {
+        panic!("picking an option should set the parameter");
+    };
+    assert_eq!((name.as_str(), value), ("area", 1.0));
+    assert_eq!(dialog.params[0].value, 1.0);
+
+    let reset = click(&mut h, &mut dialog, "Reset");
+    assert!(matches!(reset, Some(ShaderAction::Reset)));
+    assert_eq!(dialog.params[0].value, 0.0);
+}
+
+/// A level with nothing to offer is a dash rather than an empty combo box.
+#[test]
+fn an_empty_level_is_a_dash() {
+    let state = Level::default();
+    let mut h = Harness::new();
+    for _ in 0..2 {
+        h.frame(vec![], |ctx| {
+            egui::Area::new(egui::Id::new("test"))
+                .show(ctx, |ui| assert_eq!(draw_level(ui, 0, &state), None));
+        });
+    }
+    assert!(h.has("—"));
+}
+
+#[test]
+fn escape_closes_the_dialog() {
+    let pack = Pack::new("ui-escape", SAMPLE);
+    let mut h = Harness::new();
+    let mut dialog = open_over(&mut h, &pack);
+    let action = h.frame(vec![key(egui::Key::Escape)], |ctx| {
+        dialog.show(ctx, DEFAULT_LABEL)
+    });
+    assert!(action.is_none());
+    assert!(!dialog.is_open());
+}
+
+/// The first open reads `shaders.toml` -- from the shader dir, or from the
+/// system dir failing that -- and comes up on the preset it was handed.
+#[test]
+fn opening_reads_the_config_and_reveals_the_preset() {
+    let pack = Pack::new("ui-open", SAMPLE);
+    let config = format!("[Commodore]\npattern = \"{PACK}\"\n");
+    let preset = pack.0.join(SAMPLE[4]);
+
+    std::fs::write(pack.0.join(CONFIG_PATH), &config).expect("config");
+    let mut dialog = ShaderDialog::default();
+    assert!(dialog.open(Some(&pack.0), Path::new("/nonexistent"), Some(&preset)));
+    assert_eq!(dialog.collections.len(), 2);
+    assert_eq!(dialog.preset(), Some(preset));
+    assert_eq!(dialog.composed_path(DEFAULT_LABEL), SAMPLE[4]);
+
+    let system = Pack::new("ui-open-system", &[]);
+    std::fs::create_dir_all(&system.0).expect("mkdir");
+    std::fs::rename(pack.0.join(CONFIG_PATH), system.0.join(CONFIG_PATH)).expect("move");
+    let mut dialog = ShaderDialog::default();
+    dialog.open(Some(&pack.0), &system.0, None);
+    assert_eq!(dialog.collections.len(), 2);
+    assert_eq!(dialog.preset(), None);
+    assert_eq!(dialog.composed_path(DEFAULT_LABEL), DEFAULT_LABEL);
+}
+
+/// A config that does not parse offers nothing beyond the default.
+#[test]
+fn a_broken_config_is_no_collections() {
+    assert!(parse_collections(Path::new("."), "not = [toml").is_empty());
+    assert!(parse_collections(Path::new("."), "[NoPattern]\nother = 1\n").is_empty());
+}
+
+#[test]
+fn an_unclosed_tag_is_an_error() {
+    assert!(Segment::parse("<Type.slangp").is_err());
 }

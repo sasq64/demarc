@@ -3068,7 +3068,6 @@ dependencies = [
  "libloading 0.9.0",
  "mlua",
  "newsys",
- "nucleo-matcher",
  "percent-encoding",
  "pollster",
  "qbsdiff",
@@ -3077,6 +3076,7 @@ dependencies = [
  "regex",
  "resvg",
  "retro-core",
+ "retro-ui",
  "retroarc",
  "ringbuf",
  "rubato",
@@ -6992,6 +6992,17 @@ dependencies = [
  "tracing-subscriber",
  "wgpu 29.0.4",
  "winit",
+]
+
+[[package]]
+name = "retro-ui"
+version = "1.7.0"
+dependencies = [
+ "egui",
+ "nucleo-matcher",
+ "regex",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 # Android
 
 The minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
-`crates/retro-core/src/bin/c64.rs` on the desktop — as an Android app. It boots to the
+`crates/retro-core/src/bin/minimarc.rs` on the desktop — as an Android app. It boots to the
 BASIC banner on a device; touch input is what is missing.
 
 ```sh
@@ -44,7 +44,7 @@ cross-compile to `aarch64-linux-android`, and it died in `unrar_sys` 0.5.8
 The repo is now a workspace whose root is still the `demarc` package:
 
 ```
-Cargo.toml           [workspace] members = ["crates/newsys", "crates/retro-core", "crates/retroarc"]
+Cargo.toml           [workspace] members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
 crates/retro-core/   lib: backend.rs, libretro.rs, pixels.rs, retro_emu/, find.rs, path.rs
                      (`strip_verbatim_prefix` — the one thing retro_emu wanted from utils.rs,
                      whose rest pulls unarc-rs), retro_log_shim.c in its build.rs, and the
@@ -53,10 +53,11 @@ crates/retro-core/   lib: backend.rs, libretro.rs, pixels.rs, retro_emu/, find.r
                      deps: anyhow, libloading, tempfile, tracing, dirs, libc (unix)
 crates/newsys/       everything between a file on disk and a Box<dyn Backend>
 crates/retroarc/     the .slangp filter chains; the only crate that links librashader
+crates/retro-ui/     the egui HUD, picker and dialogs, against a bare egui::Context
 src/                 demarc: the Bevy app
 ```
 
-`src/bin/c64.rs` is now a thin `main` over `retro_core::player`; the `#[path]` includes and
+`src/bin/minimarc.rs` is now a thin `main` over `retro_core::player`; the `#[path]` includes and
 the `retro_emu/mod.rs` layout they forced are gone.
 
 **This works.** Both of these pass:

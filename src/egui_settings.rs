@@ -50,7 +50,13 @@ use bevy_egui::{
     egui::{self, Ui},
 };
 
-use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
+use retro_ui::dialog::{
+    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
+    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+};
+use retro_ui::{panel_frame, take_key};
+
+use crate::egui_ui::{HudState, update_ui};
 
 /// Bounds for the [`egui::DragValue`] drawn for a numeric field, attached to the
 /// field as a reflection attribute:
@@ -412,47 +418,10 @@ pub fn field_at_path<'a>(
 // Drawing
 // ---------------------------------------------------------------------------
 
-/// Sizes are in the 1600-tall virtual space `crate::egui_ui::update_ui` sets up
-/// with `set_pixels_per_point`, so these are much larger than egui's defaults.
-pub(crate) const TITLE_SIZE: f32 = 40.0;
-/// Side of the square close button in the panel's top-right corner.
-pub(crate) const CLOSE_SIZE: f32 = 40.0;
-pub(crate) const LABEL_SIZE: f32 = 28.0;
 /// Heading over a group of rows coming from one nested struct.
-pub(crate) const SECTION_SIZE: f32 = 32.0;
-pub(crate) const BODY_SIZE: f32 = 26.0;
-/// Width of the editor column. Fixed, so the rows line up and the panel does not
-/// resize as a combo box's text changes.
-pub(crate) const WIDGET_WIDTH: f32 = 320.0;
-pub(crate) const ROW_SPACING: egui::Vec2 = egui::vec2(24.0, 12.0);
-/// Fraction of the screen height the field grid may take before it scrolls.
-pub(crate) const GRID_HEIGHT_FRACTION: f32 = 0.85;
+const SECTION_SIZE: f32 = 32.0;
 /// Fraction of the screen the panel is at least as wide and tall as.
-pub(crate) const PANEL_MIN_FRACTION: egui::Vec2 = egui::vec2(0.45, 0.5);
-pub(crate) const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
-/// How much of the close button's side the painted cross spans.
-const CROSS_FRACTION: f32 = 0.45;
-
-/// Scales the widgets that size themselves from the *style* rather than from a
-/// font we hand them -- checkboxes, drag values, colour swatches, buttons.
-///
-/// `setup_egui` only overrides the Heading and Body text styles, so Button (what
-/// a [`egui::DragValue`] and a [`egui::Button`] label themselves with) is left at
-/// egui's default 14pt, which is unreadably small in this app's 1600-tall
-/// virtual space. The spacing has to grow with it or the widgets stay
-/// letterbox-thin around the bigger text.
-pub(crate) fn scale_widgets(ui: &mut Ui) {
-    let style = ui.style_mut();
-    style.text_styles.insert(
-        egui::TextStyle::Button,
-        egui::FontId::proportional(BODY_SIZE),
-    );
-    style.spacing.interact_size = egui::vec2(BODY_SIZE * 2.0, BODY_SIZE * 1.5);
-    style.spacing.button_padding = egui::vec2(BODY_SIZE * 0.4, BODY_SIZE * 0.2);
-    style.spacing.icon_width = BODY_SIZE;
-    style.spacing.icon_width_inner = BODY_SIZE * 0.6;
-    style.spacing.icon_spacing = BODY_SIZE * 0.3;
-}
+const PANEL_MIN_FRACTION: egui::Vec2 = egui::vec2(0.45, 0.5);
 
 /// Draws every section -- the root struct's own rows first, then one heading
 /// and grid per nested struct -- and returns whether anything was edited this
@@ -630,36 +599,6 @@ macro_rules! drag_arms {
             }
         )+
     }};
-}
-
-/// The editor for a bare `f32` that carries its own bounds and step: a checkbox
-/// for a 0/1 flag, a whole-number drag for an integral step, a fractional drag
-/// otherwise.
-///
-/// Shared with the shader dialog, whose slangp parameters are all `f32` with
-/// exactly this metadata -- there is no type to derive a widget from there, so
-/// the step is what stands in for one.
-pub(crate) fn draw_number(ui: &mut Ui, value: &mut f32, min: f32, max: f32, step: f32) -> bool {
-    let whole = step >= 1.0 && step.fract() == 0.0;
-    if whole && min == 0.0 && max == 1.0 {
-        let mut on = *value >= 0.5;
-        if !ui.checkbox(&mut on, "").changed() {
-            return false;
-        }
-        *value = f32::from(u8::from(on));
-        return true;
-    }
-    let speed = f64::from(max - min).abs() / 300.0;
-    let range = Some(Range::with_speed(min, max, speed.max(f64::from(step))));
-    if !whole {
-        return drag(ui, value, range, speed);
-    }
-    let mut whole_value = value.round() as i64;
-    if !drag(ui, &mut whole_value, range, speed) {
-        return false;
-    }
-    *value = whole_value as f32;
-    true
 }
 
 fn draw_int(ui: &mut Ui, value: &mut dyn PartialReflect, range: Option<Range>) -> bool {
@@ -841,7 +780,6 @@ fn settings_ui<T: SettingsType>(
     mut contexts: EguiContexts,
     mut state: ResMut<SettingsState<T>>,
     mut hud: ResMut<HudState>,
-    keys: Res<ButtonInput<KeyCode>>,
     mut applied: MessageWriter<SettingsApplied<T>>,
 ) -> Result {
     if !state.open {
@@ -849,13 +787,7 @@ fn settings_ui<T: SettingsType>(
     }
     let ctx = contexts.ctx_mut()?;
 
-    // Same reason as the picker: egui only learns of a modifier through the key
-    // events Bevy feeds it, so its own idea of what is held goes stale.
-    let mods = live_modifiers(&keys);
-    let mut closing = ctx.input_mut(|i| {
-        sync_modifiers(i, mods);
-        take_key(i, egui::Key::Escape) > 0
-    });
+    let mut closing = ctx.input_mut(|i| take_key(i, egui::Key::Escape) > 0);
     let mut edited = false;
 
     egui::Area::new(egui::Id::new("settings"))
@@ -906,36 +838,6 @@ fn settings_ui<T: SettingsType>(
         close(&mut state, &mut hud);
     }
     Ok(())
-}
-
-/// The x in the panel's top-right corner, which closes the dialog exactly as
-/// Escape does.
-///
-/// Placed against `panel` -- the rect the title and fields ended up occupying --
-/// because the panel is only as wide as its widest row, which is not known until
-/// they are drawn. The title row has already reserved [`CLOSE_SIZE`] for it, so
-/// the two cannot collide.
-///
-/// The cross is painted rather than written: the app's bitmap font has nothing
-/// above Latin-1, so a `U+2715` glyph came out as a missing-character box.
-pub(crate) fn close_button(ui: &mut Ui, panel: egui::Rect) -> bool {
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(panel.right() - CLOSE_SIZE, panel.top()),
-        egui::Vec2::splat(CLOSE_SIZE),
-    );
-    // `min_size`, because an empty button otherwise shrinks to its padding.
-    let response = ui.put(rect, egui::Button::new("").min_size(rect.size()));
-    let arm = response.rect.size().min_elem() * CROSS_FRACTION * 0.5;
-    let center = response.rect.center();
-    let stroke = egui::Stroke::new(
-        (arm * 0.22).max(1.0),
-        ui.style().interact(&response).fg_stroke.color,
-    );
-    let painter = ui.painter();
-    for dir in [egui::vec2(arm, arm), egui::vec2(arm, -arm)] {
-        painter.line_segment([center - dir, center + dir], stroke);
-    }
-    response.clicked()
 }
 
 fn close<T: SettingsType>(state: &mut SettingsState<T>, hud: &mut HudState) {

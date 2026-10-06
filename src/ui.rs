@@ -5,6 +5,8 @@ use bevy::prelude::*;
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::FuzzySource;
 
+pub use retro_ui::HudLocation;
+
 /// What the pickers in this app are lists *of*. Every source handed to
 /// [`ShowFuzzyList`] agrees on this one type, so a caller holding the `item` of
 /// a [`FuzzyListSelect`] can ask the source for the entry behind it
@@ -12,16 +14,6 @@ use crate::fuzzy_list::FuzzySource;
 /// A source whose rows are not entries at all -- the hotkey list, say -- has no
 /// data to hand back and simply inherits the default.
 pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
-
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum HudLocation {
-    #[default]
-    InfoText,
-    BottomLeft,
-    TopLeft,
-    TopRight,
-    Error,
-}
 
 /// Opens the searchable list over `source`. Picking a row emits a
 /// [`FuzzyListSelect`] carrying `id` back, so several callers can tell their

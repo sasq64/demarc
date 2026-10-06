@@ -29,14 +29,13 @@
 //! which is one preset with nothing to browse, so it has no rows under it.
 //!
 //! Under the combo boxes, folded away, come the selected preset's own
-//! `#pragma parameter` declarations, one editor each ([`preset_params`]),
-//! drawn with the settings dialog's widgets and written straight to the filter
-//! chain. A description ending in `A | B | C` that covers the parameter's whole
+//! `#pragma parameter` declarations, one editor each
+//! ([`ShaderDialog::refresh_params`]), drawn with the settings dialog's
+//! widgets. A description ending in `A | B | C` that covers the parameter's whole
 //! range is drawn as a combo box instead ([`split_options`]).
 //!
-//! Like the settings dialog, a pick takes effect the moment it is made: the
-//! selection is composed back into a path and written straight to
-//! [`ShaderPath`], which the render world extracts.
+//! A pick takes effect the moment it is made: [`ShaderDialog::show`] returns it
+//! as a [`ShaderAction`] for the host to put on screen.
 //!
 //! The tree is walked lazily, one `read_dir` per path component as the boxes
 //! above it change, because the Commodore pack alone holds ~72k presets and
@@ -44,28 +43,17 @@
 //! that logic and knows nothing about egui; the tests exercise it against a
 //! tree they build.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use bevy::prelude::*;
-use bevy_egui::{
-    EguiContexts, EguiPrimaryContextPass,
-    egui::{self, Ui},
-};
+use egui::Ui;
 use regex::Regex;
 use tracing::warn;
 
-use crate::config::{Args, RenderSettings, ShaderArg};
-use crate::egui_ui::{HudState, live_modifiers, panel_frame, sync_modifiers, take_key, update_ui};
-use crate::post_process::{ShaderEffect, ShaderPath};
-use crate::system_dir;
-// The dialog chrome -- panel metrics, the widget scaling and the close button --
-// is the settings dialog's, so the two look like one dialog with two contents.
-use crate::egui_settings::{
+use crate::dialog::{
     BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
     TITLE_SIZE, WIDGET_WIDTH, close_button, draw_number, scale_widgets,
 };
+use crate::{panel_frame, take_key};
 
 /// The file the collections are read from, in the shader dir or, failing that,
 /// the system dir. Every pattern in it is relative to the shader dir.
@@ -465,21 +453,21 @@ struct Collection {
 const DEFAULT: usize = 0;
 
 /// Everything the dialog can offer, the default collection first.
-fn collections(configured_dir: Option<&Path>) -> Vec<Collection> {
+fn collections(configured_dir: Option<&Path>, system_dir: &Path) -> Vec<Collection> {
     let mut found = vec![Collection {
         label: "Default".to_owned(),
         browser: None,
     }];
     if let Some(root) = shader_dir(configured_dir)
-        && let Some(text) = read_config(&root)
+        && let Some(text) = read_config(&root, system_dir)
     {
         found.extend(parse_collections(&root, &text));
     }
     found
 }
 
-fn read_config(shader_dir: &Path) -> Option<String> {
-    [shader_dir.join(CONFIG_PATH), system_dir().join(CONFIG_PATH)]
+fn read_config(shader_dir: &Path, system_dir: &Path) -> Option<String> {
+    [shader_dir.join(CONFIG_PATH), system_dir.join(CONFIG_PATH)]
         .iter()
         .find_map(|path| std::fs::read_to_string(path).ok())
 }
@@ -518,9 +506,9 @@ fn parse_collections(root: &Path, text: &str) -> Vec<Collection> {
 
 /// One `#pragma parameter` of the selected preset, as the shader declares it
 /// and with whatever value is in force.
-struct ShaderParam {
+pub struct ShaderParam {
     /// The uniform name, which is what the filter chain is set by.
-    name: String,
+    pub name: String,
     /// The description the pragma gives, which is what the row is labelled
     /// with, with any option list taken off it.
     label: String,
@@ -529,11 +517,37 @@ struct ShaderParam {
     value: f32,
     /// What "Reset" puts the parameter back to.
     default: f32,
-    min: f32,
-    max: f32,
-    step: f32,
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
     /// Which pass declared it; rows are ordered by pass, then by label.
     pass: usize,
+}
+
+impl ShaderParam {
+    /// `initial` is the value the chain starts with.
+    pub fn new(
+        name: String,
+        description: &str,
+        initial: f32,
+        min: f32,
+        max: f32,
+        step: f32,
+        pass: usize,
+    ) -> Self {
+        let (label, options) = split_options(description, min, max, step);
+        Self {
+            name,
+            label,
+            options,
+            value: initial,
+            default: initial,
+            min,
+            max,
+            step,
+            pass,
+        }
+    }
 }
 
 /// The option list a description ends in, if the parameter is a choice of
@@ -562,47 +576,13 @@ fn split_options(description: &str, min: f32, max: f32, step: f32) -> (String, V
     (text[..colon].to_owned(), options)
 }
 
-/// Every parameter the preset's passes declare, deduplicated (a parameter
-/// shared by several passes is one row) and ordered by pass, then by label.
-///
-/// The values are the ones the chain starts with: the shader's initial value,
-/// overridden by the preset's own `#parameter` lines -- the same precedence
-/// librashader's `RuntimeParameters` applies when it builds the chain.
-fn preset_params(path: &Path) -> Vec<ShaderParam> {
-    let mut params: Vec<ShaderParam> = retroarc::preset_parameters(path)
-        .into_iter()
-        .map(|p| {
-            let (label, options) = split_options(&p.description, p.minimum, p.maximum, p.step);
-            ShaderParam {
-                name: p.name,
-                label,
-                options,
-                value: p.initial,
-                default: p.initial,
-                min: p.minimum,
-                max: p.maximum,
-                step: p.step,
-                pass: p.pass,
-            }
-        })
-        .collect();
-    // A pass hands its parameters over in a hash map, so they have no order of
-    // their own to keep; the passes themselves do.
-    params.sort_by(|a, b| a.pass.cmp(&b.pass).then_with(|| a.label.cmp(&b.label)));
-    params
-}
-
 // ---------------------------------------------------------------------------
 // The dialog
 // ---------------------------------------------------------------------------
 
-/// Opens the shader dialog (RightAlt+Shift+E, [`crate::commands::Cmd`]).
-#[derive(Message)]
-pub struct ShowShaderDialog;
-
 /// The dialog, the collections it found and which of them is selected. All of
 /// it outlives a close, so reopening comes up where it was left.
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct ShaderDialog {
     open: bool,
     /// Filled on the first open: the trees are on disk, and reading them once
@@ -618,7 +598,46 @@ pub struct ShaderDialog {
     params_for: Option<PathBuf>,
 }
 
+/// What a frame of the dialog did, for the host to carry out.
+pub enum ShaderAction {
+    /// The selection changed: run this preset, or whatever the default
+    /// collection stands for on `None`.
+    Preset(Option<PathBuf>),
+    /// One of the preset's parameters was set to a new value.
+    Param(String, f32),
+    /// The "Reset" button: every parameter back to the preset's own value.
+    Reset,
+}
+
 impl ShaderDialog {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Opens the dialog showing `preset`, the one on screen. Returns whether it
+    /// was closed before.
+    ///
+    /// `shaders.toml` is looked for in the shader dir -- `shader_dir`, or the
+    /// usual places without one -- and in `system_dir` failing that.
+    pub fn open(
+        &mut self,
+        shader_dir: Option<&Path>,
+        system_dir: &Path,
+        preset: Option<&Path>,
+    ) -> bool {
+        if self.collections.is_empty() {
+            self.collections = collections(shader_dir, system_dir);
+        }
+        // Come up showing what is on screen: the collection the preset belongs to,
+        // with every level of it selected, or the default collection for anything
+        // else (which is what the default collection means).
+        match preset {
+            Some(path) => self.reveal(path),
+            None => self.selected = DEFAULT,
+        }
+        !std::mem::replace(&mut self.open, true)
+    }
+
     /// The selected collection's tree, or `None` on the default collection --
     /// which is what leaves it with no level rows.
     fn browser(&self) -> Option<&PresetBrowser> {
@@ -640,6 +659,118 @@ impl ShaderDialog {
         }
         self.selected = DEFAULT;
     }
+
+    /// Re-reads the parameter rows through `read` when `preset`, the one on
+    /// screen, has changed -- which is a preset pick and (once) the open.
+    /// Reading them is costly, so it is kept off the per-frame path.
+    pub fn refresh_params(
+        &mut self,
+        preset: Option<&Path>,
+        read: impl FnOnce(&Path) -> Vec<ShaderParam>,
+    ) {
+        if preset == self.params_for.as_deref() {
+            return;
+        }
+        let mut params = preset.map(read).unwrap_or_default();
+        // A pass hands its parameters over in a hash map, so they have no order of
+        // their own to keep; the passes themselves do.
+        params.sort_by(|a, b| a.pass.cmp(&b.pass).then_with(|| a.label.cmp(&b.label)));
+        self.params = params;
+        self.params_for = preset.map(Path::to_path_buf);
+    }
+
+    /// What the dialog prints under the combo boxes: the preset the selection
+    /// names, relative to its collection, which is also the tail of a `--slangp`
+    /// argument.
+    fn composed_path(&self, default_label: &str) -> String {
+        match self.browser() {
+            Some(browser) => browser.relative_path().unwrap_or_default(),
+            None => default_label.to_owned(),
+        }
+    }
+
+    /// Draws the dialog while it is open; Escape and the close button close it.
+    /// `default_label` is what the default collection is described as.
+    pub fn show(&mut self, ctx: &egui::Context, default_label: &str) -> Option<ShaderAction> {
+        if !self.open {
+            return None;
+        }
+        let mut closing = ctx.input_mut(|i| take_key(i, egui::Key::Escape) > 0);
+        // Picked inside the closure and applied after it, because the dialog is
+        // borrowed for as long as the panel is being drawn.
+        let mut picked = None;
+        let composed = self.composed_path(default_label);
+
+        egui::Area::new(egui::Id::new("shader_dialog"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                panel_frame().show(ui, |ui| {
+                    scale_widgets(ui);
+                    let panel = ui
+                        .vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Shader").size(TITLE_SIZE).strong());
+                                // Room for the close button, placed in this row's
+                                // right corner once the width is known.
+                                ui.add_space(CLOSE_SIZE);
+                            });
+                            ui.add_space(ROW_SPACING.y);
+                            let max_height = ctx.content_rect().height() * GRID_HEIGHT_FRACTION;
+                            egui::ScrollArea::vertical()
+                                .max_height(max_height)
+                                .auto_shrink([true, true])
+                                .show(ui, |ui| picked = dialog_body(ui, self));
+                            // Under the scroll area rather than in it, so a long
+                            // grid scrolls without taking the line with it.
+                            ui.add_space(ROW_SPACING.y);
+                            ui.label(
+                                egui::RichText::new(&composed)
+                                    .size(BODY_SIZE * 0.75)
+                                    .color(DISABLED_COLOR),
+                            );
+                        })
+                        .response
+                        .rect;
+                    closing |= close_button(ui, panel);
+                });
+            });
+
+        if closing {
+            self.open = false;
+        }
+        match picked? {
+            Picked::Collection(index) => {
+                self.selected = index;
+                Some(ShaderAction::Preset(self.preset()))
+            }
+            Picked::Level(level, index) => {
+                let selected = self.selected;
+                if let Some(collection) = self.collections.get_mut(selected)
+                    && let Some(browser) = collection.browser.as_mut()
+                {
+                    browser.select(level, index);
+                }
+                Some(ShaderAction::Preset(self.preset()))
+            }
+            Picked::Param(index, value) => {
+                let param = self.params.get_mut(index)?;
+                param.value = value;
+                Some(ShaderAction::Param(param.name.clone(), value))
+            }
+            Picked::Reset => {
+                for param in &mut self.params {
+                    param.value = param.default;
+                }
+                Some(ShaderAction::Reset)
+            }
+        }
+    }
+
+    /// The preset the selection names, or `None` on the default collection.
+    fn preset(&self) -> Option<PathBuf> {
+        self.browser().and_then(PresetBrowser::path)
+    }
 }
 
 /// What a frame of the dialog picked, applied once the panel is no longer
@@ -653,199 +784,6 @@ enum Picked {
     Param(usize, f32),
     /// The "Reset" button: every parameter back to the preset's own value.
     Reset,
-}
-
-pub struct ShaderDialogPlugin;
-
-impl Plugin for ShaderDialogPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<ShaderDialog>()
-            .add_message::<ShowShaderDialog>()
-            .add_systems(Update, open_dialog.run_if(on_message::<ShowShaderDialog>))
-            // After `update_ui`, which sets the frame's `pixels_per_point` --
-            // the same ordering the settings dialog needs.
-            .add_systems(EguiPrimaryContextPass, shader_dialog_ui.after(update_ui));
-    }
-}
-
-fn open_dialog(
-    mut reader: MessageReader<ShowShaderDialog>,
-    mut dialog: ResMut<ShaderDialog>,
-    mut hud_state: ResMut<HudState>,
-    shader: Res<ShaderPath>,
-    args: Res<Args>,
-) {
-    // One open however many asked for it this frame.
-    if reader.read().count() == 0 {
-        return;
-    }
-    if dialog.collections.is_empty() {
-        dialog.collections = collections(args.shader_dir.as_deref());
-    }
-    // Come up showing what is on screen: the collection the preset belongs to,
-    // with every level of it selected, or the default collection for anything
-    // else (which is what the default collection means).
-    match &shader.effect {
-        ShaderEffect::Slangp(path) => dialog.reveal(path),
-        ShaderEffect::Wgsl(_) => dialog.selected = DEFAULT,
-    }
-    if !dialog.open {
-        hud_state.set_settings_open(true);
-    }
-    dialog.open = true;
-}
-
-fn shader_dialog_ui(
-    mut contexts: EguiContexts,
-    mut dialog: ResMut<ShaderDialog>,
-    mut hud: ResMut<HudState>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut shader_path: ResMut<ShaderPath>,
-    mut render: ResMut<RenderSettings>,
-    args: Res<Args>,
-) -> Result {
-    if !dialog.open {
-        return Ok(());
-    }
-    let ctx = contexts.ctx_mut()?;
-
-    // Same reason as the picker and the settings dialog: egui only learns of a
-    // modifier through the key events Bevy feeds it, so its own idea of what is
-    // held goes stale.
-    let mods = live_modifiers(&keys);
-    let mut closing = ctx.input_mut(|i| {
-        sync_modifiers(i, mods);
-        take_key(i, egui::Key::Escape) > 0
-    });
-    // Picked inside the closure and applied after it, because the dialog is
-    // borrowed for as long as the panel is being drawn.
-    let mut picked = None;
-    let default = args.shader.unwrap_or_default();
-    let composed = composed_path(&dialog, default);
-    refresh_params(&mut dialog, &shader_path);
-
-    egui::Area::new(egui::Id::new("shader_dialog"))
-        .order(egui::Order::Foreground)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            panel_frame().show(ui, |ui| {
-                scale_widgets(ui);
-                let panel = ui
-                    .vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Shader").size(TITLE_SIZE).strong());
-                            // Room for the close button, placed in this row's
-                            // right corner once the width is known.
-                            ui.add_space(CLOSE_SIZE);
-                        });
-                        ui.add_space(ROW_SPACING.y);
-                        let max_height = ctx.content_rect().height() * GRID_HEIGHT_FRACTION;
-                        egui::ScrollArea::vertical()
-                            .max_height(max_height)
-                            .auto_shrink([true, true])
-                            .show(ui, |ui| picked = dialog_body(ui, &dialog));
-                        // Under the scroll area rather than in it, so a long
-                        // grid scrolls without taking the line with it.
-                        ui.add_space(ROW_SPACING.y);
-                        ui.label(
-                            egui::RichText::new(&composed)
-                                .size(BODY_SIZE * 0.75)
-                                .color(DISABLED_COLOR),
-                        );
-                    })
-                    .response
-                    .rect;
-                closing |= close_button(ui, panel);
-            });
-        });
-
-    match picked {
-        Some(Picked::Collection(index)) => {
-            dialog.selected = index;
-            apply(&dialog, &mut shader_path, &mut render, default);
-            refresh_params(&mut dialog, &shader_path);
-        }
-        Some(Picked::Level(level, index)) => {
-            let selected = dialog.selected;
-            if let Some(collection) = dialog.collections.get_mut(selected)
-                && let Some(browser) = collection.browser.as_mut()
-            {
-                browser.select(level, index);
-            }
-            apply(&dialog, &mut shader_path, &mut render, default);
-            refresh_params(&mut dialog, &shader_path);
-        }
-        Some(Picked::Param(index, value)) => {
-            if let Some(param) = dialog.params.get_mut(index) {
-                param.value = value;
-                Arc::make_mut(&mut shader_path.params).insert(param.name.clone(), value);
-            }
-        }
-        Some(Picked::Reset) => {
-            for param in &mut dialog.params {
-                param.value = param.default;
-            }
-            shader_path.params = Arc::new(HashMap::new());
-        }
-        None => {}
-    }
-    if closing {
-        dialog.open = false;
-        hud.set_settings_open(false);
-    }
-    Ok(())
-}
-
-/// Puts the selection on screen. A collection's preset is a filter chain to run;
-/// the default collection is whatever shader the command line chose, with the
-/// effect switched on unless that is `--shader none`.
-fn apply(
-    dialog: &ShaderDialog,
-    shader_path: &mut ShaderPath,
-    render: &mut RenderSettings,
-    default: ShaderArg,
-) {
-    // The overrides named the old preset's parameters.
-    shader_path.params = Arc::new(HashMap::new());
-    match dialog.browser().and_then(PresetBrowser::path) {
-        Some(path) => {
-            shader_path.effect = ShaderEffect::Slangp(path);
-            // Picking a preset is asking to see it, so switch the effect on.
-            render.crt_effect = true;
-        }
-        None => {
-            shader_path.effect = default.effect();
-            render.crt_effect = default != ShaderArg::None;
-        }
-    }
-}
-
-/// Re-reads the parameter rows when the preset on screen has changed, which is
-/// a preset pick and (once) the open. Reading them means parsing the preset and
-/// preprocessing every pass it names, so it is kept off the per-frame path.
-fn refresh_params(dialog: &mut ShaderDialog, shader_path: &ShaderPath) {
-    let preset = match &shader_path.effect {
-        ShaderEffect::Slangp(path) => Some(path.clone()),
-        ShaderEffect::Wgsl(_) => None,
-    };
-    if preset == dialog.params_for {
-        return;
-    }
-    dialog.params = preset.as_deref().map(preset_params).unwrap_or_default();
-    dialog.params_for = preset;
-}
-
-/// What the dialog prints under the combo boxes: the preset the selection
-/// names, relative to its collection, which is also the tail of a `--slangp`
-/// argument.
-fn composed_path(dialog: &ShaderDialog, default: ShaderArg) -> String {
-    match dialog.browser() {
-        Some(browser) => browser.relative_path().unwrap_or_default(),
-        // `--shader none` is the stock passthrough preset with the effect
-        // switched off, so name what it does rather than what it does it with.
-        None if default == ShaderArg::None => "no effect".to_owned(),
-        None => default.path().to_owned(),
-    }
 }
 
 /// The collection combo box and one combo box per level under it. Returns what

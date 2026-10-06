@@ -40,3 +40,11 @@
   anything that should fade in — or land on the DJ cue — has to arrive as a
   `LoadFile` message; check `git log -S` before blaming the change at hand for
   a regression.
+
+- egui UI can be unit tested on a bare `egui::Context` (the `Harness` in
+  `crates/retro-ui/src/tests/lib_tests.rs`), but three things cost a failed run
+  each: a new `Area` paints nothing on its first frame; a click needs the
+  pointer move in a frame of its own before the press, since egui hit-tests
+  against where the pointer was when the frame began; and held modifiers come
+  from `Event::ModifiersChanged`, not from the ones stamped on a key event
+  (`RawInput` has no `modifiers` field in 0.36).

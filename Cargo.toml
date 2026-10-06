@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/newsys", "crates/retro-core", "crates/retroarc"]
+members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -13,6 +13,8 @@ repository = "https://github.com/sasq64/demarc"
 anyhow = "1.0.102"
 cc = "1"
 dirs = "6.0.0"
+# The version `bevy_egui` is built against, so `retro-ui` and demarc share one.
+egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
 libc = "0.2"
 libloading = "0.9"
 librashader = {
@@ -71,6 +73,8 @@ retro-core = { path = "crates/retro-core" }
 newsys = { path = "crates/newsys" }
 # The `.slangp` filter chains, and the only thing that links librashader.
 retroarc = { path = "crates/retroarc" }
+# The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
+retro-ui = { path = "crates/retro-ui" }
 bevy = {
   version = "0.19.0",
   default-features = false,
@@ -112,7 +116,6 @@ bevy_egui = {
     "render",
   ]
 }
-nucleo-matcher = "0.3"
 # `block_on` for the Flash backend's wgpu adapter/device requests.
 pollster = { workspace = true, optional = true }
 # `--filter`: matched against each raw db line while collecting (see collect_db).

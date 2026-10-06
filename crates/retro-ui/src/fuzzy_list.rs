@@ -51,7 +51,6 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         id
     }
 
-    #[cfg(test)]
     fn get_all_strings(&self) -> Vec<String> {
         let mut result = vec![];
         for i in self.search("", usize::MAX) {
@@ -88,9 +87,8 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
 }
 
 /// What a row's icon is: either a glyph from the app font in a colour, or an
-/// image registered with [`crate::egui_ui::add_list_icon`] under that id.
+/// image registered with [`crate::picker::add_list_icon`] under that id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ListIcon {
     /// Character to draw, and its colour as `0xRRGGBB`.
     Glyph(char, u32),
@@ -107,7 +105,6 @@ pub struct SubstringSource {
 }
 
 impl SubstringSource {
-    #[allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
@@ -159,7 +156,6 @@ pub struct AllWordsSource {
 }
 
 impl AllWordsSource {
-    #[allow(dead_code)]
     pub fn new(items: Vec<String>) -> Self {
         let lowercased = items.iter().map(|s| s.to_lowercase()).collect();
         Self { items, lowercased }
@@ -207,7 +203,6 @@ pub struct WordsIconSource {
 }
 
 impl WordsIconSource {
-    #[allow(dead_code)]
     pub fn new(items: Vec<(String, ListIcon)>) -> Self {
         let (texts, icons) = items.into_iter().unzip();
         Self {

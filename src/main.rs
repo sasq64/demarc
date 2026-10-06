@@ -26,6 +26,8 @@ pub use ::newsys::{
     system_dir, tiff_pal, utils, workfile, zx_scr,
 };
 
+pub use ::retro_ui::fuzzy_list;
+
 mod audio;
 mod commands;
 mod config;
@@ -39,7 +41,6 @@ mod emulator;
 mod files;
 mod frame_upload;
 mod frontend;
-mod fuzzy_list;
 mod headless;
 mod jobs;
 mod load_error;

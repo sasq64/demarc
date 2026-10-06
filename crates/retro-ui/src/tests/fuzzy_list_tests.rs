@@ -239,3 +239,54 @@ fn words_icon_source_matches_like_all_words_and_keeps_its_icons() {
     assert_eq!(src.get_icon(hits[2]), (Some(ListIcon::Glyph('*', 4)), None));
     assert_eq!(src.get_icon(99), (None, None));
 }
+
+/// Every bundled source behaves the same through the trait as it does called
+/// directly, and leaves the optional parts at their defaults.
+#[test]
+fn bundled_sources_answer_through_the_trait() {
+    let sources: Vec<Box<dyn FuzzySource>> = vec![
+        Box::new(SubstringSource::from(items())),
+        Box::new(AllWordsSource::from(items())),
+        Box::new(IndexedSource::from(items())),
+    ];
+    for source in &sources {
+        assert_eq!(source.get_all_strings(), items());
+        let ids = source.search("", usize::MAX);
+        assert_eq!(ids.len(), items().len());
+        assert_eq!(source.get_text(ids[0]), items()[0]);
+        assert_eq!(source.get_item(ids[0]), ids[0]);
+        assert_eq!(source.file_index(ids[0]), None);
+        assert_eq!(source.get_icon(ids[0]), (None, None));
+        assert!(source.get_data(ids[0]).is_none());
+        assert_eq!(source.search("", 1).len(), 1);
+    }
+
+    let icon = ListIcon::Glyph('x', 0xff_00_00);
+    let icons: Box<dyn FuzzySource> = Box::new(WordsIconSource::from(vec![
+        ("one".to_owned(), icon),
+        ("two".to_owned(), icon),
+    ]));
+    assert_eq!(icons.search("tw", 10), [1]);
+    assert_eq!(icons.get_text(1), "two");
+    assert_eq!(icons.get_icon(1), (Some(icon), None));
+}
+
+/// A word too short to index is still enforced, on its own and next to one
+/// that is indexed, and a trigram found nowhere matches nothing.
+#[test]
+fn indexed_source_handles_short_and_absent_words() {
+    let source = IndexedSource::new(items());
+    let all = source.search("", usize::MAX);
+    let short = source.search("a", usize::MAX);
+    assert!(!short.is_empty() && short.len() <= all.len());
+    assert!(
+        short
+            .iter()
+            .all(|&i| source.get_text(i).to_lowercase().contains('a'))
+    );
+    assert_eq!(source.search("a", 1).len(), 1);
+    assert!(source.search("qqqzzz", 10).is_empty());
+    let text = source.get_text(short[0]).to_lowercase();
+    let both = source.search(&format!("{} a", &text[..3]), 10);
+    assert!(both.contains(&short[0]));
+}

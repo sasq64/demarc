@@ -11,7 +11,7 @@ workspace — see *Crates* below.
 
 ## Important Notes
 
-- When you make a mistake or unnecessary work dues to wrong assumptions, record
+- When you make a mistake or unnecessary work due to wrong assumptions, record
   your learnings to docs/LEARNINGS.md. Always read this file first when doing work.
 
 - Avoid long comments, and comments that describe current behaviour, even though
@@ -45,7 +45,7 @@ See `scripts/remote_example.lua`
 ### Crates
 
 The repo root is both the workspace root and the `demarc` package, so `src/` is
-demarc's own. The three crates under `crates/` hold the parts that do **not**
+demarc's own. The four crates under `crates/` hold the parts that do **not**
 need Bevy, which is what lets the libretro layer be built for Android
 (`docs/ANDROID.md`):
 
