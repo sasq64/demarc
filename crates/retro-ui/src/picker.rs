@@ -13,11 +13,18 @@ use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
 
 pub type ListSource<T> = Arc<dyn FuzzySource<T>>;
 
+const ROW_SIZE: f32 = 28.0;
+/// Side of the square a [`RowImage`] is painted into.
+const ROW_IMAGE_SIZE: f32 = 32.0;
+
+/// An image drawn after a row's text: the texture, and how far right of the
+/// end of the text it starts.
+pub type RowImage = (egui::TextureId, f32);
+
 /// Vertical gap between the list box and the info box below it.
 const PANEL_GAP: f32 = 6.0;
 
 const QUERY_SIZE: f32 = 32.0;
-pub const ROW_SIZE: f32 = 28.0;
 /// Fixed height of every row, so the box does not resize as the list is
 /// filtered or emptied.
 const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
@@ -93,15 +100,15 @@ fn draw_list_icon(ui: &Ui, painter: &egui::Painter, rect: egui::Rect, icon: List
     }
 }
 
-/// Paints one row of the list: `icons` at its left and far right, and `job` as
-/// its text. Returns where the text ended up, for a caller with more to draw
-/// after it.
-pub fn draw_row(
+/// Paints one row of the list: `icons` at its left and far right, `job` as its
+/// text and `images` after the text.
+fn draw_row(
     ui: &Ui,
     rect: egui::Rect,
     job: egui::text::LayoutJob,
     icons: (Option<ListIcon>, Option<ListIcon>),
-) -> egui::Rect {
+    images: &[RowImage],
+) {
     let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
     let galley = ui.painter().layout_job(job);
     let text_left = rect.left_center() + egui::vec2(ICON_SIZE + ICON_GAP, 0.0);
@@ -120,7 +127,13 @@ pub fn draw_row(
         }
     }
     painter.galley(text_rect.min, galley, TEXT_COLOR);
-    text_rect
+    for &(texture, offset) in images {
+        let image_rect = egui::Rect::from_min_size(
+            egui::pos2(text_rect.right() + offset, text_rect.top()),
+            egui::Vec2::splat(ROW_IMAGE_SIZE),
+        );
+        egui::Image::new((texture, image_rect.size())).paint_at(ui, image_rect);
+    }
 }
 
 /// The row the user picked (Enter, or Shift+Enter -- see [`Picked::alt`]).
@@ -269,12 +282,13 @@ impl<T: 'static> Picker<T> {
     /// Shift+Enter, which sets [`Picked::alt`]) returning a [`Picked`] for it
     /// and Escape closing the picker without one.
     ///
-    /// Each visible row is handed to `render` with the rect it was allocated,
-    /// the source and the item's id; [`draw_row`] paints the usual one.
+    /// `render` is called for each visible row with the row's text as a
+    /// [`LayoutJob`](egui::text::LayoutJob) it may add to, the source and the
+    /// item's id, and returns the images to draw after the text.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        render: impl Fn(&mut Ui, egui::Rect, &dyn FuzzySource<T>, usize),
+        render: impl Fn(&mut egui::text::LayoutJob, &dyn FuzzySource<T>, usize) -> Vec<RowImage>,
     ) -> Option<Picked<T>> {
         if !self.show_list {
             return None;
@@ -381,7 +395,19 @@ impl<T: 'static> Picker<T> {
                     selected,
                     self.list_scroll,
                     &self.list_items,
-                    |ui, rect, &id| render(ui, rect, source.as_ref(), id),
+                    |ui, rect, &id| {
+                        let mut job = egui::text::LayoutJob::default();
+                        job.append(
+                            &source.get_text(id),
+                            0.0,
+                            egui::TextFormat::simple(
+                                egui::FontId::proportional(ROW_SIZE),
+                                TEXT_COLOR,
+                            ),
+                        );
+                        let images = render(&mut job, source.as_ref(), id);
+                        draw_row(ui, rect, job, source.get_icon(id), &images);
+                    },
                 );
                 self.list_scroll = scrolled.state.offset.y;
 

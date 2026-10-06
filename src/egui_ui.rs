@@ -3,11 +3,9 @@
 
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 use bevy_egui::{
-    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext,
-    egui::{self, Ui},
+    EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
-use retro_ui::picker::{ROW_SIZE, draw_row};
-use retro_ui::{Hud, Picker, TEXT_COLOR};
+use retro_ui::{Hud, Picker};
 
 use crate::config::Args;
 use crate::emu_file::{Award, EmuFile};
@@ -244,17 +242,12 @@ fn draw_picker(
     picker: &mut Picker<EmuFile>,
 ) -> Option<retro_ui::Picked<EmuFile>> {
     let (heart_id, star_id) = icons(ctx)?;
-    picker.show(ctx, |ui: &mut Ui, rect, source, id| {
-        let text = source.get_text(id);
-
+    picker.show(ctx, |job, source, id| {
         let mut cdc = 0;
         let mut vt = false;
         let mut winner = 0;
         let mut nominee = 0;
         if let Some(emu_file) = source.get_data(id) {
-            // if let Some(place) = emu_file.get_placement() {
-            //     text = format!("{place:-4} : {text}");
-            // }
             cdc = emu_file.cdc();
             for award in emu_file.get_wins() {
                 match award {
@@ -269,39 +262,40 @@ fn draw_picker(
                 }
             }
         }
-        let font = egui::FontId::proportional(ROW_SIZE);
-        let win_format = egui::TextFormat::simple(font.clone(), GOLD_COLOR);
-        let nom_format = egui::TextFormat::simple(font.clone(), SILVER_COLOR);
-
-        let mut job = egui::text::LayoutJob::default();
-        job.append(
-            &text,
-            0.0,
-            egui::TextFormat::simple(font.clone(), TEXT_COLOR),
-        );
-        let extra = if winner > 0 || nominee > 0 { 10.0 } else { 0.0 };
+        let font = job
+            .sections
+            .first()
+            .map(|s| s.format.font_id.clone())
+            .unwrap_or_default();
         for _ in 0..winner {
-            job.append(" \u{f4cf}", 0.0, win_format.clone());
+            job.append(
+                " \u{f4cf}",
+                0.0,
+                egui::TextFormat::simple(font.clone(), GOLD_COLOR),
+            );
         }
         for _ in 0..nominee {
-            job.append(" \u{f4cf}", 0.0, nom_format.clone());
+            job.append(
+                " \u{f4cf}",
+                0.0,
+                egui::TextFormat::simple(font.clone(), SILVER_COLOR),
+            );
         }
 
-        let text_rect = draw_row(ui, rect, job, source.get_icon(id));
-        // Position the image right after the last glyph's end.
-        let end_x = text_rect.right() + 10.0 + extra;
-        let mut image_rect =
-            egui::Rect::from_min_size(egui::pos2(end_x, text_rect.top()), egui::vec2(32.0, 32.0));
+        let mut x = if winner > 0 || nominee > 0 {
+            20.0
+        } else {
+            10.0
+        };
+        let mut images = Vec::new();
         for _ in 0..cdc {
-            egui::Image::new((heart_id, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
-            image_rect.min.x += 12.0;
-            image_rect.max.x += 12.0;
+            images.push((heart_id, x));
+            x += 12.0;
         }
         if vt {
-            image_rect.min.x += 12.0;
-            image_rect.max.x += 12.0;
-            egui::Image::new((star_id, egui::vec2(16.0, 16.0))).paint_at(ui, image_rect);
+            images.push((star_id, x + 12.0));
         }
+        images
     })
 }
 

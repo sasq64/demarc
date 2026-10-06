@@ -85,16 +85,7 @@ fn step<T: 'static>(
     picker: &mut Picker<T>,
     events: Vec<egui::Event>,
 ) -> Option<Picked<T>> {
-    h.frame(events, |ctx| {
-        picker.show(ctx, |ui, rect, source, id| {
-            let job = egui::text::LayoutJob::simple_singleline(
-                source.get_text(id),
-                egui::FontId::proportional(ROW_SIZE),
-                TEXT_COLOR,
-            );
-            draw_row(ui, rect, job, source.get_icon(id));
-        })
-    })
+    h.frame(events, |ctx| picker.show(ctx, |_, _, _| Vec::new()))
 }
 
 /// An opened picker, two frames in so the search box has its focus.
