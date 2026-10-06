@@ -4,6 +4,10 @@ An command line emulator frontend for the demoscene
 
 ![Screenshot](img/c64.png)
 
+[![LatestRelease](https://img.shields.io/github/v/release/sasq64/demarc?style=for-the-badge&label=Latest%20Release)](https://github.com/sasq64/demarc/releases/latest)
+
+
+
 *Main goal*
 
 Make it easy to watch demos on your PC through emulation
