@@ -16,13 +16,11 @@ use crate::egui_settings::{Range, ReflectDisplay, SettingsApplied};
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
 #[cfg(target_os = "linux")]
-use crate::wine::{META_DIALOG_RES, META_DLL_OVERRIDES, META_RES, PICK};
+use crate::wine::{META_DIALOG_RES, META_RES, PICK};
 #[cfg(not(target_os = "linux"))]
 const META_RES: &str = "wine_res";
 #[cfg(not(target_os = "linux"))]
 const META_DIALOG_RES: &str = "wine_dialog_res";
-#[cfg(not(target_os = "linux"))]
-const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 #[cfg(not(target_os = "linux"))]
 const PICK: &str = "pick";
 
@@ -63,9 +61,6 @@ impl std::fmt::Display for Resolution {
 #[derive(Default, Debug, Clone, PartialEq, Reflect)]
 pub struct WineSettings {
     pub resolution: Resolution,
-    /// `WINEDLLOVERRIDES`, spelled wine's way. Empty leaves the release's own
-    /// overrides in charge.
-    pub overrides: String,
     /// Stop at the demo's own setup dialog instead of driving it.
     pub show_startup_dialog: bool,
     /// TBD: nothing reads this yet.
@@ -157,9 +152,6 @@ fn apply_wine(new: &WineSettings, old: &WineSettings, meta: &mut HashMap<String,
     };
     if new.resolution != old.resolution {
         set(META_RES, new.resolution.as_meta().unwrap_or(""));
-    }
-    if new.overrides != old.overrides {
-        set(META_DLL_OVERRIDES, new.overrides.trim());
     }
     if new.show_startup_dialog != old.show_startup_dialog {
         set(

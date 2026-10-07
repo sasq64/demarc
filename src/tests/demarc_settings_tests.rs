@@ -41,10 +41,7 @@ fn wine_is_its_own_section() {
         .iter()
         .map(|(n, _)| *n)
         .collect();
-    assert_eq!(
-        names,
-        vec!["resolution", "overrides", "show_startup_dialog", "filter"]
-    );
+    assert_eq!(names, vec!["resolution", "show_startup_dialog", "filter"]);
 }
 
 #[test]
@@ -73,13 +70,11 @@ fn wine_settings_write_and_clear_meta() {
     let old = WineSettings::default();
     let new = WineSettings {
         resolution: Resolution::Res1024x768,
-        overrides: "d3d9=n".into(),
         show_startup_dialog: true,
         ..default()
     };
     apply_wine(&new, &old, &mut meta);
     assert_eq!(meta[META_RES], "1024x768");
-    assert_eq!(meta[META_DLL_OVERRIDES], "d3d9=n");
     assert_eq!(meta[META_DIALOG_RES], PICK);
 
     apply_wine(&old, &new, &mut meta);
