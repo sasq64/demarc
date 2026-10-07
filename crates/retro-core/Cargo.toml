@@ -59,3 +59,7 @@ winit = { workspace = true, features = ["android-native-activity"], optional = t
 [features]
 default = []
 player = ["dep:winit", "dep:wgpu", "dep:pollster", "dep:cpal", "dep:ringbuf"]
+
+# `minimarc` is a development tool, not something to release.
+[package.metadata.dist]
+dist = false

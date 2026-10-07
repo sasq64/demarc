@@ -4,6 +4,112 @@ All notable changes to demarc will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## [1.8.0] - 2026-10-07
+
+### Added
+
+- **Navigator**: Path-based browsing of the database with a root menu, party drill-down, a Categories entry, compo placement sorting, back/forward history that restores selection and search text, and Next/Prev scoped to the launching list (`0a448fb`, `bac8953`, `bd45141`, `b4abef1`, `dabc08f`, `0a74d32`, `8487a35`, `7cf8347`).
+- **Favorites and Playlists**: Named lists of releases persisted under the config dir, with a built-in Favorites list on the `H` hotkey, a picker to add/remove a release from any playlist, and the download URL a release actually used remembered (`4f61157`, `b32e4b7`, `af09388`).
+- **Multiple Databases**: Several named databases can be loaded at once, each with its own file list and navigator root entry (`0ed6abe`).
+- **DJ Mode**: `--dj-mode` gives the next release its own cue window and brings it over by hand with an equal-power audio crossfade; `--cross-fade-activity` holds the automatic fade until the hidden screen is active (`ad3f2b1`, `760c64a`).
+- **PSP**: Added PSP system support (`59eac6d`).
+- **86Box**: DOS machine configs run on 86Box, replacing PCem (`45ff299`, `ee3ba55`, `c14cbfc`).
+- **Native Windows Releases**: Windows demos run natively when demarc itself runs on Windows (`9af36c0`, `f40dbca`).
+- **Out-of-Process Cores**: `--proc` runs libretro cores in a separate process (`f464510`).
+- **Picker Icons**: Per-row platform, category and party icons in the picker and navigator (`5a567ff`, `44880f3`, `669e73d`, `4dfa716`).
+- **Award Display**: Per-award nominee/winner markers replace the coarse CDC/viewing-tip fields (`43c2c10`, `549744a`).
+- **Tracker Music**: XM, S3M and IT play in the Fasttracker II core (`043d13e`).
+- **Protracker Music**: MOD,STK...  play in the Protracker core
+- **C64 REU**: Detect REU from the category tag and load standalone `.reu` images (`e1951a9`).
+- **Override Enhancements**: bsdiff patches, fixups keyed on db and id rather than only demozoo, and many new per-release fixups (`a10ba56`, `84c504d`, `fb0a7fa`, `f392ab0`).
+- **Wine Options**: Per-release CPU count cap, Mesa GLSL version override, opt-in `EmulateModeset`, a wine-native `winmm.dll` for Crinkler range imports and a DirectComposition shim (`d7128e2`, `af024dd`, `7c67c1c`, `dbaeaa0`, `13508fa`).
+- **`--window=WxH`**: `--window` optionally takes a size, and the settings dialog gains CRT/downsample limits and more resolutions (`cd703a1`).
+- **Remote Control**: `load_demo(id)` jumps to a db entry by id (`8f04242`).
+- **7z Archives**: Added 7z support via `sevenz-rust2` (`e07d1da`).
+- **More Mirrors**: scene.org no-http and se2-http mirrors, and a case-fixed filename retry for amigascne downloads (`2b7e6f3`, `fe4f7c4`).
+- **Android Port**: A stripped-down C64 player (`minimarc`) builds for arm64 with audio, touch input and a Gradle project (`1e7ff57`, `9a47b71`, `35af9c6`, `81460aa`, `6434614`, `5733320`).
+
+### Changed
+
+- **Cargo Workspace**: Split the libretro layer, loading pipeline, librashader backend and egui UI into the `retro-core`, `newsys`, `retroarc` and `retro-ui` crates (`8c78bb2`, `e3ab394`, `f625e63`, `2466493`).
+- **Default Sort**: `--sort=rank` is now the default, with rating used when the pouet score is missing (`12b2652`, `e3b2858`, `46c877a`).
+- **Off-Main-Thread Core Lifecycle**: Core creation and teardown, including the outgoing cross-fade core, no longer block the main thread (`c12839b`, `1dd4d4b`).
+- **Loading Pipeline**: Extracted into a `LoadingPlugin`, with loads routed through a `LoadFile` message and startup driven by an `AppState` instead of frame delays (`d3d1807`, `1b38fd2`, `08e64b6`, `5e49b87`).
+- **Frame Upload**: Emulator frames are uploaded to the GPU directly from the render world, and screen change detection uses a diff-based activity measure instead of a frame hash (`ea9f841`, `f9175cc`, `8861752`).
+- **Video Delay**: Video is delayed by a few frames through a shared-frame queue (`4e1fa3d`).
+- **Windows Releases Without Wine**: Windows-only db entries are skipped when wine is unavailable, and Vulkan is preferred when demarc runs under wine (`d3f1b75`).
+- **Double-Packed Archives**: Re-unpacking of archives inside archives is no longer limited to C64 releases (`e44c82f`, `413c94b`).
+- **Fast Load**: Now a dynamic global setting instead of a per-system constructor field (`47b33f1`).
+- **Setup Dialogs**: `autodlg` shows hidden setup dialogs, clicks default buttons directly and keeps the dialogs out of the captured session (`ecef47d`, `d886b65`).
+
+### Fixed
+
+- **Concurrent Core Loads**: Serialize core loading to avoid a race on libc statics shared between duplicated cores (`ac9f41e`).
+- **Shader Texture Limits**: Clamp librashader intermediate textures to device limits and skip passes that would exceed them (`7ebf4ac`, `234bd82`).
+- **PlayStation MODE2/2336 Discs**: Re-sector 2336-byte tracks to the raw 2352 layout the cores read (`5c35fba`).
+- **Wine Audio Crash**: Fixed a winmm `WAVEHDR` crash when apps reuse the header after writing it (`ef0bd63`).
+- **Wine Setup Dialogs**: Patch zero-size resource directories so setup dialogs work (`87e47a4`).
+- **Multi-Disk Sets**: Fall back to individual disks when a multi-disk set fails (`6e7dfe6`).
+- **Amiga Boot Filenames**: Quote the boot filename in the AmigaDOS startup-sequence (`417e387`).
+- **Windows Launch Target**: Skip `redist/` directories when picking the exe and match more resolution-from-name separators, including 320x240 (`a1334d7`, `5b5e9e4`, `1e9fc52`).
+- **Pause Handling**: Pause no longer counts against the idle timeout or `--max-time` (`275b231`).
+- **Cross Fade**: Show the info text and start `--max-time` when a cross-fade load takes over (`f12a753`, `ccc8d13`).
+- **Frame Alpha**: Force alpha opaque when repacking XRGB8888 frames (`e6a3563`).
+- **Misc**: Empty db fields treated as absent, `.rom` recognized for Atari 2600, a piped stdin db skipped under `--remote-control`, and the picker scroll area pinned to full height on the first frame (`9d37ab4`, `124db58`, `f97b804`, `c54d344`).
+
+## [1.7.0] - 2026-09-15
+
+Includes the changes from the unreleased 1.6.0.
+
+### Added
+
+- **Windows Demos**: Windows releases run under wine inside a gamescope capture session, so they get shaders, grid layout and screenshots like any other system. Each session is sandboxed in its own throwaway prefix, with `--check-wine` and a prefix setup script (`b636d4c`, `c084112`, `6627ea0`, `3d7cfeb`, `e1482b3`, `86a7bc3`).
+- **Web Releases**: `WebSystem` shows HTML/JS releases through the same gamescope core (`c084112`).
+- **DOS**: PC/DOS support through PCem and DOSBox Pure, with GUS support, aspect-correction defaults and automatic DOS/4GW placement (`04ec7a2`, `e622af0`, `f1274e0`, `6fdec29`, `3787d1c`).
+- **Amiberry Core**: Amiga releases can run on the Amiberry libretro core, with WHDLoad boot support, JIT for AGA demos and `$DEMARC_CORE_DIR` to use local cores (`2df227f`, `06b1ac6`, `326cc35`, `bc48ff2`).
+- **New Systems**: Pico-8 via fake-08 and Plus4/C16 via yape (`eec87e9`, `1e948c6`, `00ffd7a`).
+- **Per-Release Overrides**: `overrides.toml` fixes up releases the db gets wrong — which download and file to boot, meta/core options, AmigaDOS assigns, patches and scripted key events — with `--boot-file` for local content (`8eb44d1`, `fb10fc4`, `2a7e135`, `0fd26ba`, `7a789ae`).
+- **Cross Fade**: `--cross-fade` loads the next release into a spare off-screen emulator and fades it in (`42270e9`, `5df1a55`, `8b0de87`).
+- **Settings Dialog**: Runtime settings dialog with nested sections and a Wine panel (`f804220`, `515eef1`, `12f4677`).
+- **Shader Dialog**: Shader collection and Mega Bezel preset pickers driven by `shaders.toml`, with editable parameters (`a2f7ad8`, `95983b0`, `ebbe051`, `d33556d`, `d27d797`).
+- **Remote Control and Headless**: `--remote-control` drives demarc from a Luau script and `--headless` runs offscreen (`9178e86`, `cf23fb1`, `ef45df8`).
+- **Sorting and Limits**: pouet.net rank in db entries with `--sort rank/random/date`, plus `--limit` and `--skip-count` (`e2fc182`, `09aac22`, `66ba599`, `947b348`).
+- **Awards**: Pouet coup-de-coeur and viewing-tip awards shown on file list rows (`0bce775`).
+- **Download URL Picker**: Shift+Enter picks among an entry's download URLs (`b1436d2`).
+- **Amiga `--unadf`**: Boot single-disk demos as a hard drive, including DMS archives (`e1b9ec8`, `e6d6605`).
+- **libretro VFS**: Implemented the VFS interface, fixing Stella ROM loading (`4fabd57`).
+- **Border Cropping**: Crop borders using the core-reported used frame size (`872e4d9`, `98d5923`).
+- **Misc**: Palette TIFF images, `.v2m` music files, a whole-screen screenshot on Shift+T, and `.txt`/`.txt.gz` files auto-detected as databases (`404fccc`, `cb29ceb`, `0a12914`, `4cbaad9`).
+
+### Changed
+
+- **Cache Budgets**: `FileCache` gains size-banded budgets, a user-editable `.limit` file and age expiry for cores (`b3d60fd`).
+- **Release Directories**: Amiga and Atari ST release directories load as a single hard-drive entry, and command line arguments are only collected recursively when asked (`c0928cc`, `6ae31cd`).
+- **Amiga Defaults**: Model defaults to A500, floppy speed is pinned, `requires-1mb-fastmem` is honoured and demozoo AGA demos only load as AGA when the date is new (`9f5d799`, `5ea46a6`, `67d6636`, `bf3e6ec`).
+- **Launch Target Ranking**: Prefer non-Windows executables, an exe over a bat beside it and 8.3-named programs; `.bat` files are no longer claimed as DOS programs (`4982c49`, `a1cc5ec`, `489e204`, `4be153f`).
+- **Shader Loading**: Shader chains build off the render thread with parallel pass compilation (`95983b0`, `16a08df`).
+- **Unpacking**: Releases unpack off the main thread (`26a32ef`).
+- **Grid View**: Windows entries are excluded from the grid (`2d4c631`).
+- **Atari ST**: Hatari's LED status display is hidden, `hatari_ramsize` is renamed `hatari_memory_size` and the aspect ratio tweak is disabled (`ab660d5`, `521fab1`, `46ed5ae`).
+- **HUD**: Shows remaining download bytes instead of the download count (`41d2417`).
+- **Performance**: Vectorized XRGB8888 frame conversion and skipped `system.zip` rebuilds when inputs are unchanged (`323c53f`, `7e23be1`).
+- **Refactoring**: Split `retro_emu` into a backend-agnostic trait and threaded worker, extracted config/system_dir/pixels modules and moved tests out of line (`7beb7d3`, `fd8e2ad`, `bce8f99`, `6ee0286`).
+- **Removed**: The `--gus` flag and the `profile` feature (`09aac22`, `0b69ba4`).
+
+### Fixed
+
+- **C64 SID Model**: Use the 8580 SID by default (`2f3bbf2`).
+- **Core Unload**: Call `retro_unload_game` and add a shutdown timeout (`073e6f2`).
+- **Dead Downloads**: Fall back to other release URLs when a disk set is dead (`f969f33`).
+- **Amiga Executables**: Accept hunks that run into the next without `HUNK_END`, strip embedded comments from LHA entry names and fix AGA model detection (`6ecf5a8`, `9ea7022`, `5ea46a6`).
+- **Disk Sorting**: Fixed `sort_disks` when every name claims the same slot (`dbe9b46`).
+- **File Picker**: Fixed stuck modifier keys (`199f113`).
+- **Warp Indicator**: Taken down when the skip actually finishes (`e5c4565`).
+- **C64 Fast Load**: Only send F1+Return when fast-loading (`b8b85e9`).
+- **Windows Paths**: Strip the `\\?\` verbatim-path prefix before handing paths to cores (`797cf80`).
+- **Widescreen Detection**: Detected from the monitor rather than the window (`89dc7bd`).
+- **Audio**: Raised audio buffer bounds (`1307d44`).
+
 ## [1.5.0] - 2026-08-22
 
 ### Added
