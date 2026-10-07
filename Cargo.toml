@@ -1,56 +1,10 @@
-[workspace]
-members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
-
-# Shared by every crate in the workspace, so a version bump happens in one place.
-[workspace.package]
-version = "1.7.0"
-edition = "2024"
-repository = "https://github.com/sasq64/demarc"
-
-# Only the dependencies more than one crate needs. Crate-local ones stay in the
-# crate that uses them.
-[workspace.dependencies]
-anyhow = "1.0.102"
-cc = "1"
-dirs = "6.0.0"
-# The version `bevy_egui` is built against, so `retro-ui` and demarc share one.
-egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
-libc = "0.2"
-libloading = "0.9"
-librashader = {
-  git = "https://github.com/sasq64/librashader",
-  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
-  default-features = false,
-  features = [
-    "preprocess",
-    "presets",
-    "reflect-naga",
-    "runtime-wgpu",
-  ]
-}
-# `image` for the still-image backend and the frontend's screenshots; the rest
-# are used on both sides of the newsys boundary.
-image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga", "tiff"] }
-mlua = { version = "0.11", features = ["luau", "send"] }
-percent-encoding = "2"
-pollster = "0.4"
-suppaftp = "10"
-sha2 = "0.11"
-tempfile = "3.27.0"
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-wgpu = "29"
-ureq = "3"
-winit = "0.30"
-zip = { version = "8", default-features = false, features = ["deflate", "deflate64"] }
-
 [package]
 name = "demarc"
 version.workspace = true
 edition.workspace = true
-repository.workspace = true
 description = "A command line emulator frontend for the demoscene"
 readme = "README.md"
+repository.workspace = true
 
 # Lets `cargo binstall --git https://github.com/sasq64/demarc demarc` find the
 # archives that `dist` uploads to the GitHub release. The default patterns
@@ -64,17 +18,54 @@ pkg-fmt = "txz"
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
 
+[workspace]
+members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
+
+# Shared by every crate in the workspace, so a version bump happens in one place.
+[workspace.package]
+version = "1.8.0"
+edition = "2024"
+repository = "https://github.com/sasq64/demarc"
+
+# Only the dependencies more than one crate needs. Crate-local ones stay in the
+# crate that uses them.
+[workspace.dependencies]
+anyhow = "1.0.102"
+cc = "1"
+dirs = "6.0.0"
+# The version `bevy_egui` is built against, so `retro-ui` and demarc share one.
+egui = { version = "0.36", default-features = false, features = ["default_fonts"] }
+# `image` for the still-image backend and the frontend's screenshots; the rest
+# are used on both sides of the newsys boundary.
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tga", "tiff"] }
+libc = "0.2"
+libloading = "0.9"
+librashader = {
+  git = "https://github.com/sasq64/librashader",
+  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
+  default-features = false,
+  features = [
+    "preprocess",
+    "presets",
+    "reflect-naga",
+    "runtime-wgpu",
+  ]
+}
+mlua = { version = "0.11", features = ["luau", "send"] }
+percent-encoding = "2"
+pollster = "0.4"
+sha2 = "0.11"
+suppaftp = "10"
+tempfile = "3.27.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ureq = "3"
+wgpu = "29"
+winit = "0.30"
+zip = { version = "8", default-features = false, features = ["deflate", "deflate64"] }
+
 [dependencies]
 anyhow.workspace = true
-# The libretro layer, split out so it can be built for targets the rest of
-# demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
-retro-core = { path = "crates/retro-core" }
-# Unpacking a release, working out which machine it is, and getting it booted.
-newsys = { path = "crates/newsys" }
-# The `.slangp` filter chains, and the only thing that links librashader.
-retroarc = { path = "crates/retroarc" }
-# The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
-retro-ui = { path = "crates/retro-ui" }
 bevy = {
   version = "0.19.0",
   default-features = false,
@@ -89,7 +80,16 @@ clap = { version = "4.6.1", features = ["color", "derive"] }
 cpal = "0.17.1"
 dirs.workspace = true
 libloading.workspace = true
+# Unpacking a release, working out which machine it is, and getting it booted.
+newsys = { path = "crates/newsys" }
 rand = "0.10.1"
+# The libretro layer, split out so it can be built for targets the rest of
+# demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
+retro-core = { path = "crates/retro-core" }
+# The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
+retro-ui = { path = "crates/retro-ui" }
+# The `.slangp` filter chains, and the only thing that links librashader.
+retroarc = { path = "crates/retroarc" }
 ringbuf = "0.5.0"
 rubato = "0.16"
 sha2.workspace = true
@@ -116,20 +116,20 @@ bevy_egui = {
     "render",
   ]
 }
-# `block_on` for the Flash backend's wgpu adapter/device requests.
-pollster = { workspace = true, optional = true }
-# `--filter`: matched against each raw db line while collecting (see collect_db).
-regex = "1"
 image.workspace = true
 # `AppSettings::files`: the loaded databases, in the order they were given.
 indexmap = "2"
 mlua.workspace = true
 percent-encoding.workspace = true
+# `block_on` for the Flash backend's wgpu adapter/device requests.
+pollster = { workspace = true, optional = true }
+qbsdiff = "1.4.4"
+# `--filter`: matched against each raw db line while collecting (see collect_db).
+regex = "1"
 suppaftp.workspace = true
 ureq.workspace = true
 # `src/overrides.rs`: db URLs, and the bsdiff deltas an override can carry.
 url = "2"
-qbsdiff = "1.4.4"
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
 #
@@ -169,6 +169,9 @@ serde_json = "1.0.151"
 # (src/shader_dialog.rs).
 toml = { version = "1.1.4", features = ["preserve_order"] }
 
+[dev-dependencies]
+# Encoding a patch the way overrides.toml carries one, in overrides_tests.
+base64 = "0.23.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
@@ -187,10 +190,6 @@ zbus = { version = "5", features = ["tokio"] }
 # Used to dup2 fd 1 to /dev/null so libretro cores can't spew to stdout, while
 # keeping the original stdout for tracing (see `silence_stdout` in main.rs).
 libc.workspace = true
-
-[dev-dependencies]
-# Encoding a patch the way overrides.toml carries one, in overrides_tests.
-base64 = "0.23.1"
 
 [features]
 default = []
