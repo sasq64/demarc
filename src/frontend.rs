@@ -54,7 +54,7 @@ pub(crate) struct EmuView {
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
 /// How many frames the picture lags behind the core.
-const FRAME_DELAY: usize = 8;
+const FRAME_DELAY: usize = 16;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
