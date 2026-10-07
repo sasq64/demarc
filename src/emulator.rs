@@ -675,3 +675,7 @@ impl Emulator {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "tests/emulator_tests.rs"]
+mod tests;

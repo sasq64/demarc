@@ -11,7 +11,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use crate::backend::ViewFocus;
+use crate::backend::{VideoFrame, ViewFocus};
 use crate::config::{AppSettings, Args, RenderSettings};
 use crate::emulator::Emulator;
 use crate::frame_upload::FrameUploadPlugin;
@@ -294,38 +294,43 @@ fn draw_current_emu_outline(
     if w <= 0.0 || h <= 0.0 {
         return;
     }
+    let window = Vec2::new(w, h);
     if settings.all_emus {
-        // Frame the whole screen rather than a single cell.
-        let rect = Vec2::new(
-            (w - config_line_width()).max(0.0),
-            (h - config_line_width()).max(0.0),
+        let (center, rect) = outline_rect(window, None);
+        gizmos.rect_2d(
+            Isometry2d::from_translation(center),
+            rect,
+            CURRENT_OUTLINE_COLOR,
         );
-        gizmos.rect_2d(Isometry2d::IDENTITY, rect, CURRENT_OUTLINE_COLOR);
         return;
     }
     for (view, emu, cell) in &views {
         if view.index != settings.current_emu || emu.is_crossfade {
             continue;
         }
-        let (offset, size) = cell.map_or((Vec2::ZERO, Vec2::ONE), |c| (c.offset, c.size));
-        // The default Camera2d uses logical pixels with the origin centered and
-        // y pointing up; cell offsets are top-left fractions with y down.
-        let center = Vec2::new(
-            (offset.x + size.x * 0.5 - 0.5) * w,
-            (0.5 - (offset.y + size.y * 0.5)) * h,
-        );
-        // Inset by the line width so the outline sits inside the cell instead
-        // of being clipped against the window/cell edges.
-        let rect = Vec2::new(
-            (size.x * w - config_line_width()).max(0.0),
-            (size.y * h - config_line_width()).max(0.0),
-        );
+        let (center, rect) = outline_rect(window, cell);
         gizmos.rect_2d(
             Isometry2d::from_translation(center),
             rect,
             CURRENT_OUTLINE_COLOR,
         );
     }
+}
+
+/// Center and size of the outline around `cell` in a window of `window`
+/// logical pixels, or around the whole window without one.
+fn outline_rect(window: Vec2, cell: Option<&GridCell>) -> (Vec2, Vec2) {
+    let (offset, size) = cell.map_or((Vec2::ZERO, Vec2::ONE), |c| (c.offset, c.size));
+    // The default Camera2d uses logical pixels with the origin centered and
+    // y pointing up; cell offsets are top-left fractions with y down.
+    let center = Vec2::new(
+        (offset.x + size.x * 0.5 - 0.5) * window.x,
+        (0.5 - (offset.y + size.y * 0.5)) * window.y,
+    );
+    // Inset by the line width so the outline sits inside the cell instead
+    // of being clipped against the window/cell edges.
+    let rect = (size * window - config_line_width()).max(Vec2::ZERO);
+    (center, rect)
 }
 
 /// Line width used both for the gizmo config and the outline inset.
@@ -416,6 +421,20 @@ fn cursor_frame_uv(
     );
     let frame_uv = (screen_uv - uv_offset) / uv_scale;
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
+}
+
+/// Copy `frame` into the top-left of a `dst_w`x`dst_h` RGBA texture, clipping
+/// whatever does not fit.
+fn blit_frame(dst: &mut [u8], dst_w: usize, dst_h: usize, frame: &VideoFrame) {
+    let w = frame.width;
+    let src = crate::backend::frame_bytes(&frame.pixels);
+    let copy_w = w.min(dst_w);
+    let copy_h = frame.height.min(dst_h);
+    for y in 0..copy_h {
+        let src_off = y * w * 4;
+        let dst_off = y * dst_w * 4;
+        dst[dst_off..dst_off + copy_w * 4].copy_from_slice(&src[src_off..src_off + copy_w * 4]);
+    }
 }
 
 pub(crate) fn run_frontend(
@@ -567,16 +586,7 @@ pub(crate) fn run_frontend(
             && let Some(mut image) = images.get_mut(&emu.image)
             && let Some(dst) = image.data.as_mut()
         {
-            let (w, h) = (frame.width, frame.height);
-            let src = crate::backend::frame_bytes(&frame.pixels);
-            let copy_w = w.min(bg_w);
-            let copy_h = h.min(bg_h);
-            for y in 0..copy_h {
-                let src_off = y * w * 4;
-                let dst_off = y * bg_w * 4;
-                dst[dst_off..dst_off + copy_w * 4]
-                    .copy_from_slice(&src[src_off..src_off + copy_w * 4]);
-            }
+            blit_frame(dst, bg_w, bg_h, &frame);
             emu.shown_frame = Some(Arc::clone(&frame.pixels));
         }
 
@@ -638,3 +648,7 @@ impl Plugin for FrontendPlugin {
         app.add_plugins((LoadingPlugin, FrameUploadPlugin));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/frontend_tests.rs"]
+mod tests;

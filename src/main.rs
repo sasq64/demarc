@@ -38,6 +38,9 @@ mod egui_settings;
 mod egui_ui;
 mod emu_file;
 mod emulator;
+#[cfg(test)]
+#[path = "tests/fake_backend.rs"]
+mod fake_backend;
 mod files;
 mod frame_upload;
 mod frontend;
