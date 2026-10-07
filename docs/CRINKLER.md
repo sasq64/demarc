@@ -95,6 +95,18 @@ All three resolutions are affected identically; the corrupted width is always `w
 
 ---
 
+## Mode 3 — forwarded exports
+
+Crinkler reads `base + EAT[i]` without following forwarders, and 94 of wine's
+kernelbase exports are forwarders to ntdll. The intro jumps into the forwarder
+string and runs it as code. Unlike modes 1 and 2 this crashes, usually with
+`EXCEPTION_PRIV_INSTRUCTION` (`n` is `outsb`) at an address inside kernelbase's
+`.edata`. quite's "yes we can" hits it on `QueryPerformanceFrequency`.
+
+Fixed by `tools/kernelbase`, the same idea as `tools/winmm`.
+
+---
+
 ## Which module Crinkler reads
 
 Every slot in ixaleno's IAT resolves to a **`kernelbase.dll`** address — `CloseHandle`,

@@ -94,6 +94,14 @@ pub const WINMM_OVERRIDE: &str = "winmm=n,b";
 #[cfg(target_os = "linux")]
 pub const DCOMP_OVERRIDE: &str = "dcomp=n,b";
 
+/// The same for the kernelbase.dll without forwarders. See `tools/kernelbase`.
+#[cfg(target_os = "linux")]
+pub const KERNELBASE_OVERRIDE: &str = "kernelbase=n,b";
+
+/// The same for the dx8vb.dll with D3DX math. See `tools/dx8vb`.
+#[cfg(target_os = "linux")]
+pub const DX8VB_OVERRIDE: &str = "dx8vb=n,b";
+
 /// How long the driver keeps looking for a dialog before giving up.
 const DIALOG_TIMEOUT: f64 = 20.0;
 

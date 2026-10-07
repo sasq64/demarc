@@ -22,6 +22,8 @@ wineboot -i
 ./winetricks -q corefonts
 # MFC42 (Codename Chinadoll)
 ./winetricks -q mfc42
+# Native msvcp60 from the same download; wine's lacks exports (Come Clean)
+cabextract -q -d "$PREFIX/drive_c/windows/syswow64" -F msvcp60.dll "${XDG_CACHE_HOME:-$HOME/.cache}/winetricks/vcrun6/vcredist.exe"
 
 # Speech (for Zoom 3)
 ./winetricks --force -q speechsdk
@@ -45,7 +47,7 @@ fi
 # For Panic Room / FLT (and pobably others)
 
 missing=()
-for f in files/gm.dls files/tssoft32.acm files/tsd32.dll files/dcomp.dll files/winmm.dll; do
+for f in files/gm.dls files/tssoft32.acm files/tsd32.dll files/dcomp.dll files/winmm.dll files/kernelbase.dll files/dx8vb.dll; do
     [ -f "$f" ] || missing+=("$f")
 done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -68,3 +70,7 @@ install "files/dcomp.dll" $PREFIX/drive_c/windows/system32/dcomp.dll
 
 # For Crinkler range imports. See tools/winmm.
 install "files/winmm.dll" $PREFIX/drive_c/windows/syswow64/winmm.dll
+# For Crinkler imports of forwarded exports. See tools/kernelbase.
+install "files/kernelbase.dll" $PREFIX/drive_c/windows/syswow64/kernelbase.dll
+# For intros that take D3DX math from dx8vb. See tools/dx8vb.
+install "files/dx8vb.dll" $PREFIX/drive_c/windows/syswow64/dx8vb.dll

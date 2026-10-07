@@ -65,3 +65,19 @@
 
 - A demo's setup dialog can be inspected without a GUI: start it with plain
   wine, then `wine demarc-autodlg.exe --list`.
+
+- A Crinkler intro that loads a DLL with odd casing (`dx8vB.dll`, `WInmm.dll`)
+  names it on purpose; `WINEDEBUG=+loaddll` shows the whole import list, which
+  the compressed exe does not.
+
+- Plain `rustfmt` on a file reformats lines this repo keeps unformatted; check
+  with `cargo check` and leave formatting alone.
+
+- A UPX-packed DLL resolves its imports in its own stub, so a missing export
+  shows only as `"X.dll" failed to initialize` (plus a crash in the DETACH that
+  follows). `WINEDEBUG=+relay` shows the `GetProcAddress() retval=00000000`. The
+  import names are compressed too, so they can't be patched in the file.
+
+- A real DLL copied into the prefix's `syswow64` over wine's fake one is loaded
+  without any override, so it applies to every demo — unless wine's own
+  builtins import it first: a native `msvcrt.dll` there is never loaded.

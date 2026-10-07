@@ -169,6 +169,15 @@ autodlg:
 winmm:
     python3 tools/winmm/build.py files/winmm.dll
 
+# kernelbase.dll with wine's exports but no forwarders (source in tools/kernelbase).
+# Checked in; rebuild when wine's kernelbase gains exports.
+kernelbase:
+    python3 tools/kernelbase/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/kernelbase.dll" files/kernelbase.dll
+
+# dx8vb.dll with the VB_D3DX* math functions wine lacks (source in tools/dx8vb).
+dx8vb:
+    python3 tools/dx8vb/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/dx8vb.dll" files/dx8vb.dll
+
 # dcomp.dll that gives DirectComposition demos a swapchain (source in
 # tools/compshim). Checked in, and installed in the prefix by scripts/setup-wine.sh.
 compshim:
