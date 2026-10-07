@@ -317,6 +317,7 @@ impl System for DosSystem {
     }
 
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if super::windows::is_windows_bat(file) {
             return Ok(false);
         }
