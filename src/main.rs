@@ -476,7 +476,7 @@ fn main() {
         } else {
             PresentMode::Fifo
         },
-        mode: if args.window {
+        mode: if args.window.is_some() {
             WindowMode::Windowed
         } else {
             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
@@ -484,8 +484,8 @@ fn main() {
         resizable: false,
         ..Default::default()
     };
-    if args.window {
-        window.resolution = (720, 540).into();
+    if let Some(size) = args.window {
+        window.resolution = size.into();
     }
     // `--headless` opens no window at all; everything renders into the
     // offscreen image `HeadlessTarget` holds instead.
@@ -535,14 +535,15 @@ fn main() {
         ..Default::default()
     };
 
-    let win = args.window;
+    let win = args.window.is_some();
     let headless = args.headless;
     let clear_color = args.clear_color;
 
     let demo_settings = demarc_settings::DemarcSettings {
         fullscreen: !win && !headless,
         latency: args.latency,
-        volume: 100.0,
+        crt_limit: args.crt_limit,
+        downsample_limit: args.downsample,
         background: clear_color,
         fast_load: args.fast_load,
         #[cfg(target_os = "linux")]

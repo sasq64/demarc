@@ -13,6 +13,7 @@ use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
 use crate::config::{AppSettings, GlobalSettings};
 use crate::egui_settings::{Range, ReflectDisplay, SettingsApplied};
+use crate::post_process::ShaderPath;
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
 #[cfg(target_os = "linux")]
@@ -30,12 +31,14 @@ pub enum Resolution {
     /// Leave the size to the release: its name, tags or `overrides.toml`.
     #[default]
     Auto,
+    Res320x200,
+    Res512x384,
     Res640x480,
     Res800x600,
     Res1024x768,
-
     Res1280x720,
     Res1920x1080,
+    Res2560x1440,
 }
 
 impl Resolution {
@@ -43,11 +46,14 @@ impl Resolution {
     pub fn as_meta(&self) -> Option<&'static str> {
         match self {
             Resolution::Auto => None,
+            Resolution::Res320x200 => Some("320x200"),
+            Resolution::Res512x384 => Some("512x384"),
             Resolution::Res640x480 => Some("640x480"),
             Resolution::Res800x600 => Some("800x600"),
             Resolution::Res1024x768 => Some("1024x768"),
             Resolution::Res1280x720 => Some("1280x720"),
             Resolution::Res1920x1080 => Some("1920x1080"),
+            Resolution::Res2560x1440 => Some("2560x1440"),
         }
     }
 }
@@ -67,6 +73,12 @@ pub struct WineSettings {
     pub filter: bool,
 }
 
+// #[derive(Default, Debug, Clone, PartialEq, Reflect)]
+// pub struct AmigaSettings {
+//     pub aga: bool,
+//     pub drive_sound: bool,
+// }
+
 /// The settings the dialog edits.
 ///
 /// The resource is seeded from the command line in `main` and thereafter holds
@@ -85,11 +97,9 @@ pub struct DemarcSettings {
     /// frame), so the range starts at 1.
     #[reflect(@Range::new(1, 8))]
     pub latency: u32,
-    /// TBD: nothing reads this yet. Per-emulator gain already exists
-    /// (`AppSettings::audio_gain`); what is missing is a master volume for it
-    /// to scale.
-    #[reflect(@Range::new(0.0, 100.0))]
-    pub volume: f32,
+
+    pub crt_limit: f32,
+    pub downsample_limit: f32,
 
     #[cfg(target_os = "linux")]
     pub wine: WineSettings,
@@ -106,7 +116,8 @@ pub fn apply_settings(
     mut current: ResMut<DemarcSettings>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     mut clear_color: ResMut<ClearColor>,
-    app_settings: Res<AppSettings>,
+    mut app_settings: ResMut<AppSettings>,
+    mut shader_path: ResMut<ShaderPath>,
     mut global: ResMut<GlobalSettings>,
 ) {
     for SettingsApplied(new) in reader.read() {
@@ -127,6 +138,12 @@ pub fn apply_settings(
         }
         if new.fast_load != current.fast_load {
             global.0.insert("fast-load", new.fast_load.to_string());
+        }
+        if new.crt_limit != current.crt_limit {
+            app_settings.crt_limit = new.crt_limit;
+        }
+        if new.downsample_limit != current.downsample_limit {
+            shader_path.downsample_limit = new.downsample_limit;
         }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {

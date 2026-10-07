@@ -215,7 +215,7 @@ pub(super) fn post_process_pass(
                 // entirely). Independent of `crt_enabled`: `crt_limit` has almost
                 // always switched the effect off by the time we're down here, and
                 // this is a resampler, not a look.
-                let downsampling = wants_downsample(inter_size, src_size, chains.downsample_limit);
+                let downsampling = wants_downsample(inter_size, src_size, shader_path.downsample_limit);
                 // With neither the effect nor the downsampler wanted, the chain
                 // this view would run is `stock.slangp` — a nearest-sampled
                 // verbatim copy of the source. Composite the emulator framebuffer

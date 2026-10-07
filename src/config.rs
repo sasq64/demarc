@@ -183,9 +183,11 @@ pub struct Args {
     #[arg(long)]
     pub silent_drive: bool,
 
-    /// Open windowed instead of full screen
-    #[arg(short, long)]
-    pub window: bool,
+    /// Open windowed instead of full screen, optionally at a given size,
+    /// e.g. --window=640x480
+    #[arg(short, long, value_name = "WxH", num_args = 0..=1, require_equals = true,
+          default_missing_value = "720x540", value_parser = parse_window)]
+    pub window: Option<(u32, u32)>,
 
     /// Open no window and play no audio; render offscreen instead
     #[arg(long)]
@@ -321,23 +323,24 @@ fn parse_color(s: &str) -> Result<bevy::color::Color, String> {
     Ok(bevy::color::Color::srgb_u8(parse(r)?, parse(g)?, parse(b)?))
 }
 
-/// Parse a `COLSxROWS` grid specifier like `5x4` into `(cols, rows)`.
-fn parse_grid(s: &str) -> Result<(u32, u32), String> {
-    let (cols, rows) = s
+/// Parse an `AxB` pair of non-zero numbers like `5x4`.
+fn parse_pair(s: &str, form: &str) -> Result<(u32, u32), String> {
+    let (a, b) = s
         .split_once(['x', 'X'])
-        .ok_or_else(|| format!("expected COLSxROWS, e.g. 5x4 (got `{s}`)"))?;
-    let cols: u32 = cols
-        .trim()
-        .parse()
-        .map_err(|_| format!("invalid column count `{cols}`"))?;
-    let rows: u32 = rows
-        .trim()
-        .parse()
-        .map_err(|_| format!("invalid row count `{rows}`"))?;
-    if cols == 0 || rows == 0 {
-        return Err("grid dimensions must be at least 1".into());
-    }
-    Ok((cols, rows))
+        .ok_or_else(|| format!("expected {form} (got `{s}`)"))?;
+    let num = |v: &str| match v.trim().parse() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("invalid number `{v}` in `{s}`, expected {form}")),
+    };
+    Ok((num(a)?, num(b)?))
+}
+
+fn parse_grid(s: &str) -> Result<(u32, u32), String> {
+    parse_pair(s, "COLSxROWS, e.g. 5x4")
+}
+
+fn parse_window(s: &str) -> Result<(u32, u32), String> {
+    parse_pair(s, "WIDTHxHEIGHT, e.g. 640x480")
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
