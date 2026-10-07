@@ -48,3 +48,16 @@
   against where the pointer was when the frame began; and held modifiers come
   from `Event::ModifiersChanged`, not from the ones stamped on a key event
   (`RawInput` has no `modifiers` field in 0.36).
+
+- `~/.cache/demarc/system/overrides.toml` (and `system/win/*`) is rewritten from
+  the copy built into the binary, so editing the cache copy does nothing past
+  the next start: edit `system/` and rebuild. Two test runs went by with an old
+  override still applied.
+
+- `WINEDEBUG=+relay` only traces builtin DLLs, so a native d3dcompiler_47 shows
+  nothing. Load the builtin (`d3dcompiler_47=b`) to see `D3DCompile` return
+  codes, and set `VKD3D_SHADER_DUMP_PATH=<dir>` to get every shader's source;
+  one with a `-source.hlsl` but no `-target.dxbc` is the one that failed.
+
+- A demo's setup dialog can be inspected without a GUI: start it with plain
+  wine, then `wine demarc-autodlg.exe --list`.

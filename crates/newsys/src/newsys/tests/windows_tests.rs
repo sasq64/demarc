@@ -549,3 +549,39 @@ fn restates_glsl_120_subset_as_a_core_option() {
     );
     assert!(!capture_meta(&file, None).contains_key(key));
 }
+
+/// squishy's header: PE at 0x0c, a resource directory address with size 0.
+fn squishy_header(res_size: u32) -> Vec<u8> {
+    let mut h = vec![0u8; 0x200];
+    h[0..2].copy_from_slice(b"MZ");
+    h[0x0c..0x10].copy_from_slice(b"PE\0\0");
+    h[0x3c] = 0x0c;
+    let opt = 0x0c + 24;
+    h[opt..opt + 2].copy_from_slice(&0x10bu16.to_le_bytes());
+    h[opt + 56..opt + 60].copy_from_slice(&0x0fbbc318u32.to_le_bytes());
+    let dirs = opt + 96;
+    h[dirs - 4..dirs].copy_from_slice(&16u32.to_le_bytes());
+    h[dirs + 16..dirs + 20].copy_from_slice(&0xfb0cu32.to_le_bytes());
+    h[dirs + 20..dirs + 24].copy_from_slice(&res_size.to_le_bytes());
+    h
+}
+
+#[test]
+fn sizes_an_empty_resource_directory() {
+    assert_eq!(
+        empty_resource_dir(&squishy_header(0)),
+        Some((0x0c + 24 + 96 + 20, 0x0fbbc318 - 0xfb0c))
+    );
+    assert_eq!(empty_resource_dir(&squishy_header(0x100)), None);
+}
+
+#[test]
+fn patches_the_resource_size_in_a_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = write_bytes(dir.path(), "intro.exe", &squishy_header(0));
+    let mut file = WorkFile::new(dir.path());
+    let target = fix_resource_dir(&mut file, exe.clone()).unwrap();
+    assert_ne!(target, exe);
+    assert_eq!(fs::read(&exe).unwrap(), squishy_header(0));
+    assert_eq!(empty_resource_dir(&fs::read(&target).unwrap()), None);
+}

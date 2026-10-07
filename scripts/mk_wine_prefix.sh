@@ -20,6 +20,8 @@ wineboot -i
 ./winetricks -q dxvk d3dx9 d3dx10 vkd3d
 ./winetricks -q d3dx11_42 d3dx11_43 d3dcompiler_42 d3dcompiler_43 d3dcompiler_46 d3dcompiler_47
 ./winetricks -q corefonts
+# MFC42 (Codename Chinadoll)
+./winetricks -q mfc42
 
 # Speech (for Zoom 3)
 ./winetricks --force -q speechsdk

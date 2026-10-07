@@ -177,6 +177,20 @@ meta = { wine_res = "1024x768" }
 file = "puls.zip"
 libretro = { dosbox_pure_cycles = "max" }
 
+# Codename Chinadoll: needs MFC42 (scripts/mk_wine_prefix.sh), the .ccs the bat passes,
+# and "apply selection and go!" picked in its own setup menu
+[zoo.22636]
+boot = "demo-d3d.bat"
+meta = { wine_res = "640x480" }
+events = [
+  { frame = 600, key = "ArrowDown" },
+  { frame = 610, key = "ArrowDown" },
+  { frame = 620, key = "ArrowDown" },
+  { frame = 630, key = "ArrowDown" },
+  { frame = 640, key = "ArrowDown" },
+  { frame = 650, key = "Enter" },
+]
+
 # Tube by Baze / 3CS
 [zoo.57849]
 libretro = { dosbox_pure_cycles = 150000 }
@@ -471,3 +485,7 @@ patch = {
   offset = 366507,
   contents = "LwBvACsAIAAvAHcAOgAwACAA",
 }
+
+# Simula~8.BSP: henny.exe needs the plugin list simudemo.bat gives it
+[zoo.185616]
+boot = "simudemo.bat"

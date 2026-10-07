@@ -2,6 +2,7 @@
 //! started on the desktop itself on Windows — see `crate::win_runner`.
 
 use std::collections::HashMap;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -16,6 +17,7 @@ use super::META_REFRESH;
 use super::dos::{ExeKind, exe_kind};
 use super::{META_WIDESCREEN, System, get_ext, walk_dir};
 use crate::backend::Backend;
+use crate::utils::read_at;
 #[cfg(target_os = "linux")]
 use crate::libloader;
 #[cfg(target_os = "linux")]
@@ -57,6 +59,11 @@ pub struct WindowsSystem {}
 /// from the same header — see [`exe_kind`].
 fn is_windows_program(path: &Path) -> bool {
     get_ext(path) == "exe" && exe_kind(path) == ExeKind::Windows
+}
+
+/// A `.bat` an override boots in a Windows release, run by wine rather than DOS.
+pub(super) fn is_windows_bat(file: &WorkFile) -> bool {
+    get_ext(file) == "bat" && file.is_file() && file.get_meta_or("platform", "") == "Windows"
 }
 
 /// How much we want to start a given program, biggest first.
@@ -147,6 +154,52 @@ fn scan_res(stem: &str, is_separator: fn(char) -> bool) -> Option<String> {
     None
 }
 
+/// Where to write a size into the resource directory entry, and the size, when
+/// the entry has an address but a size of 0. Windows ignores the size; wine takes
+/// it for "no resources", so the setup dialog fails and the demo quits. squishy
+/// packed 64Ks (Atlas, Dope on Wax) are written like this.
+fn empty_resource_dir(header: &[u8]) -> Option<(usize, u32)> {
+    let u16_at = |at: usize| Some(u16::from_le_bytes(header.get(at..at + 2)?.try_into().ok()?));
+    let u32_at = |at: usize| Some(u32::from_le_bytes(header.get(at..at + 4)?.try_into().ok()?));
+    let opt = u32_at(0x3c)? as usize + 24;
+    let dirs = opt
+        + match u16_at(opt)? {
+            0x10b => 96,
+            0x20b => 112,
+            _ => return None,
+        };
+    if u32_at(dirs - 4)? < 3 {
+        return None;
+    }
+    let rva = u32_at(dirs + 16)?;
+    let size_at = dirs + 20;
+    if rva == 0 || u32_at(size_at)? != 0 {
+        return None;
+    }
+    let image_size = u32_at(opt + 56)?;
+    Some((size_at, image_size.checked_sub(rva).filter(|&s| s > 0)?))
+}
+
+/// Give `target` a resource directory size wine will accept — see
+/// [`empty_resource_dir`]. Returns where `target` is now, as the release may
+/// have had to be copied to be written to.
+fn fix_resource_dir(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
+    let Some((at, size)) = read_at(&target, 0, 0x400)
+        .ok()
+        .and_then(|header| empty_resource_dir(&header))
+    else {
+        return Ok(target);
+    };
+    let rel = target.strip_prefix(&file.path).unwrap_or(Path::new("")).to_owned();
+    file.make_temp()?;
+    let target = if rel.as_os_str().is_empty() { file.path.clone() } else { file.path.join(rel) };
+    info!("Setting the resource directory size of {target:?} to {size:#x}");
+    let mut out = std::fs::OpenOptions::new().write(true).open(&target)?;
+    out.seek(SeekFrom::Start(at as u64))?;
+    out.write_all(&size.to_le_bytes())?;
+    Ok(target)
+}
+
 impl WindowsSystem {
     /// Which of the files in a release is the one to start.
     ///
@@ -202,7 +255,12 @@ impl System for WindowsSystem {
         // because that one can only hand back a fixed string.
         let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
         let dialog_res = file.get_meta_or(META_DIALOG_RES, default_dialog_res(widescreen));
-        let Some(target) = self.pick_target(file, &dialog_res)? else {
+        let target = if is_windows_bat(file) {
+            Some(file.path.clone())
+        } else {
+            self.pick_target(file, &dialog_res)?
+        };
+        let Some(target) = target else {
             return Ok(false);
         };
 
@@ -218,7 +276,10 @@ impl System for WindowsSystem {
         // Native for all D3D seems to work
         #[cfg(target_os = "linux")]
         {
-            let overrides = format!("d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE}");
+            let mut overrides = format!("d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE}");
+            if let Some(extra) = dll_overrides(&file.get_all_meta()) {
+                overrides = format!("{overrides};{extra}");
+            }
             file.set_meta("gamescope_dll_overrides", &overrides);
             file.set_meta("gamescope_wine_dll_overrides", &overrides);
         }
@@ -248,6 +309,7 @@ impl System for WindowsSystem {
             }
         }
 
+        let target = fix_resource_dir(file, target)?;
         file.path = target;
         Ok(true)
     }

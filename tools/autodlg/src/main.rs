@@ -535,7 +535,7 @@ fn parse_args() -> Args {
         prefer: vec![],
         check: vec![],
         uncheck: vec![],
-        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES", "DEMO"]
+        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES", "DEMO", "INTRO"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
