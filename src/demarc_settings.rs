@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
-use crate::config::AppSettings;
+use crate::config::{AppSettings, GlobalSettings};
 use crate::egui_settings::{Range, ReflectDisplay, SettingsApplied};
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
@@ -112,6 +112,7 @@ pub fn apply_settings(
     mut window: Single<&mut Window, With<PrimaryWindow>>,
     mut clear_color: ResMut<ClearColor>,
     app_settings: Res<AppSettings>,
+    mut global: ResMut<GlobalSettings>,
 ) {
     for SettingsApplied(new) in reader.read() {
         if new.fullscreen != current.fullscreen {
@@ -128,6 +129,9 @@ pub fn apply_settings(
             app_settings
                 .system
                 .set_meta("latency", new.latency.to_string());
+        }
+        if new.fast_load != current.fast_load {
+            global.0.insert("fast-load", new.fast_load.to_string());
         }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {

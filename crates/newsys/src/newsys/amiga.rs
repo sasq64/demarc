@@ -290,7 +290,6 @@ pub struct AmigaSystem {
     aga: bool,
     xmem: bool,
     fast: bool,
-    fast_load: bool,
     silent_drive: bool,
     unadf: bool,
 }
@@ -301,7 +300,6 @@ impl AmigaSystem {
             aga: args.aga,
             xmem: args.xmem,
             fast: args.fast,
-            fast_load: args.fast_load,
             silent_drive: args.silent_drive,
             unadf: args.unadf,
         }
@@ -734,7 +732,7 @@ impl System for AmigaSystem {
                 file.set_machine(Machine::A500);
             }
         }
-        if self.fast_load {
+        if file.is_enabled("fast-load") {
             file.set_meta("puae_floppy_speed", "0");
         }
         if self.xmem {

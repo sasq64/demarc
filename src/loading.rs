@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bevy::prelude::*;
 
-use crate::config::{AppSettings, Args};
+use crate::config::{AppSettings, Args, GlobalSettings};
 use crate::cross_fade::{CrossFade, Views, redirect_load};
 use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
@@ -88,7 +88,11 @@ pub(crate) enum LoadStatus {
 /// Only the job is started here: cancelling a load already in flight, the
 /// download counters and the emulator's own state are the caller's
 /// ([`handle_loading`]).
-pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
+pub fn load_async(
+    emu_file: &EmuFile,
+    over: Option<&Override>,
+    global: &GlobalSettings,
+) -> PendingLoad {
     let name = if emu_file.game_info.title.is_empty() {
         "load"
     } else {
@@ -105,6 +109,7 @@ pub fn load_async(emu_file: &EmuFile, over: Option<&Override>) -> PendingLoad {
         .meta
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .chain(global.0.iter().map(|(k, v)| ((*k).to_owned(), v.clone())))
         .collect();
     let mut source = emu_file.path.clone();
     // The one part of an override that has to happen before the transfer:
@@ -386,6 +391,7 @@ pub fn load_file(
     settings: ResMut<AppSettings>,
     mut cross_fade: ResMut<CrossFade>,
     args: Res<Args>,
+    global: Res<GlobalSettings>,
 ) {
     for game in reader.read() {
         debug!("Got load file message");
@@ -404,7 +410,7 @@ pub fn load_file(
                     DOWNLOAD_COUNTER.ended();
                 }
                 emu.state = EmuState::Loading;
-                emu.pending_load = Some(load_async(&game.emu_file, over.as_ref()));
+                emu.pending_load = Some(load_async(&game.emu_file, over.as_ref(), &global));
                 DOWNLOAD_COUNTER.started();
             }
         }

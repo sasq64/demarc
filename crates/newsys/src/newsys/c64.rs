@@ -42,16 +42,12 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
 }
 
 pub struct C64System {
-    fast_load: bool,
     reu: bool,
 }
 
 impl C64System {
     pub fn new(args: &SysOpts) -> Self {
-        Self {
-            fast_load: args.fast_load,
-            reu: args.reu,
-        }
+        Self { reu: args.reu }
     }
 }
 
@@ -127,7 +123,7 @@ impl System for C64System {
         })?;
 
         if !images.is_empty() {
-            if self.fast_load {
+            if file.is_enabled("fast-load") {
                 file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
                 file.set_meta("vice_autostart", "disabled");
             }
@@ -152,7 +148,7 @@ impl System for C64System {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
             retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
-        if self.fast_load {
+        if path.is_enabled("fast-load") {
             core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
         }
         Ok(core)

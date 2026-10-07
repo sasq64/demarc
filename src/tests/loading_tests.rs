@@ -30,7 +30,7 @@ fn start_load(emu: &mut Emulator, file: &EmuFile, over: Option<&Override>) {
     emu.state = EmuState::Loading;
     emu.run_next = false;
     emu.run_prev = false;
-    emu.pending_load = Some(load_async(file, over));
+    emu.pending_load = Some(load_async(file, over, &GlobalSettings::default()));
     DOWNLOAD_COUNTER.started();
 }
 

@@ -422,6 +422,10 @@ impl From<CbmSystemArg> for CbmSystem {
     }
 }
 
+/// Meta applied to every file loaded.
+#[derive(Resource, Default, Clone)]
+pub struct GlobalSettings(pub HashMap<&'static str, String>);
+
 /// The slice of the command line the systems care about.
 impl From<&Args> for SysOpts {
     fn from(a: &Args) -> Self {
@@ -430,7 +434,6 @@ impl From<&Args> for SysOpts {
             cbm_variant: a.cbm_variant.into(),
             extra_options: a.extra_options.clone(),
             fast: a.fast,
-            fast_load: a.fast_load,
             grid: a.grid,
             latency: a.latency,
             lua: a.lua.clone(),

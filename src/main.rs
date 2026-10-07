@@ -76,7 +76,9 @@ use speed_test::SpeedTestPlugin;
 
 use tracing_subscriber::EnvFilter;
 
-use crate::config::{AppSettings, Args, InfoDisplay, RenderSettings, ShaderArg, SortArg};
+use crate::config::{
+    AppSettings, Args, GlobalSettings, InfoDisplay, RenderSettings, ShaderArg, SortArg,
+};
 use crate::egui_ui::EguiUiPlugin;
 use crate::emu_file::EmuFile;
 use crate::jobs::JobsPlugin;
@@ -539,7 +541,7 @@ fn main() {
         latency: args.latency,
         volume: 100.0,
         background: clear_color,
-        fast_load: false,
+        fast_load: args.fast_load,
         #[cfg(target_os = "linux")]
         wine: Default::default(),
     };
@@ -565,8 +567,15 @@ fn main() {
             .disable::<bevy::winit::WinitPlugin>();
     }
 
+    let global_settings = GlobalSettings(
+        [("fast-load", args.fast_load.to_string())]
+            .into_iter()
+            .collect(),
+    );
+
     let max_threads = args.max_threads as usize;
     app.insert_resource(args)
+        .insert_resource(global_settings)
         .insert_resource(settings)
         .insert_resource(render_settings)
         .insert_resource(ClearColor(clear_color))
