@@ -447,7 +447,7 @@ fn main() {
             // sort last, keeping the order they were collected in.
             Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
             Some(SortArg::Date) => files.sort_by_key(|f| Reverse(f.game_info.date)),
-            None => {}
+            None => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
         }
 
         if args.limit > 0 {
