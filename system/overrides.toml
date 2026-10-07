@@ -34,6 +34,17 @@ file = "variform_by_kewlers.zip"
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
+# Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
+# bytes of ECX are zero; wine leaves them set and the copy runs off .data.
+[zoo.3780]
+boot = "parsec_compatible.exe"
+patch = {
+  info = "set all of ECX before rep movsb",
+  target = "parsec_compatible.exe",
+  offset = 7232,
+  contents = "jbhoTsAOag9ZvqBMQAA=",
+}
+
 [zoo.713]
 events = [{ frame = 10, key = "Enter" }]
 
