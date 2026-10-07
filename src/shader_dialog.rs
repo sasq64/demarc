@@ -107,7 +107,19 @@ fn shader_dialog_ui(
         Some(ShaderAction::Param(name, value)) => {
             Arc::make_mut(&mut shader_path.params).insert(name, value);
         }
-        Some(ShaderAction::Reset) => shader_path.params = Arc::new(HashMap::new()),
+        // The chain keeps whatever it was last set to, so an emptied map would
+        // leave the overrides in force: set each back to the preset's value.
+        Some(ShaderAction::Reset) => {
+            if let Some(preset) = preset_of(&shader_path) {
+                let defaults = retroarc::preset_parameters(preset);
+                let params = Arc::make_mut(&mut shader_path.params);
+                for (name, value) in params.iter_mut() {
+                    if let Some(p) = defaults.iter().find(|p| &p.name == name) {
+                        *value = p.initial;
+                    }
+                }
+            }
+        }
         None => {}
     }
     if !dialog.0.is_open() {
