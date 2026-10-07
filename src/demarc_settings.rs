@@ -69,8 +69,6 @@ pub struct WineSettings {
     pub resolution: Resolution,
     /// Stop at the demo's own setup dialog instead of driving it.
     pub show_startup_dialog: bool,
-    /// TBD: nothing reads this yet.
-    pub filter: bool,
 }
 
 // #[derive(Default, Debug, Clone, PartialEq, Reflect)]
