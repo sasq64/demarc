@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::Args;
-use crate::emulator::Emulator;
+use crate::emulator::{EmuState, Emulator};
 use crate::frontend::{EmuView, GridCell, grid_cells, spawn_emulator};
 use crate::loading::LoadFinished;
 use crate::post_process::PostProcess;
@@ -116,6 +116,7 @@ fn swap_roles(
     o_emu.set_volume(0.0);
     o_emu.is_crossfade = true;
     s_emu.is_crossfade = false;
+    s_emu.state = EmuState::InfoDelay;
     // Off the main thread: tearing a core down joins its worker thread, which
     // landed as a stutter on the frame the fade ended.
     o_emu.drop_core_async();
@@ -134,19 +135,16 @@ pub(crate) fn redirect_load(
     state: &mut CrossFade,
     views: &mut Views,
     index: usize,
-    dj_mode: bool,
 ) -> usize {
     if state.spare.is_none() || index == CROSSFADE_INDEX {
         return index;
     }
     // A load that is still fading in is cut short and takes the view at once.
-    // In DJ mode one that has not been brought over yet is simply replaced.
-    if state.loaded_at.is_some() {
-        if dj_mode && state.fade_at.is_none() {
-            state.loaded_at = None;
-        } else {
-            swap_roles(state, views);
-        }
+    // One that has not started to fade yet is simply replaced.
+    if state.fade_at.is_some() {
+        swap_roles(state, views);
+    } else {
+        state.loaded_at = None;
     }
     let Some((origin, cell)) = views
         .iter()
@@ -231,7 +229,9 @@ fn run_fade(mut state: ResMut<CrossFade>, mut views: Views, time: Res<Time>, arg
         return;
     }
     let level = fading / FADE_TIME;
-    if let Ok((_, emu, _, mut pp, _)) = views.get_mut(spare) {
+    if let Ok((_, mut emu, _, mut pp, _)) = views.get_mut(spare) {
+        // `--max-time` counts from the fade, not from the hidden load.
+        emu.start_time = started_at;
         pp.alpha = level;
         // Equal power, so the pair keeps a steady loudness across the fade
         // where a linear one would dip in the middle.

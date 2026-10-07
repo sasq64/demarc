@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bevy::prelude::*;
 
-use crate::config::{AppSettings, Args, GlobalSettings};
+use crate::config::{AppSettings, GlobalSettings};
 use crate::cross_fade::{CrossFade, Views, redirect_load};
 use crate::emu_file::{DOWNLOAD_COUNTER, EmuFile, FileSource, Override, UrlList};
 use crate::emulator::{EmuState, Emulator, InputMode};
@@ -390,7 +390,6 @@ pub fn load_file(
     mut reader: MessageReader<LoadFile>,
     settings: ResMut<AppSettings>,
     mut cross_fade: ResMut<CrossFade>,
-    args: Res<Args>,
     global: Res<GlobalSettings>,
 ) {
     for game in reader.read() {
@@ -401,7 +400,7 @@ pub fn load_file(
         }
 
         let emu_index = game.target_emulator.unwrap_or(settings.current_emu);
-        let emu_index = redirect_load(&mut cross_fade, &mut emus, emu_index, args.dj_mode);
+        let emu_index = redirect_load(&mut cross_fade, &mut emus, emu_index);
 
         for (_, mut emu, view, ..) in &mut emus {
             if view.index == emu_index {
@@ -505,20 +504,22 @@ pub(crate) fn handle_loading(
                 emu.run_next = false;
                 emu.run_prev = false;
                 loaded.write(LoadFinished(entity));
-                if emu.is_crossfade {
-                    emu.state = EmuState::PreDelay;
+                emu.state = if emu.is_crossfade {
+                    EmuState::PreDelay
                 } else {
-                    emu.state = EmuState::Running;
-                    if settings.show_info && settings.maximized {
-                        writer.write(SetHudText {
-                            text: emu.get_info(),
-                            delay: Duration::from_secs(settings.info_delay),
-                            duration: Duration::from_secs(settings.info_duration),
-                            location: HudLocation::InfoText,
-                        });
-                    }
-                }
-                continue;
+                    EmuState::InfoDelay
+                };
+            }
+        }
+        if matches!(emu.state, EmuState::InfoDelay) {
+            emu.state = EmuState::Running;
+            if settings.show_info && settings.maximized {
+                writer.write(SetHudText {
+                    text: emu.get_info(),
+                    delay: Duration::from_secs(settings.info_delay),
+                    duration: Duration::from_secs(settings.info_duration),
+                    location: HudLocation::InfoText,
+                });
             }
         }
     }
