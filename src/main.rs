@@ -401,9 +401,12 @@ fn main() {
         dbs.entry(name).or_default().append(&mut files);
     }
 
-    // Anything piped in is a db too, so it can be filtered before loading.
+    // Anything piped in is a db too, so it can be filtered before loading. Not
+    // under --remote-control: a script runner's stdin may never close.
     let mut files = vec![];
-    if let Some(name) = collect_db_stdin(&filter, &mut files).unwrap() {
+    if args.remote_control.is_none()
+        && let Some(name) = collect_db_stdin(&filter, &mut files).unwrap()
+    {
         dbs.entry(name).or_default().append(&mut files);
     }
 

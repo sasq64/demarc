@@ -54,6 +54,10 @@
   the next start: edit `system/` and rebuild. Two test runs went by with an old
   override still applied.
 
+- When demarc runs with a stdin that is a pipe nobody closes (an agent's shell)
+  it used to block forever reading a "piped db", with an empty log. It skips
+  stdin under `--remote-control` now; elsewhere use `</dev/null`.
+
 - `WINEDEBUG=+relay` only traces builtin DLLs, so a native d3dcompiler_47 shows
   nothing. Load the builtin (`d3dcompiler_47=b`) to see `D3DCompile` return
   codes, and set `VKD3D_SHADER_DUMP_PATH=<dir>` to get every shader's source;
