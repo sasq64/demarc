@@ -10,8 +10,9 @@ description = "RetroArch `.slangp` filter chains on plain wgpu, built off the re
 # needs for Mega Bezel preset packs (`#reference "path" // comment` lines,
 # reference depth counted per chain instead of per file, and unresolvable
 # references skipped the way RetroArch skips them), the modf/frexp result types
-# naga's SPIR-V frontend forgets to register, and a parallel `compile_preset_passes`
-# so a 42-pass bezel preset does not spend 1.4 s in glslang. See docs/SHADERS.md.
+# naga's SPIR-V frontend forgets to register, matrix varyings split per
+# column, and a parallel `compile_preset_passes` so a 42-pass bezel preset does
+# not spend 1.4 s in glslang. See docs/SHADERS.md.
 librashader = { workspace = true }
 tracing.workspace = true
 wgpu.workspace = true

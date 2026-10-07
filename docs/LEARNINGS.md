@@ -81,3 +81,12 @@
 - A real DLL copied into the prefix's `syswow64` over wine's fake one is loaded
   without any override, so it applies to every demo — unless wine's own
   builtins import it first: a native `msvcrt.dll` there is never loaded.
+
+- `screenshot()` in a remote-control script is saved asynchronously: a `quit()`
+  right after it logs `Failed to send screenshot: sending on a closed channel`
+  and writes nothing. `wait_frames(60)` between them.
+
+- demarc only logs the top of a naga error (`Entry point main at Vertex is
+  invalid`). `librashader-cli transpile -s <pass.slang> -o vertex -f wgsl`,
+  built from the fork, prints the whole cause chain and finds the failing pass
+  of a preset without bisecting it.

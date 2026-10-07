@@ -42,7 +42,7 @@ libc = "0.2"
 libloading = "0.9"
 librashader = {
   git = "https://github.com/sasq64/librashader",
-  rev = "9fed63109652f50e352f4f08e4a8bcf75e518b5c",
+  rev = "1a8ffae9cd22ac74e9befb84c546b8741d9c3062",
   default-features = false,
   features = [
     "preprocess",
