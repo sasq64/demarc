@@ -102,6 +102,7 @@ jobs:
         with:
           python-version: "3.x"
       - uses: extractions/setup-just@v3
+      - run: pip install beautifulsoup4
       - name: Build databases
         working-directory: demodb
         run: just db-gzip
