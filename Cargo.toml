@@ -23,7 +23,7 @@ members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retr
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 edition = "2024"
 repository = "https://github.com/sasq64/demarc"
 

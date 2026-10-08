@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "demarc"
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 dependencies = [
  "anyhow",
  "base64",
@@ -5607,7 +5607,7 @@ dependencies = [
 
 [[package]]
 name = "newsys"
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 dependencies = [
  "anyhow",
  "base64",
@@ -6976,7 +6976,7 @@ dependencies = [
 
 [[package]]
 name = "retro-core"
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 dependencies = [
  "anyhow",
  "cc",
@@ -6996,7 +6996,7 @@ dependencies = [
 
 [[package]]
 name = "retro-ui"
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 dependencies = [
  "egui",
  "nucleo-matcher",
@@ -7007,7 +7007,7 @@ dependencies = [
 
 [[package]]
 name = "retroarc"
-version = "1.8.0-rc1"
+version = "1.8.0-rc2"
 dependencies = [
  "librashader",
  "tracing",
