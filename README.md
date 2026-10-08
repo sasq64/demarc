@@ -23,7 +23,6 @@ Make it easy to watch demos on your PC through emulation
 * Play tracker music in Protracker/Fasttracker clones
 * Playlist/Favorites support
 
-
 ### Platforms
 
 C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance, Neo Geo, PC (DOS, and Windows through wine)
@@ -94,10 +93,7 @@ demarc --db demozoo.tzt.gz --sort=rank --select
 
 Database files can be found for each release (Assets)
 
-*Or here:*
-
-* [demozoo](https://minnberg.se/dl/demozoo.txt.gz)
-* [csdb](https://minnberg.se/dl/csdb.txt.gz)
+You can also download/build them with the scripts in "demodb/" in this repo.
 
 ## USING WINE (LINUX ONLY)
 
