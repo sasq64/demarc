@@ -6,8 +6,6 @@ An command line emulator frontend for the demoscene
 
 [![LatestRelease](https://img.shields.io/github/v/release/sasq64/demarc?style=for-the-badge&label=Latest%20Release)](https://github.com/sasq64/demarc/releases/latest)
 
-
-
 *Main goal*
 
 Make it easy to watch demos on your PC through emulation
@@ -21,6 +19,10 @@ Make it easy to watch demos on your PC through emulation
 * Shows demo meta data as overlay
 * CRT filter for "authentic" look (using Timothy Lottes shader)
 * Right-Alt hotkey for disk switch etc
+* Cross-fading with DJ mode
+* Play tracker music in Protracker/Fasttracker clones
+* Playlist/Favorites support
+
 
 ### Platforms
 
@@ -57,6 +59,16 @@ Emulator cores are downloaded from the on first use, so the binary is all you ne
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sasq64/demarc/releases/latest/download/demarc-installer.sh | sh
 ```
+
+A note to *Wayland* users: Wayland does not keep sync well. Either start with X11;
+
+`WAYLAND_DISPLAY= demarc ...`
+
+Or for Hyprland you can config;
+
+`hyprctl eval 'hl.config({ render = { direct_scanout = 1 } }`
+
+Which will make fullscreen sync much better.
 
 ### Windows
 
@@ -131,6 +143,9 @@ C = Toggle CRT filter
 W/SHIFT-W = Warp 10s/30s
 J = Toggle Joystick/keyboard
 Z = Shader Settings
+X = Runtime Settings
+H = Add to playlist
+SHIFT+O = Fade in from DJ window
 
 For grid:
 
