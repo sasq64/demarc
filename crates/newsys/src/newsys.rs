@@ -23,7 +23,6 @@ use atari_2600::Atari2600System;
 use atari_st::AtariStSystem;
 use atari_xl::AtariXlSystem;
 use c64::C64System;
-#[cfg(target_os = "linux")]
 use dos::DosSystem;
 use gameboy::GameboySystem;
 use gba::GBASystem;
@@ -486,7 +485,6 @@ pub struct LoadResult {
 impl NewSys {
     fn get_systems(args: &SysOpts) -> Vec<Box<dyn System>> {
         vec![
-            #[cfg(target_os = "linux")]
             Box::new(DosSystem {}),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             Box::new(WindowsSystem {}),
