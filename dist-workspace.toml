@@ -30,9 +30,8 @@ libasound2-dev = '*'
 libudev-dev = '*'
 
 # Publish the demo databases as their own release assets, so they can be
-# downloaded without the Windows zip. Fetched rather than committed -- they are
-# ~8MB each and regenerated regularly. This is a global artifact: the build runs
-# once, in build-global-artifacts, not once per platform.
+# downloaded without the Windows zip. In CI the build-dbs job has already put
+# them in demodb/, so the build only runs for a local `dist build`.
 [[dist.extra-artifacts]]
-artifacts = ["target/dl/csdb.txt.gz", "target/dl/demozoo.txt.gz"]
-build = ["bash", "scripts/fetch-dbs.sh", "target/dl"]
+artifacts = ["demodb/csdb.txt.gz", "demodb/demozoo.txt.gz"]
+build = ["bash", "-c", "test -e demodb/csdb.txt.gz -a -e demodb/demozoo.txt.gz || just -f demodb/Justfile db-gzip"]

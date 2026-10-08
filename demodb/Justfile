@@ -16,8 +16,9 @@ csdb: csdb_cache
 demozoo: demozoo_export pouet_dump
     ./demozoo.py --pouet-prods
 
-export:
+db: demozoo csdb
+
+db-gzip: db
     gzip -k -f csdb.txt
     gzip -k -f demozoo.txt
 
-db: demozoo csdb
