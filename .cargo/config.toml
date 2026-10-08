@@ -10,3 +10,9 @@ DEMARC_ROOT = { value = ".", relative = true }
 # graphs to see a stack at all. The --speed-test rate is the same either way.
 [build]
 rustflags = ["-C", "force-frame-pointers=yes"]
+
+# A thread a core starts itself gets the exe's default stack, which is 1 MiB
+# on Windows against 8 on Linux. Repeats the flags above: target flags replace
+# them.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "force-frame-pointers=yes", "-C", "link-arg=/STACK:8388608"]
