@@ -1,0 +1,23 @@
+
+csdb_cache:
+    test -e .csdb_cache || 7z x csdb_cache.7z
+
+# Fetch a newer Demozoo export if there is one (checked at most once a day)
+demozoo_export:
+    ./fetch_dumps.py demozoo
+
+# Fetch a newer pouet prods dump if there is one (checked at most once a day)
+pouet_dump:
+    ./fetch_dumps.py pouet
+
+csdb: csdb_cache
+    ./csdb.py
+
+demozoo: demozoo_export pouet_dump
+    ./demozoo.py --pouet-prods
+
+export:
+    gzip -k -f csdb.txt
+    gzip -k -f demozoo.txt
+
+db: demozoo csdb

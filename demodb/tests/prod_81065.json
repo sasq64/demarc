@@ -1,0 +1,175 @@
+{
+    "success": true,
+    "prod": {
+        "id": "81065",
+        "name": "Megademica 4K",
+        "type": "4k,demo",
+        "addedUser": {
+            "id": "15177",
+            "nickname": "diver",
+            "level": "user",
+            "permissionOpenBBS": "1",
+            "avatar": "stardust_logo16.gif",
+            "glops": "2817",
+            "registerDate": "2005-07-29 23:50:33",
+            "udlogin": null,
+            "thumbups": "1897",
+            "thumbdowns": "50",
+            "ojuice": null,
+            "slengpung": null,
+            "csdb": null,
+            "zxdemo": null,
+            "demozoo": null,
+            "stats": []
+        },
+        "addedDate": "2019-04-21 23:55:47",
+        "releaseDate": "2019-04-15",
+        "voteup": "109",
+        "votepig": "3",
+        "votedown": "0",
+        "voteavg": "0.9732",
+        "download": "https:\/\/files.scene.org\/view\/parties\/2019\/revision19\/oldskool-4k-intro\/mega4k_party_0.zip",
+        "party_compo": "93",
+        "party_place": "1",
+        "party_year": "2019",
+        "sceneorg": "0",
+        "demozoo": "202810",
+        "csdb": "0",
+        "zxdemo": "0",
+        "invitation": null,
+        "invitationyear": "0",
+        "boardID": null,
+        "rank": "767",
+        "groups": [
+            {
+                "id": "719",
+                "name": "Serzhsoft",
+                "acronym": "",
+                "disambiguation": "",
+                "web": "",
+                "addedUser": "499",
+                "addedDate": "2001-04-18 11:55:48",
+                "csdb": null,
+                "zxdemo": null,
+                "demozoo": null
+            }
+        ],
+        "types": [
+            "4k",
+            "demo"
+        ],
+        "placings": [
+            {
+                "party": {
+                    "id": "1550",
+                    "name": "Revision",
+                    "web": "http:\/\/www.revision-party.net",
+                    "addedDate": null,
+                    "addedUser": null
+                },
+                "compo": "93",
+                "ranking": "1",
+                "year": "2019",
+                "compo_name": "oldskool intro"
+            }
+        ],
+        "platforms": {
+            "82": {
+                "name": "ZX Spectrum",
+                "icon": "k_zx.gif",
+                "slug": "zxspectrum"
+            }
+        },
+        "awards": [
+            {
+                "id": "959",
+                "prodID": "81065",
+                "categoryID": "40",
+                "awardType": "nominee"
+            },
+            {
+                "id": "1004",
+                "prodID": "81065",
+                "categoryID": "44",
+                "awardType": "nominee"
+            }
+        ],
+        "party": {
+            "id": "1550",
+            "name": "Revision",
+            "web": "http:\/\/www.revision-party.net",
+            "addedDate": null,
+            "addedUser": null
+        },
+        "cdc": 1,
+        "popularity": 73.94543933993994,
+        "screenshot": "https:\/\/content.pouet.net\/files\/screenshots\/00081\/00081065.png",
+        "party_compo_name": "oldskool intro",
+        "downloadLinks": [
+            {
+                "type": "youtube",
+                "link": "https:\/\/www.youtube.com\/watch?v=mgXRXDfQ0xw"
+            }
+        ],
+        "credits": [
+            {
+                "user": {
+                    "id": "1050",
+                    "nickname": "SerzhSoft",
+                    "level": "user",
+                    "permissionSubmitItems": "1",
+                    "permissionOpenBBS": "1",
+                    "permissionPostBBS": "1",
+                    "permissionPostOneliner": "1",
+                    "avatar": "irreality.gif",
+                    "glops": "304",
+                    "registerDate": "2001-08-17 19:58:43",
+                    "lastLogin": "2026-08-17 20:48:17",
+                    "udlogin": null,
+                    "sceneIDLastRefresh": null,
+                    "sceneIDData": null,
+                    "thumbups": "208",
+                    "thumbdowns": "5",
+                    "ojuice": null,
+                    "slengpung": null,
+                    "csdb": null,
+                    "zxdemo": null,
+                    "demozoo": null,
+                    "lastip": null,
+                    "lasthost": null,
+                    "stats": []
+                },
+                "role": "Idea, Code, Gfx"
+            },
+            {
+                "user": {
+                    "id": "2260",
+                    "nickname": "gasman",
+                    "level": "moderator",
+                    "permissionSubmitItems": "1",
+                    "permissionOpenBBS": "1",
+                    "permissionPostBBS": "1",
+                    "permissionPostOneliner": "1",
+                    "avatar": "blode.gif",
+                    "glops": "751",
+                    "registerDate": "2002-04-12 13:41:57",
+                    "lastLogin": "2026-08-23 10:40:34",
+                    "udlogin": null,
+                    "sceneIDLastRefresh": null,
+                    "sceneIDData": null,
+                    "thumbups": "2614",
+                    "thumbdowns": "40",
+                    "ojuice": null,
+                    "slengpung": null,
+                    "csdb": null,
+                    "zxdemo": null,
+                    "demozoo": null,
+                    "lastip": null,
+                    "lasthost": null,
+                    "stats": []
+                },
+                "role": "Music"
+            }
+        ]
+    }
+}
