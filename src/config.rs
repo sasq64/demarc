@@ -351,6 +351,8 @@ pub enum SortArg {
     Rank,
     // Newest first
     Date,
+    /// Highest db id first.
+    Id,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
