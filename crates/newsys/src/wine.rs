@@ -68,6 +68,14 @@ pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 /// Whether one is used when nothing says otherwise.
 pub const DEFAULT_DESKTOP: bool = false;
 
+/// Meta key: no shows the demo without the CRT filter.
+pub const META_FILTER: &str = "wine_filter";
+
+pub fn on_steam_deck() -> bool {
+    std::fs::read_to_string("/sys/devices/virtual/dmi/id/board_vendor")
+        .is_ok_and(|vendor| vendor.trim() == "Valve")
+}
+
 /// Whether a compatibility profile is asked for when nothing says otherwise.
 pub const DEFAULT_GL_COMPAT: bool = false;
 
@@ -118,6 +126,16 @@ fn clean_list(text: &str) -> String {
         .join(",")
 }
 
+/// [`clean_list`] without the modes larger than the session `res`: a fullscreen
+/// demo cannot switch to one.
+pub fn fitting_modes(text: &str, res: &str) -> String {
+    let fits = |mode: &&str| match (parse_res(mode), parse_res(res)) {
+        (Some((w, h)), Some((width, height))) => w <= width && h <= height,
+        _ => true,
+    };
+    clean_list(text).split(',').filter(fits).collect::<Vec<_>>().join(",")
+}
+
 /// `WIDTHxHEIGHT`, or nothing.
 fn parse_res(text: &str) -> Option<(u32, u32)> {
     let (w, h) = text.trim().split_once(['x', 'X'])?;
@@ -147,6 +165,29 @@ pub fn is_yes(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "true" | "1" | "yes" | "on"
     )
+}
+
+/// Under the data dir (`~/.local/share`): a wine unpacked here is used ahead
+/// of the system's, for hosts that cannot install one (SteamOS).
+#[cfg(target_os = "linux")]
+const WINE_BIN_DIR: &str = "demarc/wine/bin";
+
+/// Put [`WINE_BIN_DIR`] first on `PATH` when it exists, so the lookups here and
+/// the session's own `wine` both find it. Call before any thread is spawned.
+#[cfg(target_os = "linux")]
+pub fn add_wine_to_path() {
+    let Some(bin) = dirs::data_dir().map(|dir| dir.join(WINE_BIN_DIR)) else {
+        return;
+    };
+    if !bin.is_dir() {
+        return;
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(bin).chain(std::env::split_paths(&path));
+    if let Ok(path) = std::env::join_paths(dirs) {
+        // SAFETY: nothing has spawned a thread yet.
+        unsafe { std::env::set_var("PATH", path) };
+    }
 }
 
 /// Where `name` is on `PATH`, if it is anywhere on it.
@@ -303,7 +344,7 @@ impl Config {
         let dialog = match said(META_DIALOG_RES) {
             Some(list) if list.eq_ignore_ascii_case(PICK) => Dialog::Pick,
             list => Dialog::Drive(
-                list.map(|list| clean_list(&list))
+                list.map(|list| fitting_modes(&list, &res))
                     .filter(|modes| !modes.is_empty())
                     .unwrap_or_else(|| format!("{width}x{height}")),
             ),

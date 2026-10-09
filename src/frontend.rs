@@ -20,6 +20,7 @@ use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
+use crate::wine::{META_FILTER, is_yes};
 use crate::ui::{HudLocation, SetHudText, UiState};
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -189,6 +190,7 @@ pub(crate) fn spawn_emulator(
             },
             alpha: 1.0,
             raw: false,
+            no_crt: false,
         },
         EmuView { index },
     ));
@@ -593,6 +595,11 @@ pub(crate) fn run_frontend(
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
+        }
+
+        let no_crt = !is_yes(&emu.work_file.get_meta_or(META_FILTER, "true"));
+        if pp.no_crt != no_crt {
+            pp.no_crt = no_crt;
         }
 
         let (used_w, used_h) = emu.core.as_mut().unwrap().get_used_frame_size();

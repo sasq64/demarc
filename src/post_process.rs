@@ -228,6 +228,8 @@ pub struct PostProcess {
     /// window shows, where a filter chain would be a second one over the same
     /// source texture.
     pub raw: bool,
+    /// Leave the CRT effect off for this view whatever the global toggle says.
+    pub no_crt: bool,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }

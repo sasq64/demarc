@@ -112,6 +112,7 @@ fn setup_dj(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
             },
             alpha: 1.0,
             raw: true,
+            no_crt: false,
         },
         DjView,
     ));

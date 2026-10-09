@@ -14,6 +14,7 @@ done
 
 # Get latest winetricks
 curl -fsSL -o winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+chmod +x winetricks
 
 # Set up wine prefix with all native D3D
 wineboot -i
@@ -32,6 +33,13 @@ wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f
 # Make sure we have 1:1 logical/physical pixel mapping
 wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 96 /f
 
+# Keep wine off the game controllers and USB: on a Steam Deck it takes the built-in
+# controller away from the kernel and Steam, and every button dies until a reboot
+wine reg add 'HKCU\Software\Wine\DllOverrides' /v wineusb.sys /t REG_SZ /d '' /f
+wine reg add 'HKLM\System\CurrentControlSet\Services\winebus' /v DisableHidraw /t REG_DWORD /d 1 /f
+wine reg add 'HKLM\System\CurrentControlSet\Services\winebus' /v 'Enable SDL' /t REG_DWORD /d 0 /f
+wine reg add 'HKLM\System\CurrentControlSet\Services\winebus' /v DisableInput /t REG_DWORD /d 1 /f
+
 missing=()
 for plugin in asfdemux avdec_wmav2; do
     gst-inspect-1.0 --exists "$plugin" || missing+=("$plugin")
@@ -40,7 +48,7 @@ if [ ${#missing[@]} -gt 0 ]; then
     echo ""
     echo "**Warning: gstreamer plugins not installed: $missing"
     echo "Try something like:"
-    wcho "sudo pacman -S gst-plugins-ugly"
+    echo "sudo pacman -S gst-plugins-ugly"
     echo ""
 fi
 

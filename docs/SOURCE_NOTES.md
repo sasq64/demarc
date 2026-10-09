@@ -2346,6 +2346,8 @@ sits there until the next entry is asked for.
   *no* override rather than an empty variable, which to wine means "override nothing with nothing".
   Unset, `newsys/windows.rs` fills it from the DLLs the release ships beside its executable: a demo
   carrying its own `d3dx9_37.dll` needs that build and not wine's reimplementation.
+- `wine_filter` (`META_FILTER`), default `true` except on a Steam Deck. `false` leaves the CRT
+  effect off for the view (`PostProcess::no_crt`), whatever `--shader` says.
 - `wine_desktop` (`META_DESKTOP`) puts the pair inside a wine virtual desktop (`explorer /desktop=`)
   fixed at the session size. Demos switch display modes on their way to fullscreen, and under
   gamescope's Xwayland that means tearing down and remapping an X window, which a handful — Equinox's

@@ -29,12 +29,12 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_GLSL_VERSION,
-    WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command, wine_prefix,
+    WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
-    META_DESKTOP, META_DIALOG_RES, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
-    default_dialog_res, is_yes,
+    META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
+    default_dialog_res, is_yes, on_steam_deck,
 };
 #[cfg(target_os = "linux")]
 use crate::wine_sandbox::{self, Sandbox};
@@ -255,6 +255,7 @@ impl System for WindowsSystem {
         // because that one can only hand back a fixed string.
         let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
         let dialog_res = file.get_meta_or(META_DIALOG_RES, default_dialog_res(widescreen));
+        let dialog_res = fitting_modes(&dialog_res, &file.get_meta_or(META_RES, String::new()));
         let target = if is_windows_bat(file) {
             Some(file.path.clone())
         } else {
@@ -325,6 +326,7 @@ impl System for WindowsSystem {
         HashMap::from([
             (META_RES, DEFAULT_RES),
             (META_DESKTOP, if DEFAULT_DESKTOP { "true" } else { "false" }),
+            (META_FILTER, if on_steam_deck() { "false" } else { "true" }),
             (
                 META_GL_COMPAT,
                 if DEFAULT_GL_COMPAT { "true" } else { "false" },

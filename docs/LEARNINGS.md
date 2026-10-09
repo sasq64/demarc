@@ -114,3 +114,22 @@
 
 - A wine session can be run without the dialog hidden by adding
   `wine_dialog_res:pick` as a field on the db line given to `--db`.
+
+- On a Steam Deck, wine's `wineusb.sys` (libusb) detaches the kernel driver
+  from the built-in controller's USB interface (`3-3:1.2`), so Steam logs
+  `Controller device closed after hid_read failure` and every button, Steam
+  included, is dead until a reboot. Three wrong causes were named first (wine
+  windows on `DISPLAY=:1`, an overwritten binary, winebus hidraw); Steam's
+  `logs/controller.txt` and `ls /sys/bus/usb/devices/3-3:1.*/driver` had the
+  answer from the start. The prefix sets a `wineusb.sys` DLL override; its
+  service `Start`=4 does not stop it loading.
+
+- `pkill -f <pattern>` and `pgrep -f <pattern>` over ssh match the remote shell
+  running them, since the pattern is in its own command line: the first killed
+  its own session, the second made a wait loop that never ended.
+
+- A Windows demo that shows black or dies at once under a small `wine_res`:
+  run it headless with `--no-silence` and grep for `Setting display mode` /
+  `Failed to change display mode` before comparing prefixes. A mode larger than
+  the session cannot be switched to. Diffing the Deck's prefix against the
+  workstation's found only missing wine-mono and cost several rounds.

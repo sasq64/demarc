@@ -317,6 +317,8 @@ fn main() {
     cap_malloc_arenas();
     #[cfg(all(unix, target_env = "gnu"))]
     cap_rayon_threads();
+    #[cfg(target_os = "linux")]
+    wine::add_wine_to_path();
     tame_openmp_cores();
     #[cfg(target_os = "windows")]
     prefer_vulkan_under_wine();

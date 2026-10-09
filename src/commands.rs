@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
 use bevy::render::view::screenshot::save_to_disk;
@@ -218,6 +219,125 @@ fn handle_hotkey(
         if let Some(cmd) = check_hotkey(&input) {
             settings.hotkey_pressed_at = 0.0;
             writer.write(CmdMessage(cmd));
+        }
+    }
+}
+
+/// Binds a gamepad button, alone or with a held `modifier`, to a [`Cmd`].
+struct PadMapping {
+    modifier: Option<GamepadButton>,
+    button: GamepadButton,
+    cmd: Cmd,
+}
+
+impl PadMapping {
+    const fn new(button: GamepadButton, cmd: Cmd) -> Self {
+        Self {
+            modifier: None,
+            button,
+            cmd,
+        }
+    }
+    const fn with(modifier: GamepadButton, button: GamepadButton, cmd: Cmd) -> Self {
+        Self {
+            modifier: Some(modifier),
+            button,
+            cmd,
+        }
+    }
+}
+
+// West/North are X/Y on an Xbox pad, LeftTrigger/LeftTrigger2 are L1/L2.
+const PAD_HOTKEYS: &[PadMapping] = &[
+    PadMapping::new(GamepadButton::West, Cmd::OpenFile),
+    PadMapping::new(GamepadButton::North, Cmd::ToggleInfo),
+    PadMapping::new(GamepadButton::RightTrigger, Cmd::NextFile),
+    PadMapping::new(GamepadButton::LeftTrigger, Cmd::PrevFile),
+    PadMapping::new(GamepadButton::Start, Cmd::PauseResume),
+    PadMapping::with(
+        GamepadButton::LeftTrigger2,
+        GamepadButton::North,
+        Cmd::ToggleCrt,
+    ),
+    PadMapping::with(
+        GamepadButton::LeftTrigger2,
+        GamepadButton::West,
+        Cmd::ChangeScale,
+    ),
+    PadMapping::with(
+        GamepadButton::LeftTrigger2,
+        GamepadButton::RightTrigger,
+        Cmd::Warp10,
+    ),
+];
+
+/// A mapping without a modifier only fires while no modifier button is held.
+fn check_pad(pad: &ButtonInput<GamepadButton>) -> Option<Cmd> {
+    let held = |b: GamepadButton| pad.pressed(b);
+    let any_modifier = PAD_HOTKEYS.iter().filter_map(|m| m.modifier).any(held);
+    PAD_HOTKEYS
+        .iter()
+        .find(|m| pad.just_pressed(m.button) && m.modifier.map_or(!any_modifier, held))
+        .map(|m| m.cmd)
+}
+
+fn handle_gamepad(
+    pads: Query<&Gamepad>,
+    ui_state: Res<UiState>,
+    mut writer: MessageWriter<CmdMessage>,
+) {
+    if ui_state.modal {
+        return;
+    }
+    for pad in &pads {
+        if let Some(cmd) = check_pad(pad.digital()) {
+            writer.write(CmdMessage(cmd));
+        }
+    }
+}
+
+/// The keys a gamepad types while a picker or dialog is open; the last field
+/// is whether holding the button repeats.
+const PAD_NAV: &[(GamepadButton, KeyCode, bool)] = &[
+    (GamepadButton::DPadUp, KeyCode::ArrowUp, true),
+    (GamepadButton::DPadDown, KeyCode::ArrowDown, true),
+    (GamepadButton::DPadLeft, KeyCode::ArrowLeft, true),
+    (GamepadButton::DPadRight, KeyCode::ArrowRight, true),
+    (GamepadButton::LeftTrigger, KeyCode::PageUp, true),
+    (GamepadButton::RightTrigger, KeyCode::PageDown, true),
+    (GamepadButton::South, KeyCode::Enter, false),
+    (GamepadButton::East, KeyCode::Escape, false),
+];
+
+const PAD_REPEAT_DELAY: f32 = 0.4;
+const PAD_REPEAT_RATE: f32 = 0.05;
+
+fn gamepad_navigation(
+    pads: Query<&Gamepad>,
+    window: Single<Entity, With<PrimaryWindow>>,
+    ui_state: Res<UiState>,
+    time: Res<Time>,
+    mut next_repeat: Local<f32>,
+    mut keys: MessageWriter<bevy::input::keyboard::KeyboardInput>,
+) {
+    let now = time.elapsed_secs();
+    let repeat = now >= *next_repeat;
+    for pad in &pads {
+        for &(button, key, repeats) in PAD_NAV {
+            let mut msg = crate::remote_control::key_message(key, ButtonState::Pressed, *window);
+            // Released even after the dialog closed, or the key stays held.
+            if pad.just_released(button) {
+                msg.state = ButtonState::Released;
+                keys.write(msg);
+            } else if !ui_state.modal {
+            } else if pad.just_pressed(button) {
+                *next_repeat = now + PAD_REPEAT_DELAY;
+                keys.write(msg);
+            } else if repeats && repeat && pad.pressed(button) {
+                *next_repeat = now + PAD_REPEAT_RATE;
+                msg.repeat = true;
+                keys.write(msg);
+            }
         }
     }
 }
@@ -1056,11 +1176,13 @@ impl Plugin for CommandPlugin {
                 (
                     handle_hotkey.in_set(FrontendSet::Input),
                     handle_media_keys.in_set(FrontendSet::Input),
+                    handle_gamepad.in_set(FrontendSet::Input),
                     handle_textlist,
                     handle_playlist_pick,
                     handle_cmd.run_if(on_message::<CmdMessage>),
                 ),
-            );
+            )
+            .add_systems(PreUpdate, gamepad_navigation.before(InputSystems));
     }
 }
 

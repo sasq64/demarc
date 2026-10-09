@@ -142,6 +142,20 @@ fn the_dialog_is_asked_for_its_own_list_of_modes() {
     assert_eq!(cfg.dialog, Dialog::Drive("640x480".to_string()));
 }
 
+#[test]
+fn modes_larger_than_the_session_are_not_asked_for() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let meta = HashMap::from([
+        (META_RES.to_string(), "1280x720".to_string()),
+        (META_DIALOG_RES.to_string(), default_dialog_res(true)),
+    ]);
+    let cfg = Config::from_meta(&exe, &meta).unwrap();
+    assert_eq!(
+        cfg.dialog,
+        Dialog::Drive("1280x720,1024x576,800x600".to_string())
+    );
+}
+
 /// On a widescreen the dialog is first asked for a 16:9 aspect, before the modes.
 #[test]
 fn widescreen_asks_for_the_aspect_first() {

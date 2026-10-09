@@ -125,6 +125,7 @@ fn compute_uniform(
     // while the same core, maximized, stays above it.
     let crt_enabled = settings.crt_effect
         && !pp.raw
+        && !pp.no_crt
         && match (viewport, src) {
             (Some(target), Some(src)) => pixel_ratio(target, src, uv_scale) >= crt_limit,
             // Source not loaded yet: keep the global setting rather than

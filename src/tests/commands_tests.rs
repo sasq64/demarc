@@ -97,3 +97,22 @@ fn multibyte_urls_are_counted_in_characters() {
     assert_eq!(out, "https://exämple.org/.../filnämn-ÅÄÖ.zip");
     assert!(out.chars().count() <= 40);
 }
+
+#[test]
+fn pad_modifier_picks_the_combined_mapping() {
+    let mut pad = ButtonInput::<GamepadButton>::default();
+    pad.press(GamepadButton::West);
+    assert_eq!(check_pad(&pad), Some(Cmd::OpenFile));
+
+    let mut pad = ButtonInput::<GamepadButton>::default();
+    pad.press(GamepadButton::LeftTrigger2);
+    assert_eq!(check_pad(&pad), None);
+    pad.clear();
+    pad.press(GamepadButton::West);
+    assert_eq!(check_pad(&pad), Some(Cmd::ChangeScale));
+
+    // A button with no combined mapping does nothing while the modifier is held.
+    pad.clear();
+    pad.press(GamepadButton::Start);
+    assert_eq!(check_pad(&pad), None);
+}

@@ -318,7 +318,7 @@ fn logical_key(key: KeyCode) -> Key {
     }
 }
 
-fn key_message(key: KeyCode, state: ButtonState, window: Entity) -> KeyboardInput {
+pub(crate) fn key_message(key: KeyCode, state: ButtonState, window: Entity) -> KeyboardInput {
     KeyboardInput {
         key_code: key,
         logical_key: logical_key(key),

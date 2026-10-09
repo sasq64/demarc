@@ -137,6 +137,7 @@ fn post_process(source: Handle<Image>, position: UVec2, size: UVec2) -> PostProc
         },
         alpha: 1.0,
         raw: false,
+        no_crt: false,
     }
 }
 
