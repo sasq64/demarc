@@ -388,6 +388,9 @@ Working, and verified by eye on captured frames:
   `!demarc started`; the demo plays inside a demarc view at the session size.
 - **Keyboard injection** — `retro_keyboard_callback` → socket → `wlserver_key` → Xwayland →
   the client. Typing "hello demarc" at a page that echoes keys shows "hello demarc".
+- **Clicks** — an override's `events = [{ frame, click = [x, y] }]` → `RETRO_DEVICE_POINTER`
+  → `WARP` + `BUTTON` → the focused window, mapped through its scale. Gaia Machina's
+  GL-drawn launcher is driven this way.
 - **Through demarc** — the picture reaches a view, with the CRT shader applied to it.
 - **Teardown** — after a wine session unloads, no `gamescope`, `Xwayland`,
   `gamescopereaper`, `wineserver` or `winedevice.exe` is left running.

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
-use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus};
+use crate::backend::{Backend, InputEvent, STATE_SKIPPING, VideoFrame, ViewFocus};
 use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
 use super::{FrameTarget, RetroCoreDirect};
@@ -20,8 +20,9 @@ use super::{FrameTarget, RetroCoreDirect};
 /// [`RetroCoreThreaded::new`] for why the default is not enough.
 pub(super) const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
-/// How long a key scheduled by [`RetroCmd::SendKeys`] stays down before the
+/// How long a key scheduled by [`RetroCmd::SendEvents`] stays down before the
 /// matching release is sent. Long enough for any core to notice the press.
+/// A click also hovers this long before it presses.
 pub(super) const KEY_HOLD_FRAMES: u64 = 2;
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
@@ -35,6 +36,10 @@ pub(super) enum RetroCmd {
     AddMouseMotion {
         dx: f32,
         dy: f32,
+    },
+    SetMousePosition {
+        x: f32,
+        y: f32,
     },
     SetMouseButtons {
         left: bool,
@@ -56,11 +61,30 @@ pub(super) enum RetroCmd {
     SetFocus {
         focus: ViewFocus,
     },
-    /// `(frame, keycode)` pairs, where the frame is relative to whenever the
+    /// `(frame, event)` pairs, where the frame is relative to whenever the
     /// worker picks the command up — `0` meaning the next stepped frame.
-    SendKeys {
-        time_code_list: Vec<(u32, u32)>,
-    },
+    SendEvents { events: Vec<(u32, InputEvent)> },
+}
+
+/// One step of a scheduled event, due on an absolute frame.
+#[derive(Copy, Clone)]
+pub(super) enum Scheduled {
+    Key(u32, bool),
+    Pointer(f32, f32, bool),
+}
+
+/// Play every scheduled input that is due by `frame` into the core.
+pub(super) fn play_due(core: &mut RetroCoreDirect, queue: &mut Vec<(u64, Scheduled)>, frame: u64) {
+    queue.retain(|&(at, step)| {
+        if at > frame {
+            return true;
+        }
+        match step {
+            Scheduled::Key(code, down) => core.press_key(code, down, 0),
+            Scheduled::Pointer(x, y, pressed) => core.set_pointer(x, y, pressed),
+        }
+        false
+    });
 }
 
 /// A single stepped frame's worth of data, pushed from the worker to main thread
@@ -241,10 +265,10 @@ fn worker_loop(
     state: &AtomicU64,
     speed_test: bool,
 ) {
-    // Keys scheduled by `RetroCmd::SendKeys`, as (frame to fire on, keycode,
-    // pressed). Frames are absolute counts of `frames`, so nothing can be
-    // scheduled into the past.
-    let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
+    // Input scheduled by `RetroCmd::SendEvents`, as (frame to fire on, step).
+    // Frames are absolute counts of `frames`, so nothing can be scheduled into
+    // the past.
+    let mut key_queue: Vec<(u64, Scheduled)> = Vec::new();
     // Only opened when `DEMARC_FRAME_STATS` asks for a log; the average colour
     // it adds costs a couple of extra passes over the framebuffer.
     let mut stats_log = FrameStatsLog::from_env();
@@ -269,16 +293,7 @@ fn worker_loop(
             }
         }
 
-        // Play back every scheduled key that is due this frame.
-        if !key_queue.is_empty() {
-            key_queue.retain(|&(at, code, down)| {
-                if at > frame {
-                    return true;
-                }
-                core.press_key(code, down, 0);
-                false
-            });
-        }
+        play_due(core, &mut key_queue, frame);
 
         if core.visible {
             let mut frame = match pool.iter_mut().position(|b| Arc::get_mut(b).is_some()) {
@@ -369,12 +384,12 @@ fn worker_loop(
 
 /// Apply one command to the core. Returns `true` if the worker should stop.
 ///
-/// `key_queue` is the worker's scheduled-key list and `frame` its current frame
-/// counter; `SendKeys` appends to the former relative to the latter.
+/// `key_queue` is the worker's scheduled-input list and `frame` its current frame
+/// counter; `SendEvents` appends to the former relative to the latter.
 pub(super) fn apply_cmd(
     core: &mut RetroCoreDirect,
     cmd: RetroCmd,
-    key_queue: &mut Vec<(u64, u32, bool)>,
+    key_queue: &mut Vec<(u64, Scheduled)>,
     frame: u64,
     state: &AtomicU64,
 ) -> bool {
@@ -382,6 +397,7 @@ pub(super) fn apply_cmd(
         RetroCmd::Reset => core.reset(),
         RetroCmd::PressKey { code, down, mods } => core.press_key(code, down, mods),
         RetroCmd::AddMouseMotion { dx, dy } => core.add_mouse_motion(dx, dy),
+        RetroCmd::SetMousePosition { x, y } => core.set_mouse_position(x, y),
         RetroCmd::SetMouseButtons {
             left,
             right,
@@ -406,12 +422,21 @@ pub(super) fn apply_cmd(
                 set_state_bit(state, STATE_SKIPPING, false);
             }
         }
-        RetroCmd::SendKeys { time_code_list } => {
-            for (at, code) in time_code_list {
+        RetroCmd::SendEvents { events } => {
+            for (at, event) in events {
                 // Relative to now, so a core's startup keys can't land in the past.
                 let at = frame + at as u64;
-                key_queue.push((at, code, true));
-                key_queue.push((at + KEY_HOLD_FRAMES, code, false));
+                match event {
+                    InputEvent::Key(code) => {
+                        key_queue.push((at, Scheduled::Key(code, true)));
+                        key_queue.push((at + KEY_HOLD_FRAMES, Scheduled::Key(code, false)));
+                    }
+                    InputEvent::Click(x, y) => {
+                        key_queue.push((at, Scheduled::Pointer(x, y, false)));
+                        key_queue.push((at + KEY_HOLD_FRAMES, Scheduled::Pointer(x, y, true)));
+                        key_queue.push((at + 2 * KEY_HOLD_FRAMES, Scheduled::Pointer(x, y, false)));
+                    }
+                }
             }
         }
     }
@@ -457,9 +482,9 @@ impl Backend for RetroCoreThreaded {
         let _ = self.cmd_tx.send(RetroCmd::SetFocus { focus });
     }
 
-    fn send_keys(&mut self, keys: &[(u32, u32)]) {
-        let _ = self.cmd_tx.send(RetroCmd::SendKeys {
-            time_code_list: keys.to_vec(),
+    fn send_events(&mut self, events: &[(u32, InputEvent)]) {
+        let _ = self.cmd_tx.send(RetroCmd::SendEvents {
+            events: events.to_vec(),
         });
     }
 
@@ -489,6 +514,9 @@ impl Backend for RetroCoreThreaded {
     }
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
         let _ = self.cmd_tx.send(RetroCmd::AddMouseMotion { dx, dy });
+    }
+    fn set_mouse_position(&mut self, x: f32, y: f32) {
+        let _ = self.cmd_tx.send(RetroCmd::SetMousePosition { x, y });
     }
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
         let _ = self.cmd_tx.send(RetroCmd::SetMouseButtons {

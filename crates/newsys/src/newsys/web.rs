@@ -66,7 +66,9 @@ impl System for WebSystem {
         {
             let core = libloader::get_libretro(CORE_NAME_GAMESCOPE)
                 .context("Could not load the gamescope core")?;
-            retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)
+            let mut meta = path.get_all_meta();
+            meta.insert("absolute_pointer".into(), "true".into());
+            retro_emu::create_core(&core, system_dir(), Some(path), meta, false)
         }
         // `can_load` said no everywhere else, so this is only reachable by
         // asking for a page by hand.

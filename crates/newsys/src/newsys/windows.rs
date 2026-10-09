@@ -449,6 +449,7 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
 #[cfg(target_os = "linux")]
 fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, String> {
     let mut meta = path.get_all_meta();
+    meta.insert("absolute_pointer".into(), "true".into());
 
     match wine_command(&path.path, &meta) {
         Ok(cmd) => {

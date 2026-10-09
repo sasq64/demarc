@@ -15,6 +15,15 @@ pub struct VideoFrame {
     pub pixels: Arc<Vec<u32>>,
 }
 
+/// One scheduled input for [`Backend::send_events`].
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum InputEvent {
+    /// A retro keycode, released two frames after it is pressed.
+    Key(u32),
+    /// A left click at a position normalized 0..1 over the frame.
+    Click(f32, f32),
+}
+
 /// How much of the user's attention a view has, handed to the backend by
 /// [`Backend::focus`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -122,11 +131,10 @@ pub trait Backend {
     /// uses it to stop rendering audio nobody is listening to.
     fn focus(&mut self, _focus: ViewFocus) {}
 
-    /// Schedule key presses to be played back into the core, as
-    /// `(frame, keycode)` pairs. The frame is relative to now — `0` means the
-    /// next stepped frame — and each key is released two frames after it is
-    /// pressed. Used to feed a core its "startup keys".
-    fn send_keys(&mut self, _keys: &[(u32, u32)]) {}
+    /// Schedule input to be played back into the core, as `(frame, event)`
+    /// pairs. The frame is relative to now — `0` means the next stepped frame.
+    /// Used to feed a core its "startup keys".
+    fn send_events(&mut self, _events: &[(u32, InputEvent)]) {}
 
     fn get_info(&self) -> Option<String> {
         None

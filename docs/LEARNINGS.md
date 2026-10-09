@@ -90,3 +90,27 @@
   invalid`). `librashader-cli transpile -s <pass.slang> -o vertex -f wgsl`,
   built from the fork, prints the whole cause chain and finds the failing pass
   of a preset without bisecting it.
+
+- A wine demo's GL-drawn launcher (Gaia Machina) is still black in a headless
+  screenshot at frame 240 and only drawn by ~360; shoot a few frames apart
+  before concluding a window is empty. Try `press_key(Key.Enter)` on a custom
+  launcher before building anything — Gaia's takes it as "Run".
+
+- `external/gamescope/build-lr` was configured with `-I<an old session's
+  scratchpad>/vk-headers/include` (there is no system `vulkan-headers`), so
+  ninja fails on `vulkan/vulkan_core.h` once that is cleaned. Clone
+  Vulkan-Headers at the loader's tag (`v1.4.357`) and link it back to the path
+  in `meson-info/intro-buildoptions.json` instead of reconfiguring.
+
+- Override `events` frames count core frames, which run ~150 ahead of a remote
+  script's `wait_frames`; time clicks against when the target appears in core
+  frames, with margin, since wine's startup time varies.
+
+- Manual mouse reaches gamescope as relative motion only, so the cursor drawn
+  in the session drifts away from demarc's own; positions logged from demarc's
+  cursor then miss when replayed (Tokyo's "resolution" clicks hit Die). Windows
+  and web sessions now set `absolute_pointer`, which makes the two agree. A
+  click override recorded before that is suspect.
+
+- A wine session can be run without the dialog hidden by adding
+  `wine_dialog_res:pick` as a field on the db line given to `--db`.

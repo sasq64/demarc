@@ -105,6 +105,8 @@ pub struct Emulator {
     pub speed_test: bool,
     pub is_image: bool,
     pub buttons: u32,
+    /// The left button as last fed, to log each click once.
+    left_down: bool,
     pub last_active_time: f32,
     pub idle_time: f32,
     pub emu_file: EmuFile,
@@ -460,6 +462,11 @@ impl Emulator {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
         let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
+        if left && !self.left_down && let Some(p) = abs_pointer {
+            let frame = self.core.as_ref().unwrap().frames_stepped();
+            info!("{{ frame = {frame}, click = [{:.3}, {:.3}] }}", p.x, p.y);
+        }
+        self.left_down = left;
         self.core.as_mut().unwrap().set_mouse_buttons(
             left,
             mouse_buttons.pressed(MouseButton::Right),

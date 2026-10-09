@@ -4,7 +4,7 @@ use tracing::warn;
 
 use crate::{
     SysOpts,
-    backend::Backend,
+    backend::{Backend, InputEvent},
     cbmconvert, libloader,
     libretro::{RETROK_F1, RETROK_RETURN},
     newsys::{collect_disk_images, walk_dir},
@@ -149,7 +149,7 @@ impl System for C64System {
         let mut core =
             retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
         if path.is_enabled("fast-load") {
-            core.send_keys(&[(50, RETROK_F1), (55, RETROK_RETURN)]);
+            core.send_events(&[(50, InputEvent::Key(RETROK_F1)), (55, InputEvent::Key(RETROK_RETURN))]);
         }
         Ok(core)
     }

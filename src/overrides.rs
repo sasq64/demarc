@@ -42,6 +42,7 @@
 //!
 //! [zoo.108]
 //! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
+//! events = [{ frame = 400, click = [0.57, 0.94] }]  # left click, 0..1 over the frame
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -63,6 +64,7 @@ use qbsdiff::Bspatch;
 use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
+use crate::backend::InputEvent;
 
 use crate::emu_file::{DemoId, Override, Patch};
 use crate::emulator::Emulator;
@@ -145,17 +147,19 @@ struct RawOverride {
     assign: toml::Table,
     /// One patch, or an array of them.
     patch: Option<Patches>,
-    /// Keys to press, as `events = [{ frame = 50, key = "Enter" }]`.
+    /// Keys to press or clicks to make, as `events = [{ frame = 50, key = "Enter" }]`.
     #[serde(default)]
     events: Vec<RawEvent>,
 }
 
-/// One `events` entry. `key` is a Bevy `KeyCode` name, as in remote scripts.
+/// One `events` entry. `key` is a Bevy `KeyCode` name, as in remote scripts;
+/// `click` is a position normalized 0..1 over the frame.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawEvent {
     frame: u32,
-    key: String,
+    key: Option<String>,
+    click: Option<[f32; 2]>,
 }
 
 /// `patch = { … }` for the common single patch, `[[zoo.<id>.patch]]` (or an
@@ -286,7 +290,15 @@ impl RawOverride {
         if !self.events.is_empty() {
             let keys = Emulator::build_keycode_map();
             for event in self.events {
-                let name = match event.key.as_str() {
+                let key = match (event.key, event.click) {
+                    (Some(key), None) => key,
+                    (None, Some([x, y])) => {
+                        events.push((event.frame, InputEvent::Click(x, y)));
+                        continue;
+                    }
+                    _ => bail!("an event needs one of key or click"),
+                };
+                let name = match key.as_str() {
                     c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
                     c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
                         format!("Key{}", c.to_ascii_uppercase())
@@ -294,9 +306,9 @@ impl RawOverride {
                     name => name.to_string(),
                 };
                 let Some((_, code)) = keys.iter().find(|(k, _)| format!("{k:?}") == name) else {
-                    bail!("unknown key {:?} in events", event.key);
+                    bail!("unknown key {key:?} in events");
                 };
-                events.push((event.frame, *code));
+                events.push((event.frame, InputEvent::Key(*code)));
             }
         }
 

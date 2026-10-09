@@ -23,10 +23,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
 
-use crate::backend::{Backend, STATE_SKIPPING, ViewFocus};
+use crate::backend::{Backend, InputEvent, STATE_SKIPPING, ViewFocus};
 use crate::pixels::{SCREEN_ACTIVE, get_frame_diff};
 
-use super::threaded::{RetroCmd, WORKER_STACK_SIZE, apply_cmd, set_state_bit};
+use super::threaded::{RetroCmd, Scheduled, WORKER_STACK_SIZE, apply_cmd, play_due, set_state_bit};
 use super::{FrameTarget, RetroCoreDirect};
 
 const WORKER_ARG: &str = "--retro-process-worker";
@@ -162,10 +162,12 @@ const MSG_SET_DISK: u32 = 6;
 const MSG_UNLOAD: u32 = 7;
 const MSG_SKIP: u32 = 8;
 const MSG_FOCUS: u32 = 9;
-/// Followed by `a` [`MSG_KEY`] messages.
-const MSG_SEND_KEYS: u32 = 10;
+/// Followed by `a` [`MSG_KEY`] or [`MSG_CLICK`] messages.
+const MSG_SEND_EVENTS: u32 = 10;
 const MSG_KEY: u32 = 11;
 const MSG_RELEASE: u32 = 12;
+const MSG_CLICK: u32 = 13;
+const MSG_MOUSE_POSITION: u32 = 14;
 // Child to parent
 const MSG_SETUP_OK: u32 = 20;
 const MSG_SETUP_ERR: u32 = 21;
@@ -233,6 +235,10 @@ impl Msg {
             MSG_MOUSE_MOTION => RetroCmd::AddMouseMotion {
                 dx: self.x,
                 dy: self.y,
+            },
+            MSG_MOUSE_POSITION => RetroCmd::SetMousePosition {
+                x: self.x,
+                y: self.y,
             },
             MSG_MOUSE_BUTTONS => RetroCmd::SetMouseButtons {
                 left: self.a != 0,
@@ -510,10 +516,19 @@ impl Backend for RetroCoreProcess {
         self.send(Msg::new(MSG_FOCUS, a, 0, 0));
     }
 
-    fn send_keys(&mut self, keys: &[(u32, u32)]) {
-        self.send(Msg::new(MSG_SEND_KEYS, keys.len() as u32, 0, 0));
-        for &(frame, code) in keys {
-            self.send(Msg::new(MSG_KEY, frame, code, 0));
+    fn send_events(&mut self, events: &[(u32, InputEvent)]) {
+        self.send(Msg::new(MSG_SEND_EVENTS, events.len() as u32, 0, 0));
+        for &(frame, event) in events {
+            self.send(match event {
+                InputEvent::Key(code) => Msg::new(MSG_KEY, frame, code, 0),
+                InputEvent::Click(x, y) => Msg {
+                    tag: MSG_CLICK,
+                    a: frame,
+                    x,
+                    y,
+                    ..Default::default()
+                },
+            });
         }
     }
 
@@ -542,6 +557,14 @@ impl Backend for RetroCoreProcess {
             tag: MSG_MOUSE_MOTION,
             x: dx,
             y: dy,
+            ..Default::default()
+        });
+    }
+    fn set_mouse_position(&mut self, x: f32, y: f32) {
+        self.send(Msg {
+            tag: MSG_MOUSE_POSITION,
+            x,
+            y,
             ..Default::default()
         });
     }
@@ -720,7 +743,7 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
     let mut target = free.pop();
     // The slot holding the newest frame, which a duped frame is copied from.
     let mut last: Option<usize> = None;
-    let mut key_queue: Vec<(u64, u32, bool)> = Vec::new();
+    let mut key_queue: Vec<(u64, Scheduled)> = Vec::new();
     // Copy of the last frame handed over, to measure motion against.
     let mut last_frame: Vec<u32> = Vec::new();
     let mut aggregated_diff = 0.0f32;
@@ -746,16 +769,17 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
                         free.push(slot);
                     }
                 }
-                MSG_SEND_KEYS => {
-                    let mut time_code_list = Vec::with_capacity(msg.a as usize);
+                MSG_SEND_EVENTS => {
+                    let mut events = Vec::with_capacity(msg.a as usize);
                     for _ in 0..msg.a {
                         match chan.recv_blocking() {
-                            Ok(key) if key.tag == MSG_KEY => time_code_list.push((key.a, key.b)),
+                            Ok(m) if m.tag == MSG_KEY => events.push((m.a, InputEvent::Key(m.b))),
+                            Ok(m) if m.tag == MSG_CLICK => events.push((m.a, InputEvent::Click(m.x, m.y))),
                             Ok(_) => {}
                             Err(_) => return,
                         }
                     }
-                    let cmd = RetroCmd::SendKeys { time_code_list };
+                    let cmd = RetroCmd::SendEvents { events };
                     apply_cmd(core, cmd, &mut key_queue, frame, state);
                 }
                 _ => {
@@ -768,15 +792,7 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
             }
         }
 
-        if !key_queue.is_empty() {
-            key_queue.retain(|&(at, code, down)| {
-                if at > frame {
-                    return true;
-                }
-                core.press_key(code, down, 0);
-                false
-            });
-        }
+        play_due(core, &mut key_queue, frame);
 
         let Some(slot) = target else { continue };
         if !core.visible {

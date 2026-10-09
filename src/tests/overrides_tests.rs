@@ -170,6 +170,7 @@ fn patch_from_system_dir_source() {
 /// `events` names keys the way remote scripts do, and arrives as retro keycodes.
 #[test]
 fn parses_key_events() {
+    use crate::backend::InputEvent::Key;
     let overrides = parse(
         r#"
         [zoo.108]
@@ -183,13 +184,35 @@ fn parses_key_events() {
     assert_eq!(
         overrides[&zoo(108)].events,
         [
-            (50, crate::libretro::RETROK_RETURN),
-            (60, crate::libretro::RETROK_a),
-            (70, crate::libretro::RETROK_1),
-            (80, crate::libretro::RETROK_b)
+            (50, Key(crate::libretro::RETROK_RETURN)),
+            (60, Key(crate::libretro::RETROK_a)),
+            (70, Key(crate::libretro::RETROK_1)),
+            (80, Key(crate::libretro::RETROK_b))
         ]
     );
     assert!(!overrides.contains_key(&zoo(2)));
+}
+
+/// `click` is a position over the frame, and an event is a key or a click.
+#[test]
+fn parses_click_events() {
+    use crate::backend::InputEvent::Click;
+    let overrides = parse(
+        r#"
+        [zoo.108]
+        events = [{ frame = 400, click = [0.25, 0.75] }]
+
+        [zoo.2]
+        events = [{ frame = 1, key = "Enter", click = [0.5, 0.5] }]
+
+        [zoo.3]
+        events = [{ frame = 1 }]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(overrides[&zoo(108)].events, [(400, Click(0.25, 0.75))]);
+    assert!(!overrides.contains_key(&zoo(2)));
+    assert!(!overrides.contains_key(&zoo(3)));
 }
 
 /// `download` replaces the release's own links, and has to be a URL.

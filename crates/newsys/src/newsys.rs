@@ -652,7 +652,7 @@ impl NewSys {
                 if let Some(over) = over
                     && !over.events.is_empty()
                 {
-                    backend.send_keys(&over.events);
+                    backend.send_events(&over.events);
                 }
                 return Ok(LoadResult {
                     backend,

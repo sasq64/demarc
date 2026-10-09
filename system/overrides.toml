@@ -88,6 +88,15 @@ boot = "ASD-The butterfly effect.exe"
 events = [{ frame = 30, key = "Enter" }, { frame = 35, key = "Enter" }, { frame = 40, key = "Enter" }]
 meta = { dosbox_pure_cycles = 100000 }
 
+# Tokyo
+[zoo.8057]
+events = [
+  { frame = 300, click = [0.335, 0.984] },
+  { frame = 350, click = [0.311, 0.689] },
+  { frame = 400, click = [0.140, 0.948] },
+]
+meta = { wine_res = "1024x576" }
+
 [zoo.8092]
 file = "odd_wd.zip"
 
@@ -173,9 +182,11 @@ boot = "texas_safe_1280x720.exe"
 # profile, so it gets a core one, and then calls glActiveTextureARB — which
 # wine's wglGetProcAddress will not resolve on a core context, and which the
 # intro calls without checking. NULL, during FBO setup, every time.
+# Its launcher is drawn in GL: click High texture quality, then Run.
 [zoo.31427]
 meta = { wine_gl_compat = true }
 file = "gaiamachinafinal.zip"
+events = [{ frame = 450, click = [0.594, 0.814] }, { frame = 500, click = [0.573, 0.939] }]
 
 [zoo.40674]
 events = [{ frame = 450, key = "1" }]

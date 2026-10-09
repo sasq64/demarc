@@ -37,6 +37,8 @@ pub unsafe extern "C" fn demarc_retro_log_rust(level: c_int, msg: *const c_char)
 use crate::libretro::{
     RETRO_DEVICE_ID_JOYPAD_MASK, RETRO_DEVICE_ID_MOUSE_LEFT, RETRO_DEVICE_ID_MOUSE_MIDDLE,
     RETRO_DEVICE_ID_MOUSE_RIGHT, RETRO_DEVICE_ID_MOUSE_X, RETRO_DEVICE_ID_MOUSE_Y,
+    RETRO_DEVICE_ID_POINTER_PRESSED, RETRO_DEVICE_ID_POINTER_X, RETRO_DEVICE_ID_POINTER_Y,
+    RETRO_DEVICE_POINTER,
     RETRO_DEVICE_JOYPAD, RETRO_DEVICE_KEYBOARD, RETRO_DEVICE_MASK, RETRO_DEVICE_MOUSE,
     RETRO_ENVIRONMENT_GET_CAN_DUPE, RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,
     RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER, RETRO_ENVIRONMENT_GET_FASTFORWARDING,
@@ -72,6 +74,11 @@ struct MouseState {
     left: bool,
     right: bool,
     middle: bool,
+}
+
+/// 0..1 over the frame, as libretro's -0x7fff..0x7fff.
+fn pointer_axis(v: f32) -> i16 {
+    ((v.clamp(0.0, 1.0) * 2.0 - 1.0) * 0x7fff as f32).round() as i16
 }
 
 /// Display aspect ratio (width / height) the core wants the frame presented at.
@@ -133,6 +140,14 @@ pub struct RetroCoreDirect {
     disk_callback: retro_disk_control_callback,
     state: RetroState,
     mouse: MouseState,
+    /// Absolute pointer as libretro reports it: x, y in -0x7fff..0x7fff, pressed.
+    pointer: (i16, i16, bool),
+    /// The `absolute_pointer` setting: the frontend's cursor and left button
+    /// drive `pointer`, instead of the mouse's left button.
+    live_pointer: bool,
+    /// The last live pointer applied, so an unchanged cursor leaves a
+    /// scheduled click alone.
+    last_live: (i16, i16, bool),
     vars: HashMap<String, CString>,
     audio_buf: Vec<i16>,
     core_path: CString,
@@ -293,7 +308,7 @@ impl RetroCoreDirect {
         val
     }
 
-    fn input_state(&self, port: c_uint, device: c_uint, _index: c_uint, id: c_uint) -> i16 {
+    fn input_state(&self, port: c_uint, device: c_uint, index: c_uint, id: c_uint) -> i16 {
         match device & RETRO_DEVICE_MASK {
             RETRO_DEVICE_JOYPAD => {
                 let mask = self.state.joypad.get(port as usize).copied().unwrap_or(0);
@@ -320,6 +335,12 @@ impl RetroCoreDirect {
                 RETRO_DEVICE_ID_MOUSE_LEFT => self.mouse.left as i16,
                 RETRO_DEVICE_ID_MOUSE_RIGHT => self.mouse.right as i16,
                 RETRO_DEVICE_ID_MOUSE_MIDDLE => self.mouse.middle as i16,
+                _ => 0,
+            },
+            RETRO_DEVICE_POINTER if index == 0 => match id {
+                RETRO_DEVICE_ID_POINTER_X => self.pointer.0,
+                RETRO_DEVICE_ID_POINTER_Y => self.pointer.1,
+                RETRO_DEVICE_ID_POINTER_PRESSED => self.pointer.2 as i16,
                 _ => 0,
             },
             _ => 0,
@@ -700,6 +721,9 @@ impl RetroCoreDirect {
                 disk_callback: retro_disk_control_callback::default(),
                 state: Default::default(),
                 mouse: Default::default(),
+                pointer: Default::default(),
+                live_pointer: settings.get("absolute_pointer").is_some_and(|v| v == "true"),
+                last_live: Default::default(),
                 vars: Default::default(),
                 audio_buf: Vec::new(),
                 system_path: CString::new(system_dir.to_string_lossy().as_bytes()).unwrap(),
@@ -851,9 +875,32 @@ impl RetroCoreDirect {
     }
 
     pub(crate) fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
-        self.mouse.left = left;
+        if self.live_pointer {
+            self.set_live_pointer(self.last_live.0, self.last_live.1, left);
+        } else {
+            self.mouse.left = left;
+        }
         self.mouse.right = right;
         self.mouse.middle = middle;
+    }
+
+    /// Move the absolute pointer to `x`, `y` (0..1 over the frame).
+    pub(crate) fn set_pointer(&mut self, x: f32, y: f32, pressed: bool) {
+        self.pointer = (pointer_axis(x), pointer_axis(y), pressed);
+    }
+
+    /// The frontend's cursor, when `absolute_pointer` is set.
+    pub(crate) fn set_mouse_position(&mut self, x: f32, y: f32) {
+        if self.live_pointer {
+            self.set_live_pointer(pointer_axis(x), pointer_axis(y), self.last_live.2);
+        }
+    }
+
+    fn set_live_pointer(&mut self, x: i16, y: i16, pressed: bool) {
+        if (x, y, pressed) != self.last_live {
+            self.last_live = (x, y, pressed);
+            self.pointer = self.last_live;
+        }
     }
 
     /// Set or clear a joypad button on `port` (0 = Joystick #1, 1 = Joystick #2).
@@ -913,6 +960,9 @@ impl Backend for RetroCoreDirect {
     }
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {
         RetroCoreDirect::add_mouse_motion(self, dx, dy)
+    }
+    fn set_mouse_position(&mut self, x: f32, y: f32) {
+        RetroCoreDirect::set_mouse_position(self, x, y)
     }
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
         RetroCoreDirect::set_mouse_buttons(self, left, right, middle)

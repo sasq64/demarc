@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use retro_core::backend::InputEvent;
 
 use crate::system_dir;
 
@@ -77,6 +78,6 @@ pub struct Override {
     // Run the release on the fast Amiga configuration ([`amiga::apply_fast`](crate::newsys::amiga::apply_fast)),
     // for the ones that need more machine than their year or tags suggest.
     pub fast: bool,
-    // (frame, retro keycode) pairs passed to `Backend::send_keys` once the backend is created
-    pub events: Vec<(u32, u32)>,
+    // Passed to `Backend::send_events` once the backend is created
+    pub events: Vec<(u32, InputEvent)>,
 }
