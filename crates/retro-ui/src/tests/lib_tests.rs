@@ -134,13 +134,14 @@ fn take_key_ignores_modifiers() {
 #[test]
 fn scale_follows_the_window_height_within_bounds() {
     let mut h = Harness::new();
-    for (height, factor, want) in [
-        (1600.0, 1.0, 1.0),
-        (800.0, 2.0, 1.0),
-        (10.0, 1.0, 0.2),
-        (100_000.0, 1.0, 8.0),
+    for (height, factor, zoom, want) in [
+        (1600.0, 1.0, 1.0, 1.0),
+        (800.0, 2.0, 1.0, 1.0),
+        (10.0, 1.0, 1.0, 0.2),
+        (100_000.0, 1.0, 1.0, 8.0),
+        (1600.0, 1.0, 1.5, 1.5),
     ] {
-        h.frame(vec![], |ctx| set_scale(ctx, height, factor));
+        h.frame(vec![], |ctx| set_scale(ctx, height, factor, zoom));
         h.frame(vec![], |ctx| assert_eq!(ctx.pixels_per_point(), want));
     }
 }

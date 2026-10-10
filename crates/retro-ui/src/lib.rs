@@ -56,10 +56,10 @@ pub fn apply_style(ctx: &egui::Context, font: Vec<u8>) {
 }
 
 /// Scale `ctx` to a window `logical_height` points tall, so the UI keeps its
-/// proportions whatever the window is sized at.
-pub fn set_scale(ctx: &egui::Context, logical_height: f32, scale_factor: f32) {
+/// proportions whatever the window is sized at. `zoom` enlarges it on top.
+pub fn set_scale(ctx: &egui::Context, logical_height: f32, scale_factor: f32, zoom: f32) {
     let scale = (logical_height / VIRTUAL_HEIGHT).clamp(0.2, 8.0);
-    ctx.set_pixels_per_point(scale_factor * scale);
+    ctx.set_pixels_per_point(scale_factor * scale * zoom);
 }
 
 /// Look of the boxes the picker and the dialogs are drawn in: near-opaque black

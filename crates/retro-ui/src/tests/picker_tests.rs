@@ -278,3 +278,18 @@ fn rows_draw_their_icons() {
     assert_eq!(list_icon_texture(&h.ctx, 7), list_icon_texture(&h.ctx, 7));
     assert!(list_icon_texture(&h.ctx, u32::MAX).is_none());
 }
+
+/// Once it has a frame to measure, the picker leaves twice as much room at its
+/// sides as above and below it.
+#[test]
+fn side_margins_are_twice_the_vertical_ones() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
+    step(&mut h, &mut picker, vec![]);
+    let screen = h.ctx.content_rect();
+    let area = h.ctx.memory(|m| m.area_rect(egui::Id::new(AREA_ID))).unwrap();
+    let side = (screen.width() - area.width()) / 2.0;
+    let vertical = (screen.height() - area.height()) / 2.0;
+    assert!(area.width() > screen.height());
+    assert!((side - 2.0 * vertical).abs() < 2.0, "{side} beside, {vertical} above");
+}

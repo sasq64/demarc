@@ -31,7 +31,6 @@ Open:
 - When "1995" ended, demarc stayed on a black screen showing the title, with
   the inner gamescope a zombie child (`[gamescope-wl] <defunct>`). Not looked at.
 - bubblewrap on the Deck is too old for demarc's wine sandbox (see *bwrap*).
-- No gstreamer `asfdemux`, so demos with WMA audio are silent.
 - No Mono or Gecko in the prefix, so .NET demos will not run.
 - Sticks do nothing; only the D-pad navigates. The pad is not passed to the
   emulated machine as a joystick.
@@ -126,7 +125,7 @@ The proper fix is in the gamescope fork: do not send mangoapp stats under the
 libretro backend. `external/gamescope` is not checked out on the workstation, so
 this was not done.
 
-### `-x wine_res=1280x800` and `--shader=none`
+### `-x wine_res=1280x800`
 
 Mean GPU load on the Deck, ten-second samples:
 
@@ -139,7 +138,8 @@ Mean GPU load on the Deck, ten-second samples:
 
 At the 1920x1080 default the GPU sat at 99-100%. `wine_res` also sets the mode
 demarc asks the demo's setup dialog for. The inner gamescope costs about half a
-CPU core while a demo runs. `--shader=none` was the user's own addition.
+CPU core while a demo runs. The CRT filter stays on for emulated machines; only
+Windows demos default to `wine_filter=false` on a Deck.
 
 The session is the panel's own 1280x800, so a 4:3 demo can have 1024x768. A
 demo cannot switch to a mode larger than the session: DXVK logs
@@ -169,13 +169,32 @@ about a core while showing a Windows demo, which has not been profiled.
 The prefix is 400 MB smaller than the workstation's only because it has no
 wine-mono; the rest matches file for file.
 
+### WMA (`GST_PLUGIN_PATH`)
+
+SteamOS's gstreamer has no ASF demuxer and no libav, so wine cannot open a
+`.wma`. `libgstasf.so` (gst-plugins-ugly) and `libgstlibav.so` (gst-libav) from
+the Arch archive, at the Deck's gstreamer version (1.22.10), sit in
+`~/.local/share/demarc/gst`; the launcher points `GST_PLUGIN_PATH` there. They
+link against the Deck's own ffmpeg 6.1.
+
+Texas / Keyboarders needed that and an (empty) `C:\users\Public\Music\Sample
+Music`, which `mk_wine_prefix.sh` now makes.
+
+### Rupture
+
+ASD's Rupture (zoo 60) played its music over a black picture, on any Mesa
+driver. It takes ARB vertex programs only when `GL_VENDOR` contains "ATI" and
+`NV_vertex_program` (Cg profile vp30) otherwise; Mesa says "AMD" and has no such
+extension, so no vertex program loaded. `overrides.toml` now patches out the
+vendor test.
+
 ### gamescope core: bundled `libgudev`
 
 The launcher now moves it aside at every start.
 
 The core's `lib/libgudev-1.0.so.0` needs glib 2.80 (`g_once_init_enter_pointer`);
 the Deck has 2.78. It was moved to
-`~/.cache/demarc/cores/<hash>/libgudev-1.0.so.0.bundled` so the system copy
+`~/.cache/demarc/cores/<hash>/lib/libgudev-1.0.so.0.bundled` so the system copy
 loads. A core update brings it back. `docs/GAMESCOPE.md` says the release needs
 SteamOS 3.7; this is why. The real fix is in the core's release build.
 
@@ -236,7 +255,7 @@ the inherited environment, all covered above.
 - `src/commands.rs` — gamepad support. `PAD_HOTKEYS` maps a button, alone or
   with a held modifier, to a `Cmd` (`PadMapping::new` / `PadMapping::with`); a
   plain mapping does not fire while a modifier button is held. `PAD_NAV` turns
-  D-pad, L1/R1, A and B into arrow, page, Enter and Escape key messages while a
+  D-pad, L1/R1, A and X into arrow, page, Enter and Escape key messages while a
   picker or dialog is open, with key repeat. Bevy's gamepad support was already
   compiled in.
 
@@ -245,10 +264,12 @@ the inherited environment, all covered above.
   | X | Open file menu | | D-pad | arrows |
   | Y | Toggle info | | L1 / R1 | Page Up / Down |
   | R1 / L1 | Next / previous file | | A | Enter |
-  | Start | Pause/resume | | B | Escape |
+  | Start | Pause/resume | | X | Escape |
+  | B | Open on-screen keyboard | | | |
   | L2+Y | Toggle CRT filter | | | |
   | L2+X | Change scale | | | |
   | L2+R1 | Warp 10s | | | |
+  | L2 (tap) | Command list | | | |
 
 - `src/remote_control.rs` — `key_message` is `pub(crate)`.
 - `src/tests/commands_tests.rs` — a test for the modifier rule.
@@ -264,10 +285,18 @@ the inherited environment, all covered above.
 
 ## Setting it up again
 
-`steamdeck/install.sh [user@host]`, run on the workstation, does all of the
-below and skips what is already there; it is also how a new build is pushed.
-Only the copy, the skips and `--check-wine` have been run; the wine download and
-the prefix step have not.
+`steamdeck/package.sh`, run on the workstation, builds
+`target/steamdeck/demarc-steamdeck.zip`: `demarc.tar.gz` plus `install.sh`
+(macOS/Linux) and `install.bat` (Windows), which need only `ssh` and `scp`.
+`install.sh deck@<address>` copies the tarball to the Deck, unpacks it into
+`~/demarc` and runs `setup.sh` there, which does all of the below and skips what
+is already there; it is also how a new build is pushed. The Deck needs sshd on
+and a password set, which takes one visit to Desktop Mode (`passwd`, `sudo
+systemctl enable --now sshd`).
+
+Before the split into these scripts, only the copy, the skips and `--check-wine`
+had been run; the wine download and the prefix step have not, and neither has
+`install.bat`.
 
 1. Unpack a wow64 wine build into `~/.local/share/demarc/wine` (Kron4ek
    `wine-11.17-amd64-wow64`; 11.16 has a wineserver double free). Copy the

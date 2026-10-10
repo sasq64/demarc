@@ -116,3 +116,19 @@ fn pad_modifier_picks_the_combined_mapping() {
     pad.press(GamepadButton::Start);
     assert_eq!(check_pad(&pad), None);
 }
+
+#[test]
+fn pad_b_opens_the_keyboard() {
+    let mut pad = ButtonInput::<GamepadButton>::default();
+    pad.press(GamepadButton::East);
+    assert_eq!(check_pad(&pad), Some(Cmd::OpenKeyboard));
+}
+
+#[test]
+fn command_list_shows_pad_buttons() {
+    let pad = command_list(true);
+    assert_eq!(pad.len(), PAD_HOTKEYS.len());
+    assert_eq!(pad[0], (" \u{f0c32}      Open file menu ".to_string(), Cmd::OpenFile));
+    assert!(pad.iter().any(|(line, _)| line.starts_with(" L2+R1 ")));
+    assert_eq!(command_list(false).len(), HOTKEYS.len());
+}

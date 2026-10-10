@@ -89,6 +89,9 @@ pub struct DemarcSettings {
 
     pub fast_load: bool,
 
+    /// Draw the picker with larger text.
+    pub zoom_launcher: bool,
+
     /// Frames a core's worker thread may run ahead. Takes effect on the next
     /// release loaded -- see [`crate::newsys::NewSys::set_meta`]. `0` would be
     /// a rendezvous channel (the worker blocked until the frontend takes each

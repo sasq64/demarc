@@ -189,6 +189,10 @@ pub struct Args {
           default_missing_value = "720x540", value_parser = parse_window)]
     pub window: Option<(u32, u32)>,
 
+    /// Larger text in the file picker; on by default on a Steam Deck
+    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub zoom_launcher: Option<bool>,
+
     /// Open no window and play no audio; render offscreen instead
     #[arg(long)]
     pub headless: bool,

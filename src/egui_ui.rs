@@ -202,6 +202,9 @@ fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
     }
 }
 
+/// 18 rows in the picker instead of 26.
+const LAUNCHER_ZOOM: f32 = 1.45;
+
 pub(crate) fn update_ui(
     mut contexts: EguiContexts,
     mut state: ResMut<HudState>,
@@ -209,12 +212,18 @@ pub(crate) fn update_ui(
     mut selected: MessageWriter<FuzzyListSelect>,
     keys: Res<ButtonInput<KeyCode>>,
     camera: Single<&Camera, With<PrimaryEguiContext>>,
+    settings: Res<crate::demarc_settings::DemarcSettings>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     if let (Some(size), Some(factor)) =
         (camera.logical_target_size(), camera.target_scaling_factor())
     {
-        retro_ui::set_scale(ctx, size.y, factor);
+        let zoom = if settings.zoom_launcher && state.picker.is_open() {
+            LAUNCHER_ZOOM
+        } else {
+            1.0
+        };
+        retro_ui::set_scale(ctx, size.y, factor, zoom);
     }
     // Before anything reads this frame's keys, the dialogs drawn after this
     // system included.

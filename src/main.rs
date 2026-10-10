@@ -201,6 +201,13 @@ fn is_windows_only(file: &emu_file::EmuFile) -> bool {
             .all(|name| name.trim().eq_ignore_ascii_case("windows"))
 }
 
+pub(crate) fn on_steam_deck() -> bool {
+    #[cfg(target_os = "linux")]
+    return wine::on_steam_deck();
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
 /// Raise the process's soft open-file limit to the hard limit
 #[cfg(unix)]
 fn raise_fd_limit() {
@@ -551,6 +558,7 @@ fn main() {
         downsample_limit: args.downsample,
         background: clear_color,
         fast_load: args.fast_load,
+        zoom_launcher: args.zoom_launcher.unwrap_or_else(on_steam_deck),
         #[cfg(target_os = "linux")]
         wine: Default::default(),
     };

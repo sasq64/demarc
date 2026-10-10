@@ -13,6 +13,8 @@ use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
 
 pub type ListSource<T> = Arc<dyn FuzzySource<T>>;
 
+const AREA_ID: &str = "fuzzy_list";
+
 const ROW_SIZE: f32 = 28.0;
 /// Side of the square a [`RowImage`] is painted into.
 const ROW_IMAGE_SIZE: f32 = 32.0;
@@ -132,7 +134,8 @@ fn draw_row(
             egui::pos2(text_rect.right() + offset, text_rect.top()),
             egui::Vec2::splat(ROW_IMAGE_SIZE),
         );
-        egui::Image::new((texture, image_rect.size())).paint_at(ui, image_rect);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        painter.image(texture, image_rect, uv, egui::Color32::WHITE);
     }
 }
 
@@ -300,10 +303,15 @@ impl<T: 'static> Picker<T> {
         self.sync_results(&source);
 
         let screen = ctx.content_rect();
-        // As wide as the screen is tall (it is opened over a 4:3-ish emulator
-        // view), capped to what actually fits. The panels below take their own
-        // width from this one, via `available_width`.
-        let width = screen.height().min(screen.width() - 2.0 * MARGIN.x);
+        // Side margins twice the gap last frame's picker left above and below
+        // it, and never narrower than the screen is tall. The panels below take
+        // their own width from this one, via `available_width`.
+        let fits = screen.width() - 2.0 * MARGIN.x;
+        let width = ctx
+            .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
+            .map_or(0.0, |area| screen.width() - 2.0 * (screen.height() - area.height()))
+            .max(screen.height())
+            .min(fits);
 
         // Selection keys are taken before the search box is drawn, so the
         // `TextEdit` never sees them. Home/End are deliberately left alone -- they
@@ -355,7 +363,7 @@ impl<T: 'static> Picker<T> {
             self.list_info_item = info_item;
         }
 
-        egui::Area::new(egui::Id::new("fuzzy_list"))
+        egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {

@@ -133,3 +133,46 @@
   `Failed to change display mode` before comparing prefixes. A mode larger than
   the session cannot be switched to. Diffing the Deck's prefix against the
   workstation's found only missing wine-mono and cost several rounds.
+
+- The Deck launcher starts in the picker (`--select`), where `handle_gamepad`
+  drops pad hotkeys: a pad command meant for use while typing has to be let
+  through `ui_state.modal`. Steam's `console_log.txt` logs every
+  `ExecuteSteamURL`, which shows whether a press arrived at all.
+
+- The gamescope core keeps its bundled libraries in `lib/` beside the core, and
+  a core update restores the `libgudev` SteamOS 3.6 cannot load; every Windows
+  demo then fails with a bare `retro_load_game(...) failed`. Running the core
+  directory's `./gamescope --version` prints the real symbol error.
+
+- Overrides are keyed on the db's file name (`demozoo.*` → `zoo`, `csdb.*`), so
+  a one-line test db called `db.txt` runs without its `overrides.toml` entry.
+  Texas started its packed 4k instead of the safe build and "reproduced" a crash
+  that was not the one being hunted.
+
+- A message box a demo shows before it has a window is readable from ssh:
+  `WINEDEBUG=+relay wine demo.exe 2>&1 | grep 'ret=004'` lists the exe's own
+  calls up to the `MessageBoxA`. Texas's "Error" box was a failed
+  `SetCurrentDirectoryA("Sample Music")`, not the WMA decoder first suspected.
+
+- A GL demo that is black on Mesa and fine on NVIDIA: run the same headless
+  `WINEDEBUG=+opengl` trace on both (`ssh ripper` has the NVIDIA card) and diff
+  the call-name histograms before reading single frames. Rupture's showed
+  `glLoadProgramNV` on NVIDIA and nothing in its place on Mesa at once; an hour
+  went into the Mesa trace alone. Over ssh there, wine is not on `PATH`
+  (`~/wine-builds/wine-11.17-amd64-wow64/bin`), and demarc then loads nothing
+  and logs nothing.
+
+- fr-063's `Threads[i]->Running==0` assert was "fixed" twice by lowering
+  `wine_cpus` (4, then 8), which only made a race rarer: each worker sets
+  `Running` itself 5 ms after it is created. A fix for a timing assert needs
+  several runs to count as one; the exe is unpacked, so the override patches
+  the assert's branch out instead.
+
+- A core option the core never declared is dropped without a word, so a
+  `default_meta` entry for one does nothing. Grep the core's option table
+  (`core_options.h` in `libretro/dosbox-pure`) before adding a key.
+
+- A DOS demo that cannot find the Sound Blaster DOSBox gives it (Crystal Dream:
+  `Could not find output device!`): lower `dosbox_pure_cycles` before trying
+  card type, IRQ or GUS. Its detection is a timing loop that runs out at the
+  default 200000; six card settings were tried first and all failed alike.

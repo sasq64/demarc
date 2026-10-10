@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -58,6 +59,7 @@ pub enum Cmd {
     ShaderDialog,
     StartOther,
     AddToPlaylist,
+    OpenKeyboard,
 }
 
 impl Cmd {
@@ -89,39 +91,69 @@ impl Cmd {
         Cmd::ShaderDialog,
         Cmd::StartOther,
         Cmd::AddToPlaylist,
+        Cmd::OpenKeyboard,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
     pub fn from_name(name: &str) -> Option<Cmd> {
         Cmd::ALL.iter().copied().find(|c| format!("{c:?}") == name)
     }
+
+    fn description(self) -> &'static str {
+        match self {
+            Cmd::NextFile => "Next file",
+            Cmd::PrevFile => "Prev file",
+            Cmd::SwapDisk => "Swap disk",
+            Cmd::ChangeScale => "Change screen scale",
+            Cmd::ToggleCrt => "Toggle CRT filter",
+            Cmd::ToggleBorder => "Toggle border stretch",
+            Cmd::PauseResume => "Pause/Resume",
+            Cmd::MouseClick => "Click Left mouse button",
+            Cmd::ToggleInput => "Toggle Joystick/Keyboard cursor keys",
+            Cmd::ToggleInfo => "Toggle Info",
+            Cmd::Reset => "Reset current emulator",
+            Cmd::Screenshot => "Screenshot: Current Emulator",
+            Cmd::ScreenshotAll => "Screenshot: Whole Screen",
+            Cmd::Warp10 => "Warp 10s forward",
+            Cmd::Warp30 => "Warp 30s forward",
+            Cmd::Fullscreen => "Toggle fullscreen",
+            Cmd::ToggleAll => "Toggle all",
+            Cmd::NextEmu => "Next emulator",
+            Cmd::PrevEmu => "Previous emulator",
+            Cmd::Maximize => "(Un)maximize current emulator",
+            Cmd::NextFileAll => "Next file in all emulators",
+            Cmd::OpenFile => "Open file menu",
+            Cmd::Reload => "Reload",
+            Cmd::Settings => "Edit settings",
+            Cmd::ShaderDialog => "Pick shader preset",
+            Cmd::StartOther => "Fade in cross fade emulator",
+            Cmd::AddToPlaylist => "Add to playlist",
+            Cmd::OpenKeyboard => "Open on-screen keyboard",
+        }
+    }
 }
 
 #[derive(Message)]
 pub struct CmdMessage(pub Cmd);
 
-/// Binds a key to the [`Cmd`] it triggers, plus a description shown in the
-/// RightAlt overlay (see [`handle_textlist`]).
+/// Binds a key to the [`Cmd`] it triggers.
 struct KeyMapping {
     key: KeyCode,
-    description: &'static str,
     cmd: Cmd,
     shift: bool,
 }
 
 impl KeyMapping {
-    const fn new(key: KeyCode, description: &'static str, cmd: Cmd) -> Self {
+    const fn new(key: KeyCode, cmd: Cmd) -> Self {
         Self {
             key,
-            description,
             cmd,
             shift: false,
         }
     }
-    const fn shifted(key: KeyCode, description: &'static str, cmd: Cmd) -> Self {
+    const fn shifted(key: KeyCode, cmd: Cmd) -> Self {
         Self {
             key,
-            description,
             cmd,
             shift: true,
         }
@@ -140,60 +172,44 @@ impl KeyMapping {
             }
         }
     }
+
+    fn label(&self) -> String {
+        if self.shift {
+            format!("\u{f0636} + {}", self.glyph())
+        } else {
+            self.glyph().to_string()
+        }
+    }
 }
 
 const HOTKEYS: &[KeyMapping] = &[
-    KeyMapping::new(KeyCode::KeyN, "Next file", Cmd::NextFile),
-    KeyMapping::new(KeyCode::KeyP, "Prev file", Cmd::PrevFile),
-    KeyMapping::new(KeyCode::Space, "Next file", Cmd::NextFile),
-    KeyMapping::new(KeyCode::KeyD, "Swap disk", Cmd::SwapDisk),
-    KeyMapping::new(KeyCode::KeyS, "Change screen scale", Cmd::ChangeScale),
-    KeyMapping::new(KeyCode::KeyC, "Toggle CRT filter", Cmd::ToggleCrt),
-    KeyMapping::new(KeyCode::KeyB, "Toggle border stretch", Cmd::ToggleBorder),
-    KeyMapping::new(KeyCode::KeyU, "Pause/Resume", Cmd::PauseResume),
-    KeyMapping::new(KeyCode::KeyM, "Click Left mouse button", Cmd::MouseClick),
-    KeyMapping::new(KeyCode::KeyF, "Toggle fullscreen", Cmd::Fullscreen),
-    KeyMapping::new(
-        KeyCode::KeyJ,
-        "Toggle Joystick/Keyboard cursor keys",
-        Cmd::ToggleInput,
-    ),
-    KeyMapping::new(KeyCode::KeyO, "Open file menu", Cmd::OpenFile),
-    KeyMapping::shifted(
-        KeyCode::KeyO,
-        "Fade in cross fade emulator",
-        Cmd::StartOther,
-    ),
-    KeyMapping::new(KeyCode::KeyX, "Edit settings", Cmd::Settings),
-    KeyMapping::new(KeyCode::KeyZ, "Pick shader preset", Cmd::ShaderDialog),
-    KeyMapping::new(KeyCode::KeyI, "Toggle Info", Cmd::ToggleInfo),
-    KeyMapping::new(KeyCode::KeyH, "Add to playlist", Cmd::AddToPlaylist),
-    KeyMapping::new(KeyCode::KeyR, "Reset current emulator", Cmd::Reset),
-    KeyMapping::new(
-        KeyCode::KeyT,
-        "Screenshot: Current Emulator",
-        Cmd::Screenshot,
-    ),
-    KeyMapping::shifted(
-        KeyCode::KeyT,
-        "Screenshot: Whole Screen",
-        Cmd::ScreenshotAll,
-    ),
-    KeyMapping::new(KeyCode::KeyW, "Warp 10s forward", Cmd::Warp10),
-    KeyMapping::shifted(KeyCode::KeyW, "Warp 30s forward", Cmd::Warp30),
-    KeyMapping::new(
-        KeyCode::Enter,
-        "(Un)maximize current emulator",
-        Cmd::Maximize,
-    ),
-    KeyMapping::new(KeyCode::Tab, "Next emulator", Cmd::NextEmu),
-    KeyMapping::shifted(KeyCode::Tab, "Previous emulator", Cmd::PrevEmu),
-    KeyMapping::new(KeyCode::KeyA, "Toggle all", Cmd::ToggleAll),
-    KeyMapping::shifted(
-        KeyCode::KeyN,
-        "Next file in all emulators",
-        Cmd::NextFileAll,
-    ),
+    KeyMapping::new(KeyCode::KeyN, Cmd::NextFile),
+    KeyMapping::new(KeyCode::KeyP, Cmd::PrevFile),
+    KeyMapping::new(KeyCode::Space, Cmd::NextFile),
+    KeyMapping::new(KeyCode::KeyD, Cmd::SwapDisk),
+    KeyMapping::new(KeyCode::KeyS, Cmd::ChangeScale),
+    KeyMapping::new(KeyCode::KeyC, Cmd::ToggleCrt),
+    KeyMapping::new(KeyCode::KeyB, Cmd::ToggleBorder),
+    KeyMapping::new(KeyCode::KeyU, Cmd::PauseResume),
+    KeyMapping::new(KeyCode::KeyM, Cmd::MouseClick),
+    KeyMapping::new(KeyCode::KeyF, Cmd::Fullscreen),
+    KeyMapping::new(KeyCode::KeyJ, Cmd::ToggleInput),
+    KeyMapping::new(KeyCode::KeyO, Cmd::OpenFile),
+    KeyMapping::shifted(KeyCode::KeyO, Cmd::StartOther),
+    KeyMapping::new(KeyCode::KeyX, Cmd::Settings),
+    KeyMapping::new(KeyCode::KeyZ, Cmd::ShaderDialog),
+    KeyMapping::new(KeyCode::KeyI, Cmd::ToggleInfo),
+    KeyMapping::new(KeyCode::KeyH, Cmd::AddToPlaylist),
+    KeyMapping::new(KeyCode::KeyR, Cmd::Reset),
+    KeyMapping::new(KeyCode::KeyT, Cmd::Screenshot),
+    KeyMapping::shifted(KeyCode::KeyT, Cmd::ScreenshotAll),
+    KeyMapping::new(KeyCode::KeyW, Cmd::Warp10),
+    KeyMapping::shifted(KeyCode::KeyW, Cmd::Warp30),
+    KeyMapping::new(KeyCode::Enter, Cmd::Maximize),
+    KeyMapping::new(KeyCode::Tab, Cmd::NextEmu),
+    KeyMapping::shifted(KeyCode::Tab, Cmd::PrevEmu),
+    KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll),
+    KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
 ];
 
 /// Returns the [`Cmd`] bound to whichever hotkey was just pressed this frame,
@@ -245,7 +261,32 @@ impl PadMapping {
             cmd,
         }
     }
+
+    fn label(&self) -> String {
+        match self.modifier {
+            Some(modifier) => format!("{}+{}", pad_name(modifier), pad_name(self.button)),
+            None => pad_name(self.button).to_string(),
+        }
+    }
 }
+
+fn pad_name(button: GamepadButton) -> &'static str {
+    match button {
+        GamepadButton::South => "󰯭",
+        GamepadButton::East => "󰯰",
+        GamepadButton::West => "󰰲",
+        GamepadButton::North => "󰰵",
+        GamepadButton::LeftTrigger => "L1",
+        GamepadButton::RightTrigger => "R1",
+        GamepadButton::LeftTrigger2 => "L2",
+        GamepadButton::RightTrigger2 => "R2",
+        GamepadButton::Start => "Start",
+        GamepadButton::Select => "Select",
+        _ => "?",
+    }
+}
+
+const PAD_MODIFIER: GamepadButton = GamepadButton::LeftTrigger2;
 
 // West/North are X/Y on an Xbox pad, LeftTrigger/LeftTrigger2 are L1/L2.
 const PAD_HOTKEYS: &[PadMapping] = &[
@@ -254,21 +295,11 @@ const PAD_HOTKEYS: &[PadMapping] = &[
     PadMapping::new(GamepadButton::RightTrigger, Cmd::NextFile),
     PadMapping::new(GamepadButton::LeftTrigger, Cmd::PrevFile),
     PadMapping::new(GamepadButton::Start, Cmd::PauseResume),
-    PadMapping::with(
-        GamepadButton::LeftTrigger2,
-        GamepadButton::North,
-        Cmd::ToggleCrt,
-    ),
-    PadMapping::with(
-        GamepadButton::LeftTrigger2,
-        GamepadButton::West,
-        Cmd::ChangeScale,
-    ),
-    PadMapping::with(
-        GamepadButton::LeftTrigger2,
-        GamepadButton::RightTrigger,
-        Cmd::Warp10,
-    ),
+    PadMapping::new(GamepadButton::East, Cmd::OpenKeyboard),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::North, Cmd::ToggleCrt),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::West, Cmd::ChangeScale),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::RightTrigger, Cmd::Warp10),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::LeftTrigger, Cmd::SwapDisk),
 ];
 
 /// A mapping without a modifier only fires while no modifier button is held.
@@ -284,13 +315,14 @@ fn check_pad(pad: &ButtonInput<GamepadButton>) -> Option<Cmd> {
 fn handle_gamepad(
     pads: Query<&Gamepad>,
     ui_state: Res<UiState>,
+    mut settings: ResMut<AppSettings>,
     mut writer: MessageWriter<CmdMessage>,
 ) {
-    if ui_state.modal {
-        return;
-    }
     for pad in &pads {
-        if let Some(cmd) = check_pad(pad.digital()) {
+        if let Some(cmd) = check_pad(pad.digital())
+            && (!ui_state.modal || cmd == Cmd::OpenKeyboard)
+        {
+            settings.hotkey_pressed_at = 0.0;
             writer.write(CmdMessage(cmd));
         }
     }
@@ -306,7 +338,7 @@ const PAD_NAV: &[(GamepadButton, KeyCode, bool)] = &[
     (GamepadButton::LeftTrigger, KeyCode::PageUp, true),
     (GamepadButton::RightTrigger, KeyCode::PageDown, true),
     (GamepadButton::South, KeyCode::Enter, false),
-    (GamepadButton::East, KeyCode::Escape, false),
+    (GamepadButton::West, KeyCode::Escape, false),
 ];
 
 const PAD_REPEAT_DELAY: f32 = 0.4;
@@ -342,9 +374,26 @@ fn gamepad_navigation(
     }
 }
 
+/// The rows of the command overlay, and the [`Cmd`] each one runs.
+fn command_list(pad: bool) -> Vec<(String, Cmd)> {
+    if pad {
+        PAD_HOTKEYS
+            .iter()
+            .map(|m| (format!(" {:<6} {} ", m.label(), m.cmd.description()), m.cmd))
+            .collect()
+    } else {
+        HOTKEYS
+            .iter()
+            .map(|m| (format!(" {} {} ", m.label(), m.cmd.description()), m.cmd))
+            .collect()
+    }
+}
+
 fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
+    mut pad_list: Local<bool>,
     mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
     mut show_list: MessageWriter<ShowFuzzyList>,
@@ -354,15 +403,20 @@ fn handle_textlist(
     // until that list reports back (its own `item` is a URL index, not a file).
 ) {
     for msg in file_reader.read() {
-        if msg.id == 99 && msg.item < HOTKEYS.len() {
-            let cmd = HOTKEYS[msg.item].cmd;
+        if msg.id == 99
+            && let Some(&(_, cmd)) = command_list(*pad_list).get(msg.item)
+        {
             writer.write(CmdMessage(cmd));
         }
     }
-    let hot_key_pressed =
-        input.just_pressed(KeyCode::AltRight) || input.just_pressed(KeyCode::ControlRight);
-    let hot_key_released =
-        input.just_released(KeyCode::AltRight) || input.just_released(KeyCode::ControlRight);
+    let pad_pressed = pads.iter().any(|p| p.just_pressed(PAD_MODIFIER));
+    let pad_released = pads.iter().any(|p| p.just_released(PAD_MODIFIER));
+    let hot_key_pressed = pad_pressed
+        || input.just_pressed(KeyCode::AltRight)
+        || input.just_pressed(KeyCode::ControlRight);
+    let hot_key_released = pad_released
+        || input.just_released(KeyCode::AltRight)
+        || input.just_released(KeyCode::ControlRight);
 
     if hot_key_pressed {
         settings.hotkey_pressed_at = time.elapsed_secs();
@@ -373,15 +427,10 @@ fn handle_textlist(
             return;
         }
         if time.elapsed_secs() - settings.hotkey_pressed_at < 0.35 {
-            let lines = HOTKEYS
-                .iter()
-                .map(|m| {
-                    if m.shift {
-                        format!(" \u{f0636} + {} {} ", m.glyph(), m.description)
-                    } else {
-                        format!(" {} {} ", m.glyph(), m.description)
-                    }
-                })
+            *pad_list = pad_released || crate::on_steam_deck();
+            let lines = command_list(*pad_list)
+                .into_iter()
+                .map(|(line, _)| line)
                 .collect::<Vec<_>>();
             let source = AllWordsSource::new(lines);
             show_list.write(ShowFuzzyList {
@@ -752,6 +801,24 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     lines.join("\n")
 }
 
+static KEYBOARD_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Steam's on-screen keyboard; does nothing where there is no `steam`.
+fn steam_keyboard(open: bool) {
+    KEYBOARD_OPEN.store(open, Ordering::Relaxed);
+    let action = if open { "open" } else { "close" };
+    let url = format!("steam://{action}/keyboard");
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("steam").arg(url).status();
+    });
+}
+
+fn close_keyboard_on_load() {
+    if KEYBOARD_OPEN.load(Ordering::Relaxed) {
+        steam_keyboard(false);
+    }
+}
+
 pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut emus: Query<(&mut Emulator, &EmuView)>,
@@ -865,6 +932,9 @@ pub(crate) fn handle_cmd(
             }
             Cmd::ShaderDialog => {
                 show_shader.write(ShowShaderDialog);
+            }
+            Cmd::OpenKeyboard => {
+                steam_keyboard(true);
             }
             _ => {}
         }
@@ -1180,6 +1250,7 @@ impl Plugin for CommandPlugin {
                     handle_textlist,
                     handle_playlist_pick,
                     handle_cmd.run_if(on_message::<CmdMessage>),
+                    close_keyboard_on_load.run_if(on_message::<crate::loading::LoadFile>),
                 ),
             )
             .add_systems(PreUpdate, gamepad_navigation.before(InputSystems));

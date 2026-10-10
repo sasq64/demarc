@@ -13,8 +13,10 @@ export DXVK_CONFIG="d3d9.presentInterval=1;dxgi.syncInterval=1"
 unset LD_PRELOAD ENABLE_VK_LAYER_VALVE_steam_overlay_1 ENABLE_VK_LAYER_VALVE_steam_fossilize_1
 unset GAMESCOPE_STATS GAMESCOPE_LIMITER_FILE GAMESCOPE_MODE_SAVE_FILE GAMESCOPE_WAYLAND_DISPLAY
 unset MANGOHUD_CONFIGFILE STEAM_USE_MANGOAPP RADV_FORCE_VRS_CONFIG_FILE
+# SteamOS has no ASF demuxer or WMA decoder; install.sh puts them here.
+export GST_PLUGIN_PATH="$HOME/.local/share/demarc/gst"
 # The gamescope core's own libgudev needs a newer glib than SteamOS 3.6 has.
-for f in "$HOME"/.cache/demarc/cores/*/libgudev-1.0.so.0; do
+for f in "$HOME"/.cache/demarc/cores/*/libgudev-1.0.so.0 "$HOME"/.cache/demarc/cores/*/lib/libgudev-1.0.so.0; do
     [ -f "$f" ] && mv "$f" "$f.bundled"
 done
 # test-env, test-args: one-off environment and arguments for a run started over ssh.
@@ -22,7 +24,7 @@ done
 [ -f test-args ] && set -- $(cat test-args)
 if [ $# -eq 0 ]; then
     # The panel's own size: the GPU is pegged at the 1920x1080 default.
-    set -- demozoo.txt.gz csdb.txt.gz --shader=none --select -x wine_res=1280x800
+    set -- demozoo.txt.gz csdb.txt.gz --select -x wine_res=1280x800
 fi
 # Own IPC namespace: demarc's gamescope otherwise sends its frame stats to the
 # same message queue as the Deck's, and the performance HUD jumps between the two.
