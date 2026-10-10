@@ -73,6 +73,9 @@ install -Dm644 files/gm.dls $PREFIX/drive_c/windows/syswow64/drivers/gm.dls
 install -Dm644 files/gm.dls $PREFIX/drive_c/windows/system32/drivers/gm.dls
 wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f
 
+# Texas by Keyboarders changes to Vista's sample music folder and quits without it.
+mkdir -p "$PREFIX/drive_c/users/Public/Music/Sample Music"
+
 # For DirectComposition demos (Razor 1911 and others). See tools/compshim.
 install "files/dcomp.dll" $PREFIX/drive_c/windows/system32/dcomp.dll
 

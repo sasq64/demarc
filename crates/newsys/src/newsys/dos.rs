@@ -360,6 +360,7 @@ impl System for DosSystem {
             ("dosbox_pure_cycles", "200000"),
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
+            ("dosbox_pure_startup_message", "false"),
         ]
         .into()
     }

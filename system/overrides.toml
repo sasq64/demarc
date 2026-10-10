@@ -15,6 +15,16 @@ meta = { vice_sid_extra = "0xd420" }
 [zoo.20]
 meta = { wine_res = "1024x768" }
 
+# Rupture by ASD. Picks ARB vertex programs only when GL_VENDOR contains "ATI",
+# and NV_vertex_program (vp30) otherwise, which Mesa does not have: black screen.
+[zoo.60]
+patch = {
+  info = "always use ARB vertex programs",
+  target = "ASD-Rapture.exe",
+  offset = 312034,
+  contents = "kJA=",
+}
+
 [zoo.76]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
@@ -31,8 +41,18 @@ meta = { dosbox_pure_cycles = 100000 }
 [zoo.138]
 file = "variform_by_kewlers.zip"
 
+# Crystal Dream / Triton: its Sound Blaster detection times out on a fast CPU.
+# Picks Sound Blaster Pro, 44 kHz.
+[zoo.174]
+events = [{ frame = 100, key = "5" }, { frame = 150, key = "8" }]
+meta = { dosbox_pure_cycles = 26800 }
+
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
+
+[zoo.714]
+events = [{ frame = 50, key = "Y" }]
+meta = { dosbox_pure_cycles = 100000 }
 
 # Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
 # bytes of ECX are zero; wine leaves them set and the copy runs off .data.
@@ -48,10 +68,17 @@ patch = {
 [zoo.713]
 events = [{ frame = 10, key = "Enter" }]
 
-# fr-063: Magellan / Farbrausch. Its task scheduler asserts with many cores.
+# fr-063: Magellan / Farbrausch. Its task scheduler asserts that no worker has
+# started yet, but they start themselves after 5 ms; fewer cores only makes
+# that rarer.
 [zoo.829]
 file = "fr-063_v1.02.zip"
-meta = { wine_cpus = 8 }
+patch = {
+  info = "skip the Threads[i]->Running==0 assert",
+  target = "fr-063.exe",
+  offset = 2215481,
+  contents = "kJA=",
+}
 
 [zoo.3298]
 file = "fr-025-final.zip"
