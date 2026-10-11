@@ -110,6 +110,10 @@ pub const KERNELBASE_OVERRIDE: &str = "kernelbase=n,b";
 #[cfg(target_os = "linux")]
 pub const DX8VB_OVERRIDE: &str = "dx8vb=n,b";
 
+/// The same for the opengl32.dll with NVIDIA's `wglGetProcAddress`. See `tools/opengl32`.
+#[cfg(target_os = "linux")]
+pub const OPENGL32_OVERRIDE: &str = "opengl32=n,b";
+
 /// How long the driver keeps looking for a dialog before giving up.
 const DIALOG_TIMEOUT: f64 = 20.0;
 

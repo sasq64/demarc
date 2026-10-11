@@ -55,7 +55,7 @@ fi
 # For Panic Room / FLT (and pobably others)
 
 missing=()
-for f in files/gm.dls files/tssoft32.acm files/tsd32.dll files/dcomp.dll files/winmm.dll files/kernelbase.dll files/dx8vb.dll; do
+for f in files/gm.dls files/tssoft32.acm files/tsd32.dll files/dcomp.dll files/winmm.dll files/kernelbase.dll files/dx8vb.dll files/opengl32.dll; do
     [ -f "$f" ] || missing+=("$f")
 done
 if [ ${#missing[@]} -gt 0 ]; then
@@ -85,3 +85,5 @@ install "files/winmm.dll" $PREFIX/drive_c/windows/syswow64/winmm.dll
 install "files/kernelbase.dll" $PREFIX/drive_c/windows/syswow64/kernelbase.dll
 # For intros that take D3DX math from dx8vb. See tools/dx8vb.
 install "files/dx8vb.dll" $PREFIX/drive_c/windows/syswow64/dx8vb.dll
+# For intros that take GL 1.1 functions from wglGetProcAddress. See tools/opengl32.
+install "files/opengl32.dll" $PREFIX/drive_c/windows/syswow64/opengl32.dll

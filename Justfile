@@ -178,6 +178,10 @@ kernelbase:
 dx8vb:
     python3 tools/dx8vb/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/dx8vb.dll" files/dx8vb.dll
 
+# opengl32.dll whose wglGetProcAddress also finds GL 1.1 functions (source in tools/opengl32).
+opengl32:
+    python3 tools/opengl32/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/opengl32.dll" files/opengl32.dll
+
 # dcomp.dll that gives DirectComposition demos a swapchain (source in
 # tools/compshim). Checked in, and installed in the prefix by scripts/setup-wine.sh.
 compshim:

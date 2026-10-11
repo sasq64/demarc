@@ -29,7 +29,7 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_GLSL_VERSION,
-    WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
+    OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
@@ -278,7 +278,7 @@ impl System for WindowsSystem {
         #[cfg(target_os = "linux")]
         {
             let mut overrides = format!(
-                "d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE};{KERNELBASE_OVERRIDE};{DX8VB_OVERRIDE}"
+                "d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE};{KERNELBASE_OVERRIDE};{DX8VB_OVERRIDE};{OPENGL32_OVERRIDE}"
             );
             if let Some(extra) = dll_overrides(&file.get_all_meta()) {
                 overrides = format!("{overrides};{extra}");
