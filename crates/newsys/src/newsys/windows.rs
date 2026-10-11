@@ -28,7 +28,7 @@ use crate::system_dir;
 use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
-    DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_GLSL_VERSION,
+    DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW, META_GLSL_VERSION,
     OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
@@ -190,13 +190,36 @@ fn fix_resource_dir(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
     else {
         return Ok(target);
     };
-    let rel = target.strip_prefix(&file.path).unwrap_or(Path::new("")).to_owned();
-    file.make_temp()?;
-    let target = if rel.as_os_str().is_empty() { file.path.clone() } else { file.path.join(rel) };
+    let target = writable_target(file, target)?;
     info!("Setting the resource directory size of {target:?} to {size:#x}");
     let mut out = std::fs::OpenOptions::new().write(true).open(&target)?;
     out.seek(SeekFrom::Start(at as u64))?;
     out.write_all(&size.to_le_bytes())?;
+    Ok(target)
+}
+
+/// Where `target` is once the release is in a temp dir that can be written to.
+fn writable_target(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
+    let rel = target.strip_prefix(&file.path).unwrap_or(Path::new("")).to_owned();
+    file.make_temp()?;
+    Ok(if rel.as_os_str().is_empty() { file.path.clone() } else { file.path.join(rel) })
+}
+
+/// The cnc-ddraw files, relative to [`system_dir`].
+#[cfg(target_os = "linux")]
+const CNC_DDRAW_DIR: &str = "win/cnc-ddraw";
+
+/// Put cnc-ddraw beside `target` — see [`META_CNC_DDRAW`]. Returns where
+/// `target` is now.
+#[cfg(target_os = "linux")]
+fn add_cnc_ddraw(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
+    let target = writable_target(file, target)?;
+    let dir = target.parent().context("The demo has no directory")?;
+    for name in ["ddraw.dll", "ddraw.ini"] {
+        std::fs::copy(system_dir().join(CNC_DDRAW_DIR).join(name), dir.join(name))
+            .with_context(|| format!("Failed to copy cnc-ddraw's {name}"))?;
+    }
+    info!("Running {target:?} on cnc-ddraw");
     Ok(target)
 }
 
@@ -280,6 +303,9 @@ impl System for WindowsSystem {
             let mut overrides = format!(
                 "d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE};{KERNELBASE_OVERRIDE};{DX8VB_OVERRIDE};{OPENGL32_OVERRIDE}"
             );
+            if is_yes(&file.get_meta_or(META_CNC_DDRAW, "")) {
+                overrides.push_str(";ddraw=n,b");
+            }
             if let Some(extra) = dll_overrides(&file.get_all_meta()) {
                 overrides = format!("{overrides};{extra}");
             }
@@ -313,6 +339,12 @@ impl System for WindowsSystem {
         }
 
         let target = fix_resource_dir(file, target)?;
+        #[cfg(target_os = "linux")]
+        let target = if is_yes(&file.get_meta_or(META_CNC_DDRAW, "")) {
+            add_cnc_ddraw(file, target)?
+        } else {
+            target
+        };
         file.path = target;
         Ok(true)
     }

@@ -59,6 +59,11 @@ pub const META_DLL_OVERRIDES: &str = "wine_dll_overrides";
 #[cfg(target_os = "linux")]
 pub const META_GLSL_VERSION: &str = "wine_glsl_version";
 
+/// Meta key: yes puts cnc-ddraw beside a DirectDraw demo. wined3d draws ddraw
+/// to the GL front buffer, which never reaches the session.
+#[cfg(target_os = "linux")]
+pub const META_CNC_DDRAW: &str = "wine_cnc_ddraw";
+
 /// Meta key: yes runs the demo with wine's `X11 Driver\EmulateModeset` on.
 pub const META_EMULATE_MODESET: &str = "wine_emulate_modeset";
 

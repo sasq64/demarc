@@ -98,6 +98,18 @@ patch = {
 [zoo.4767]
 boot = "final.png"
 
+# Grayscale by Keyboarders: wined3d's ddraw draws to the GL front buffer, black
+[zoo.5252]
+meta = { wine_cnc_ddraw = "true" }
+
+# #scene.no adtro: black for the same reason
+[zoo.175836]
+meta = { wine_cnc_ddraw = "true" }
+
+# Antimoney: 8 bit flip chain, wined3d makes no P8 primary and it crashes
+[zoo.49452]
+meta = { wine_cnc_ddraw = "true" }
+
 [zoo.6123]
 events = [{ frame = 300, key = "Enter" }]
 

@@ -36,6 +36,14 @@ wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Driv
 wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d 'tssoft32.acm' /f 2>&1 | tail -2;
 ```
 
+### cnc-ddraw for DirectDraw demos
+
+wined3d draws a ddraw primary into the GL front buffer, which never reaches the
+gamescope session: such demos play their music over a black screen. An entry
+with `wine_cnc_ddraw = "true"` gets cnc-ddraw (`system/win/cnc-ddraw`, MIT)
+copied beside its exe and `ddraw=n,b`. It is 2D only, so not the default:
+demos that use Direct3D through ddraw need wined3d.
+
 
 ## Known failures
 
@@ -52,10 +60,6 @@ or the code; these are not:
   points above the context version (`Extensions required for glBlendEquationi
   not supported`); Windows drivers hand them out. Would need the GL version
   hint in the jar patched.
-- **Antimoney** (zoo 49452). 1024x768x8 DirectDraw flip chain: wined3d (GL and
-  Vulkan) cannot make a `P8_UINT` render target, and `renderer=gdi` rejects
-  video-memory surfaces, so the primary is NULL and it crashes at 0x40CA8C.
-  A ddraw wrapper such as cnc-ddraw is the likely fix.
 - **Codename Chinadoll** (zoo 22636) plays, but about one start in three stays
   black after its menu, and key delivery into the session is itself not
   reliable (Lua keys and override events alike sometimes do nothing).

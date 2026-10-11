@@ -218,3 +218,16 @@
   `RUST_LOG=retro=debug`, so the one useful line (`Crash: INT:Gate Selector…`)
   was not even visible. Set `DEMARC_CORE_DIR=libretro/dosbox-pure` from the
   first run.
+
+- GL drawn to the front buffer never reaches the screen in the wine/gamescope
+  session: a single-buffered pixel format, or `glDrawBuffer(GL_FRONT)` plus
+  `glFlush`, stays black while the music plays. wined3d's ddraw draws that way
+  (Grayscale), and an intro that hard-codes a pixel format index can land on a
+  single-buffered one (The Explorer's 8; wine's list alternates DB,DB,SB,SB).
+  Check `+opengl` for `glDrawBuffer buf 1028` / a bare `wglSetPixelFormat`
+  before reading shaders: an hour went into shader compile logs that were fine.
+  A VIP 2 "control" only showed its GDI launcher, so it proved nothing about GL.
+  A 5 KB test exe builds without mingw: `clang --target=i686-w64-windows-gnu
+  -nostdlib -fuse-ld=lld -I<wine>/include/wine/windows -Wl,--entry=_start@0`
+  against the `.a` files in `<wine>/lib/wine/i386-windows`, and runs as the
+  file given to demarc.
