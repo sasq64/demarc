@@ -34,6 +34,7 @@ value. Unknown arguments print a warning and are skipped.
 | `--no-fill` | Leave the demo's window as it is. By default, once the demo's render window appears, its frame (title bar, borders) is stripped and its client area moved to the desktop origin, so the captured frame is the demo and nothing else. The client area keeps the size the demo picked; it is never resized. |
 | `--list` | Print the dialog's control tree — class, kind, text, checked state, combo/list items and selection — and change nothing. This is how you work out what to pass to `--prefer` for a demo that needs a per-release override. |
 | `--timeout <secs>` | How long to wait for a dialog to appear — the wait ends early once the demo has had a window with no buttons on it for half a second, which is a demo that has no dialog — and afterwards how long to wait for the render window to undecorate. Default `20`. Generous on purpose: a cold wine prefix spends a while building itself before showing its first window. |
+| `--dialog-wait <ms>` | How long a window with no buttons on it has to be the only thing there before the demo counts as having no dialog. Default `500`. Set from `gamescope_dialog_wait_ms`. |
 
 ## Label matching
 

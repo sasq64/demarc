@@ -67,6 +67,12 @@ pub const META_CNC_DDRAW: &str = "wine_cnc_ddraw";
 /// Meta key: yes runs the demo with wine's `X11 Driver\EmulateModeset` on.
 pub const META_EMULATE_MODESET: &str = "wine_emulate_modeset";
 
+/// Meta key: how long a demo's buttonless window may stand alone before the
+/// driver decides there is no dialog coming.
+pub const META_DIALOG_WAIT: &str = "gamescope_dialog_wait_ms";
+
+pub const DEFAULT_DIALOG_WAIT_MS: u32 = 500;
+
 /// Meta key: yes turns on Mesa's `allow_glsl_120_subset_in_110` for the demo.
 pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 
@@ -327,6 +333,7 @@ struct Config {
     dialog: Dialog,
     widescreen: bool,
     emulate_modeset: bool,
+    dialog_wait_ms: u32,
     /// Run inside `explorer /desktop=`, a wine virtual desktop the size of the
     /// session — see [`META_DESKTOP`].
     #[cfg(target_os = "linux")]
@@ -372,6 +379,9 @@ impl Config {
                 .map(|v| is_yes(v))
                 .unwrap_or(DEFAULT_WIDESCREEN),
             emulate_modeset: meta.get(META_EMULATE_MODESET).is_some_and(|v| is_yes(v)),
+            dialog_wait_ms: said(META_DIALOG_WAIT)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_DIALOG_WAIT_MS),
             #[cfg(target_os = "linux")]
             desktop: meta
                 .get(META_DESKTOP)
@@ -418,6 +428,9 @@ impl Config {
         ]);
         if self.emulate_modeset {
             args.push("--emulate-modeset".into());
+        }
+        if self.dialog_wait_ms != DEFAULT_DIALOG_WAIT_MS {
+            args.extend(["--dialog-wait".into(), self.dialog_wait_ms.to_string()]);
         }
         match &self.dialog {
             Dialog::Drive(modes) => {

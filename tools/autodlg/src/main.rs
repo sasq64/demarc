@@ -520,6 +520,7 @@ struct Args {
     no_go: bool,
     emulate_modeset: bool,
     timeout: f64,
+    dialog_wait: Duration,
     /// One fallback chain per `--prefer`: the alternatives of a chain are tried
     /// in order and the first one the dialog actually offers wins, so a demo
     /// that has no 800x600 can still be asked for 640x480 instead.
@@ -539,6 +540,7 @@ fn parse_args() -> Args {
         no_go: false,
         emulate_modeset: false,
         timeout: 20.0,
+        dialog_wait: NO_DIALOG,
         prefer: vec![],
         check: vec![],
         uncheck: vec![],
@@ -576,6 +578,9 @@ fn parse_args() -> Args {
             }
             "--launch" => args.launch = Some(value),
             "--timeout" => args.timeout = value.parse().unwrap_or(20.0),
+            "--dialog-wait" => {
+                args.dialog_wait = value.parse().map(Duration::from_millis).unwrap_or(NO_DIALOG)
+            }
             // Comma-separated substrings of a radio button or combo box
             // entry to select, best first. Entries that normalise to nothing
             // are dropped: an empty one would match every control there is.
@@ -806,7 +811,7 @@ fn main() {
         // waiting out the timeout would only keep the session black.
         match plain {
             _ if !any_plain => plain = None,
-            Some(since) if since.elapsed() >= NO_DIALOG => break,
+            Some(since) if since.elapsed() >= args.dialog_wait => break,
             Some(_) => {}
             None => plain = Some(Instant::now()),
         }

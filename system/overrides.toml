@@ -678,3 +678,7 @@ patch = {
 # Simula~8.BSP: henny.exe needs the plugin list simudemo.bat gives it
 [zoo.185616]
 boot = "simudemo.bat"
+
+# Spot: a small buttonless window comes up before the setup dialog
+[zoo.9828]
+meta = { wine_res = "512x384", gamescope_dialog_wait_ms = 3000 }
