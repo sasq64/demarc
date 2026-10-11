@@ -2,6 +2,8 @@
 -- that one, quit. Globals come from src/remote_control.rs; Key.* and Cmd.*
 -- name every key the emulator understands and every hotkey command, and
 -- load_demo(id) jumps straight to a db entry by its (demozoo) id.
+-- audio_level() is the RMS (0..1) of what the cores played since it was last
+-- asked, and record_audio("out.wav") writes all of it from then on.
 
 function Main()
     wait_frames(300)

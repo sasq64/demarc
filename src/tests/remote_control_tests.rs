@@ -143,3 +143,31 @@ fn every_command_round_trips_by_name() {
     }
     assert_eq!(Cmd::from_name("NotACommand"), None);
 }
+
+/// `audio_level` covers what arrived since it was last asked, and a recording
+/// is a whole WAV after every push.
+#[test]
+fn a_script_hears_the_cores() {
+    let wav = std::env::temp_dir().join("remote_control_audio.wav");
+    let source = format!(
+        "function Main()
+            record_audio({:?})
+            wait_frames(1)
+            Loud = audio_level()
+            Quiet = audio_level()
+        end",
+        wav.to_string_lossy()
+    );
+    let mut r = runner("audio", &source).unwrap();
+    r.update();
+    r.tap.lock().unwrap().push(48000, &[16384, -16384]);
+    r.update();
+    let globals = r._lua.globals();
+    assert_eq!(globals.get::<f64>("Loud").unwrap(), 0.5);
+    assert_eq!(globals.get::<f64>("Quiet").unwrap(), 0.0);
+
+    let bytes = std::fs::read(&wav).unwrap();
+    assert_eq!(bytes.len(), 48);
+    assert_eq!(&bytes[40..44], 4u32.to_le_bytes());
+    assert_eq!(&bytes[44..], [0, 0x40, 0, 0xc0]);
+}

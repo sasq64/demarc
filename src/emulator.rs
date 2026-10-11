@@ -365,6 +365,7 @@ impl Emulator {
             }
             *audio_seen = true;
             got_audio = true;
+            crate::remote_control::tap_audio(from as u32, samples);
             sink.push_audio(from as f32, samples);
         });
         got_audio

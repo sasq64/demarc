@@ -9,6 +9,8 @@
 //! across the FFI boundary, so they live in [`BOOTSTRAP`] instead.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -43,6 +45,85 @@ pub enum Action {
 struct RemoteState {
     actions: Vec<Action>,
     error: Option<String>,
+}
+
+/// What the script hears: the cores' own output, taken before the sink so it
+/// is there when headless too.
+#[derive(Default)]
+pub struct AudioTap {
+    sum_sq: f64,
+    count: usize,
+    record: Option<PathBuf>,
+    wav: Option<(File, u32)>,
+}
+
+impl AudioTap {
+    pub fn push(&mut self, rate: u32, samples: &[i16]) {
+        self.sum_sq += samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>();
+        self.count += samples.len();
+        if let Some(path) = self.record.take() {
+            match File::create(&path) {
+                Ok(file) => self.wav = Some((file, 0)),
+                Err(e) => error!("Remote control: {path:?}: {e}"),
+            }
+        }
+        if let Some((file, len)) = &mut self.wav {
+            let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            *len += bytes.len() as u32;
+            // The header is rewritten every time, so the file is whole
+            // whenever the app goes away.
+            let res = file
+                .seek(SeekFrom::Start(0))
+                .and_then(|_| file.write_all(&wav_header(rate, *len)))
+                .and_then(|_| file.seek(SeekFrom::End(0)))
+                .and_then(|_| file.write_all(&bytes));
+            if let Err(e) = res {
+                error!("Remote control: recording audio: {e}");
+                self.wav = None;
+            }
+        }
+    }
+
+    /// RMS, 0 to 1, of what arrived since the last call.
+    fn level(&mut self) -> f64 {
+        let rms = if self.count == 0 {
+            0.0
+        } else {
+            (self.sum_sq / self.count as f64).sqrt() / 32768.0
+        };
+        self.sum_sq = 0.0;
+        self.count = 0;
+        rms
+    }
+}
+
+fn wav_header(rate: u32, data_len: u32) -> Vec<u8> {
+    let mut h = Vec::with_capacity(44);
+    h.extend(b"RIFF");
+    h.extend((36 + data_len).to_le_bytes());
+    h.extend(b"WAVEfmt ");
+    h.extend(16u32.to_le_bytes());
+    h.extend(1u16.to_le_bytes());
+    h.extend(2u16.to_le_bytes());
+    h.extend(rate.to_le_bytes());
+    h.extend((rate * 4).to_le_bytes());
+    h.extend(4u16.to_le_bytes());
+    h.extend(16u16.to_le_bytes());
+    h.extend(b"data");
+    h.extend(data_len.to_le_bytes());
+    h
+}
+
+/// The running script's tap, where [`crate::emulator::Emulator`] can reach it.
+static AUDIO_TAP: Mutex<Option<Arc<Mutex<AudioTap>>>> = Mutex::new(None);
+
+pub fn tap_audio(rate: u32, samples: &[i16]) {
+    let tap = AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(tap) = tap.as_ref() {
+        tap.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(rate, samples);
+    }
 }
 
 /// Run after the script, so `Main` is already defined when `Run` wraps it.
@@ -81,6 +162,7 @@ pub struct ScriptRunner {
     _lua: Lua,
     resume: Function,
     shared: Arc<Mutex<RemoteState>>,
+    tap: Arc<Mutex<AudioTap>>,
     done: bool,
 }
 
@@ -107,7 +189,8 @@ impl ScriptRunner {
         .context("creating the Lua state")?;
 
         let shared = Arc::new(Mutex::new(RemoteState::default()));
-        register(&lua, &shared)?;
+        let tap = Arc::new(Mutex::new(AudioTap::default()));
+        register(&lua, &shared, &tap)?;
 
         let name = path
             .file_name()
@@ -133,6 +216,7 @@ impl ScriptRunner {
             _lua: lua,
             resume,
             shared,
+            tap,
             done: false,
         })
     }
@@ -173,7 +257,11 @@ fn push(shared: &Arc<Mutex<RemoteState>>, action: Action) {
 /// Register the globals a script drives demarc with. Every closure is `Send`
 /// (mlua's `send` feature) and owns a handle to the shared queue rather than
 /// borrowing anything it could not outlive.
-fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>) -> Result<()> {
+fn register(
+    lua: &Lua,
+    shared: &Arc<Mutex<RemoteState>>,
+    tap: &Arc<Mutex<AudioTap>>,
+) -> Result<()> {
     let globals = lua.globals();
 
     // The emulator's map is the set of keys demarc can actually deliver, so it
@@ -235,6 +323,23 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>) -> Result<()> {
         "screenshot",
         lua.create_function(move |_, path: String| {
             push(&state, Action::Screenshot(path.into()));
+            Ok(())
+        })?,
+    )?;
+
+    let audio = tap.clone();
+    globals.set(
+        "audio_level",
+        lua.create_function(move |_, ()| {
+            Ok(audio.lock().unwrap_or_else(|e| e.into_inner()).level())
+        })?,
+    )?;
+
+    let audio = tap.clone();
+    globals.set(
+        "record_audio",
+        lua.create_function(move |_, path: String| {
+            audio.lock().unwrap_or_else(|e| e.into_inner()).record = Some(path.into());
             Ok(())
         })?,
     )?;
@@ -339,7 +444,10 @@ fn init_script(world: &mut World) {
         return;
     };
     match ScriptRunner::new(&path) {
-        Ok(runner) => world.insert_non_send(RemoteControl(runner)),
+        Ok(runner) => {
+            *AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner.tap.clone());
+            world.insert_non_send(RemoteControl(runner));
+        }
         Err(e) => error!("No remote control: {e:#}"),
     }
 }
