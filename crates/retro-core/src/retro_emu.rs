@@ -145,6 +145,8 @@ pub struct RetroCoreDirect {
     /// The `absolute_pointer` setting: the frontend's cursor and left button
     /// drive `pointer`, instead of the mouse's left button.
     live_pointer: bool,
+    /// A scheduled click, for a core that takes its buttons from the mouse.
+    click: bool,
     /// The last live pointer applied, so an unchanged cursor leaves a
     /// scheduled click alone.
     last_live: (i16, i16, bool),
@@ -332,7 +334,7 @@ impl RetroCoreDirect {
                 RETRO_DEVICE_ID_MOUSE_Y => {
                     self.mouse.dy.clamp(i16::MIN as i32, i16::MAX as i32) as i16
                 }
-                RETRO_DEVICE_ID_MOUSE_LEFT => self.mouse.left as i16,
+                RETRO_DEVICE_ID_MOUSE_LEFT => (self.mouse.left || self.click) as i16,
                 RETRO_DEVICE_ID_MOUSE_RIGHT => self.mouse.right as i16,
                 RETRO_DEVICE_ID_MOUSE_MIDDLE => self.mouse.middle as i16,
                 _ => 0,
@@ -723,6 +725,7 @@ impl RetroCoreDirect {
                 mouse: Default::default(),
                 pointer: Default::default(),
                 live_pointer: settings.get("absolute_pointer").is_some_and(|v| v == "true"),
+                click: false,
                 last_live: Default::default(),
                 vars: Default::default(),
                 audio_buf: Vec::new(),
@@ -887,6 +890,7 @@ impl RetroCoreDirect {
     /// Move the absolute pointer to `x`, `y` (0..1 over the frame).
     pub(crate) fn set_pointer(&mut self, x: f32, y: f32, pressed: bool) {
         self.pointer = (pointer_axis(x), pointer_axis(y), pressed);
+        self.click = pressed && !self.live_pointer;
     }
 
     /// The frontend's cursor, when `absolute_pointer` is set.
