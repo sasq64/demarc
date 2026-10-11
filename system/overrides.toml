@@ -701,3 +701,16 @@ meta = { wine_res = "512x384", gamescope_dialog_wait_ms = 3000 }
 
 [zoo.24439]
 meta = { wine_res = "640x480" }
+
+[zoo.97965]
+events = [
+  { frame = 50, key = "ArrowDown" },
+  { frame = 60, key = "Enter" },
+  { frame = 70, key = "ArrowDown" },
+  { frame = 80, key = "ArrowDown" },
+  { frame = 90, key = "Enter" },
+  { frame = 100, key = "ArrowUp" },
+  { frame = 110, key = "ArrowUp" },
+  { frame = 120, key = "Enter" },
+  { frame = 130, key = "Enter" },
+]
