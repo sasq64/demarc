@@ -28,6 +28,9 @@ patch = {
 [zoo.76]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
+[zoo.81]
+meta = { dos4gw = "true" }
+
 [zoo.102]
 file = "rgba_tbc_elevated_2016.zip"
 boot = "elevated_1280x720.exe"
@@ -50,6 +53,9 @@ meta = { dosbox_pure_cycles = 10000, dosbox_pure_sblaster_type = "sbpro2" }
 
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
+
+[zoo.374]
+meta = { dos4gw = "true" }
 
 # Panic / Future Crew: finds no Sound Blaster at 200000 cycles.
 [zoo.711]
@@ -105,6 +111,11 @@ events = [{ frame = 10, key = "Enter" }]
 boot = "dEEP"
 file = "CNCD_PRX-Deep.lha"
 fast = true
+
+# The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
+[zoo.6124]
+events = [{ frame = 300, key = "Enter" }]
+libretro = { dosbox_pure_memory_size = "none" }
 
 # Caero / EMF & Plant: draws nothing at 100000 cycles and up.
 [zoo.7637]
@@ -188,6 +199,9 @@ events = [
   { frame = 60, key = "2" },
 ]
 
+[zoo.18963]
+meta = { dos4gw = "true" }
+
 # Killer / CNCD
 [zoo.19401]
 assign = { Killer = "SYS:" }
@@ -250,8 +264,27 @@ events = [
 meta = { wine_res = "640x480" }
 file = "gerbera_final_by_moppi_productions.zip"
 
+[zoo.27182]
+events = [
+  { frame = 30, key = "4" },
+]
+
 [zoo.28174]
 boot = "Batman Forever (One disk version).dsk"
+
+[zoo.28488]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 40, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
+
+[zoo.29517]
+events = [
+  { frame = 30, key = "2" },
+  { frame = 40, key = "4" },
+  { frame = 500, key = "3" },
+]
 
 [zoo.31384]
 file = "kbd-texas_rel2.zip"
@@ -273,6 +306,13 @@ events = [{ frame = 450, key = "1" }]
 # ix / Moppi
 [zoo.67521]
 meta = { wine_res = "1024x768" }
+
+[zoo.67821]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 40, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
 
 [zoo.68604]
 file = "puls.zip"
@@ -326,6 +366,12 @@ events = [
   { frame = 540, key = "Enter" },
 ]
 meta = { dosbox_pure_cycles = 4000 }
+
+# Into the Shadows / Triton: its blit runs off the end of the video segment and
+# switches VESA bank in the #GP handler, a fault only the normal core raises.
+[zoo.118585]
+events = [{ frame = 300, key = "Enter" }]
+libretro = { dosbox_pure_cpu_core = "normal" }
 
 [zoo.118078]
 meta = { wine_glsl_version = "130" }
@@ -597,6 +643,9 @@ idJuTXzIJnCAt4vz0Nxw1uolYVQPups7ZKauueDjqKMGDAEC+C7kinChIFYa82A=
 
 [zoo.322619]
 file = "dkg^lmn-neocolora.lha"
+
+[zoo.352983]
+meta = { dos4gw = "true" }
 
 [zoo.376675]
 meta = { amiga_core = "puae" }

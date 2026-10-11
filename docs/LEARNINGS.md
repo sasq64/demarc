@@ -209,3 +209,12 @@
   dosbox-pure takes no buttons from; it presses the mouse's left button too
   now. Untitled's setup screen also starts on Enter, which the "try Enter
   first" note above would have found before any code was written.
+
+- A DOS demo that goes black right after setting a banked VESA mode (Into the
+  Shadows): log the `int 10h` 4Fxx calls and dump guest memory at the crash
+  before trying options. One `4F05` and pixel data running from A0000 up over
+  the UMBs showed a blit that expects a #GP at the segment limit. Cycles, GUS
+  and memory size were tried first, against the buildbot core and without
+  `RUST_LOG=retro=debug`, so the one useful line (`Crash: INT:Gate Selector…`)
+  was not even visible. Set `DEMARC_CORE_DIR=libretro/dosbox-pure` from the
+  first run.
