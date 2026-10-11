@@ -71,11 +71,66 @@ pub struct WineSettings {
     pub show_startup_dialog: bool,
 }
 
-// #[derive(Default, Debug, Clone, PartialEq, Reflect)]
-// pub struct AmigaSettings {
-//     pub aga: bool,
-//     pub drive_sound: bool,
-// }
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum CpuType {
+    #[default]
+    Auto,
+    X386,
+    Pentium,
+    MMx,
+}
+
+impl CpuType {
+    pub fn as_meta(&self) -> &'static str {
+        match self {
+            CpuType::Auto => "auto",
+            CpuType::X386 => "386",
+            CpuType::Pentium => "pentium_slow",
+            CpuType::MMx => "pentium_mmx",
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum CpuCycles {
+    #[default]
+    Auto, // "auto"
+    X8080,      // 300
+    X286,       // 3000
+    X386,       // 8000
+    X486,       // 25000
+    XPentium,   // 50000
+    XPentiumo2, // 100000
+    XPentiumo3, // 200000
+    Max,        // "max"
+}
+
+impl CpuCycles {
+    pub fn as_meta(&self) -> &'static str {
+        match self {
+            CpuCycles::Auto => "auto",
+            CpuCycles::X8080 => "300",
+            CpuCycles::X286 => "3000",
+            CpuCycles::X386 => "8000",
+            CpuCycles::X486 => "25000",
+            CpuCycles::XPentium => "50000",
+            CpuCycles::XPentiumo2 => "100000",
+            CpuCycles::XPentiumo3 => "200000",
+            CpuCycles::Max => "max",
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Reflect)]
+pub struct DosSettings {
+    pub cycles: CpuCycles,
+    pub cpu_type: CpuType,
+}
+#[derive(Default, Debug, Clone, PartialEq, Reflect)]
+pub struct AmigaSettings {
+    pub aga: bool,
+    pub drive_sound: bool,
+}
 
 /// The settings the dialog edits.
 ///
@@ -101,6 +156,8 @@ pub struct DemarcSettings {
 
     pub crt_limit: f32,
     pub downsample_limit: f32,
+
+    pub dos: DosSettings,
 
     #[cfg(target_os = "linux")]
     pub wine: WineSettings,
@@ -145,6 +202,16 @@ pub fn apply_settings(
         }
         if new.downsample_limit != current.downsample_limit {
             shader_path.downsample_limit = new.downsample_limit;
+        }
+        if new.dos.cycles != current.dos.cycles {
+            app_settings
+                .system
+                .set_meta("dosbox_pure_cycles", new.dos.cycles.as_meta().into());
+        }
+        if new.dos.cpu_type != current.dos.cpu_type {
+            app_settings
+                .system
+                .set_meta("dosbox_pure_cpu_type", new.dos.cpu_type.as_meta().into());
         }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {

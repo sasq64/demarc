@@ -559,6 +559,7 @@ fn main() {
         background: clear_color,
         fast_load: args.fast_load,
         zoom_launcher: args.zoom_launcher.unwrap_or_else(on_steam_deck),
+        dos: Default::default(),
         #[cfg(target_os = "linux")]
         wine: Default::default(),
     };

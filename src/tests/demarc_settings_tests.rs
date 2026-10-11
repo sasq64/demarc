@@ -36,18 +36,18 @@ fn demarc_settings_are_all_editable() {
 fn wine_is_its_own_section() {
     let sections = settings_sections();
     let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
-    assert_eq!(titles, vec!["", "Wine"]);
-    let names: Vec<&str> = widgets(&sections[1].fields)
+    assert_eq!(titles, vec!["", "Dos", "Wine"]);
+    let names: Vec<&str> = widgets(&sections[2].fields)
         .iter()
         .map(|(n, _)| *n)
         .collect();
-    assert_eq!(names, vec!["resolution", "show_startup_dialog", "filter"]);
+    assert_eq!(names, vec!["resolution", "show_startup_dialog"]);
 }
 
 #[test]
 fn resolutions_are_labelled_by_size() {
     let sections = settings_sections();
-    let Widget::Enum { variants } = &sections[1].fields[0].widget else {
+    let Widget::Enum { variants } = &sections[2].fields[0].widget else {
         panic!("resolution is not a combo box");
     };
     let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();
@@ -55,11 +55,14 @@ fn resolutions_are_labelled_by_size() {
         labels,
         vec![
             "Auto",
+            "320x200",
+            "512x384",
             "640x480",
             "800x600",
             "1024x768",
             "1280x720",
-            "1920x1080"
+            "1920x1080",
+            "2560x1440"
         ]
     );
 }
@@ -79,4 +82,12 @@ fn wine_settings_write_and_clear_meta() {
 
     apply_wine(&old, &new, &mut meta);
     assert!(meta.is_empty(), "{meta:?}");
+}
+
+#[test]
+fn dos_settings_map_to_core_options() {
+    assert_eq!(CpuCycles::Auto.as_meta(), "auto");
+    assert_eq!(CpuCycles::X486.as_meta(), "25000");
+    assert_eq!(CpuCycles::Max.as_meta(), "max");
+    assert_eq!(CpuType::MMx.as_meta(), "pentium_mmx");
 }
