@@ -168,6 +168,8 @@ serde_json = "1.0.151"
 # `preserve_order` keeps `shaders.toml`'s collections in the order it writes them
 # (src/shader_dialog.rs).
 toml = { version = "1.1.4", features = ["preserve_order"] }
+# Writing to `system/overrides.toml` without losing its layout (src/patch_menu.rs).
+toml_edit = "0.25.13"
 
 [dev-dependencies]
 # Encoding a patch the way overrides.toml carries one, in overrides_tests.

@@ -52,6 +52,7 @@ mod media_keys;
 mod mouse_cursor;
 mod navigator;
 mod overrides;
+mod patch_menu;
 mod playlists;
 mod post_process;
 mod remote_control;
@@ -651,6 +652,7 @@ fn main() {
             JobsPlugin,
             ShaderDialogPlugin,
         ))
+        .add_plugins(patch_menu::PatchMenuPlugin)
         .init_state::<AppState>()
         .add_systems(Update, enter_running.run_if(in_state(AppState::Startup)));
     if headless {
