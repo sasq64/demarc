@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::{System, get_ext, walk_dir};
+use super::{ARCHIVE_NAME, RELEASE_DIR, System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
@@ -179,6 +179,9 @@ fn launch_rank(path: &Path, release: &str) -> i32 {
     };
     if !release.is_empty() && stem == release {
         rank += 10;
+    } else if stem.len() >= 3 && release.contains(&stem) {
+        // "yup-overhead" holds OVERHEAD.COM and a variant, OVRHEADO.COM.
+        rank += 8;
     }
     if ["install", "setup", "config", "uninstal", "readme"].contains(&stem.as_str()) {
         rank -= 20;
@@ -230,6 +233,44 @@ fn is_simple_name(path: &Path) -> bool {
 const DOS_NAME_CHARS: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'()-@^_`{}~";
 
+/// Rename a program DOSBox could not start by name to an 8.3 one.
+fn give_dos_name(path: &Path) -> Result<PathBuf> {
+    let dir = path.parent().context("Program has no directory")?;
+    let dos_part = |part: &str, max: usize| -> String {
+        part.chars()
+            .filter(|c| *c != '~' && DOS_NAME_CHARS.contains(*c))
+            .take(max)
+            .collect::<String>()
+            .to_ascii_uppercase()
+    };
+    let mut stem = dos_part(&path.file_stem().unwrap_or_default().to_string_lossy(), 8);
+    if stem.is_empty() {
+        stem = "DEMO".into();
+    }
+    let ext = dos_part(&get_ext(path), 3);
+    let taken: Vec<String> = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().to_ascii_uppercase())
+        .collect();
+    let name = (0..)
+        .map(|n| {
+            if n == 0 {
+                format!("{stem}.{ext}")
+            } else {
+                let digits = n.to_string();
+                let keep = stem.len().min(8 - digits.len());
+                format!("{}{digits}.{ext}", &stem[..keep])
+            }
+        })
+        .find(|name| !taken.contains(name))
+        .context("No free DOS name")?;
+    let target = dir.join(name);
+    fs::rename(path, &target)
+        .with_context(|| format!("Could not rename {path:?} to {target:?}"))?;
+    info!("Renamed {path:?} to {target:?}");
+    Ok(target)
+}
+
 /// The DOS extenders and DPMI hosts a release ships beside its program.
 const EXTENDERS: &[&str] = &[
     "dos4gw", "dos4g", "dos32a", "cwsdpmi", "cwsdpr0", "pmodew", "wdosx", "dpmiload", "dpmi16bi",
@@ -274,12 +315,14 @@ impl DosSystem {
     /// otherwise the programs are ranked against each other and the best one
     /// taken — see [`launch_rank`]. `dir` names the release, which is how a
     /// program named after it is recognised, and may equally be a single file.
+    #[cfg(test)]
     fn pick_target(&self, dir: &Path) -> Result<Option<PathBuf>> {
-        let release = dir
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_ascii_lowercase();
+        let release = dir.file_stem().unwrap_or_default().to_string_lossy();
+        self.pick_target_named(dir, &release)
+    }
+
+    fn pick_target_named(&self, dir: &Path, release: &str) -> Result<Option<PathBuf>> {
+        let release = release.to_ascii_lowercase();
         let mut config = None;
         let mut best: Option<(i32, PathBuf)> = None;
         walk_dir(dir, 0, |path, ext, _| {
@@ -321,7 +364,9 @@ impl System for DosSystem {
         if super::windows::is_windows_bat(file) {
             return Ok(false);
         }
-        let Some(target) = self.pick_target(file)? else {
+        let dir_name = file.file_stem().unwrap_or_default().to_string_lossy();
+        let release = file.get_meta_or(ARCHIVE_NAME, dir_name);
+        let Some(target) = self.pick_target_named(file, &release)? else {
             return Ok(false);
         };
 
@@ -336,13 +381,30 @@ impl System for DosSystem {
         let use_4gw = get_ext(&target) != "cfg"
             && (file.has_tag(META_DOS4GW) || !file.get_meta_or(META_DOS4GW, "").is_empty());
 
+        let rename = get_ext(&target) != "cfg" && !is_simple_name(&target);
+
         if use_4gw {
             debug!("Needs DOS4GW");
-            file.make_temp()?;
         }
-        let Some(target) = self.pick_target(file)? else {
+        if use_4gw || rename {
+            // A `boot_file` left the path on one program of a release.
+            let name = (file.is_file() && file.has_meta(RELEASE_DIR) && !file.is_temporary())
+                .then(|| target.file_name().map(ToOwned::to_owned))
+                .flatten();
+            if let (Some(name), Some(dir)) = (name, target.parent()) {
+                file.path = dir.to_path_buf();
+                file.make_temp()?;
+                file.path = file.path.join(name);
+            } else {
+                file.make_temp()?;
+            }
+        }
+        let Some(mut target) = self.pick_target_named(file, &release)? else {
             return Ok(false);
         };
+        if rename {
+            target = give_dos_name(&target)?;
+        }
         file.path = target.clone();
         if use_4gw {
             place_extender(file, &dos4gw_source())?;
@@ -361,6 +423,7 @@ impl System for DosSystem {
             ("dosbox_pure_memory_size", "64"),
             ("dosbox_pure_aspect_correction", "true"),
             ("dosbox_pure_startup_message", "false"),
+            ("dosbox_pure_midi", "disabled"),
         ]
         .into()
     }

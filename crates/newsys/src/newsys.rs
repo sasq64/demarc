@@ -193,6 +193,9 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
     if path.is_file() {
         if is_archive(path)? {
             wf = WorkFile::new_dir_with_meta(meta.clone())?;
+            if let Some(stem) = path.file_stem() {
+                wf.set_meta(ARCHIVE_NAME, stem.to_string_lossy());
+            }
             debug!("Unpacking {path:?} to {wf:?}");
             unpack_into(path, &wf)?;
             // TODO: Better way of figuring out if we should recursively unpack.
@@ -216,6 +219,10 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
     }
     Ok(wf)
 }
+
+/// Meta key holding the name of the archive a release was unpacked from, which
+/// the temp dir it now sits in no longer carries.
+pub const ARCHIVE_NAME: &str = "archive_name";
 
 /// Meta key holding the release directory a `boot_file` was picked out of, set
 /// by [`apply_override`] when it narrows the work file's path to one program.

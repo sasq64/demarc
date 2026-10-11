@@ -209,7 +209,21 @@ fn prefers_a_program_with_a_name_dos_could_have_held() {
     assert!(found.ends_with("the whole demo.exe"), "picked {found:?}");
 }
 
-/// What counts as a name DOS itself could hold.
+/// A release prefixed with its group still names its program, and the
+/// variant beside it is named something else.
+#[test]
+fn prefers_the_program_the_release_name_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = DosSystem {};
+
+    let release = dir.path().join("yup-overhead");
+    fs::create_dir_all(&release).unwrap();
+    write_bytes(&release, "OVRHEADO.COM", &[0xc3]);
+    write_bytes(&release, "OVERHEAD.COM", &[0xc3]);
+    let found = sys.pick_target(&release).unwrap().unwrap();
+    assert!(found.ends_with("OVERHEAD.COM"), "picked {found:?}");
+}
+
 #[test]
 fn knows_an_8_3_name_from_a_longer_one() {
     for name in ["demo.exe", "GO.BAT", "a.c", "trip_95.exe", "cw$dpmi.exe"] {
@@ -464,4 +478,42 @@ fn boots_an_ibm_xt_to_rom_basic() {
         "third line was {:?}",
         last[2]
     );
+}
+
+#[test]
+fn renames_a_long_named_program_in_a_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = DosSystem {};
+
+    let release = dir.path().join("release");
+    fs::create_dir_all(&release).unwrap();
+    let mut exe = vec![0u8; 0x40];
+    exe[..2].copy_from_slice(b"MZ");
+    write_bytes(&release, "The Whole Demo (final).exe", &exe);
+    write_bytes(&release, "thewhole.dat", &[0]);
+
+    let mut wf = WorkFile::new(release.clone());
+    assert!(sys.load(&mut wf).unwrap());
+    assert!(wf.is_temporary());
+    assert!(wf.path.ends_with("THEWHOLE.EXE"), "{:?}", wf.path);
+    assert!(wf.path.is_file());
+    assert!(wf.path.with_file_name("thewhole.dat").is_file());
+    assert!(release.join("The Whole Demo (final).exe").is_file());
+
+    // A `boot_file` narrowed to the program still brings the release along.
+    let meta = HashMap::from([(
+        RELEASE_DIR.to_string(),
+        release.to_string_lossy().into_owned(),
+    )]);
+    let mut wf = WorkFile::new_with_meta(release.join("The Whole Demo (final).exe"), meta);
+    assert!(sys.load(&mut wf).unwrap());
+    assert!(wf.path.ends_with("THEWHOLE.EXE"), "{:?}", wf.path);
+    assert!(wf.path.with_file_name("thewhole.dat").is_file());
+
+    let taken = dir.path().join("taken");
+    fs::create_dir_all(&taken).unwrap();
+    let long = write_bytes(&taken, "longername.com", &[0xc3]);
+    write_bytes(&taken, "LONGERNA.COM", &[0]);
+    let renamed = give_dos_name(&long).unwrap();
+    assert!(renamed.ends_with("LONGERN1.COM"), "{renamed:?}");
 }
