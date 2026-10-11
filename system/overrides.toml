@@ -42,31 +42,26 @@ meta = { dosbox_pure_cycles = 100000 }
 file = "variform_by_kewlers.zip"
 
 # Crystal Dream / Triton: its Sound Blaster detection times out on a fast CPU.
-# Picks Sound Blaster Pro, 44 kHz.
+# Picks Sound Blaster Pro, 44 kHz. Its player starts the next block once the
+# DSP stops reporting busy, which an SB16 never does.
 [zoo.174]
 events = [{ frame = 100, key = "5" }, { frame = 150, key = "8" }]
-meta = { dosbox_pure_cycles = 26800 }
+meta = { dosbox_pure_cycles = 10000, dosbox_pure_sblaster_type = "sbpro2" }
 
 [zoo.350]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
-[zoo.714]
-events = [{ frame = 50, key = "Y" }]
+# Panic / Future Crew: finds no Sound Blaster at 200000 cycles.
+[zoo.711]
+events = [{ frame = 10, key = "Enter" }]
 meta = { dosbox_pure_cycles = 100000 }
-
-# Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
-# bytes of ECX are zero; wine leaves them set and the copy runs off .data.
-[zoo.3780]
-boot = "parsec_compatible.exe"
-patch = {
-  info = "set all of ECX before rep movsb",
-  target = "parsec_compatible.exe",
-  offset = 7232,
-  contents = "jbhoTsAOag9ZvqBMQAA=",
-}
 
 [zoo.713]
 events = [{ frame = 10, key = "Enter" }]
+
+[zoo.714]
+events = [{ frame = 50, key = "Y" }]
+meta = { dosbox_pure_cycles = 100000 }
 
 # fr-063: Magellan / Farbrausch. Its task scheduler asserts that no worker has
 # started yet, but they start themselves after 5 ms; fewer cores only makes
@@ -83,13 +78,38 @@ patch = {
 [zoo.3298]
 file = "fr-025-final.zip"
 
+# Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
+# bytes of ECX are zero; wine leaves them set and the copy runs off .data.
+[zoo.3780]
+boot = "parsec_compatible.exe"
+patch = {
+  info = "set all of ECX before rep movsb",
+  target = "parsec_compatible.exe",
+  offset = 7232,
+  contents = "jbhoTsAOag9ZvqBMQAA=",
+}
+
 [zoo.4767]
 boot = "final.png"
+
+[zoo.6123]
+events = [{ frame = 300, key = "Enter" }]
+
+[zoo.6425]
+events = [{ frame = 10, key = "Enter" }]
+
+[zoo.6787]
+events = [{ frame = 10, key = "Enter" }]
 
 [zoo.7236]
 boot = "dEEP"
 file = "CNCD_PRX-Deep.lha"
 fast = true
+
+# Caero / EMF & Plant: draws nothing at 100000 cycles and up.
+[zoo.7637]
+events = [{ frame = 20, key = "Y" }]
+meta = { dosbox_pure_cycles = 50000 }
 
 [zoo.7378]
 events = [
@@ -101,6 +121,14 @@ events = [
   { frame = 145, key = "ArrowDown" },
   { frame = 147, key = "ArrowDown" },
   { frame = 150, key = "Enter" },
+]
+
+[zoo.7364]
+events = [
+  { frame = 100, key = "4" },
+  { frame = 120, key = "4" },
+  { frame = 140, key = "5" },
+  { frame = 160, key = "3" },
 ]
 
 # Closer / CNCD
@@ -134,8 +162,25 @@ meta = { amiga_core = "puae" }
 [zoo.8205]
 file = "tbc+mainloop_micropolis-party.zip"
 
+[zoo.8874]
+events = [
+  { frame = 150, key = "Enter" },
+  { frame = 190, key = "Enter" },
+  { frame = 230, key = "Enter" },
+  { frame = 270, key = "Enter" },
+  { frame = 300, key = "Enter" },
+]
+
 [zoo.8960]
 file = "petroleo_boah.zip"
+
+[zoo.9286]
+events = [{ frame = 10, key = "1" }]
+
+# Shad / Cocoon & Syndrome: MIDAS picks the GUS and its DMA reads wrap all the time.
+[zoo.9737]
+events = [{ frame = 10, key = "Enter" }]
+meta = { dosbox_pure_gus = "false" }
 
 [zoo.17996]
 events = [
@@ -157,6 +202,13 @@ patch = {
 file = "inside.zip"
 
 [zoo.32542]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 41, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
+
+[zoo.35547]
 events = [
   { frame = 30, key = "Enter" },
   { frame = 41, key = "Enter" },
@@ -240,6 +292,17 @@ events = [
   { frame = 650, key = "Enter" },
 ]
 
+# Remnants / Alcatraz: written against a VM BIOS that leaves the DAC index at 0
+[zoo.342211]
+libretro = { dosbox_pure_cycles = "max", dosbox_pure_dac_index_reset = "true" }
+
+[zoo.375937]
+events = [
+  { frame = 30, key = "Enter" },
+  { frame = 41, key = "Enter" },
+  { frame = 50, key = "Enter" },
+]
+
 # Tube by Baze / 3CS
 [zoo.57849]
 libretro = { dosbox_pure_cycles = 150000 }
@@ -247,6 +310,22 @@ libretro = { dosbox_pure_cycles = 150000 }
 [zoo.90015]
 boot = "dEEPMiX"
 fast = true
+
+# VectorDemo / Ultraforce: its Sound Blaster IRQ detection fails on a fast CPU.
+# Installs for a fast AT with the detected card, then runs the demo.
+[zoo.100243]
+events = [
+  { frame = 200, key = "ArrowDown" },
+  { frame = 210, key = "Enter" },
+  { frame = 270, key = "ArrowDown" },
+  { frame = 275, key = "ArrowDown" },
+  { frame = 285, key = "Enter" },
+  { frame = 345, key = "Enter" },
+  { frame = 500, key = "Enter" },
+  { frame = 530, key = "ArrowUp" },
+  { frame = 540, key = "Enter" },
+]
+meta = { dosbox_pure_cycles = 4000 }
 
 [zoo.118078]
 meta = { wine_glsl_version = "130" }

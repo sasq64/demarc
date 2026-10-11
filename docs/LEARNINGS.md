@@ -176,3 +176,36 @@
   `Could not find output device!`): lower `dosbox_pure_cycles` before trying
   card type, IRQ or GUS. Its detection is a timing loop that runs out at the
   default 200000; six card settings were tried first and all failed alike.
+
+- dosbox-pure runs real-mode programs on the dynamic core whenever cycles are
+  auto-adjusted, and that core has its own FPU decoders (`dyn_fpu_dh.h`,
+  `dyn_fpu.h`) beside `fpu.cpp`. Adding FCOMI/FCMOV to `fpu.cpp` alone changed
+  nothing for Remnants; a trace line in the new function that never fired showed
+  it. A boot sector that sets DOS's COM registers and jumps to the intro under
+  `qemu-system-i386` gives a reference picture and, with `-s -S`, a gdb target.
+
+- A core option's value in demarc is the *first* one the core lists, not the
+  `default` in its `core_options.h`: `dosbox_pure_midi` reads `disabled` there
+  but runs as `frontend`. Print the value in the core before reasoning from the
+  header. Futura's crash looked impossible (an IRQ 9 with no MPU-401) until then.
+  A guest stack in a core dump shows the way in: `F000:1287` on it is the BIOS
+  IRQ 9 stub's `int 0Ah`.
+
+- An unpacked archive sits in `/tmp/demarc-XXXXXX`, so nothing that reads the
+  release name off the directory sees the archive's name; it is in the
+  `archive_name` meta instead. A rank bonus keyed on the directory name passed
+  its unit test (which builds a named directory) and did nothing for the zip.
+  Run the real archive headless before calling a picker change done.
+
+- DOS sound that starts and then stops (Crystal Dream, silent after 1.4 s):
+  log the DSP commands in `sblaster.cpp` first. One `14 FF FF` and nothing
+  after it showed a 64K block nobody restarted; the demo's timer handler polls
+  port 22C and restarts only when the DSP reads idle. Cycles, GUS and the mono
+  card were tried before that and changed nothing. `audio_level()` and
+  `record_audio()` in a remote-control script show where the sound ends;
+  `print` there needs `--no-silence`.
+
+- An override `click` used to drive only the libretro pointer, which
+  dosbox-pure takes no buttons from; it presses the mouse's left button too
+  now. Untitled's setup screen also starts on Enter, which the "try Enter
+  first" note above would have found before any code was written.
