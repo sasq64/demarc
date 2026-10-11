@@ -767,6 +767,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     let mut lines = Vec::new();
     let platform = file.get_meta("platform");
     let category = file.get_meta("category");
+    let id = file.get_meta("id");
     let year = file.game_info.year();
     let year = if year == 0 {
         "".to_string()
@@ -774,9 +775,9 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
         format!(" ({year})")
     };
     if platform.is_empty() {
-        lines.push(format!("{category}{year}"));
+        lines.push(format!("#{id} {category}{year}"));
     } else {
-        lines.push(format!("{platform} {category}{year}"));
+        lines.push(format!("#{id} {platform} {category}{year}"));
     }
     if let Some(party) = file.meta.get("party").filter(|p| !p.is_empty()) {
         lines.push(format!("Party: {party}"));
