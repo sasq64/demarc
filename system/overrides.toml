@@ -272,6 +272,12 @@ events = [
   }
 ]
 
+# Kasparov: wined3d's D3D7 caps fail its card check; space goes past the warning.
+# cnc-ddraw has no Direct3D, and the demo then refuses to start at all.
+[zoo.23568]
+meta = { wine_res = "640x480" }
+events = [{ frame = 900, key = "Space" }]
+
 [zoo.25839]
 meta = { wine_res = "640x480" }
 file = "gerbera_final_by_moppi_productions.zip"
@@ -679,6 +685,19 @@ patch = {
 [zoo.185616]
 boot = "simudemo.bat"
 
+# Hexer / LJ: draws a fixed 1024x768 viewport
+[zoo.371094]
+meta = { wine_res = "1024x768" }
+
+[zoo.46023]
+meta = { wine_res = "640x480" }
+
+[zoo.98284]
+meta = { wine_res = "640x480" }
+
 # Spot: a small buttonless window comes up before the setup dialog
 [zoo.9828]
 meta = { wine_res = "512x384", gamescope_dialog_wait_ms = 3000 }
+
+[zoo.24439]
+meta = { wine_res = "640x480" }

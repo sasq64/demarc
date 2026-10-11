@@ -219,6 +219,16 @@
   was not even visible. Set `DEMARC_CORE_DIR=libretro/dosbox-pure` from the
   first run.
 
+- "Cmd+<key>" in a request means the app's own hot key, RightAlt/RightCtrl
+  held (`handle_hotkey` in `commands.rs`), not the Super/Cmd key. A shortcut
+  checked outside `HOTKEYS` has to zero `settings.hotkey_pressed_at`, or the
+  hot key's release opens the command list too.
+
+- A one-line db given to `--db` only gets its `overrides.toml` entry when the
+  file is named like the db it came from (`demozoo.txt`, `csdb.txt`): the id is
+  keyed on the file name, so a `spot.txt` ran without its `wine_res`. Autodlg's
+  own log lines only show with `--no-silence`.
+
 - GL drawn to the front buffer never reaches the screen in the wine/gamescope
   session: a single-buffered pixel format, or `glDrawBuffer(GL_FRONT)` plus
   `glFlush`, stays black while the music plays. wined3d's ddraw draws that way
