@@ -24,7 +24,7 @@ done
 [ -f test-args ] && set -- $(cat test-args)
 if [ $# -eq 0 ]; then
     # The panel's own size: the GPU is pegged at the 1920x1080 default.
-    set -- demozoo.txt.gz csdb.txt.gz --select -x wine_res=1280x800
+    set -- demozoo.txt.gz csdb.txt.gz --select -x use_tracker=true -x wine_res=1280x800
 fi
 # Own IPC namespace: demarc's gamescope otherwise sends its frame stats to the
 # same message queue as the Deck's, and the performance HUD jumps between the two.
