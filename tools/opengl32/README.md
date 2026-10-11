@@ -8,5 +8,9 @@ NULL. Wine only looks in its extension registry, so the GL 1.1 functions are
 NULL there, while NVIDIA's Windows driver hands them out too. LJ's "Hexer"
 fetches `glGenTextures` that way and calls the NULL.
 
+`wglChoosePixelFormat` asks for 32 colour and 8 alpha bits when an RGBA
+request of 24+ bits asks for no alpha, as Windows drivers hand out alpha
+anyway. Kewlers' "Aesterozoa" quits when `GL_ALPHA_BITS` is 0.
+
 `just opengl32` rebuilds `files/opengl32.dll`. `scripts/mk_wine_prefix.sh`
 installs it, demarc sets `opengl32=n,b`.

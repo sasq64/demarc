@@ -98,6 +98,25 @@ static void *__stdcall get_proc_address(const char *name)
     return address ? address : lookup(wine, name);
 }
 
+// Windows drivers list their 32-bit formats with alpha first, so a request
+// for none still gets 8; Aesterozoa quits when GL_ALPHA_BITS is 0.
+static int(__stdcall *wine_choose_pixel_format)(void *hdc, const unsigned char *pfd);
+
+static int __stdcall choose_pixel_format(void *hdc, const unsigned char *pfd)
+{
+    if (pfd && pfd[8] == 0 && pfd[9] >= 24 && pfd[18] == 0) {
+        unsigned char with_alpha[40];
+        for (unsigned i = 0; i < sizeof(with_alpha); i++)
+            with_alpha[i] = pfd[i];
+        with_alpha[9] = 32;
+        with_alpha[18] = 8;
+        int format = wine_choose_pixel_format(hdc, with_alpha);
+        if (format)
+            return format;
+    }
+    return wine_choose_pixel_format(hdc, pfd);
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
@@ -114,6 +133,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             if (address && equal(names[i], "wglGetProcAddress")) {
                 wine_get_proc_address = address;
                 address = get_proc_address;
+            } else if (address && equal(names[i], "wglChoosePixelFormat")) {
+                wine_choose_pixel_format = address;
+                address = choose_pixel_format;
             }
         } else {
             LdrGetProcedureAddress(wine, 0, ordinals[i], &address);

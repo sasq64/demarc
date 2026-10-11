@@ -241,3 +241,11 @@
   -nostdlib -fuse-ld=lld -I<wine>/include/wine/windows -Wl,--entry=_start@0`
   against the `.a` files in `<wine>/lib/wine/i386-windows`, and runs as the
   file given to demarc.
+
+- A GL demo's own "can't init" box after a successful `wglMakeCurrent`: look
+  for `glGetIntegerv(0d52..0d57)` before it in `+relay`, and dump the unpacked
+  code from `/proc/<pid>/mem` while the box is up (`objdump -b binary
+  --adjust-vma=0x400000`). Aesterozoa asks for 24 colour bits and no alpha,
+  then quits on `GL_ALPHA_BITS` 0. Wine ranks colour bits before alpha, so
+  asking for 8 alpha alone still returned the 24-bit format; the opengl32 shim
+  asks for 32+8.
