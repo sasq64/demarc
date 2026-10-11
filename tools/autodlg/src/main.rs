@@ -341,14 +341,21 @@ impl Ctl {
             .strip_prefix("WindowsForms10.")
             .and_then(|rest| rest.split('.').next())
             .unwrap_or(&class);
+        // Delphi's VCL subclasses the stock controls under names of its own.
+        let base = match base {
+            "TButton" | "TBitBtn" | "TCheckBox" | "TRadioButton" | "TGroupBox" => "Button",
+            "TComboBox" => "ComboBox",
+            "TListBox" => "ListBox",
+            other => other,
+        };
         // Low nibble of a button's style says which kind it is.
         let kind = if base.eq_ignore_ascii_case("Button") {
             match style & 0x0F {
                 // WinForms owner-draws every button, check boxes included,
                 // so those cannot be told apart.
                 0 | 1 | 0xB => Kind::Push,
-                2 | 3 => Kind::Check,
-                4 | 5 | 8 | 9 => Kind::Radio,
+                2 | 3 | 5 | 6 => Kind::Check,
+                4 | 8 | 9 => Kind::Radio,
                 7 => Kind::Group,
                 _ => Kind::Other,
             }
