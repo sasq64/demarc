@@ -51,6 +51,13 @@ def read_exports(path):
     return rows
 
 
+def windows_ordinals(rows):
+    """Windows has the four Dll* exports first; wine has them last."""
+    names = [name for _, name in rows]
+    dll = [name for name in names if name.startswith("Dll")]
+    return list(enumerate(dll + [name for name in names if name not in dll], 1))
+
+
 def thunks(rows):
     out = [".text"]
     for i in range(len(rows)):
@@ -76,7 +83,7 @@ def def_file(rows):
 
 
 def main():
-    rows = read_exports(sys.argv[1])
+    rows = windows_ordinals(read_exports(sys.argv[1]))
     out_dll = os.path.abspath(sys.argv[2])
     with tempfile.TemporaryDirectory() as tmp:
         def write(name, text):

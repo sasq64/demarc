@@ -1,6 +1,8 @@
 # dx8vb.dll
 
-A 32-bit `dx8vb.dll` with the same exports and ordinals as wine's. The
+A 32-bit `dx8vb.dll` with wine's exports under the ordinals Windows gives them
+(the four `Dll*` first, so everything else is wine's + 4; AND's "feet4" imports
+by ordinal). The
 `VB_D3DX*` math functions are real; everything else jumps into wine's builtin
 dx8vb (found through `WINEDLLDIR<n>`).
 
