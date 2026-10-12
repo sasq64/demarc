@@ -146,7 +146,9 @@ extensions such as `glLoadProgramNV`.
 
 **Black or instant exit with a small `wine_res`.** Grep the `--no-silence` log
 for `Setting display mode` / `Failed to change display mode`: a mode larger
-than the session cannot be set. A demo that never calls `glViewport`, or draws
+than the session cannot be set. A `returned -2` with a mode that fits is the
+refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
+640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
 in a corner, needs `wine_res` set to its own resolution. `wine_desktop=true`
 is for demos that do not survive a mode switch.
 

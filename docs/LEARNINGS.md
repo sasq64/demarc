@@ -301,3 +301,10 @@
   by Yama, so a UPX exe is unpacked with a downloaded `upx -d`; repacking the
   fixed one with `upx --best` halves the bsdiff, which goes in
   `system/win/patches/` as a `source` rather than inline base64.
+
+- `NtUserChangeDisplaySettings ... returned -2` is not always a mode larger
+  than the session: We Ain't Real asks for 640x480 at 85 Hz, and the session
+  lists 640x480 at 59 Hz only, so 60 fails as well and neither `wine_res` nor
+  `wine_emulate_modeset` helps. `WINEDEBUG=+system` prints the requested
+  `dmDisplayFrequency`; a rate of 0 in the demo's config means "default" and
+  works at any session size or refresh.

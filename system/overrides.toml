@@ -809,6 +809,14 @@ boot = "index.html"
 [zoo.46032]
 boot = "adelanto.exe"
 
+# We Ain't Real by Solar: asks for 640x480 at 85 Hz, which no session has
+[zoo.46672]
+patch = {
+  info = "default refresh rate",
+  target = "energy3d.cfg",
+  contents = "NjQwDQo0ODANCjMyDQozMg0KOA0KMA0KMQ==",
+}
+
 [zoo.50646]
 meta = { wine_res = "640x480" }
 
