@@ -811,3 +811,32 @@ meta = { wine_res = "640x480" }
 
 [zoo.156337]
 meta = { dos4gw = "true" }
+
+[zoo.8325]
+boot = "N-LEVEL.EXE"
+
+[zoo.18965]
+events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame = 70, key = "Enter" }]
+
+[zoo.101129]
+meta = { dosbox_pure_cycles = 20000 }
+events = [
+  { frame = 50, key = "ArrowDown" },
+  { frame = 52, key = "ArrowDown" },
+  { frame = 54, key = "ArrowDown" },
+  { frame = 56, key = "ArrowDown" },
+  { frame = 58, key = "ArrowDown" },
+  { frame = 60, key = "Enter" },
+  { frame = 70, key = "Enter" },
+  { frame = 80, key = "Enter" },
+  { frame = 90, key = "Enter" },
+
+  { frame = 100, key = "ArrowDown" },
+  { frame = 102, key = "ArrowDown" },
+  { frame = 104, key = "ArrowDown" },
+  { frame = 106, key = "ArrowDown" },
+  { frame = 108, key = "ArrowDown" },
+
+  { frame = 120, key = "Enter" },
+  { frame = 130, key = "Enter" },
+]
