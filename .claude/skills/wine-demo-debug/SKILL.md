@@ -144,6 +144,13 @@ wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos.
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
 extensions such as `glLoadProgramNV`.
 
+**D3D8/9 2D quads show one colour or a zoomed corner.** XYZRHW quads drawn
+with texgen (`TEXCOORDINDEX` camera-space) or a texture matrix left on from a
+3D pass: Windows ignores both for pre-transformed vertices, DXVK applies the
+texgen. Dump the vertices and states at the draw (winedbg breakpoint on the
+device vtable). Fix in the unpacked exe; Nature v2.0 (`zoo.8340`) routes each
+`SetVertexShader(XYZRHW)` through a stub that zeroes both.
+
 **Black or instant exit with a small `wine_res`.** Grep the `--no-silence` log
 for `Setting display mode` / `Failed to change display mode`: a mode larger
 than the session cannot be set. A `returned -2` with a mode that fits is the

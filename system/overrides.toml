@@ -867,3 +867,17 @@ patch = {
 [zoo.29804]
 meta = { dosbox_pure_cycles = "200000" }
 file = "ign_desp.zip"
+
+# Nature v2.0 by Threepixels. The 3D scenes leave camera-space texgen and an
+# env-map texture matrix on stage 0, and its pre-transformed 2D quads (the
+# render-target copy, image layers) never clear them; Windows ignores both
+# for XYZRHW vertices, DXVK and wined3d do not. Unpacked, each
+# SetVertexShader(0x144) goes through a stub that zeroes TEXCOORDINDEX and
+# TEXTURETRANSFORMFLAGS first, repacked.
+[zoo.8340]
+patch = {
+  info = "Reset texgen for 2D quads",
+  target = "Nature v2.0.exe",
+  format = "bsdiff",
+  source = "win/patches/nature2.bsdiff",
+}

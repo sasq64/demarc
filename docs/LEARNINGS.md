@@ -308,3 +308,14 @@
   `wine_emulate_modeset` helps. `WINEDEBUG=+system` prints the requested
   `dmDisplayFrequency`; a rate of 0 in the demo's config means "default" and
   works at any session size or refresh.
+
+- A D3D8 demo that shows one flat colour, or a zoomed-in corner, through its
+  render-target copy (Nature v2.0): look at the stage-0 `TEXCOORDINDEX` and
+  `TEXTURETRANSFORMFLAGS` in force when its XYZRHW quads draw. It left
+  camera-space texgen from the 3D scene on, which Windows ignores for
+  pre-transformed vertices and DXVK applies. Viewport, mip-chain and LOD-bias
+  theories came first; a screenshot showing the logo zoomed, and the bypassed
+  scenes broken too, pointed at the quads' texcoords. wined3d's d3d8 has no
+  symbols, so break on the device vtable entry (`break *(*(unsigned
+  int*)(vtbl+4*n))`) in one `winedbg --file` session: attaching under wow64
+  faults the break-in thread, and the process dies on `detach`.
