@@ -171,6 +171,11 @@ autodlg works around the known case.
 'ret=004'` lists the calls up to the `MessageBoxA`; often a failed
 `SetCurrentDirectory` or file open, not a codec.
 
+**Old GL demo dies right after `glGetString`/`glGetIntegerv`.** Modern
+values overflow 2000-era assumptions: `GL_EXTENSIONS` into a fixed buffer,
+a texture of `GL_MAX_TEXTURE_SIZE` squared. Patch the call in the unpacked
+exe (Adelanto, `zoo.46032`); env vars do not shorten wine's extension string.
+
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
 

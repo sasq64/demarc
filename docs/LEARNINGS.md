@@ -319,3 +319,18 @@
   symbols, so break on the device vtable entry (`break *(*(unsigned
   int*)(vtbl+4*n))`) in one `winedbg --file` session: attaching under wow64
   faults the break-in thread, and the process dies on `detach`.
+
+- A test db line taken with `grep -n` starts `306676:id:...`, so no id is
+  parsed and no override applies, silently; the first test of a new override
+  "failed" that way. And `pkill -f gamescope` matches the shell running it,
+  locally as over ssh: it killed this session's shell and another session's
+  background run.
+
+- A setup dialog that autodlg never answers may belong to a *child* process
+  the demo starts (Adelanto runs `e3d_setup.exe` and waits for it); autodlg
+  used to search only the launched pid. Its combo also spelled modes
+  `640*480`. After that, two crashes followed that were the exe's own: a
+  `+relay` grep for the last `RtlAllocateHeap` before the fault found a 0x800
+  log buffer overrun by `GL_EXTENSIONS`, then a `GL_MAX_TEXTURE_SIZE`-squared
+  texture (0x30000000 bytes, NULL). `__GL_ExtensionStringVersion` and
+  `MESA_EXTENSION_MAX_YEAR` do not shorten wine's extension string.

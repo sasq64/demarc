@@ -67,6 +67,9 @@ unsafe extern "system" {
     fn VirtualAllocEx(h: isize, addr: usize, size: usize, kind: u32, protect: u32) -> usize;
     fn ReadProcessMemory(h: isize, addr: usize, buf: *mut u8, size: usize, read: *mut usize) -> Bool32;
     fn WriteProcessMemory(h: isize, addr: usize, buf: *const u8, size: usize, written: *mut usize) -> Bool32;
+    fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
+    fn Process32FirstW(snap: isize, entry: *mut ProcessEntry32W) -> Bool32;
+    fn Process32NextW(snap: isize, entry: *mut ProcessEntry32W) -> Bool32;
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
@@ -101,6 +104,20 @@ struct StartupInfoW {
     stdin: isize,
     stdout: isize,
     stderr: isize,
+}
+
+#[repr(C)]
+struct ProcessEntry32W {
+    size: u32,
+    usage: u32,
+    process_id: u32,
+    heap_id: usize,
+    module_id: u32,
+    threads: u32,
+    parent_process_id: u32,
+    pri_class_base: i32,
+    flags: u32,
+    exe_file: [u16; 260],
 }
 
 #[repr(C)]
@@ -198,6 +215,38 @@ fn report(event: &str) {
 /// When non-zero, only windows belonging to this process are considered — set
 /// by `--launch` so the driver can never answer some unrelated dialog.
 static TARGET_PID: AtomicU32 = AtomicU32::new(0);
+
+/// `root` and every process it started, directly or not: Adelanto's dialog
+/// is a separate `e3d_setup.exe` the demo runs.
+fn process_tree(root: u32) -> Vec<u32> {
+    const TH32CS_SNAPPROCESS: u32 = 2;
+    let mut parents = Vec::new();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == -1 {
+            return vec![root];
+        }
+        let mut e: ProcessEntry32W = std::mem::zeroed();
+        e.size = std::mem::size_of::<ProcessEntry32W>() as u32;
+        let mut ok = Process32FirstW(snap, &mut e);
+        while ok != 0 {
+            parents.push((e.process_id, e.parent_process_id));
+            ok = Process32NextW(snap, &mut e);
+        }
+        CloseHandle(snap);
+    }
+    let mut tree = vec![root];
+    let mut i = 0;
+    while i < tree.len() {
+        for &(child, parent) in &parents {
+            if parent == tree[i] && !tree.contains(&child) {
+                tree.push(child);
+            }
+        }
+        i += 1;
+    }
+    tree
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -371,6 +420,8 @@ fn wtext(f: unsafe extern "system" fn(Hwnd, *mut u16, i32) -> i32, h: Hwnd) -> S
 /// hit a `NOT OK`.
 fn norm(s: &str) -> String {
     s.chars()
+        // Adelanto's setup offers `640*480`.
+        .map(|c| if c == '*' { 'x' } else { c })
         .filter(|c| c.is_alphanumeric())
         .flat_map(|c| c.to_uppercase())
         .collect()
@@ -551,11 +602,13 @@ unsafe extern "system" fn collect_top(h: Hwnd, l: isize) -> Bool32 {
     if pid == unsafe { GetCurrentProcessId() } {
         return 1;
     }
-    let target = TARGET_PID.load(Ordering::Relaxed);
-    if target != 0 && pid != target {
-        return 1;
-    }
     unsafe { collect(h, l) }
+}
+
+fn pid_of(h: Hwnd) -> u32 {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(h, &mut pid) };
+    pid
 }
 
 fn children(parent: Hwnd) -> Vec<Ctl> {
@@ -567,6 +620,11 @@ fn children(parent: Hwnd) -> Vec<Ctl> {
 fn top_levels() -> Vec<Ctl> {
     let mut v: Vec<Ctl> = Vec::new();
     unsafe { EnumWindows(collect_top, &mut v as *mut _ as isize) };
+    let target = TARGET_PID.load(Ordering::Relaxed);
+    if target != 0 {
+        let tree = process_tree(target);
+        v.retain(|c| tree.contains(&pid_of(c.hwnd)));
+    }
     v
 }
 

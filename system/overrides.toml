@@ -806,8 +806,26 @@ events = [
 [zoo.38834]
 boot = "index.html"
 
+# Adelanto by Nostalgia. Logs GL_EXTENSIONS through a 0x800 heap buffer,
+# which today's extension list overruns, and allocates a texture of
+# GL_MAX_TEXTURE_SIZE squared (768 MB at 16384). Its mode switch also asks
+# for exactly 60 Hz, which a session at the screen's refresh does not offer.
 [zoo.46032]
 boot = "adelanto.exe"
+patch = [
+  {
+    info = "skip logging GL_EXTENSIONS, max texture size 2048",
+    target = "adelanto.exe",
+    offset = 80251,
+    contents = "6w3sp0IAVuhgFgAAg8QMjX4YxwcACAAAkJCQkJCQ",
+  },
+  {
+    info = "mode switch without DM_DISPLAYFREQUENCY",
+    target = "adelanto.exe",
+    offset = 80791,
+    contents = "HA==",
+  },
+]
 
 # We Ain't Real by Solar: asks for 640x480 at 85 Hz, which no session has
 [zoo.46672]
