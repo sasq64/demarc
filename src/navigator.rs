@@ -72,7 +72,7 @@ impl NavList {
             prompt: Some(self.prompt.clone()),
             selected: self.selected,
             title,
-            title_select: pos - 1,
+            title_select: pos,
         });
     }
 }
@@ -528,6 +528,10 @@ fn update_navigator(
     hud: Res<HudState>,
 ) {
     navigator.remember_state(&hud);
+    let id = navigator.stack[navigator.pos as usize].id;
+    if hud.list_query(id).is_none() {
+        return;
+    }
     if input.just_pressed(KeyCode::ArrowLeft) {
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {

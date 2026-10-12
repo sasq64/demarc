@@ -258,21 +258,22 @@ impl<T: 'static> Picker<T> {
             self.list_query = prompt.into();
         }
         self.list_pending_select = selected;
-        let mut parts: Vec<String> = title.split('/').map(|s| s.to_string()).collect();
+        let mut parts: Vec<String> = title.split('/').map(|s| format!(" {s} ")).collect();
 
+        let len = parts.len() as i32;
+        parts.insert(0, "  ".into());
         if title_select >= 0 {
-            let len = parts.len() as i32;
             if title_select > 0 {
-                parts.insert(0, " 󰜲 ".into());
+                parts.push(" 󰜲".into());
             } else {
-                parts.insert(0, "   ".into());
+                parts.push("  ".into());
             }
-            if title_select >= 0 && title_select < len - 1 {
-                parts.push(" 󰜵".into());
+            if title_select >= 0 && title_select < len && !title.is_empty() {
+                parts.push("󰜵".into());
             }
         }
 
-        self.list_title = (title_select, parts);
+        self.list_title = (title_select - 1, parts);
 
         self.list_source = Some(source);
         // The source may be a different instance than last time (rebuilt, or
