@@ -252,8 +252,31 @@
 
 - A white GL intro whose shader Mesa rejects is not always a GLSL version
   problem: Surveillance is NVIDIA-only GLSL (`vec4 - vec2`) and
-  `wine_glsl_version` did nothing. Compile the dumped shader with
-  `glslangValidator` first. `MESA_SHADER_DUMP_PATH=<dir>` names each shader
+  `wine_glsl_version` did nothing. `RUST_LOG=retro=warn` prints Mesa's compile
+  errors now; read them first. `MESA_SHADER_DUMP_PATH=<dir>` names each shader
   `FS_<hash>.glsl`; a corrected file of the same name under
   `MESA_SHADER_READ_PATH` replaces it, which is what `wine_shader_read` plus a
   `patch` does for a Crinkler exe that cannot be patched itself.
+
+- `err:seh:NtRaiseException ... c0000005` at an ntdll address as a demo's only
+  log line, with `+loaddll` stopping after kernel32: the fault is wine's import
+  walk, not the demo. Glutamat's 1k header overlaps code with the import
+  descriptor, so `OriginalFirstThunk` is garbage; Windows falls back to the IAT
+  when it lies outside the image, wine reads it. The bytes are code, so no
+  `patch` can zero them: autodlg maps a copy of the IAT there in the suspended
+  child. `winedbg --file cmds` (`cont`, `info reg`, `bt`) under `gamescope
+  --backend headless` showed ESI on the descriptor in one run.
+
+- `libretro/gamescope` can be behind the fork the released core is built from:
+  a core built from a stale checkout had no PipeWire capture, so a web demo's
+  music played on the user's speakers. `git fetch` and compare with
+  `origin/demarc` before building it, and grep the `.so` for `capturing the
+  session's audio`. A Chrome page stuck on its loading bar: load it in
+  `chromium --headless=new --enable-logging=stderr --log-level=0` to read the
+  console. `-x key=value` splits on commas, so a literal `gamescope_command`
+  with `--window-size=800,600` is cut there without a word.
+
+- The newest directory in `~/.cache/demarc/downloads` is not the demo just run
+  (a cached download keeps its old mtime): `find` it by archive name. Tentura's
+  "does not start" was a dialog of resolution push buttons with no start
+  button; `autodlg --list` showed it in one step.

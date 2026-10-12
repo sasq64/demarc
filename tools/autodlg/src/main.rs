@@ -63,6 +63,10 @@ unsafe extern "system" {
     ) -> Bool32;
     fn WaitForSingleObject(h: isize, ms: u32) -> u32;
     fn CloseHandle(h: isize) -> Bool32;
+    fn ResumeThread(h: isize) -> u32;
+    fn VirtualAllocEx(h: isize, addr: usize, size: usize, kind: u32, protect: u32) -> usize;
+    fn ReadProcessMemory(h: isize, addr: usize, buf: *mut u8, size: usize, read: *mut usize) -> Bool32;
+    fn WriteProcessMemory(h: isize, addr: usize, buf: *const u8, size: usize, written: *mut usize) -> Bool32;
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
@@ -109,6 +113,9 @@ struct ProcessInformation {
 }
 
 const INFINITE: u32 = 0xFFFF_FFFF;
+const CREATE_SUSPENDED: u32 = 4;
+const MEM_COMMIT_RESERVE: u32 = 0x3000;
+const PAGE_READWRITE: u32 = 4;
 
 #[repr(C)]
 #[derive(Default)]
@@ -196,6 +203,62 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+fn read_u32s(process: isize, addr: u32, count: usize) -> Option<Vec<u32>> {
+    let mut buf = vec![0u8; count * 4];
+    let ok = unsafe {
+        ReadProcessMemory(process, addr as usize, buf.as_mut_ptr(), buf.len(), std::ptr::null_mut())
+    };
+    (ok != 0).then(|| {
+        buf.chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    })
+}
+
+/// Windows reads an import's thunks from the IAT when `OriginalFirstThunk`
+/// points outside the image, which a 1k intro's overlapping header relies on;
+/// wine follows the pointer. Maps a copy of the IAT where it points.
+fn fix_import_thunks(process: isize, exe: &str) -> Option<()> {
+    let file = std::fs::read(exe).ok()?;
+    let at = |offset: usize| {
+        let bytes = file.get(offset..offset + 4)?;
+        Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let opt = at(0x3C)? as usize + 24;
+    if file.get(opt..opt + 2)? != [0x0B, 0x01] {
+        return None;
+    }
+    let (base, image_size, headers_size) = (at(opt + 28)?, at(opt + 56)?, at(opt + 60)?);
+    let mut descriptor = base.wrapping_add(at(opt + 104)?);
+    for _ in 0..64 {
+        let d = read_u32s(process, descriptor, 5)?;
+        let (lookup, name, iat) = (d[0], d[3], d[4]);
+        if name == 0 || iat == 0 {
+            break;
+        }
+        descriptor = descriptor.wrapping_add(20);
+        if lookup == 0 || (headers_size..image_size).contains(&lookup) {
+            continue;
+        }
+        let mut thunks = Vec::new();
+        while thunks.len() < 4096 {
+            let thunk = read_u32s(process, base.wrapping_add(iat).wrapping_add(thunks.len() as u32), 1)?;
+            thunks.extend(thunk[0].to_le_bytes());
+            if thunk[0] == 0 {
+                break;
+            }
+        }
+        let target = base.wrapping_add(lookup) as usize;
+        let page = target & !0xFFFF;
+        let done = unsafe {
+            VirtualAllocEx(process, page, target - page + thunks.len(), MEM_COMMIT_RESERVE, PAGE_READWRITE) != 0
+                && WriteProcessMemory(process, target, thunks.as_ptr(), thunks.len(), std::ptr::null_mut()) != 0
+        };
+        println!("import thunks at {target:#x} outside the image: {}", if done { "mapped" } else { "not mapped" });
+    }
+    Some(())
+}
+
 /// Start `exe` (in its own directory) and return its process handle and pid.
 ///
 /// Launching the demo from here rather than from the shell is what lets both it
@@ -225,7 +288,7 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             0,
-            0,
+            CREATE_SUSPENDED,
             std::ptr::null_mut(),
             if dir.is_empty() {
                 std::ptr::null()
@@ -239,7 +302,11 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
     if ok == 0 {
         return None;
     }
-    unsafe { CloseHandle(pi.thread) };
+    fix_import_thunks(pi.process, exe);
+    unsafe {
+        ResumeThread(pi.thread);
+        CloseHandle(pi.thread);
+    }
     Some((pi.process, pi.process_id))
 }
 
@@ -714,6 +781,17 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
         println!("click {:?}", c.text);
         c.click();
         return true;
+    }
+    // Tentura has no start button: each resolution is a push button of its own.
+    for want in args.prefer.iter().flatten().map(|w| norm(w)) {
+        if let Some(c) = kids
+            .iter()
+            .find(|c| c.kind == Kind::Push && norm(&c.text).contains(&want))
+        {
+            println!("click {:?}", c.text);
+            c.click();
+            return true;
+        }
     }
     if args.no_fallback {
         return false;

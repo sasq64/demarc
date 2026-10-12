@@ -762,6 +762,10 @@ boot = "simudemo.bat"
 [zoo.371094]
 meta = { wine_res = "1024x768" }
 
+# Tentura: fullscreen buttons draw at their own size in a corner
+[zoo.53348]
+meta = { wine_res = "1024x768" }
+
 [zoo.46023]
 meta = { wine_res = "640x480" }
 
@@ -787,3 +791,7 @@ events = [
   { frame = 120, key = "Enter" },
   { frame = 130, key = "Enter" },
 ]
+
+# 70s / Alcatraz: a WebGL demo; its only exe is the web server for the page
+[zoo.38834]
+boot = "index.html"
