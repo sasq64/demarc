@@ -6,7 +6,11 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use egui::{Ui, scroll_area::ScrollAreaOutput};
+use egui::{
+    TextEdit, Ui,
+    scroll_area::ScrollAreaOutput,
+    text::{CCursor, CCursorRange},
+};
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource, ListIcon};
 use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
@@ -184,6 +188,7 @@ pub struct Picker<T> {
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
     list_source: Option<ListSource<T>>,
+    edit_id: egui::Id,
 }
 
 impl<T> Default for Picker<T> {
@@ -202,6 +207,7 @@ impl<T> Default for Picker<T> {
             list_info: String::new(),
             list_info_item: None,
             list_source: None,
+            edit_id: egui::Id::new("edit_id"),
         }
     }
 }
@@ -302,6 +308,12 @@ impl<T: 'static> Picker<T> {
         };
         self.sync_results(&source);
 
+        // Cursor should always be at the end, since Left/Right arrows are used for navigation
+        if let Some(mut state) = TextEdit::load_state(ctx, self.edit_id) {
+            let end = CCursor::new(self.list_query.chars().count());
+            state.cursor.set_char_range(Some(CCursorRange::one(end)));
+            state.store(ctx, self.edit_id);
+        }
         let screen = ctx.content_rect();
         // Side margins twice the gap last frame's picker left above and below
         // it, and never narrower than the screen is tall. The panels below take
@@ -309,7 +321,9 @@ impl<T: 'static> Picker<T> {
         let fits = screen.width() - 2.0 * MARGIN.x;
         let width = ctx
             .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
-            .map_or(0.0, |area| screen.width() - 2.0 * (screen.height() - area.height()))
+            .map_or(0.0, |area| {
+                screen.width() - 2.0 * (screen.height() - area.height())
+            })
             .max(screen.height())
             .min(fits);
 
@@ -320,6 +334,8 @@ impl<T: 'static> Picker<T> {
         // when several repeats land in one frame.
         let len = self.list_items.len();
         let (row_steps, page_steps, pick, close, shift) = ctx.input_mut(|i| {
+            take_key(i, egui::Key::ArrowLeft);
+            take_key(i, egui::Key::ArrowRight);
             let rows = take_key(i, egui::Key::ArrowDown) - take_key(i, egui::Key::ArrowUp);
             let pages = take_key(i, egui::Key::PageDown) - take_key(i, egui::Key::PageUp);
             // Enter belongs to the list, not the search box, and Escape closes the
@@ -386,6 +402,7 @@ impl<T: 'static> Picker<T> {
                     // take focus away and leave typing going nowhere.
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.list_query)
+                            .id(self.edit_id)
                             // Our own `panel_frame` already draws the box.
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
