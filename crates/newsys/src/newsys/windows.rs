@@ -417,11 +417,18 @@ impl System for WindowsSystem {
             // it, which is exactly the "one at a time" this is meant to end.
             close_prefix(&prefix);
         }
+        let mut meta = capture_meta(path, sandbox.as_ref());
+        if let Some(command) = meta.get_mut("gamescope_command")
+            && command.contains(ARG_SEPARATOR)
+        {
+            let argv = command.split(ARG_SEPARATOR).map(str::to_string).collect();
+            *command = crate::wine_log::capture(argv).join(ARG_SEPARATOR);
+        }
         Ok(Box::new(RetroCoreThreaded::new(
             &core,
             system_dir(),
             Some(path),
-            capture_meta(path, sandbox.as_ref()),
+            meta,
             false,
         )?))
     }

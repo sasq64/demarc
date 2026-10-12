@@ -30,6 +30,8 @@ pub mod win_runner;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod wine;
 #[cfg(target_os = "linux")]
+pub mod wine_log;
+#[cfg(target_os = "linux")]
 pub mod wine_sandbox;
 pub mod workfile;
 pub mod zx_scr;

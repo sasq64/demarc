@@ -47,6 +47,12 @@ to muzzle the cores (`silence_stdout` in `src/main.rs`), and the compositor is a
 of the core, so gamescope's and wine's diagnostics go the same way. Without the flag, a
 session that fails to start fails silently.
 
+A Windows session's stderr is not lost to that, though: `wine_log::capture` wraps the
+command so wine's and Mesa's stderr come back through a FIFO and are logged on the `retro`
+target — missing DLLs, unimplemented functions, GL errors and GLSL compile errors as
+warnings, the rest at debug. `RUST_LOG=retro=warn` shows them; a `WINEDEBUG` set for
+demarc replaces the default `fixme-all`.
+
 To drive it by hand, past the `WindowsSystem` routing:
 
 ```sh
