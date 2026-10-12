@@ -29,6 +29,7 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW, META_GLSL_VERSION,
+    META_SHADER_READ,
     OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
@@ -490,9 +491,18 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
             // The size of the session, as `wine_res` asked for it.
             meta.entry("gamescope_resolution".into())
                 .or_insert_with(|| format!("{}x{}", cmd.width, cmd.height));
+            let mut argv = cmd.argv;
+            if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
+                && let Some(dir) = path.path.parent()
+            {
+                argv.splice(
+                    0..0,
+                    ["env".to_string(), format!("MESA_SHADER_READ_PATH={}", dir.display())],
+                );
+            }
             let argv = match sandbox {
-                Some(sandbox) => sandbox.wrap(cmd.argv),
-                None => cmd.argv,
+                Some(sandbox) => sandbox.wrap(argv),
+                None => argv,
             };
             meta.entry("gamescope_command".into())
                 .or_insert_with(|| argv.join(ARG_SEPARATOR));

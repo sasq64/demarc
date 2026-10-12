@@ -249,3 +249,11 @@
   then quits on `GL_ALPHA_BITS` 0. Wine ranks colour bits before alpha, so
   asking for 8 alpha alone still returned the 24-bit format; the opengl32 shim
   asks for 32+8.
+
+- A white GL intro whose shader Mesa rejects is not always a GLSL version
+  problem: Surveillance is NVIDIA-only GLSL (`vec4 - vec2`) and
+  `wine_glsl_version` did nothing. Compile the dumped shader with
+  `glslangValidator` first. `MESA_SHADER_DUMP_PATH=<dir>` names each shader
+  `FS_<hash>.glsl`; a corrected file of the same name under
+  `MESA_SHADER_READ_PATH` replaces it, which is what `wine_shader_read` plus a
+  `patch` does for a Crinkler exe that cannot be patched itself.

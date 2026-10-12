@@ -76,6 +76,11 @@ pub const DEFAULT_DIALOG_WAIT_MS: u32 = 500;
 /// Meta key: yes turns on Mesa's `allow_glsl_120_subset_in_110` for the demo.
 pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 
+/// Meta key: yes points Mesa's `MESA_SHADER_READ_PATH` at the demo's directory,
+/// where a `patch` has put `FS_<hash>.glsl` replacements for shaders Mesa rejects.
+#[cfg(target_os = "linux")]
+pub const META_SHADER_READ: &str = "wine_shader_read";
+
 /// Whether one is used when nothing says otherwise.
 pub const DEFAULT_DESKTOP: bool = false;
 
