@@ -840,3 +840,15 @@ events = [
   { frame = 120, key = "Enter" },
   { frame = 130, key = "Enter" },
 ]
+
+# Akkordarbeit by bypass. One PCX is 275 wide with 276 bytes per line, and the
+# decoder writes the padding byte too, running 264 bytes past its buffer into
+# wine's heap metadata. Unpacked, its allocation raised to 0x11ca0, repacked.
+[zoo.20036]
+meta = { wine_cnc_ddraw = true }
+patch = {
+  info = "PCX buffer overrun",
+  target = "akkord.exe",
+  format = "bsdiff",
+  source = "win/patches/akkordarbeit.bsdiff",
+}

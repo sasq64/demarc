@@ -165,6 +165,12 @@ autodlg works around the known case.
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
 
+**Fault in msvcrt `memset`/`memcpy` that vanishes under `+heap` or
+winedbg.** The demo overran an earlier heap block into wine's free-block
+header; trace `+virtual,+seh` (layout unchanged) and the relay's `new`
+sizes. Fix the unpacked exe and ship a bsdiff `source` patch (Akkordarbeit,
+`zoo.20036`).
+
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
 stack address. winmm MIDI is silent without a synth and soundfont. Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).

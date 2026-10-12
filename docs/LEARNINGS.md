@@ -292,3 +292,12 @@
   about where a relative-mouse core (DOSBox Pure) has its own cursor: a replayed
   click lands wherever that one is. `dosbox_pure_mouse_input = "direct"` makes
   the core take the click's position.
+
+- A crash in builtin msvcrt's `memset` on a fresh `new()` block that goes
+  away under `+heap` or winedbg (both change heap flags) is the demo
+  overrunning an earlier block into wine's free-block header (Akkordarbeit:
+  a PCX with one padding byte per row). `+virtual` shows the block running
+  past its subheap without changing the layout. `/proc/<pid>/mem` is closed
+  by Yama, so a UPX exe is unpacked with a downloaded `upx -d`; repacking the
+  fixed one with `upx --best` halves the bsdiff, which goes in
+  `system/win/patches/` as a `source` rather than inline base64.
