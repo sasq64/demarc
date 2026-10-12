@@ -350,6 +350,16 @@ events = [
   { frame = 650, key = "Enter" },
 ]
 
+[zoo.101540]
+libretro = { dosbox_pure_cycles = 20000, dosbox_pure_mouse_input = "direct" }
+events = [{ frame = 194, click = [0.49, 0.90] }]
+patch = {
+  info = "saved sound setup",
+  target = "appeal.exe",
+  offset = 1188615,
+  contents = "BQAAAQFAAgMCAQcAAAEBQAIDAg==",
+}
+
 # Remnants / Alcatraz: written against a VM BIOS that leaves the DAC index at 0
 [zoo.342211]
 libretro = { dosbox_pure_cycles = "max", dosbox_pure_dac_index_reset = "true" }
@@ -795,3 +805,9 @@ events = [
 # 70s / Alcatraz: a WebGL demo; its only exe is the web server for the page
 [zoo.38834]
 boot = "index.html"
+
+[zoo.50646]
+meta = { wine_res = "640x480" }
+
+[zoo.156337]
+meta = { dos4gw = "true" }

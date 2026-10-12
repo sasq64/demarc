@@ -280,3 +280,15 @@
   (a cached download keeps its old mtime): `find` it by archive name. Tentura's
   "does not start" was a dialog of resolution push buttons with no start
   button; `autodlg --list` showed it in one step.
+
+- Before writing a `patch` from two copies of a file, compare both against the
+  one in the cached download (`~/.cache/demarc/downloads/*/`): the copy named
+  "fixed" was the pristine one, so the first patch changed nothing.
+
+- An override is found by the db's *file name* (`demozoo.txt` → `zoo`), so a
+  one-line test db has to keep that name or no override applies, silently.
+
+- The `{ frame, click }` line demarc logs is the host cursor, which says nothing
+  about where a relative-mouse core (DOSBox Pure) has its own cursor: a replayed
+  click lands wherever that one is. `dosbox_pure_mouse_input = "direct"` makes
+  the core take the click's position.
