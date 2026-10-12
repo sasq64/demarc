@@ -23,3 +23,6 @@ __pycache__/
 /android/app/src/main/jniLibs/
 /perf.data*
 /flamegraph.svg
+/demodb/*.txt
+/demodb/*.txt.gz
+
