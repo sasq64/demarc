@@ -806,6 +806,9 @@ events = [
 [zoo.38834]
 boot = "index.html"
 
+[zoo.46032]
+boot = "adelanto.exe"
+
 [zoo.50646]
 meta = { wine_res = "640x480" }
 
@@ -852,3 +855,7 @@ patch = {
   format = "bsdiff",
   source = "win/patches/akkordarbeit.bsdiff",
 }
+
+[zoo.29804]
+meta = { dosbox_pure_cycles = "200000" }
+file = "ign_desp.zip"
