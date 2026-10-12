@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use bevy::input::mouse::MouseButtonInput;
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
@@ -128,7 +129,7 @@ impl Cmd {
             Cmd::ShaderDialog => "Pick shader preset",
             Cmd::StartOther => "Fade in cross fade emulator",
             Cmd::AddToPlaylist => "Add to playlist",
-            Cmd::OpenKeyboard => "Open on-screen keyboard",
+            Cmd::OpenKeyboard => "Toggle on-screen keyboard",
         }
     }
 }
@@ -295,7 +296,7 @@ const PAD_HOTKEYS: &[PadMapping] = &[
     PadMapping::new(GamepadButton::RightTrigger, Cmd::NextFile),
     PadMapping::new(GamepadButton::LeftTrigger, Cmd::PrevFile),
     PadMapping::new(GamepadButton::Start, Cmd::PauseResume),
-    PadMapping::new(GamepadButton::East, Cmd::OpenKeyboard),
+    PadMapping::new(GamepadButton::Select, Cmd::OpenKeyboard),
     PadMapping::with(PAD_MODIFIER, GamepadButton::North, Cmd::ToggleCrt),
     PadMapping::with(PAD_MODIFIER, GamepadButton::West, Cmd::ChangeScale),
     PadMapping::with(PAD_MODIFIER, GamepadButton::RightTrigger, Cmd::Warp10),
@@ -319,6 +320,10 @@ fn handle_gamepad(
     mut writer: MessageWriter<CmdMessage>,
 ) {
     for pad in &pads {
+        // Steam's keyboard closes itself on B.
+        if pad.just_pressed(GamepadButton::East) {
+            KEYBOARD_OPEN.store(false, Ordering::Relaxed);
+        }
         if let Some(cmd) = check_pad(pad.digital())
             && (!ui_state.modal || cmd == Cmd::OpenKeyboard)
         {
@@ -371,6 +376,29 @@ fn gamepad_navigation(
                 keys.write(msg);
             }
         }
+    }
+}
+
+/// Steam's "Gamepad with Mouse Trackpad" layout sends the right pad's motion as
+/// a mouse and its click as the right stick button.
+fn gamepad_mouse(
+    pads: Query<&Gamepad>,
+    window: Single<Entity, With<PrimaryWindow>>,
+    mut buttons: MessageWriter<MouseButtonInput>,
+) {
+    for pad in &pads {
+        let state = if pad.just_pressed(GamepadButton::RightThumb) {
+            ButtonState::Pressed
+        } else if pad.just_released(GamepadButton::RightThumb) {
+            ButtonState::Released
+        } else {
+            continue;
+        };
+        buttons.write(MouseButtonInput {
+            button: MouseButton::Left,
+            state,
+            window: *window,
+        });
     }
 }
 
@@ -936,7 +964,7 @@ pub(crate) fn handle_cmd(
                 show_shader.write(ShowShaderDialog);
             }
             Cmd::OpenKeyboard => {
-                steam_keyboard(true);
+                steam_keyboard(!KEYBOARD_OPEN.load(Ordering::Relaxed));
             }
             _ => {}
         }
@@ -1256,7 +1284,10 @@ impl Plugin for CommandPlugin {
                     close_keyboard_on_load.run_if(on_message::<crate::loading::LoadFile>),
                 ),
             )
-            .add_systems(PreUpdate, gamepad_navigation.before(InputSystems));
+            .add_systems(
+                PreUpdate,
+                (gamepad_navigation, gamepad_mouse).before(InputSystems),
+            );
     }
 }
 

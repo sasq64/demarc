@@ -265,11 +265,17 @@ the inherited environment, all covered above.
   | Y | Toggle info | | L1 / R1 | Page Up / Down |
   | R1 / L1 | Next / previous file | | A | Enter |
   | Start | Pause/resume | | X | Escape |
-  | B | Open on-screen keyboard | | | |
+  | Select | Toggle on-screen keyboard | | | |
+  | Right pad click | Left mouse button | | | |
   | L2+Y | Toggle CRT filter | | | |
   | L2+X | Change scale | | | |
   | L2+R1 | Warp 10s | | | |
   | L2 (tap) | Command list | | | |
+
+  The right pad only moves the mouse once the shortcut's layout is set to the
+  "Gamepad with Mouse Trackpad" template (Steam button → Controller settings →
+  Edit Layout → Templates). That template sends the pad's click as R3, which
+  `gamepad_mouse` turns into a left mouse button.
 
 - `src/remote_control.rs` — `key_message` is `pub(crate)`.
 - `src/tests/commands_tests.rs` — a test for the modifier rule.

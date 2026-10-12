@@ -118,9 +118,9 @@ fn pad_modifier_picks_the_combined_mapping() {
 }
 
 #[test]
-fn pad_b_opens_the_keyboard() {
+fn pad_select_toggles_the_keyboard() {
     let mut pad = ButtonInput::<GamepadButton>::default();
-    pad.press(GamepadButton::East);
+    pad.press(GamepadButton::Select);
     assert_eq!(check_pad(&pad), Some(Cmd::OpenKeyboard));
 }
 
