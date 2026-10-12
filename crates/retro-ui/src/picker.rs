@@ -11,6 +11,7 @@ use egui::{
     scroll_area::ScrollAreaOutput,
     text::{CCursor, CCursorRange},
 };
+use tracing::info;
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource, ListIcon};
 use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
@@ -41,8 +42,10 @@ const LIST_HEIGHT_FRACTION: f32 = 0.6;
 const ICON_SIZE: f32 = ROW_SIZE;
 const ICON_GAP: f32 = 8.0;
 
-const TITLE_SIZE: f32 = 26.0;
-const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xaa, 0x7c);
+const TITLE_SIZE: f32 = 30.0;
+const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xee, 0xcc);
+const SELECTED_TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xee, 0xcc);
+const SELECTED_TITLE_BG: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x70, 0x50);
 
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
@@ -122,7 +125,7 @@ fn draw_row(
     let painter = ui.painter().with_clip_rect(clip);
     for (icon, x) in [
         (icons.0, rect.left() + ICON_SIZE / 2.0),
-        (icons.1, rect.right() - ICON_SIZE / 2.0),
+        (icons.1, rect.right() - ICON_SIZE),
     ] {
         if let Some(icon) = icon {
             let icon_rect = egui::Rect::from_center_size(
@@ -182,7 +185,7 @@ pub struct Picker<T> {
     /// one scroll back to the restored selection.
     list_reopened: bool,
     /// Text of the line above the search box.
-    list_title: String,
+    list_title: (i32, Vec<String>),
     list_info: String,
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
@@ -203,7 +206,7 @@ impl<T> Default for Picker<T> {
             list_pending_select: None,
             list_scroll: 0.0,
             list_reopened: false,
-            list_title: String::new(),
+            list_title: (-1, Vec::new()),
             list_info: String::new(),
             list_info_item: None,
             list_source: None,
@@ -241,6 +244,7 @@ impl<T: 'static> Picker<T> {
         prompt: Option<&str>,
         selected: Option<usize>,
         title: &str,
+        title_select: i32,
     ) {
         // A different picker starts fresh; the same one comes back with the
         // search text and the row the user left it on.
@@ -254,7 +258,22 @@ impl<T: 'static> Picker<T> {
             self.list_query = prompt.into();
         }
         self.list_pending_select = selected;
-        self.list_title = title.to_owned();
+        let mut parts: Vec<String> = title.split('/').map(|s| s.to_string()).collect();
+
+        if title_select >= 0 {
+            let len = parts.len() as i32;
+            if title_select > 0 {
+                parts.insert(0, " 󰜲 ".into());
+            } else {
+                parts.insert(0, "   ".into());
+            }
+            if title_select >= 0 && title_select < len - 1 {
+                parts.push(" 󰜵".into());
+            }
+        }
+
+        self.list_title = (title_select, parts);
+
         self.list_source = Some(source);
         // The source may be a different instance than last time (rebuilt, or
         // just re-measured for the info field), so re-query and re-describe.
@@ -389,12 +408,24 @@ impl<T: 'static> Picker<T> {
                 panel_frame().show(ui, |ui| {
                     let inner_width = ui.available_width();
                     ui.set_width(inner_width);
-                    if !self.list_title.is_empty() {
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(&self.list_title)
-                                .size(TITLE_SIZE)
-                                .color(TITLE_COLOR),
-                        ));
+                    let (index, title) = &self.list_title;
+                    if !title.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            for (i, part) in title.iter().enumerate() {
+                                let bg = if (i as i32) == (*index + 1) {
+                                    SELECTED_TITLE_BG
+                                } else {
+                                    egui::Color32::BLACK
+                                };
+                                ui.add(egui::Label::new(
+                                    egui::RichText::new(part)
+                                        .size(TITLE_SIZE)
+                                        .background_color(bg)
+                                        .color(TITLE_COLOR),
+                                ));
+                            }
+                        });
                     }
                     // The picker is modal, so the search box keeps focus the whole
                     // time it is up: egui only routes key events to a focused

@@ -45,7 +45,11 @@ fn open_menu(
     mut show_list: MessageWriter<ShowFuzzyList>,
 ) {
     let hot_key = input.any_pressed([KeyCode::AltRight, KeyCode::ControlRight]);
-    if !hot_key || !input.just_pressed(KeyCode::KeyV) || ui_state.modal || !overrides_path().is_file() {
+    if !hot_key
+        || !input.just_pressed(KeyCode::KeyV)
+        || ui_state.modal
+        || !overrides_path().is_file()
+    {
         return;
     }
     // Keeps the hot key's release from also opening the command list.
@@ -57,6 +61,7 @@ fn open_menu(
         prompt: None,
         selected: None,
         title: "Patch overrides".into(),
+        title_select: -1,
     });
 }
 
@@ -111,7 +116,10 @@ fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
         1 => Change::Meta("dos4gw", "true".into()),
         2 => {
             let path = &emu.work_file.path;
-            let name = path.file_name().filter(|_| path.is_file()).context("No boot file")?;
+            let name = path
+                .file_name()
+                .filter(|_| path.is_file())
+                .context("No boot file")?;
             Change::Boot(name.to_string_lossy().into_owned())
         }
         3 => Change::Enters,

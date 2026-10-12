@@ -28,6 +28,8 @@ pub struct ShowFuzzyList {
     pub selected: Option<usize>,
     /// Shown above the search box, and hidden while empty.
     pub title: String,
+    // Highlight this part of the title
+    pub title_select: i32,
 }
 
 /// Emitted when the user picks a row (Enter, or Shift+Enter — see

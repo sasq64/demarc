@@ -59,13 +59,20 @@ pub(crate) struct NavList {
 }
 
 impl NavList {
-    pub(crate) fn show(&self, show_list: &mut MessageWriter<ShowFuzzyList>) {
+    pub(crate) fn show(
+        &self,
+        pos: i32,
+        title: String,
+        show_list: &mut MessageWriter<ShowFuzzyList>,
+    ) {
+        info!("POS: {pos} TITLE: {}", self.path);
         show_list.write(ShowFuzzyList {
             id: self.id,
             source: self.source.clone(),
             prompt: Some(self.prompt.clone()),
             selected: self.selected,
-            title: self.path.clone(),
+            title,
+            title_select: pos - 1,
         });
     }
 }
@@ -158,7 +165,8 @@ impl Navigator {
 
     pub(crate) fn show(&mut self, lw: &mut MessageWriter<ShowFuzzyList>) {
         if self.pos != self.showing {
-            self.stack[self.pos as usize].show(lw);
+            let title = self.stack.last().unwrap().path.clone();
+            self.stack[self.pos as usize].show(self.pos as i32, title, lw);
             self.showing = self.pos;
         }
     }
@@ -346,7 +354,8 @@ impl Navigator {
 
     pub fn open(&mut self, show_list: &mut MessageWriter<ShowFuzzyList>) {
         if self.pos >= 0 {
-            self.stack[self.pos as usize].show(show_list);
+            let title = self.stack.last().unwrap().path.clone();
+            self.stack[self.pos as usize].show(self.pos as i32, title, show_list);
         }
     }
 }

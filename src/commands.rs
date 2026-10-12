@@ -439,6 +439,7 @@ fn handle_textlist(
                 prompt: None,
                 selected: None,
                 title: String::new(),
+                title_select: -1,
             });
         }
     }
@@ -1038,6 +1039,7 @@ pub(crate) fn handle_cmd(
                             prompt: Some(String::new()),
                             selected: None,
                             title: "Add to playlist".into(),
+                            title_select: -1,
                         });
                         commands.insert_resource(PlaylistPick {
                             file: emu.emu_file.clone(),

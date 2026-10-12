@@ -333,6 +333,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
             msg.prompt.as_deref(),
             msg.selected,
             &msg.title,
+            msg.title_select,
         );
     }
 }
