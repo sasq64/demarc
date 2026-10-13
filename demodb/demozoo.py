@@ -1169,10 +1169,11 @@ def export(conn, out_path, pouet_data=None, pouet_lookup=None):
     def author_string(prod_id, supertype):
         # A graphics entry is the work of the artist who drew it, so credit
         # them; demos and music keep the group byline.  An entry credited to
-        # a group alone still falls back to that group.
+        # a group alone still falls back to that group, and one with no group
+        # to its sceners.
         if supertype == "graphics" or supertype == "music":
             return person_string(prod_id) or group_string(prod_id)
-        return group_string(prod_id)
+        return group_string(prod_id) or person_string(prod_id)
 
     n = 0
     n_pouet = 0

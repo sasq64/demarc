@@ -357,6 +357,10 @@ pub enum SortArg {
     Date,
     /// Highest db id first.
     Id,
+    // Titles, alphabetically
+    Title,
+    // Authors, alphabetically
+    Author,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]

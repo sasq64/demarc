@@ -390,7 +390,7 @@ pub fn setup_navigator(
                 .iter()
                 .map(|f| f.get_party())
                 .filter(|p| !p.is_empty())
-                .collect::<BTreeSet<_>>()
+                .collect::<IndexSet<_>>()
                 .into_iter()
                 .map(|p| (p.to_string(), party_icon(p)))
                 .collect(),
@@ -421,6 +421,33 @@ pub fn setup_navigator(
         cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
         Some(AllWordsSource::new(cats))
     })?;
+    navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
+        let authors: Vec<String> = files
+            .iter()
+            .map(|f| f.get_meta("author"))
+            .filter(|p| !p.is_empty() && !p.contains(" & "))
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        Some(AllWordsSource::new(authors))
+    })?;
+    navigator.register(
+        "Authors/{author}",
+        |path: &[&str], files: &'static [EmuFile]| {
+            let subset: Vec<u32> = files
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.get_meta("author").split(" & ").any(|s| s == path[1]))
+                .map(|(i, _)| i as u32)
+                .collect();
+            Some(PickerSource::new(
+                files,
+                Some(subset),
+                IconMode::PlatformOnly,
+            ))
+        },
+    )?;
     navigator.register(
         "Platforms/{platform}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -493,6 +520,7 @@ pub fn setup_navigator(
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Platforms".into(), ListIcon::Glyph('󰍹', 0xc0f0c0)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
+                ("Authors".into(), ListIcon::Glyph('', 0x20a0a0)),
             ]
             .into(),
         ));
@@ -536,6 +564,8 @@ fn update_navigator(
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {
         navigator.forward().show(&mut list_writer);
+    } else if input.just_pressed(KeyCode::Enter) {
+        //navigator.get_selected();
     }
 }
 
