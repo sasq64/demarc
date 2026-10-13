@@ -50,11 +50,13 @@ demos that use Direct3D through ddraw need wined3d.
 From the "Black screen" playlist, 2026-10. Fixed ones are in `overrides.toml`
 or the code; these are not:
 
-- **Atlas** (zoo 202450). Dialog now works (see `fix_resource_dir`), then one
-  pixel shader (godrays, `#include "16" "15" "14"` where 14 includes 15 and 16
-  again) fails to compile with both the prefix's d3dcompiler_47 (6.3.9600, 2013)
-  and wine's vkd3d, and the intro dereferences the NULL blob at 0x403721.
-  Likely needs a Windows 10 d3dcompiler_47 that honours `#pragma once`.
+- **Atlas** (zoo 202450). Dialog now works (see `fix_resource_dir`), and the
+  Windows 10 d3dcompiler_47 compiles its shaders. About 10 s in, its synth
+  thread calls a NULL import at `0x418369` (`sqrt(1 - x)`, double in `xmm0`):
+  slot `0x41b160` in its msvcrt imports, most likely
+  `__libm_sse2_sqrt_precise`, which Windows' msvcrt exports and wine's does not
+  (wine's msvcr110/120 and ucrtbase do). The exe is packed (`logicoma`
+  section), so its import can't be renamed in the file.
 - **Transformer 3** (zoo 202844). Java/OpenRNDR asks for a 3.3 core context and
   calls `glBlendEquationi` (GL 4.0). wine's `wglGetProcAddress` refuses entry
   points above the context version (`Extensions required for glBlendEquationi

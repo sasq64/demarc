@@ -335,14 +335,21 @@
   texture (0x30000000 bytes, NULL). `__GL_ExtensionStringVersion` and
   `MESA_EXTENSION_MAX_YEAR` do not shorten wine's extension string.
 
-- The `files` help text in `config.rs` said an http(s) URL could be given, but
-  `collect_file` made every argument a local path. A browser extension was
-  built and handed over on the help text alone; one headless run with a URL
-  would have shown `No such file or directory` first.
+- winetricks' `d3dcompiler_47` is the Windows 8.1 SDK build (6.3.9600), which
+  rejects Windows 10 HLSL such as typed UAV loads of `float4` (`X3676`). A
+  D3D11 intro that passes NULL for the error blob then faults on the NULL code
+  blob right after `D3DCompile` (One Of Those Days, `zoo.185601`). wine's
+  builtin compiler is no workaround: it compiled the shader, but DXVK read past
+  the end of its DXBC. A 5 KB test exe that calls `D3DCompile` on the
+  `VKD3D_SHADER_DUMP_PATH` source with a given DLL printed the error in one
+  step. The prefix now takes 10.0.15063 from lutris' `d3d_extras`.
 
-- `steamdeck/dev.sh` pushes only the binary and launcher, never `setup.sh`, so a
-  step added there had not run when "it did not work after reboot" came back.
-  Steam's `logs/controller.txt` names the layout it loads for the shortcut
-  (`Loaded Config for Last Resort Path for App ID 2274913106`): read it before
-  guessing at layouts. A hand-written `configset_controller_neptune.vdf` entry
-  for the shortcut did not change it; the right pad arrives as the right stick.
+- A `+relay` trace of a 64k intro runs so slowly that the crash it was meant to
+  catch never happens before the timeout (Atlas: 5.8 GB of log, no fault).
+  `winedbg --file cmds demo.exe` in the background under `gamescope --backend
+  headless`, with a second `demarc-autodlg.exe` (no `--launch`) a few seconds
+  later to press the dialog, gives registers, `bt` and `x/Ni` of the unpacked
+  code at the fault. A NULL slot among a packed exe's resolved imports
+  (`x/24x` on the thunk's table) is a missing export: wine's msvcrt lacks
+  `__libm_sse2_sqrt_precise`. Pointing AeDebug at `winedbg --minidump` wrote
+  nothing.

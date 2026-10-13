@@ -51,6 +51,7 @@ black (a launcher can take 360 frames). `audio_level()` tells if sound plays.
 cd <demo dir> && WINEPREFIX=~/.wine-demarc WINEDEBUG=+loaddll wine demo.exe
 ```
 
+Plain wine plays sound on the host (no capture); keep runs short.
 demarc's launch path adds things plain wine lacks: autodlg, DLL overrides for
 DLLs shipped beside the exe, `allow_glsl_120_subset_in_110`, the session size,
 override patches. If it works here and not in demarc, the difference is there.
@@ -131,7 +132,9 @@ providing the corrected `FS_<hash>.glsl` (see Surveillance, `zoo.155010`).
 **HLSL compile errors.** Use the builtin compiler to see return codes
 (`WINEDLLOVERRIDES=d3dcompiler_47=b` with `+relay`) and
 `VKD3D_SHADER_DUMP_PATH=<dir>`: a `-source.hlsl` with no `-target.dxbc` is the
-one that failed.
+one that failed. A NULL-blob fault right after `D3DCompile` with no error
+blob asked for: compile the dumped source with each DLL from a test exe and
+print the errors; the prefix needs a Windows 10 `d3dcompiler_47` (10.0.x).
 
 **GL function pointer is NULL (page fault at 0).** wine's `wglGetProcAddress`
 refuses names whose extension is not on the context. `wine_gl_compat` asks

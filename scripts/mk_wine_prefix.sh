@@ -20,6 +20,11 @@ chmod +x winetricks
 wineboot -i
 ./winetricks -q dxvk d3dx9 d3dx10 vkd3d
 ./winetricks -q d3dx11_42 d3dx11_43 d3dcompiler_42 d3dcompiler_43 d3dcompiler_46 d3dcompiler_47
+# winetricks' d3dcompiler_47 is 8.1 (6.3.9600); 10.0.15063 compiles typed UAV loads (One Of Those Days)
+curl -fsSL https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz | tar -xJ -C "$PREFIX" v2/x32/d3dcompiler_47.dll v2/x64/d3dcompiler_47.dll
+mv "$PREFIX/v2/x32/d3dcompiler_47.dll" "$PREFIX/drive_c/windows/syswow64/"
+mv "$PREFIX/v2/x64/d3dcompiler_47.dll" "$PREFIX/drive_c/windows/system32/"
+rm -r "$PREFIX/v2"
 ./winetricks -q corefonts
 # MFC42 (Codename Chinadoll)
 ./winetricks -q mfc42
