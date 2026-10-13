@@ -859,8 +859,11 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     lines.join("\n")
 }
 
-/// Steam's on-screen keyboard; does nothing where there is no `steam`.
+/// Steam's on-screen keyboard; Deck only, since `steam <url>` starts a stopped client.
 fn steam_keyboard(open: bool) {
+    if !crate::on_steam_deck() {
+        return;
+    }
     let action = if open { "open" } else { "close" };
     let url = format!("steam://{action}/keyboard");
     std::thread::spawn(move || {
