@@ -8,6 +8,7 @@ use bevy_egui::{
 use retro_ui::{Hud, Picker};
 
 use crate::config::Args;
+use crate::egui_settings::SettingsState;
 use crate::emu_file::{Award, EmuFile};
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::ui::{FuzzyListSelect, SetHudText, ShowFuzzyList, UiState};
@@ -204,6 +205,7 @@ fn sync_modifiers(i: &mut egui::InputState, mods: egui::Modifiers) {
 
 /// 18 rows in the picker instead of 26.
 const LAUNCHER_ZOOM: f32 = 1.45;
+const DECK_SETTINGS_ZOOM: f32 = 2.0;
 
 pub(crate) fn update_ui(
     mut contexts: EguiContexts,
@@ -213,6 +215,7 @@ pub(crate) fn update_ui(
     keys: Res<ButtonInput<KeyCode>>,
     camera: Single<&Camera, With<PrimaryEguiContext>>,
     settings: Res<crate::demarc_settings::DemarcSettings>,
+    dialog: Option<Res<SettingsState<crate::demarc_settings::DemarcSettings>>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     if let (Some(size), Some(factor)) =
@@ -220,6 +223,8 @@ pub(crate) fn update_ui(
     {
         let zoom = if settings.zoom_launcher && state.picker.is_open() {
             LAUNCHER_ZOOM
+        } else if dialog.is_some_and(|d| d.is_open()) && crate::on_steam_deck() {
+            DECK_SETTINGS_ZOOM
         } else {
             1.0
         };

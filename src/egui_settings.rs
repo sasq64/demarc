@@ -694,13 +694,19 @@ pub struct SettingsApplied<T>(pub T);
 
 /// The open dialog for one settings type.
 #[derive(Resource)]
-struct SettingsState<T> {
+pub(crate) struct SettingsState<T> {
     open: bool,
     /// What the widgets edit.
     draft: T,
     /// Described once when the dialog opens, not per frame.
     sections: Vec<Section>,
     title: String,
+}
+
+impl<T> SettingsState<T> {
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
 }
 
 impl<T: Default> Default for SettingsState<T> {
