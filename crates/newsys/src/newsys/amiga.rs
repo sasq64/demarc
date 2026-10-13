@@ -732,9 +732,6 @@ impl System for AmigaSystem {
                 file.set_machine(Machine::A500);
             }
         }
-        if file.is_enabled("fast-load") {
-            file.set_meta("puae_floppy_speed", "0");
-        }
         if self.xmem {
             file.set_fast_mem(8);
             file.set_z3_mem(128);

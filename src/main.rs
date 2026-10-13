@@ -561,7 +561,7 @@ fn main() {
         crt_limit: args.crt_limit,
         downsample_limit: args.downsample,
         background: clear_color,
-        fast_load: args.fast_load,
+        c64_fast_load: args.c64_fast_load,
         zoom_launcher: args.zoom_launcher.unwrap_or_else(on_steam_deck),
         dos: Default::default(),
         #[cfg(target_os = "linux")]
@@ -590,7 +590,7 @@ fn main() {
     }
 
     let global_settings = GlobalSettings(
-        [("fast-load", args.fast_load.to_string())]
+        [("c64_fast_load", args.c64_fast_load.to_string())]
             .into_iter()
             .collect(),
     );

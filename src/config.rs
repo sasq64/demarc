@@ -174,10 +174,10 @@ pub struct Args {
     #[arg(long)]
     pub unadf: bool,
 
-    /// C64: Always use Retro-replay to load
-    /// Amiga: Turn off disk rotation emulation
-    #[arg(long, verbatim_doc_comment)]
-    pub fast_load: bool,
+    /// C64: Use Retro-replay to load disks, e.g. --c64-fast-load=false
+    #[arg(long, num_args = 0..=1, require_equals = true, default_value_t = true,
+          default_missing_value = "true", action = clap::ArgAction::Set)]
+    pub c64_fast_load: bool,
 
     /// Amiga,C64,Amstrad: Dont produce disk loading sound
     #[arg(long)]

@@ -1,2 +1,2 @@
-demarc.exe demozoo.txt.gz csdb.txt.gz --select --fast-load
+demarc.exe demozoo.txt.gz csdb.txt.gz --select
 

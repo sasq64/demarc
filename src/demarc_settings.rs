@@ -142,7 +142,7 @@ pub struct DemarcSettings {
     pub fullscreen: bool,
     pub background: Color,
 
-    pub fast_load: bool,
+    pub c64_fast_load: bool,
 
     /// Draw the picker with larger text.
     pub zoom_launcher: bool,
@@ -194,8 +194,8 @@ pub fn apply_settings(
                 .system
                 .set_meta("latency", new.latency.to_string());
         }
-        if new.fast_load != current.fast_load {
-            global.0.insert("fast-load", new.fast_load.to_string());
+        if new.c64_fast_load != current.c64_fast_load {
+            global.0.insert("c64_fast_load", new.c64_fast_load.to_string());
         }
         if new.crt_limit != current.crt_limit {
             app_settings.crt_limit = new.crt_limit;

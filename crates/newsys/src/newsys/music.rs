@@ -126,7 +126,7 @@ impl System for MusicSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         info!("MUSIC CREATE {path:?}");
-        if path.is_enabled(USE_TRACKER)
+        if !path.is_disabled(USE_TRACKER)
             && let Some(name) = tracker_core(path)
         {
             let core = libloader::get_libretro(name)

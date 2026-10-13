@@ -123,7 +123,7 @@ impl System for C64System {
         })?;
 
         if !images.is_empty() {
-            if file.is_enabled("fast-load") {
+            if !file.is_disabled("c64_fast_load") {
                 file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
                 file.set_meta("vice_autostart", "disabled");
             }
@@ -148,7 +148,7 @@ impl System for C64System {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
             retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
-        if path.is_enabled("fast-load") {
+        if !path.is_disabled("c64_fast_load") {
             core.send_events(&[(50, InputEvent::Key(RETROK_F1)), (55, InputEvent::Key(RETROK_RETURN))]);
         }
         Ok(core)

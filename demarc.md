@@ -190,9 +190,8 @@ Options:
       --xmem
           Amiga/Atari ST: add extra memory
 
-      --fast-load
-          C64: Always use JiffyDOS to load
-          Amiga: Turn off disk rotation emulation
+      --c64-fast-load[=<C64_FAST_LOAD>]
+          C64: Use Retro-replay to load disks, e.g. --c64-fast-load=false
 
       --silent-drive
           Amiga,C64,Amstrad: Dont produce disk loading sound
