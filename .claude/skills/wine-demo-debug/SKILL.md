@@ -141,6 +141,11 @@ refuses names whose extension is not on the context. `wine_gl_compat` asks
 Mesa for a 4.6 compatibility context. Functions above the context version are
 still refused.
 
+**Java demos.** A `runtime/` + `app/*.cfg` release is javapackager: run
+`runtime/bin/java.exe -cp app/<jar> <app.mainclass>` for the stack trace. A GL
+4.x call on a 3.3 core context dies on NVIDIA only; bump the GLFW hint in the
+jar (`zoo.202844`).
+
 **Black screen with music.** Check `+opengl` for `glDrawBuffer buf 1028` or a
 single-buffered pixel format: front-buffer drawing never reaches the session.
 wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos.

@@ -906,3 +906,14 @@ patch = {
   format = "bsdiff",
   source = "win/patches/nature2.bsdiff",
 }
+
+# Transformer 3 by Limp Ninja (OPENRNDR). Asks GLFW for a 3.3 core context and
+# calls glBlendEquationi (4.0); NVIDIA's Linux driver reports exactly 3.3, so
+# LWJGL never loads it and the JVM aborts. The jar asks for 4.3 instead.
+[zoo.202844]
+patch = {
+  info = "GL 4.3 context",
+  target = "demo-evoke-1.0-SNAPSHOT.jar",
+  format = "bsdiff",
+  source = "win/patches/transformer3.bsdiff",
+}

@@ -353,3 +353,12 @@
   (`x/24x` on the thunk's table) is a missing export: wine's msvcrt lacks
   `__libm_sse2_sqrt_precise`. Pointing AeDebug at `winedbg --minidump` wrote
   nothing.
+
+- A Java demo (javapackager: `runtime/`, `app/*.cfg`) prints its exceptions
+  when `runtime/bin/java.exe -cp app/<jar> <app.mainclass>` is run directly;
+  the launcher exe shows nothing. On NVIDIA a GL context is exactly the version
+  asked for, and LWJGL loads no function above it, so an OPENRNDR demo asking
+  for 3.3 core dies on its first 4.x call (`zoo.202844`). Mesa gives the
+  highest core version and was fine. A jar whose central directory lists each
+  entry twice (`unzip` calls it a zip bomb) can take a recompressed class in
+  place when it is no larger; the bsdiff then stays at 12 KB.
