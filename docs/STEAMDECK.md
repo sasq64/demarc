@@ -274,7 +274,8 @@ the inherited environment, all covered above.
 
   The right pad only moves the mouse once the shortcut's layout is set to the
   "Gamepad with Mouse Trackpad" template (Steam button → Controller settings →
-  Edit Layout → Templates). That template sends the pad's click as R3, which
+  Edit Layout → Templates). `setup.sh` writes that choice into Steam's
+  `configset_controller_neptune.vdf`; untested on a Deck. That template sends the pad's click as R3, which
   `gamepad_mouse` turns into a left mouse button.
 
 - `src/remote_control.rs` — `key_message` is `pub(crate)`.
