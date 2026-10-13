@@ -302,6 +302,7 @@ const PAD_HOTKEYS: &[PadMapping] = &[
     PadMapping::with(PAD_MODIFIER, GamepadButton::RightTrigger, Cmd::Warp10),
     PadMapping::with(PAD_MODIFIER, GamepadButton::LeftTrigger, Cmd::SwapDisk),
     PadMapping::with(PAD_MODIFIER, GamepadButton::Select, Cmd::Settings),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::South, Cmd::AddToPlaylist),
 ];
 
 /// A mapping without a modifier only fires while no modifier button is held.
