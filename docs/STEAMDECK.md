@@ -266,17 +266,17 @@ the inherited environment, all covered above.
   | R1 / L1 | Next / previous file | | A | Enter |
   | Start | Pause/resume | | X | Escape |
   | Select | Toggle on-screen keyboard | | | |
-  | Right pad click | Left mouse button | | | |
+  | Right stick / pad, click | Mouse, left button | | | |
   | L2+Y | Toggle CRT filter | | | |
   | L2+X | Change scale | | | |
   | L2+R1 | Warp 10s | | | |
   | L2 (tap) | Command list | | | |
 
-  The right pad only moves the mouse once the shortcut's layout is set to the
-  "Gamepad with Mouse Trackpad" template (Steam button → Controller settings →
-  Edit Layout → Templates). `setup.sh` writes that choice into Steam's
-  `configset_controller_neptune.vdf`; untested on a Deck. That template sends the pad's click as R3, which
-  `gamepad_mouse` turns into a left mouse button.
+  `gamepad_mouse` moves the cursor with the right stick and left-clicks on its
+  button. Steam's fallback layout for a shortcut ("Gamepad With Joystick
+  Trackpad") sends the right pad as that stick, so the pad works too. Assigning
+  the "Gamepad with Mouse Trackpad" template through
+  `configset_controller_neptune.vdf` was tried and did not take.
 
 - `src/remote_control.rs` — `key_message` is `pub(crate)`.
 - `src/tests/commands_tests.rs` — a test for the modifier rule.

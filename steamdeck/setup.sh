@@ -40,14 +40,4 @@ if ! grep -qs demarc.sh ~/.local/share/Steam/userdata/*/config/shortcuts.vdf; th
     DISPLAY=:0 steamos-add-to-steam "$PWD/demarc.sh"
 fi
 
-# Right pad as a mouse: the "Gamepad with Mouse Trackpad" template for the shortcut.
-for user in ~/.local/share/Steam/userdata/[1-9]*; do
-    cfg=~/.local/share/Steam/steamapps/common/"Steam Controller Configs/${user##*/}/config/configset_controller_neptune.vdf"
-    grep -qs '"demarc.sh"' "$cfg" && continue
-    echo "Setting the controller layout"
-    mkdir -p "${cfg%/*}"
-    [ -f "$cfg" ] || printf '"controller_config"\n{\n}\n' >"$cfg"
-    sed -i '0,/^{/s//{\n\t"demarc.sh"\n\t{\n\t\t"template"\t\t"controller_neptune_gamepad+mouse.vdf"\n\t}/' "$cfg"
-done
-
 ./glibc/ld-linux-x86-64.so.2 --library-path ./glibc:/usr/lib ./demarc-dev --check-wine || true

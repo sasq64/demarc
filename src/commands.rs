@@ -1,15 +1,15 @@
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use bevy::input::mouse::MouseButtonInput;
+use bevy::input::mouse::{MouseButtonInput, MouseMotion};
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
 use bevy::render::view::screenshot::save_to_disk;
-use bevy::window::{PrimaryWindow, WindowMode};
+use bevy::window::{CursorMoved, PrimaryWindow, WindowMode};
 
 use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
@@ -301,6 +301,7 @@ const PAD_HOTKEYS: &[PadMapping] = &[
     PadMapping::with(PAD_MODIFIER, GamepadButton::West, Cmd::ChangeScale),
     PadMapping::with(PAD_MODIFIER, GamepadButton::RightTrigger, Cmd::Warp10),
     PadMapping::with(PAD_MODIFIER, GamepadButton::LeftTrigger, Cmd::SwapDisk),
+    PadMapping::with(PAD_MODIFIER, GamepadButton::Select, Cmd::Settings),
 ];
 
 /// A mapping without a modifier only fires while no modifier button is held.
@@ -320,10 +321,6 @@ fn handle_gamepad(
     mut writer: MessageWriter<CmdMessage>,
 ) {
     for pad in &pads {
-        // Steam's keyboard closes itself on B.
-        if pad.just_pressed(GamepadButton::East) {
-            KEYBOARD_OPEN.store(false, Ordering::Relaxed);
-        }
         if let Some(cmd) = check_pad(pad.digital())
             && (!ui_state.modal || cmd == Cmd::OpenKeyboard)
         {
@@ -379,14 +376,44 @@ fn gamepad_navigation(
     }
 }
 
-/// Steam's "Gamepad with Mouse Trackpad" layout sends the right pad's motion as
-/// a mouse and its click as the right stick button.
+const PAD_MOUSE_DEADZONE: f32 = 0.12;
+const PAD_MOUSE_SPEED: f32 = 900.0;
+
+/// Cursor speed in pixels per second for a right stick deflection.
+fn stick_velocity(stick: Vec2) -> Vec2 {
+    let len = stick.length();
+    if len < PAD_MOUSE_DEADZONE {
+        return Vec2::ZERO;
+    }
+    let t = ((len - PAD_MOUSE_DEADZONE) / (1.0 - PAD_MOUSE_DEADZONE)).min(1.0);
+    Vec2::new(stick.x, -stick.y) / len * t * t * PAD_MOUSE_SPEED
+}
+
+/// The right stick as a mouse, its button as the left mouse button. Steam's
+/// default Deck layout sends the right pad as that stick, click included.
 fn gamepad_mouse(
     pads: Query<&Gamepad>,
-    window: Single<Entity, With<PrimaryWindow>>,
+    mut window: Single<(Entity, &mut Window), With<PrimaryWindow>>,
+    time: Res<Time>,
     mut buttons: MessageWriter<MouseButtonInput>,
+    mut motion: MessageWriter<MouseMotion>,
+    mut moved: MessageWriter<CursorMoved>,
 ) {
+    let (entity, window) = &mut *window;
     for pad in &pads {
+        let delta = stick_velocity(pad.right_stick()) * time.delta_secs();
+        if delta != Vec2::ZERO {
+            let size = window.size();
+            let position = (window.cursor_position().unwrap_or(size / 2.0) + delta)
+                .clamp(Vec2::ZERO, size - 1.0);
+            window.set_cursor_position(Some(position));
+            motion.write(MouseMotion { delta });
+            moved.write(CursorMoved {
+                window: *entity,
+                position,
+                delta: Some(delta),
+            });
+        }
         let state = if pad.just_pressed(GamepadButton::RightThumb) {
             ButtonState::Pressed
         } else if pad.just_released(GamepadButton::RightThumb) {
@@ -397,7 +424,7 @@ fn gamepad_mouse(
         buttons.write(MouseButtonInput {
             button: MouseButton::Left,
             state,
-            window: *window,
+            window: *entity,
         });
     }
 }
@@ -831,11 +858,8 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
     lines.join("\n")
 }
 
-static KEYBOARD_OPEN: AtomicBool = AtomicBool::new(false);
-
 /// Steam's on-screen keyboard; does nothing where there is no `steam`.
 fn steam_keyboard(open: bool) {
-    KEYBOARD_OPEN.store(open, Ordering::Relaxed);
     let action = if open { "open" } else { "close" };
     let url = format!("steam://{action}/keyboard");
     std::thread::spawn(move || {
@@ -844,9 +868,7 @@ fn steam_keyboard(open: bool) {
 }
 
 fn close_keyboard_on_load() {
-    if KEYBOARD_OPEN.load(Ordering::Relaxed) {
-        steam_keyboard(false);
-    }
+    steam_keyboard(false);
 }
 
 pub(crate) fn handle_cmd(
@@ -964,7 +986,7 @@ pub(crate) fn handle_cmd(
                 show_shader.write(ShowShaderDialog);
             }
             Cmd::OpenKeyboard => {
-                steam_keyboard(!KEYBOARD_OPEN.load(Ordering::Relaxed));
+                steam_keyboard(true);
             }
             _ => {}
         }

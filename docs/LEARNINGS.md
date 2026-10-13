@@ -339,3 +339,10 @@
   `collect_file` made every argument a local path. A browser extension was
   built and handed over on the help text alone; one headless run with a URL
   would have shown `No such file or directory` first.
+
+- `steamdeck/dev.sh` pushes only the binary and launcher, never `setup.sh`, so a
+  step added there had not run when "it did not work after reboot" came back.
+  Steam's `logs/controller.txt` names the layout it loads for the shortcut
+  (`Loaded Config for Last Resort Path for App ID 2274913106`): read it before
+  guessing at layouts. A hand-written `configset_controller_neptune.vdf` entry
+  for the shortcut did not change it; the right pad arrives as the right stick.
