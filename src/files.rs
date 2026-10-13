@@ -12,6 +12,7 @@ use tracing::info;
 use crate::{
     emu_file::{CompactDate, EmuFile, FileSource, GameInfo, UrlList},
     m3u::M3u,
+    modland,
     utils::{is_disk_image, unpack_if_packed},
 };
 
@@ -110,8 +111,13 @@ pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Res
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "db".into());
     let start = out.len();
-    collect_db_text(text, filter, out);
-    let name = db_name(text, fallback);
+    let name = if modland::is_index(text) {
+        modland::collect(text, filter, out);
+        "Modland".into()
+    } else {
+        collect_db_text(text, filter, out);
+        db_name(text, fallback)
+    };
     tag_db(&mut out[start..], &name);
     Ok(name)
 }
@@ -176,7 +182,7 @@ pub struct DbFilter<'a> {
 }
 
 impl DbFilter<'_> {
-    fn keeps(&self, line: &str) -> bool {
+    pub(crate) fn keeps(&self, line: &str) -> bool {
         self.include.iter().all(|re| matches_field(re, line))
             && !self.exclude.iter().any(|re| matches_field(re, line))
     }

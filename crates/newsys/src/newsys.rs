@@ -3,7 +3,7 @@ use qbsdiff::Bspatch;
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tracing::{debug, info, trace, warn};
 
 use crate::backend::Backend;
@@ -36,7 +36,7 @@ use plus4::Plus4System;
 use psp::PspSystem;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tic80::Tic80System;
 use web::WebSystem;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -519,6 +519,17 @@ impl NewSys {
             Box::new(WebSystem {}),
         ]
     }
+    /// Every extension some system claims, lowercase.
+    pub fn supported_extensions() -> &'static HashSet<&'static str> {
+        static EXTENSIONS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+        EXTENSIONS.get_or_init(|| {
+            Self::get_systems(&SysOpts::default())
+                .iter()
+                .flat_map(|sys| sys.extensions().iter().copied())
+                .collect()
+        })
+    }
+
     pub fn new(args: &SysOpts) -> Self {
         let mut meta = HashMap::<String, String>::new();
         for opt in &args.extra_options {

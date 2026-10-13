@@ -49,6 +49,7 @@ mod jobs;
 mod load_error;
 mod loading;
 mod media_keys;
+mod modland;
 mod mouse_cursor;
 mod navigator;
 mod overrides;
