@@ -23,10 +23,13 @@ use anyhow::{Context, Result, anyhow, bail};
 use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
 
-use crate::backend::{Backend, InputEvent, STATE_SKIPPING, ViewFocus};
+use crate::backend::{Backend, InputEvent, MAX_LATENCY, STATE_SKIPPING, ViewFocus};
 use crate::pixels::{SCREEN_ACTIVE, get_frame_diff};
 
-use super::threaded::{RetroCmd, Scheduled, WORKER_STACK_SIZE, apply_cmd, play_due, set_state_bit};
+use super::threaded::{
+    RetroCmd, Scheduled, WORKER_STACK_SIZE, apply_cmd, clamp_latency, latency_from_meta, play_due,
+    set_state_bit,
+};
 use super::{FrameTarget, RetroCoreDirect};
 
 const WORKER_ARG: &str = "--retro-process-worker";
@@ -168,6 +171,7 @@ const MSG_KEY: u32 = 11;
 const MSG_RELEASE: u32 = 12;
 const MSG_CLICK: u32 = 13;
 const MSG_MOUSE_POSITION: u32 = 14;
+const MSG_LATENCY: u32 = 15;
 // Child to parent
 const MSG_SETUP_OK: u32 = 20;
 const MSG_SETUP_ERR: u32 = 21;
@@ -352,12 +356,8 @@ impl RetroCoreProcess {
         meta: HashMap<String, String>,
         speed_test: bool,
     ) -> Result<Self> {
-        let latency: usize = meta
-            .get("latency")
-            .and_then(|l| l.parse().ok())
-            .unwrap_or(3);
         // One on display, one being rendered, the rest in flight.
-        let slots = latency.max(1) + 2;
+        let slots = MAX_LATENCY + 2;
 
         let file = shared_file()?;
         file.set_len((HEADER_SIZE + slots * SLOT_SIZE) as u64)?;
@@ -609,6 +609,10 @@ impl Backend for RetroCoreProcess {
         self.fps
     }
 
+    fn set_latency(&mut self, frames: usize) {
+        self.send(Msg::new(MSG_LATENCY, frames as u32, 0, 0));
+    }
+
     fn skip_frames(&mut self, frames: u32) {
         set_state_bit(self.shm.atomics().1, STATE_SKIPPING, frames > 0);
         self.send(Msg::new(MSG_SKIP, frames, 0, 0));
@@ -704,6 +708,8 @@ fn run_worker(mut stream: UnixStream, file: File) -> Result<()> {
         );
     }
 
+    let limit = latency_from_meta(&meta);
+
     let shm = Shm::map(&file, slots)?;
     drop(file);
     let mut chan = Channel::new(stream);
@@ -733,12 +739,20 @@ fn run_worker(mut stream: UnixStream, file: File) -> Result<()> {
         (*h).disks = core.get_number_of_disks() as u64;
     }
     chan.send(Msg::new(MSG_SETUP_OK, 0, 0, 0))?;
-    worker_loop(&mut core, &mut chan, &shm, speed_test);
+    worker_loop(&mut core, &mut chan, &shm, speed_test, limit);
     Ok(())
 }
 
-fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_test: bool) {
+fn worker_loop(
+    core: &mut RetroCoreDirect,
+    chan: &mut Channel,
+    shm: &Shm,
+    speed_test: bool,
+    mut limit: usize,
+) {
     let (frames, state) = shm.atomics();
+    // Frames sent and not yet released, the one on display among them.
+    let mut in_flight = 0usize;
     let mut free: Vec<usize> = (0..shm.slots).rev().collect();
     let mut target = free.pop();
     // The slot holding the newest frame, which a duped frame is copied from.
@@ -752,7 +766,8 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
 
         // Drain commands, waiting for one while there is nothing to do.
         loop {
-            let msg = match chan.recv(target.is_none() || !core.visible) {
+            let throttled = !speed_test && in_flight > limit;
+            let msg = match chan.recv(target.is_none() || !core.visible || throttled) {
                 Ok(Some(msg)) => msg,
                 Ok(None) => break,
                 Err(_) => return,
@@ -763,12 +778,14 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
                     if slot >= shm.slots {
                         continue;
                     }
+                    in_flight = in_flight.saturating_sub(1);
                     if target.is_none() {
                         target = Some(slot);
                     } else {
                         free.push(slot);
                     }
                 }
+                MSG_LATENCY => limit = clamp_latency(msg.a as usize),
                 MSG_SEND_EVENTS => {
                     let mut events = Vec::with_capacity(msg.a as usize);
                     for _ in 0..msg.a {
@@ -861,6 +878,7 @@ fn worker_loop(core: &mut RetroCoreDirect, chan: &mut Channel, shm: &Shm, speed_
         if chan.send(Msg::new(MSG_FRAME, slot as u32, 0, 0)).is_err() {
             return;
         }
+        in_flight += 1;
         target = free.pop();
     }
 }

@@ -68,6 +68,17 @@ fn resolutions_are_labelled_by_size() {
 }
 
 #[test]
+fn latency_is_picked_from_its_levels() {
+    let sections = settings_sections();
+    let latency = sections[0].fields.iter().find(|f| f.name == "latency");
+    let Some(Widget::Enum { variants }) = latency.map(|f| &f.widget) else {
+        panic!("latency is not a combo box");
+    };
+    let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();
+    assert_eq!(labels, vec!["Low", "Medium", "High"]);
+}
+
+#[test]
 fn wine_settings_write_and_clear_meta() {
     let mut meta = HashMap::from([(META_RES.to_owned(), "640x480".to_owned())]);
     let old = WineSettings::default();

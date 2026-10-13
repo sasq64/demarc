@@ -3,6 +3,7 @@ use bevy::ecs::system::RunSystemOnce;
 use clap::Parser;
 
 use super::*;
+use crate::config::Latency;
 use crate::fake_backend::{FakeBackend, solid_frame};
 
 const TARGET: UVec2 = UVec2::new(1280, 720);
@@ -522,21 +523,39 @@ fn an_unchanged_frame_is_not_copied_again() {
 fn the_picture_lags_the_core_by_the_frame_delay() {
     let mut world = world();
     let (entity, core) = spawn(&mut world, 0, None);
-    core.lock().frame = solid_frame(4, 2, 1);
-    for _ in 0..=FRAME_DELAY {
-        run(&mut world);
-    }
-    let old = texture(&world, entity);
+    assert_lags(&mut world, entity, &core, 1, Latency::Medium);
+}
 
-    core.lock().frame = solid_frame(4, 2, 2);
-    for _ in 0..FRAME_DELAY {
-        run(&mut world);
-        assert_eq!(texture(&world, entity), old);
+#[test]
+fn a_new_latency_level_changes_the_frame_delay_at_once() {
+    let mut world = world();
+    let (entity, core) = spawn(&mut world, 0, None);
+    assert_lags(&mut world, entity, &core, 1, Latency::Medium);
+
+    settings(&mut world).latency = Latency::Low;
+    assert_lags(&mut world, entity, &core, 3, Latency::Low);
+    assert_eq!(core.lock().latency, Some(Latency::Low.setting().latency));
+}
+
+/// Shows colour `n`, then `n + 1`, which has to reach the texture exactly
+/// `level`'s video delay later.
+fn assert_lags(world: &mut World, entity: Entity, core: &FakeBackend, n: u32, level: Latency) {
+    let delay = level.setting().video_delay;
+    core.lock().frame = solid_frame(4, 2, n);
+    for _ in 0..=delay {
+        run(world);
     }
-    run(&mut world);
+    let old = texture(world, entity);
+
+    core.lock().frame = solid_frame(4, 2, n + 1);
+    for _ in 0..delay {
+        run(world);
+        assert_eq!(texture(world, entity), old);
+    }
+    run(world);
     assert_eq!(
-        texture(&world, entity),
-        crate::backend::frame_bytes(&[2; 8])
+        texture(world, entity),
+        crate::backend::frame_bytes(&[n + 1; 8])
     );
 }
 

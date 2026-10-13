@@ -525,7 +525,7 @@ fn a_display_at_the_cores_rate_is_followed_frame_for_frame() {
     assert_eq!(core.lock().runs, runs + 1);
 }
 
-/// With no stream the sink reports a level under `AUDIO_BUF_MIN`.
+/// With no stream the sink reports a level under `audio_buf_min`.
 #[test]
 fn a_dry_audio_buffer_steps_an_extra_frame() {
     let core = FakeBackend::default();
@@ -551,8 +551,9 @@ fn a_silent_core_is_not_stepped_twice() {
 fn a_full_audio_buffer_drops_the_frame() {
     let core = FakeBackend::default();
     let mut emu = emulator(&core);
-    let (mut producer, _consumer) = ringbuf::HeapRb::<f32>::new(AUDIO_BUF_MAX * 2).split();
-    producer.push_iter(std::iter::repeat_n(0.0, AUDIO_BUF_MAX + 1));
+    let max = emu.latency.audio_buf_max;
+    let (mut producer, _consumer) = ringbuf::HeapRb::<f32>::new(max * 2).split();
+    producer.push_iter(std::iter::repeat_n(0.0, max + 1));
     emu.sink.producer = Some(Mutex::new(producer));
 
     assert!(emu.run(&Time::default()));

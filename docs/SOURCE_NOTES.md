@@ -219,8 +219,8 @@ When the core's fps and the display's agree within 1% for 8 consecutive frames i
 
 - `speed_test`: pump the core once per update, no audio handling, no pacing — throughput bound only
   by CPU/GPU.
-- `occupied_len > AUDIO_BUF_MAX` → drop a frame.
-- `occupied_len < AUDIO_BUF_MIN` → run an extra frame to refill. Gated on `has_audio`, which is
+- `occupied_len > latency.audio_buf_max` → drop a frame.
+- `occupied_len < latency.audio_buf_min` → run an extra frame to refill. Gated on `has_audio`, which is
   `audio_seen` — **samples actually arriving**, not the core advertising a sample rate. A core can
   report 44.1 kHz and emit nothing for a silent ROM; treating that as "has audio" makes the
   buffer-dry check fire every frame and runs the demo at double speed.
@@ -490,8 +490,9 @@ something.
 first. `write_patch` replaces the file entirely when there is no offset, overwrites at `offset` when
 there is, and zero-extends a file too short to reach it.
 
-**`set_meta`** (how the settings dialog moves `latency`) is applied in `load_prepared`, so it takes
-hold on the *next* release loaded, not the one playing: a backend reads its meta once, as it is built.
+**`set_meta`** is applied in `load_prepared`, so it takes hold on the *next* release loaded, not the
+one playing: a backend reads its meta once, as it is built. `latency` is the exception: the running
+cores are told through `Backend::set_latency`, and the meta only seeds the cores loaded later.
 
 **`prune_caches`** runs once at startup alongside `fetch::prune_cache`, for the same reason: nothing
 holds a path into any cache yet, so this run's own work can't be evicted. Each cache carries its own
@@ -2109,10 +2110,13 @@ shows and the baseline `apply_settings` compares against.
 the dialog edits a snapshot, and a field it never touched must not clobber what something else did
 while it was open — RightAlt+F moving the window, say.
 
-`latency` is the frames a core's worker may run ahead; it takes effect on the *next* release loaded
-(`NewSys::set_meta`), so the change is announced in the HUD because there is nothing to see. `0`
-would be a rendezvous channel (worker blocked until the frontend takes each frame), so the range
-starts at 1. `volume` is TBD — nothing reads it yet.
+`latency` is a `config::Latency` level (Low/Medium/High, also `--latency`), and `Latency::setting`
+maps it to a `LatencySetting`: the frames a core's worker may run ahead, the frames the picture is
+held back (`frame_queue` in `run_frontend`), and the audio sink fill between which `Emulator::run`
+neither drops nor repeats a frame. It applies at once: `run_frontend` hands the setting to every
+`Emulator`, which passes the frame limit on with `Backend::set_latency`. The frame fifo itself is
+always `MAX_LATENCY` deep (the thread's channel, the process backend's slots); the worker stops
+stepping while it holds `latency` finished frames. `volume` is TBD — nothing reads it yet.
 
 ## `shader_dialog.rs`
 
@@ -2793,7 +2797,7 @@ makes the worker run at the frontend's consumption rate.
 **`run` consumes exactly one frame per call**, like `RetroCoreThreaded::run`: the frontend paces
 `run()` at the movie's fps and assumes each call carries one frame's worth of audio. Draining the
 whole channel instead would push several frames of audio per paced call (flooding the sink past
-`AUDIO_BUF_MAX` → continuous "Dropping frame") and would keep the bounded channel from ever filling,
+`audio_buf_max` → continuous "Dropping frame") and would keep the bounded channel from ever filling,
 defeating the blocking-send backpressure.
 
 **"One frame" is `tick(1/fps)`, not a bare `run_frame()`.** Alongside the timeline, `tick` advances

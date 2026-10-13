@@ -11,6 +11,7 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
+use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
 use crate::loading::PendingLoad;
@@ -124,10 +125,8 @@ pub struct Emulator {
     /// Pixels last copied into [`Self::image`], so an unchanged frame is not
     /// copied and re-uploaded again.
     pub shown_frame: Option<Arc<Vec<u32>>>,
+    pub latency: LatencySetting,
 }
-
-const AUDIO_BUF_MIN: usize = 9000;
-const AUDIO_BUF_MAX: usize = 25000;
 
 impl Emulator {
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
@@ -570,6 +569,15 @@ impl Emulator {
         self.idle_time = 0.0;
     }
 
+    pub fn set_latency(&mut self, latency: LatencySetting) {
+        if self.latency != latency {
+            self.latency = latency;
+            if let Some(core) = self.core.as_mut() {
+                core.set_latency(latency.latency);
+            }
+        }
+    }
+
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
         if delta > 0.0 {
@@ -642,7 +650,7 @@ impl Emulator {
 
         trace!("DELTA {delta} vs {}", self.display_fps,);
 
-        if occupied_len > AUDIO_BUF_MAX {
+        if occupied_len > self.latency.audio_buf_max {
             trace!("Dropping frame");
             self.next_frame += frame_time;
             return true;
@@ -662,7 +670,7 @@ impl Emulator {
         // For safety: if the audio buffer is running dry, advance an extra frame
         // to refill it. Only meaningful when the core actually produces audio;
         // otherwise the buffer is always empty and this would fire every frame.
-        if has_audio && !self.skipping && occupied_len < AUDIO_BUF_MIN {
+        if has_audio && !self.skipping && occupied_len < self.latency.audio_buf_min {
             result &= core.run();
             trace!("Duplicating frame");
         }

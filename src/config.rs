@@ -216,9 +216,10 @@ pub struct Args {
     #[arg(long)]
     pub proc: bool,
 
-    /// Max queued frames. Lower values = better input response
-    #[arg(long, default_value_t = 2)]
-    pub latency: u32,
+    /// How far picture and sound run behind the core. Lower = better input
+    /// response, higher = fewer audio drops
+    #[arg(long, value_enum, default_value_t)]
+    pub latency: Latency,
 
     /// Extra options to add to libretro
     #[arg(short = 'x', long, value_delimiter = ',')]
@@ -448,7 +449,7 @@ impl From<&Args> for SysOpts {
             extra_options: a.extra_options.clone(),
             fast: a.fast,
             grid: a.grid,
-            latency: a.latency,
+            latency: a.latency.setting().latency as u32,
             lua: a.lua.clone(),
             proc: a.proc,
             reu: a.reu,
@@ -467,6 +468,49 @@ impl From<ScaleModeArg> for ScaleMode {
             ScaleModeArg::Zoom => ScaleMode::Zoom,
             ScaleModeArg::Fixed(n) => ScaleMode::Fixed(n),
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, bevy::reflect::Reflect, clap::ValueEnum)]
+pub enum Latency {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+/// What a [`Latency`] level stands for.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LatencySetting {
+    /// Frames a core may run ahead of the frontend.
+    pub latency: usize,
+    /// Frames the picture is held back, to meet the sound.
+    pub video_delay: usize,
+    /// Fill of the audio sink, in samples, under which an extra frame is run.
+    pub audio_buf_min: usize,
+    /// Fill of the audio sink over which a frame is dropped.
+    pub audio_buf_max: usize,
+}
+
+impl Latency {
+    pub fn setting(self) -> LatencySetting {
+        let (latency, video_delay, audio_buf_min, audio_buf_max) = match self {
+            Latency::Low => (1, 0, 6000, 18000),
+            Latency::Medium => (2, 16, 9000, 25000),
+            Latency::High => (6, 24, 14000, 30000),
+        };
+        LatencySetting {
+            latency,
+            video_delay,
+            audio_buf_min,
+            audio_buf_max,
+        }
+    }
+}
+
+impl Default for LatencySetting {
+    fn default() -> Self {
+        Latency::default().setting()
     }
 }
 
@@ -576,6 +620,7 @@ pub struct AppSettings {
     pub hotkey_pressed_at: f32,
     pub mouse_index: Option<usize>,
     pub speed_test: bool,
+    pub latency: Latency,
     pub tv_mode: bool,
     pub idle_timeout: i32,
     pub info_delay: u64,

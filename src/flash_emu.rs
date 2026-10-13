@@ -174,7 +174,7 @@ impl Backend for FlashEmu {
         // frontend (`Emulator::run`) paces `run()` at the movie's fps and assumes
         // each call carries one frame's worth of audio. Draining the whole channel
         // here instead would push several frames of audio per paced call (flooding
-        // the sink past `AUDIO_BUF_MAX` -> continuous "Dropping frame") and would
+        // the sink past `audio_buf_max` -> continuous "Dropping frame") and would
         // keep the bounded channel from ever filling, defeating the blocking-send
         // backpressure that throttles the worker to real time.
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {

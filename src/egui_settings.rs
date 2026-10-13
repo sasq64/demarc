@@ -86,6 +86,7 @@ impl Range {
     /// integer type narrower than 53 bits converts losslessly; `u64`/`i64`
     /// bounds have to be written as `f64` literals, which is no worse than the
     /// precision [`egui::DragValue`] works in anyway.
+    #[allow(dead_code)]
     pub fn new(min: impl Into<f64>, max: impl Into<f64>) -> Self {
         let (min, max) = (min.into(), max.into());
         Self {

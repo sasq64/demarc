@@ -15,6 +15,7 @@ pub struct FakeState {
     pub pointer: Vec<(f32, f32)>,
     pub buttons: Vec<(bool, bool, bool)>,
     pub focus: Vec<ViewFocus>,
+    pub latency: Option<usize>,
 
     pub frame: VideoFrame,
     pub used: Option<(usize, usize)>,
@@ -40,6 +41,7 @@ impl Default for FakeState {
             pointer: Vec::new(),
             buttons: Vec::new(),
             focus: Vec::new(),
+            latency: None,
             frame: VideoFrame::default(),
             used: None,
             audio: Vec::new(),
@@ -92,6 +94,10 @@ impl Backend for FakeBackend {
 
     fn reset(&mut self) {
         self.lock().resets += 1;
+    }
+
+    fn set_latency(&mut self, frames: usize) {
+        self.lock().latency = Some(frames);
     }
 
     fn press_key(&mut self, code: u32, down: bool, mods: u16) {

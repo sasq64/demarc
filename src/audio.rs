@@ -301,6 +301,9 @@ pub fn init_audio_stream(
     Ok((config.sample_rate as f32, stream))
 }
 
+/// Samples the ring between an emulator and its audio callback holds.
+pub(crate) const RING_SIZE: usize = 4096 * 8;
+
 #[derive(Default)]
 pub struct AudioSink {
     pub producer: Option<Mutex<HeapProd<f32>>>,
@@ -314,7 +317,7 @@ pub struct AudioSink {
 
 impl AudioSink {
     pub fn activate(&mut self) {
-        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(4096 * 8).split();
+        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
         let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.volume.clone()) else {
             error!("Could not init audio");
             return;

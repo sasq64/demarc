@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
-use crate::backend::{Backend, InputEvent, STATE_SKIPPING, VideoFrame, ViewFocus};
+use crate::backend::{Backend, InputEvent, MAX_LATENCY, STATE_SKIPPING, VideoFrame, ViewFocus};
 use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
 use super::{FrameTarget, RetroCoreDirect};
@@ -24,6 +24,23 @@ pub(super) const WORKER_STACK_SIZE: usize = 32 * 1024 * 1024;
 /// matching release is sent. Long enough for any core to notice the press.
 /// A click also hovers this long before it presses.
 pub(super) const KEY_HOLD_FRAMES: u64 = 2;
+
+/// The frame limit a backend starts with, from its `latency` meta.
+pub(super) fn latency_from_meta(meta: &HashMap<String, String>) -> usize {
+    let latency = meta.get("latency").and_then(|l| l.parse().ok()).unwrap_or(3);
+    clamp_latency(latency)
+}
+
+pub(super) fn clamp_latency(frames: usize) -> usize {
+    frames.clamp(1, MAX_LATENCY)
+}
+
+/// The frames in the update channel, and how many the worker may put there.
+#[derive(Default)]
+struct Fill {
+    queued: AtomicUsize,
+    limit: AtomicUsize,
+}
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
 pub(super) enum RetroCmd {
@@ -142,6 +159,8 @@ pub struct RetroCoreThreaded {
     /// the channel. The worker only ever clears it, on the frame the skip runs
     /// out, so the two sides never fight over the bit.
     state: Arc<AtomicU64>,
+    fill: Arc<Fill>,
+    speed_test: bool,
     info: Option<String>,
 }
 
@@ -165,13 +184,12 @@ impl RetroCoreThreaded {
         let system_dir = system_dir.to_path_buf();
         let game = game.map(|g| g.to_path_buf());
 
-        let mut latency = 3;
-        if let Some(l) = meta.get("latency") {
-            latency = l.parse().unwrap_or(3);
-        }
+        let fill = Arc::new(Fill::default());
+        fill.limit.store(latency_from_meta(&meta), Ordering::Relaxed);
+        let worker_fill = Arc::clone(&fill);
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<RetroCmd>();
-        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(latency);
+        let (update_tx, update_rx) = mpsc::sync_channel::<RetroUpdate>(MAX_LATENCY);
         let (setup_tx, setup_rx) = mpsc::channel::<Result<SetupResult, String>>();
 
         let info = meta.get("info").cloned();
@@ -209,6 +227,7 @@ impl RetroCoreThreaded {
                     &update_tx,
                     &worker_frames,
                     &worker_state,
+                    &worker_fill,
                     speed_test,
                 );
                 // `core` is dropped here, running retro_deinit on this thread.
@@ -242,6 +261,8 @@ impl RetroCoreThreaded {
                 disk_count: disks,
                 frames,
                 state,
+                fill,
+                speed_test,
                 info,
             }),
             Ok(Err(e)) => {
@@ -256,6 +277,18 @@ impl RetroCoreThreaded {
     }
 }
 
+/// Longest the worker sleeps on a full queue before looking at its commands
+/// again; the frontend wakes it sooner by taking a frame.
+const THROTTLE_POLL: Duration = Duration::from_millis(5);
+
+impl RetroCoreThreaded {
+    fn wake_worker(&self) {
+        if let Some(handle) = &self.handle {
+            handle.thread().unpark();
+        }
+    }
+}
+
 /// Worker-thread main loop
 fn worker_loop(
     core: &mut RetroCoreDirect,
@@ -263,6 +296,7 @@ fn worker_loop(
     update_tx: &mpsc::SyncSender<RetroUpdate>,
     frames: &AtomicU64,
     state: &AtomicU64,
+    fill: &Fill,
     speed_test: bool,
 ) {
     // Input scheduled by `RetroCmd::SendEvents`, as (frame to fire on, step).
@@ -291,6 +325,13 @@ fn worker_loop(
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return,
             }
+        }
+
+        if !speed_test
+            && fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed)
+        {
+            thread::park_timeout(THROTTLE_POLL);
+            continue;
         }
 
         play_due(core, &mut key_queue, frame);
@@ -375,8 +416,11 @@ fn worker_loop(
                     Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
                     Err(mpsc::TrySendError::Disconnected(_)) => return,
                 }
-            } else if update_tx.send(update).is_err() {
-                return; // main side gone
+            } else {
+                fill.queued.fetch_add(1, Ordering::AcqRel);
+                if update_tx.send(update).is_err() {
+                    return; // main side gone
+                }
             }
         }
     }
@@ -455,6 +499,10 @@ pub(super) fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
 impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
+            if !self.speed_test {
+                self.fill.queued.fetch_sub(1, Ordering::AcqRel);
+                self.wake_worker();
+            }
             self.frame = update.frame;
             self.frame_diff = update.frame_diff;
             self.aggregated_diff = update.aggregated_diff;
@@ -476,6 +524,11 @@ impl Backend for RetroCoreThreaded {
     }
     fn get_info(&self) -> Option<String> {
         self.info.clone()
+    }
+
+    fn set_latency(&mut self, frames: usize) {
+        self.fill.limit.store(clamp_latency(frames), Ordering::Relaxed);
+        self.wake_worker();
     }
 
     fn focus(&mut self, focus: ViewFocus) {
@@ -591,6 +644,7 @@ impl Drop for RetroCoreThreaded {
         // once the worker has dropped its SyncSender, which it does after the
         // core has been unloaded, so a disconnect means the join is free.
         let _ = self.cmd_tx.send(RetroCmd::Unload);
+        self.wake_worker();
         let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let rx = self.update_rx.get_mut().unwrap();
         loop {

@@ -43,6 +43,9 @@ pub enum ViewFocus {
 /// yet. Cleared on the frame the skip runs out.
 pub const STATE_SKIPPING: u64 = 1 << 0;
 
+/// The most finished frames a backend may hold for the frontend.
+pub const MAX_LATENCY: usize = 10;
+
 /// Abstract interface over a libretro emulator core.
 pub trait Backend {
     fn set_disk(&mut self, no: u32);
@@ -139,6 +142,10 @@ pub trait Backend {
     fn get_info(&self) -> Option<String> {
         None
     }
+
+    /// How many finished frames the backend may run ahead of the frontend, up
+    /// to [`MAX_LATENCY`].
+    fn set_latency(&mut self, _frames: usize) {}
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture

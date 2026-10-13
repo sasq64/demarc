@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
-use crate::config::{AppSettings, GlobalSettings};
-use crate::egui_settings::{Range, ReflectDisplay, SettingsApplied};
+use crate::config::{AppSettings, GlobalSettings, Latency};
+use crate::egui_settings::{ReflectDisplay, SettingsApplied};
 use crate::post_process::ShaderPath;
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
@@ -147,12 +147,7 @@ pub struct DemarcSettings {
     /// Draw the picker with larger text.
     pub zoom_launcher: bool,
 
-    /// Frames a core's worker thread may run ahead. Takes effect on the next
-    /// release loaded -- see [`crate::newsys::NewSys::set_meta`]. `0` would be
-    /// a rendezvous channel (the worker blocked until the frontend takes each
-    /// frame), so the range starts at 1.
-    #[reflect(@Range::new(1, 8))]
-    pub latency: u32,
+    pub latency: Latency,
 
     pub crt_limit: f32,
     pub downsample_limit: f32,
@@ -190,9 +185,10 @@ pub fn apply_settings(
             clear_color.0 = new.background;
         }
         if new.latency != current.latency {
+            app_settings.latency = new.latency;
             app_settings
                 .system
-                .set_meta("latency", new.latency.to_string());
+                .set_meta("latency", new.latency.setting().latency.to_string());
         }
         if new.c64_fast_load != current.c64_fast_load {
             global.0.insert("c64_fast_load", new.c64_fast_load.to_string());

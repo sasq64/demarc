@@ -543,6 +543,7 @@ fn main() {
             .collect(),
         maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
+        latency: args.latency,
         tv_mode: args.tv_mode,
         idle_timeout: args.idle_timeout,
         info_delay: args.info_delay,

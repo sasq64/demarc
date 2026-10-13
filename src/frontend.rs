@@ -54,8 +54,6 @@ pub(crate) struct EmuView {
 
 /// Color of the outline drawn around the currently-focused emulator.
 const CURRENT_OUTLINE_COLOR: Color = Color::srgb(1.0, 0.55, 0.0);
-/// How many frames the picture lags behind the core.
-const FRAME_DELAY: usize = 16;
 
 /// Build the cells for a `cols`x`rows` grid, laid out left-to-right then
 /// top-to-bottom so cell index `i` is the emulator's stable index.
@@ -557,6 +555,7 @@ pub(crate) fn run_frontend(
                 .flatten();
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
+        emu.set_latency(settings.latency.setting());
         emu.run(&time);
 
         if emu.skip_finished() {
@@ -573,7 +572,7 @@ pub(crate) fn run_frontend(
 
         let frame = emu.core.as_ref().unwrap().frame();
         emu.frame_queue.push_back(frame);
-        while emu.frame_queue.len() > FRAME_DELAY + 1 {
+        while emu.frame_queue.len() > emu.latency.video_delay + 1 {
             emu.frame_queue.pop_front();
         }
         let frame = emu.frame_queue.front().unwrap().clone();
