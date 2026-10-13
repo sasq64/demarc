@@ -332,8 +332,14 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
                 .to_string_lossy()
                 .into_owned(),
         );
+        let path = match in_path.to_str() {
+            Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+                FileSource::Url(UrlList::parse_field(leak(url.to_owned())))
+            }
+            _ => in_path.into(),
+        };
         Ok(EmuFile {
-            path: in_path.into(),
+            path,
             game_info: GameInfo {
                 title,
                 ..Default::default()

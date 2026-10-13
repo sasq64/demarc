@@ -95,6 +95,20 @@ Database files can be found for each release (Assets)
 
 You can also download/build them with the scripts in "demodb/" in this repo.
 
+### Browser extension (Chromium/Chrome/Brave on Linux)
+
+Adds *Run in Demarc* to the right click menu of a download link.
+
+```bash
+browser-extension/install.sh
+```
+
+Then open `chrome://extensions`, turn on *Developer mode* and *Load unpacked*
+the `browser-extension` directory.
+
+The extension's options take extra menu entries, one per line: `AGA=--aga --fast`
+adds *Run in Demarc (AGA)*, which runs with those options.
+
 ## USING WINE (LINUX ONLY)
 
 * Install wine (latest version)

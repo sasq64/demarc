@@ -414,3 +414,15 @@ fn a_db_is_named_after_its_first_comment() {
         "csdb"
     );
 }
+
+#[test]
+fn collect_file_takes_a_url() {
+    let file = collect_file(Path::new("https://example.com/demos/a%20demo.zip")).unwrap();
+    let FileSource::Url(urls) = &file.path else {
+        panic!("not a URL: {:?}", file.path);
+    };
+    assert_eq!(urls.first(), Some("https://example.com/demos/a%20demo.zip"));
+
+    let file = collect_file(Path::new("demos/a.zip")).unwrap();
+    assert!(matches!(file.path, FileSource::Path(_)));
+}

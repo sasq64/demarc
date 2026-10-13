@@ -334,3 +334,8 @@
   log buffer overrun by `GL_EXTENSIONS`, then a `GL_MAX_TEXTURE_SIZE`-squared
   texture (0x30000000 bytes, NULL). `__GL_ExtensionStringVersion` and
   `MESA_EXTENSION_MAX_YEAR` do not shorten wine's extension string.
+
+- The `files` help text in `config.rs` said an http(s) URL could be given, but
+  `collect_file` made every argument a local path. A browser extension was
+  built and handed over on the help text alone; one headless run with a URL
+  would have shown `No such file or directory` first.
