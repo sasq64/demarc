@@ -15,6 +15,12 @@ buffer it feeds, so Fairlight's "Uncovering Static" crashes: it plays its one
 55 MB buffer from a header on the stack and then reuses that stack. The copy's
 flags go back to the app's header, and callbacks get the app's pointer.
 
+`midiOutOpen` gets a DirectMusic synth port with every instrument of the
+default GM collection (the prefix's `gm.dls`) downloaded, and the
+`midiOut*` calls on that handle go to it. Wine's own midiOut plays to the
+host's ALSA sequencer, which nothing in the session hears, so Gopher & LJ's
+"Yama" was silent. `midiStream*` still goes to wine.
+
 - `exports.txt` — `ordinal name stdcall-arg-bytes`, ordinals 2–194 taken from
   Windows 10 (10240 and 28000 are identical), then the names only wine has.
   Exports wine does not implement return 0.

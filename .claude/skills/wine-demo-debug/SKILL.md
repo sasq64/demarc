@@ -84,7 +84,8 @@ at start. A `wine_dialog_res:pick` field on the db line leaves the dialog up.
 
 **winedbg.** `winedbg --file cmds "Z:\\path\\x.exe"` with `cont`, `info reg`,
 `bt`, `x/Nx` in `cmds`; copy the exe to a space-free path. For a packed exe,
-dump the unpacked code from `/proc/<pid>/mem` while it runs and
+dump the unpacked code from `/proc/<pid>/mem` while it runs (from
+the script that started gamescope, since ptrace_scope only lets ancestors read) and
 `objdump -b binary --adjust-vma=0x400000`.
 
 **wineserver.** `wineserver -f -p -d1` logs the request stream when `wine`
@@ -159,6 +160,11 @@ texgen. Dump the vertices and states at the draw (winedbg breakpoint on the
 device vtable). Fix in the unpacked exe; Nature v2.0 (`zoo.8340`) routes each
 `SetVertexShader(XYZRHW)` through a stub that zeroes both.
 
+**NaN uniforms, frames slowing to seconds.** `+opengl` shows a
+`glUniform*` value of `-nan(ind)`: the intro leaks x87 stack slots per frame
+and `fild` overflows. The opengl32 proxy's `emms` after `wglSwapBuffers`
+covers it (Yama, `zoo.398638`).
+
 **Black or instant exit with a small `wine_res`.** Grep the `--no-silence` log
 for `Setting display mode` / `Failed to change display mode`: a mode larger
 than the session cannot be set. A `returned -2` with a mode that fits is the
@@ -194,7 +200,8 @@ sizes. Fix the unpacked exe and ship a bsdiff `source` patch (Akkordarbeit,
 `zoo.20036`).
 
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
-stack address. winmm MIDI is silent without a synth and soundfont. Odd ACM
+stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth
+(`gm.dls`); `midiStream*` is still silent. Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).
 
 ## Further reading

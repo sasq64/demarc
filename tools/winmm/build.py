@@ -13,7 +13,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = "i686-pc-windows-msvc"
 
 KERNEL32 = ["LoadLibraryW@4", "GetProcAddress@8", "GetEnvironmentVariableW@12",
-            "DisableThreadLibraryCalls@4"]
+            "DisableThreadLibraryCalls@4", "CreateThread@24", "CreateEventW@16", "SetEvent@4",
+            "WaitForSingleObject@8"]
 
 
 def read_exports():

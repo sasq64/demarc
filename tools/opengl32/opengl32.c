@@ -117,6 +117,17 @@ static int __stdcall choose_pixel_format(void *hdc, const unsigned char *pfd)
     return wine_choose_pixel_format(hdc, pfd);
 }
 
+// Windows leaves the x87 stack empty after a swap. Yama leaks one value per
+// frame and gets a NaN time once it overflows.
+static int(__stdcall *wine_swap_buffers)(void *hdc);
+
+static int __stdcall swap_buffers(void *hdc)
+{
+    int ret = wine_swap_buffers(hdc);
+    __asm__ volatile("emms");
+    return ret;
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
@@ -136,6 +147,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglChoosePixelFormat")) {
                 wine_choose_pixel_format = address;
                 address = choose_pixel_format;
+            } else if (address && equal(names[i], "wglSwapBuffers")) {
+                wine_swap_buffers = address;
+                address = swap_buffers;
             }
         } else {
             LdrGetProcedureAddress(wine, 0, ordinals[i], &address);

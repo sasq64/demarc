@@ -917,3 +917,7 @@ patch = {
   format = "bsdiff",
   source = "win/patches/transformer3.bsdiff",
 }
+
+# Yama by Gopher & LJ: draws and copies a fixed 1920x1080 whatever the window.
+[zoo.398638]
+meta = { wine_res = "1920x1080" }

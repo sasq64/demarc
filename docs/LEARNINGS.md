@@ -362,3 +362,21 @@
   highest core version and was fine. A jar whose central directory lists each
   entry twice (`unzip` calls it a zip bomb) can take a recompressed class in
   place when it is no larger; the bsdiff then stays at 12 KB.
+
+- A GL intro whose `+opengl` trace shows `glUniform*` with `-nan(ind)` and
+  frames slowing to seconds: an x87 stack leak. Yama (`zoo.398638`) pushes
+  its time twice per frame and pops once; after 8 frames `fild` overflows to
+  the indefinite NaN. Windows clears the stack somewhere per frame, so the
+  opengl32 proxy now runs `emms` after `wglSwapBuffers`. Its
+  `ChangeDisplaySettings ... -2` was a garbage DEVMODE and a red herring.
+  Getting the unpacked code: a winedbg `break *addr` set before Crinkler
+  unpacks is overwritten, and `break SwapBuffers` finds no symbols under
+  wow64; `/proc/<pid>/mem` *is* readable from a Python script that started
+  `gamescope ... wine demo.exe` itself (ptrace_scope 1 allows ancestors).
+
+- Wine's `midiOutOpen(0)` opens the host's ALSA sequencer port
+  (`PipeWire-System`), outside the session's audio capture and with no synth
+  behind it, so a winmm MIDI intro is silent without an error
+  (`WINEDEBUG=+midi` lists the ports). The winmm proxy now plays `midiOut*`
+  through a DirectMusic synth port with `gm.dls`; loading every GM instrument
+  costs about a second at open.

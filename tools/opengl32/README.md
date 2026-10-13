@@ -12,5 +12,9 @@ fetches `glGenTextures` that way and calls the NULL.
 request of 24+ bits asks for no alpha, as Windows drivers hand out alpha
 anyway. Kewlers' "Aesterozoa" quits when `GL_ALPHA_BITS` is 0.
 
+`wglSwapBuffers` empties the x87 register stack (`emms`) after the swap.
+Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
+overflows, under wine the time turns NaN after a few frames.
+
 `just opengl32` rebuilds `files/opengl32.dll`. `scripts/mk_wine_prefix.sh`
 installs it, demarc sets `opengl32=n,b`.
