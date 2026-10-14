@@ -18,10 +18,8 @@ use ringbuf::{
 
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
-/// Largest fractional drift correction [`AudioResampler::set_adjust`] will
-/// honour. The async resampler is built with this much relative-ratio headroom
-/// so corrections can be applied on the fly without rebuilding. Kept well above
-/// the controller's own clamp so it never saturates here.
+/// How far from `1.0` [`AudioResampler::set_adjust`] may move the ratio; the
+/// resampler is built with this much headroom.
 const MAX_RATIO_ADJUST: f64 = 0.05;
 
 /// Resamples interleaved stereo audio from the core's native rate to the
@@ -72,19 +70,10 @@ impl AudioResampler {
         })
     }
 
-    /// Nudge the output/input ratio by `adjust` (a small signed fraction, e.g.
-    /// `+0.002` for +0.2%) to compensate for clock drift between the emulator
-    /// and the audio device, without rebuilding the resampler.
-    ///
-    /// A positive `adjust` raises the effective input rate, so the resampler
-    /// emits *fewer* output frames per input frame and the downstream ring
-    /// buffer drains; a negative `adjust` does the reverse and lets it fill.
-    /// The change is ramped over the next chunk to avoid zipper noise, and
-    /// clamped to the headroom the resampler was built with.
+    /// Multiply the output/input ratio by `adjust`: `1.0` leaves it alone,
+    /// `0.99` emits 1% fewer output frames (the ring drains), `1.01` 1% more.
     pub fn set_adjust(&mut self, adjust: f64) {
-        let adjust = adjust.clamp(-MAX_RATIO_ADJUST, MAX_RATIO_ADJUST);
-        // rel < 1 when adjust > 0: faster input -> fewer output frames.
-        let rel = 1.0 / (1.0 + adjust);
+        let rel = adjust.clamp(1.0 - MAX_RATIO_ADJUST, 1.0 + MAX_RATIO_ADJUST);
         if let Err(e) = self.inner.set_resample_ratio_relative(rel, true) {
             warn!("audio ratio adjust failed: {e}");
         }
@@ -260,14 +249,10 @@ pub fn init_audio_stream(
     let (supported, sample_rate) = pick_output_config(device.supported_output_configs()?, target)
         .expect("no supported config");
 
-    // We continuously adjust the resample ratio based on how full the ring
-    // buffer is, so a small buffer is desirable for tight feedback. Prefer 2048
-    // frames, but clamp into the device's advertised range: if the smallest
-    // supported buffer is larger than 2048 we take that (the lowest supported),
-    // and if the range is unknown we let the backend choose. cpal's CoreAudio
-    // backend rejects out-of-range fixed sizes with `StreamConfigNotSupported`,
-    // so this clamp is what keeps macOS happy.
-    const PREFERRED_BUFFER: u32 = 2048;
+    // A small buffer keeps latency down and lets the ring run near empty. Clamp
+    // into the device's advertised range: cpal's CoreAudio backend rejects
+    // out-of-range fixed sizes with `StreamConfigNotSupported`.
+    const PREFERRED_BUFFER: u32 = 512;
     let buffer_size = match supported.buffer_size() {
         cpal::SupportedBufferSize::Range { min, max } => {
             cpal::BufferSize::Fixed(PREFERRED_BUFFER.clamp(*min, *max))

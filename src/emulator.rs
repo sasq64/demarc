@@ -86,7 +86,10 @@ pub struct Emulator {
     pub match_frames: usize,
     pub sink: AudioSink,
     pub key_map: HashMap<KeyCode, libretro::retro_key>,
+    /// Multiplier on the resample ratio; `1.0` is no correction.
     pub audio_rate_adjust: f64,
+    /// Smoothed fill of the audio sink, in samples; `0` until first measured.
+    pub audio_fill: f64,
     pub audio_seen: bool,
     pub disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
@@ -308,6 +311,7 @@ impl Emulator {
         Emulator {
             max_time,
             run_next: true,
+            audio_rate_adjust: 1.0,
             key_map: Self::build_keycode_map(),
             image: handle.clone(),
             width,
@@ -645,8 +649,12 @@ impl Emulator {
         // below fire on every single frame, running the demo at double speed.
         let has_audio = self.audio_seen;
         let occupied_len = self.sink.occupied_len();
-
-        //let p = self.producer.lock().unwrap();
+        self.audio_fill = if self.audio_fill == 0.0 {
+            occupied_len as f64
+        } else {
+            self.audio_fill * 0.95 + occupied_len as f64 * 0.05
+        };
+        self.audio_rate_adjust = rate_adjust(self.audio_fill, &self.latency);
 
         trace!("DELTA {delta} vs {}", self.display_fps,);
 
@@ -681,15 +689,23 @@ impl Emulator {
         // mark its end. Clearing the flag here re-arms the buffer-dry catch-up
         // above, which is the only thing that refills the ring buffer the skip
         // drained; left latched (as it was), the deficit is never repaid and
-        // the audio callback underruns from here on. Meanwhile the integral has
-        // wound down to its clamp against an emptiness the controller had no
-        // say over, so reset it rather than let it unwind against real audio.
+        // the audio callback underruns from here on. The smoothed fill tracked
+        // the drained ring, so start it over from the refilled one.
         if self.skipping && got_audio {
             self.skipping = false;
-            self.audio_rate_adjust = 0.0;
+            self.audio_fill = 0.0;
         }
         result
     }
+}
+
+/// Resample ratio multiplier that steers the smoothed sink `fill` down towards
+/// just above `audio_buf_min`, so the ring runs near empty instead of filling.
+fn rate_adjust(fill: f64, latency: &LatencySetting) -> f64 {
+    let min = latency.audio_buf_min as f64;
+    let window = (latency.audio_buf_max - latency.audio_buf_min) as f64;
+    let target = min + window / 8.0;
+    (1.0 - 0.01 * (fill - target) / window).clamp(0.99, 1.01)
 }
 
 #[cfg(test)]

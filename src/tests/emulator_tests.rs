@@ -568,7 +568,6 @@ fn a_skip_ends_when_audio_comes_back() {
     let mut emu = emulator(&core);
     emu.audio_seen = true;
     emu.skip(500);
-    emu.audio_rate_adjust = -0.01;
 
     emu.run(&Time::default());
     assert!(emu.skipping, "no audio yet, so the skip is still running");
@@ -577,7 +576,19 @@ fn a_skip_ends_when_audio_comes_back() {
     core.lock().audio = vec![0; 64];
     emu.run(&Time::default());
     assert!(!emu.skipping);
-    assert_eq!(emu.audio_rate_adjust, 0.0);
+    assert_eq!(emu.audio_fill, 0.0, "the drained fill is not carried past the skip");
+}
+
+#[test]
+fn the_rate_adjust_drains_a_full_sink_and_fills_an_empty_one() {
+    let latency = LatencySetting::default();
+    let target = latency.audio_buf_min + (latency.audio_buf_max - latency.audio_buf_min) / 8;
+
+    assert!((rate_adjust(target as f64, &latency) - 1.0).abs() < 1e-9);
+    assert!(rate_adjust(latency.audio_buf_max as f64, &latency) < 1.0);
+    assert!(rate_adjust(latency.audio_buf_min as f64, &latency) > 1.0);
+    assert_eq!(rate_adjust(1e9, &latency), 0.99);
+    assert!(rate_adjust(0.0, &latency) <= 1.01);
 }
 
 #[test]
