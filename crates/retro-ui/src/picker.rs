@@ -11,7 +11,6 @@ use egui::{
     scroll_area::ScrollAreaOutput,
     text::{CCursor, CCursorRange},
 };
-use tracing::info;
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource, ListIcon};
 use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
@@ -417,7 +416,7 @@ impl<T: 'static> Picker<T> {
                                 let bg = if (i as i32) == (*index + 1) {
                                     SELECTED_TITLE_BG
                                 } else {
-                                    egui::Color32::BLACK
+                                    egui::Color32::TRANSPARENT
                                 };
                                 ui.add(egui::Label::new(
                                     egui::RichText::new(part)

@@ -155,6 +155,12 @@ impl FileCache {
         }
     }
 
+    pub fn is_cached(&self, key: &str, filename: &str) -> bool {
+        let dir = self.root.join(hash_key(key));
+        let path = dir.join(filename);
+        path.is_file()
+    }
+
     /// The cached file `filename` for `key`, producing it if it isn't there.
     ///
     /// On a miss `produce` is called with the path to write and is expected to

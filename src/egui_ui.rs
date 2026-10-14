@@ -2,6 +2,7 @@
 //! and state, and turns what it returns back into messages.
 
 use bevy::{camera::visibility::RenderLayers, prelude::*};
+use bevy_egui::egui::Color32;
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
@@ -261,6 +262,7 @@ fn draw_picker(
         let mut vt = false;
         let mut winner = 0;
         let mut nominee = 0;
+        let mut cached = false;
         if let Some(emu_file) = source.get_data(id) {
             cdc = emu_file.cdc();
             for award in emu_file.get_wins() {
@@ -275,12 +277,21 @@ fn draw_picker(
                     _ => nominee += 1,
                 }
             }
+            cached = emu_file.is_cached().unwrap_or(false);
         }
         let font = job
             .sections
             .first()
             .map(|s| s.format.font_id.clone())
             .unwrap_or_default();
+        if cached {
+            job.append(
+                "\u{f409}",
+                10.0,
+                egui::TextFormat::simple(font.clone(), Color32::WHITE),
+            );
+        }
+
         for _ in 0..winner {
             job.append(
                 " \u{f4cf}",
@@ -295,7 +306,6 @@ fn draw_picker(
                 egui::TextFormat::simple(font.clone(), SILVER_COLOR),
             );
         }
-
         let mut x = if winner > 0 || nominee > 0 {
             20.0
         } else {

@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use newsys::fetch::{is_download_cached, is_download_cached_progress};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -379,6 +380,7 @@ fn fetch_release(
 ) -> Result<(PathBuf, Vec<String>)> {
     let failed = RefCell::new(HashSet::new());
     let fetched = RefCell::new(Vec::new());
+    // Wrap fetch() with inspection code to report failures
     let mut fetch = |url: &str, on_progress: OnProgress<'_>| {
         fetch(url, on_progress)
             .inspect(|_| fetched.borrow_mut().push(url.to_owned()))
@@ -503,6 +505,20 @@ impl FileSource {
             FileSource::Path(p) => Ok((p, used)),
             FileSource::Url(_) => unreachable!("just converted to Path above"),
         }
+    }
+
+    fn is_cached(&self) -> Result<bool> {
+        if let FileSource::Url(urls) = self {
+            let downloads = release_downloads(urls.as_slice());
+            let (p, _fetched) =
+                fetch_release(&downloads, &|_, _| {}, &is_download_cached_progress)?;
+            return Ok(p
+                .to_str()
+                .unwrap_or("false")
+                .parse::<bool>()
+                .unwrap_or(false));
+        }
+        Ok(true)
     }
 }
 
@@ -813,6 +829,10 @@ pub struct EmuFile {
 }
 
 impl EmuFile {
+    pub fn is_cached(&self) -> Result<bool> {
+        self.path.is_cached()
+    }
+
     pub fn get_meta(&self, name: &str) -> &'static str {
         self.meta.get(name).copied().unwrap_or("")
     }
