@@ -118,6 +118,9 @@ struct RetroUpdate {
     fps: f64,
     frame_diff: f32,
     aggregated_diff: f32,
+    /// Share of the worker's time spent not waiting, over the last
+    /// [`CPU_WINDOW`].
+    cpu: f32,
 }
 
 pub struct RetroCoreThreaded {
@@ -133,6 +136,7 @@ pub struct RetroCoreThreaded {
     /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
     frame_diff: f32,
     aggregated_diff: f32,
+    cpu: f32,
     audio_sum: i32,
     last_sum: i32,
     frame_width: usize,
@@ -247,6 +251,7 @@ impl RetroCoreThreaded {
                 frame: Arc::default(),
                 frame_diff: 0.0,
                 aggregated_diff: 0.0,
+                cpu: 0.0,
                 audio_sum: 0,
                 last_sum: 0,
                 frame_width: width,
@@ -281,6 +286,8 @@ impl RetroCoreThreaded {
 /// again; the frontend wakes it sooner by taking a frame.
 const THROTTLE_POLL: Duration = Duration::from_millis(5);
 
+const CPU_WINDOW: Duration = Duration::from_millis(250);
+
 impl RetroCoreThreaded {
     fn wake_worker(&self) {
         if let Some(handle) = &self.handle {
@@ -311,6 +318,9 @@ fn worker_loop(
     // the frontend has dropped every other reference to it.
     let mut pool: Vec<Arc<Vec<u32>>> = Vec::new();
     let mut aggregated_diff = 0.0f32;
+    let mut window_start = Instant::now();
+    let mut idle = Duration::ZERO;
+    let mut cpu = 0.0f32;
     loop {
         let frame = frames.load(Ordering::Relaxed);
 
@@ -330,7 +340,9 @@ fn worker_loop(
         if !speed_test
             && fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed)
         {
+            let t = Instant::now();
             thread::park_timeout(THROTTLE_POLL);
+            idle += t.elapsed();
             continue;
         }
 
@@ -395,6 +407,13 @@ fn worker_loop(
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
 
+            let window = window_start.elapsed();
+            if window >= CPU_WINDOW {
+                cpu = 1.0 - idle.as_secs_f32() / window.as_secs_f32();
+                window_start = Instant::now();
+                idle = Duration::ZERO;
+            }
+
             let update = RetroUpdate {
                 width,
                 height,
@@ -407,6 +426,7 @@ fn worker_loop(
                 fps: core.fps(),
                 frame_diff,
                 aggregated_diff,
+                cpu,
             };
             if speed_test {
                 // Benchmark: never block on the consumer. Hand off the latest frame
@@ -418,9 +438,11 @@ fn worker_loop(
                 }
             } else {
                 fill.queued.fetch_add(1, Ordering::AcqRel);
+                let t = Instant::now();
                 if update_tx.send(update).is_err() {
                     return; // main side gone
                 }
+                idle += t.elapsed();
             }
         }
     }
@@ -506,6 +528,7 @@ impl Backend for RetroCoreThreaded {
             self.frame = update.frame;
             self.frame_diff = update.frame_diff;
             self.aggregated_diff = update.aggregated_diff;
+            self.cpu = update.cpu;
             self.frame_width = update.width;
             self.frame_height = update.height;
             self.used_width = update.used_width;
@@ -623,6 +646,12 @@ impl Backend for RetroCoreThreaded {
     }
     fn frames_stepped(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
+    }
+    fn queued_frames(&self) -> usize {
+        self.fill.queued.load(Ordering::Relaxed)
+    }
+    fn cpu_load(&self) -> f32 {
+        self.cpu
     }
 }
 

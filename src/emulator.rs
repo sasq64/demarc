@@ -129,6 +129,8 @@ pub struct Emulator {
     /// copied and re-uploaded again.
     pub shown_frame: Option<Arc<Vec<u32>>>,
     pub latency: LatencySetting,
+    /// This emulator's `emu` column in the `--frame-log` CSV.
+    log_id: usize,
 }
 
 impl Emulator {
@@ -318,6 +320,7 @@ impl Emulator {
             height,
             color_cycle,
             speed_test,
+            log_id: crate::frame_log::next_id(),
             ..Default::default()
         }
     }
@@ -655,6 +658,18 @@ impl Emulator {
             self.audio_fill * 0.95 + occupied_len as f64 * 0.05
         };
         self.audio_rate_adjust = rate_adjust(self.audio_fill, &self.latency);
+
+        crate::frame_log::log(&crate::frame_log::FrameStats {
+            emu: self.log_id,
+            time: time.elapsed_secs_f64(),
+            delta,
+            fill: occupied_len,
+            queued: core.queued_frames(),
+            buf_min: self.latency.audio_buf_min,
+            buf_max: self.latency.audio_buf_max,
+            fps,
+            cpu: core.cpu_load(),
+        });
 
         trace!("DELTA {delta} vs {}", self.display_fps,);
 

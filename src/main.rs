@@ -42,6 +42,7 @@ mod emulator;
 #[path = "tests/fake_backend.rs"]
 mod fake_backend;
 mod files;
+mod frame_log;
 mod frame_upload;
 mod frontend;
 mod headless;
@@ -388,6 +389,12 @@ fn main() {
     // Asked and answered before anything else happens: nothing is loaded, no
     // window opens, and the exit code says whether Windows releases would run,
     // so this is usable from a script.
+    if let Some(path) = &args.frame_log
+        && let Err(e) = frame_log::open(path)
+    {
+        eprintln!("Could not open frame log {}: {e}", path.display());
+        std::process::exit(1);
+    }
     if args.check_wine {
         std::process::exit(check_wine_and_report());
     }

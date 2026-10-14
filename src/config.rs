@@ -206,6 +206,10 @@ pub struct Args {
     #[arg(long)]
     pub speed_test: bool,
 
+    /// Write per-frame audio fill / frame delta / queued frame stats as CSV
+    #[arg(long, value_name = "FILE")]
+    pub frame_log: Option<PathBuf>,
+
     /// Report whether Windows releases can be run here — wine, bwrap and the
     /// ~/.wine-demarc prefix — then exit. Without all three, .exe releases are
     /// left to whatever else can claim them.
@@ -473,6 +477,7 @@ impl From<ScaleModeArg> for ScaleMode {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, bevy::reflect::Reflect, clap::ValueEnum)]
 pub enum Latency {
+    VeryLow,
     Low,
     #[default]
     Medium,
@@ -495,9 +500,10 @@ pub struct LatencySetting {
 impl Latency {
     pub fn setting(self) -> LatencySetting {
         let (latency, video_delay, audio_buf_min, audio_buf_max) = match self {
-            Latency::Low => (1, 0, 6000, 18000),
-            Latency::Medium => (2, 16, 9000, 25000),
-            Latency::High => (6, 24, 14000, 30000),
+            Latency::VeryLow => (1, 0, 2000, 6000),
+            Latency::Low => (1, 0, 2000, 12000),
+            Latency::Medium => (2, 6, 3000, 18000),
+            Latency::High => (4, 16, 54000, 20000),
         };
         LatencySetting {
             latency,

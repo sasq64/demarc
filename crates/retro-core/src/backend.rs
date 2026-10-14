@@ -95,6 +95,15 @@ pub trait Backend {
     fn frames_stepped(&self) -> u64 {
         0
     }
+    /// Finished frames waiting in the backend's update channel.
+    fn queued_frames(&self) -> usize {
+        0
+    }
+    /// Share (0..1) of the time the core's worker spent busy rather than
+    /// waiting, measured over the last delivered frame.
+    fn cpu_load(&self) -> f32 {
+        0.0
+    }
     /// Bitmask of what the backend is doing right now, for the frontend to
     /// reflect in the UI — see the `STATE_*` constants. Read every displayed
     /// frame, so it must be cheap (an atomic load for the threaded core, which
