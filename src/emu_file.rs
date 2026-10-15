@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use newsys::fetch::{is_download_cached, is_download_cached_progress};
+use newsys::fetch::is_download_cached;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -317,13 +317,12 @@ pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
 /// `fetch` is a parameter so the walk can be tested without a network.
 fn fetch_first_available(
     urls: &[impl AsRef<str>],
-    on_progress: OnProgress<'_>,
-    fetch: &mut impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+    fetch: &mut impl FnMut(&str) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
     let mut last_error = None;
     for url in urls {
         let url = url.as_ref();
-        match fetch(url, on_progress) {
+        match fetch(url) {
             Ok(path) => return Ok(path),
             Err(e) => {
                 warn!("download failed for {url}: {e:#}");
@@ -341,15 +340,16 @@ fn fetch_first_available(
 /// A disk falls back through its own alternatives, but a disk that can't be
 /// fetched at all fails the whole set: half a set won't boot, and the caller
 /// has other downloads to fall back on.
+///
+/// `fetch` is told whether to report progress for the URL it is given.
 fn fetch_download(
     download: &Download<'_>,
-    on_progress: OnProgress<'_>,
-    fetch: &mut impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+    fetch: &mut impl FnMut(&str, bool) -> Result<PathBuf>,
 ) -> Result<PathBuf> {
     // Normalized rather than passed on as they are stored — see `cache_keys`
     // for why the cache wants that form.
     match download {
-        Download::File(url) => fetch(&cache_key(url), on_progress),
+        Download::File(url) => fetch(&cache_key(url), true),
         Download::Disks(disks) => {
             let mut files = Vec::with_capacity(disks.len());
             for alternatives in disks {
@@ -358,8 +358,7 @@ fn fetch_download(
                 // progress bar on every disk.
                 files.push(fetch_first_available(
                     &cache_keys(alternatives),
-                    &|_, _| {},
-                    fetch,
+                    &mut |url| fetch(url, false),
                 )?);
             }
             crate::fetch::gather_files(&files)
@@ -375,14 +374,13 @@ fn fetch_download(
 /// [`fetch_first_available`], the last failure is the one reported.
 fn fetch_release(
     downloads: &[Download<'_>],
-    on_progress: OnProgress<'_>,
-    mut fetch: impl FnMut(&str, OnProgress<'_>) -> Result<PathBuf>,
+    mut fetch: impl FnMut(&str, bool) -> Result<PathBuf>,
 ) -> Result<(PathBuf, Vec<String>)> {
     let failed = RefCell::new(HashSet::new());
     let fetched = RefCell::new(Vec::new());
     // Wrap fetch() with inspection code to report failures
-    let mut fetch = |url: &str, on_progress: OnProgress<'_>| {
-        fetch(url, on_progress)
+    let mut fetch = |url: &str, report: bool| {
+        fetch(url, report)
             .inspect(|_| fetched.borrow_mut().push(url.to_owned()))
             .inspect_err(|_| {
                 failed.borrow_mut().insert(url.to_owned());
@@ -399,7 +397,7 @@ fn fetch_release(
             continue;
         }
         fetched.borrow_mut().clear();
-        match fetch_download(download, on_progress, &mut fetch) {
+        match fetch_download(download, &mut fetch) {
             Ok(path) => return Ok((path, fetched.take())),
             Err(e) => {
                 warn!("download failed for {}: {e:#}", download.label());
@@ -494,31 +492,34 @@ impl FileSource {
             // disk set that sits together in one directory (built into an m3u
             // later), an archive, a reupload. The first that lands wins.
             let downloads = release_downloads(urls.as_slice());
-            let (p, fetched) = fetch_release(&downloads, on_progress, fetch_url_with_progress)?;
+            let (p, fetched) = fetch_release(&downloads, |url, report| {
+                fetch_url_with_progress(url, if report { on_progress } else { &|_, _| {} })
+            })?;
             used = urls
                 .iter()
                 .filter(|url| fetched.contains(&cache_key(url)))
                 .collect();
             *self = FileSource::Path(p);
         }
-        match self {
-            FileSource::Path(p) => Ok((p, used)),
-            FileSource::Url(_) => unreachable!("just converted to Path above"),
-        }
+        let FileSource::Path(p) = self else {
+            unreachable!("just converted to Path above")
+        };
+        Ok((p, used))
     }
 
-    fn is_cached(&self) -> Result<bool> {
-        if let FileSource::Url(urls) = self {
-            let downloads = release_downloads(urls.as_slice());
-            let (p, _fetched) =
-                fetch_release(&downloads, &|_, _| {}, &is_download_cached_progress)?;
-            return Ok(p
-                .to_str()
-                .unwrap_or("false")
-                .parse::<bool>()
-                .unwrap_or(false));
-        }
-        Ok(true)
+    /// Whether any of the release's downloads is already in the cache in full:
+    /// a file, or a copy of every disk of a set.
+    fn is_cached(&self) -> bool {
+        let FileSource::Url(urls) = self else {
+            return true;
+        };
+        let cached = |url: &&str| is_download_cached(&cache_key(url));
+        release_downloads(urls.as_slice())
+            .iter()
+            .any(|download| match download {
+                Download::File(url) => cached(url),
+                Download::Disks(disks) => disks.iter().all(|disk| disk.iter().any(cached)),
+            })
     }
 }
 
@@ -829,7 +830,7 @@ pub struct EmuFile {
 }
 
 impl EmuFile {
-    pub fn is_cached(&self) -> Result<bool> {
+    pub fn is_cached(&self) -> bool {
         self.path.is_cached()
     }
 

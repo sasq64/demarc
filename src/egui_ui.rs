@@ -277,7 +277,7 @@ fn draw_picker(
                     _ => nominee += 1,
                 }
             }
-            cached = emu_file.is_cached().unwrap_or(false);
+            cached = emu_file.is_cached();
         }
         let font = job
             .sections

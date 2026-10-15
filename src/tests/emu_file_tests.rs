@@ -5,7 +5,7 @@ use std::cell::RefCell;
 /// isn't `works`, and report which URLs were tried alongside the result.
 fn walk(urls: &[&str], works: &str) -> (Vec<String>, Result<PathBuf>) {
     let tried = RefCell::new(Vec::new());
-    let result = fetch_first_available(urls, &|_, _| {}, &mut |url: &str, _| {
+    let result = fetch_first_available(urls, &mut |url: &str| {
         tried.borrow_mut().push(url.to_string());
         if url.ends_with(works) {
             Ok(PathBuf::from(works))
@@ -22,7 +22,7 @@ fn walk(urls: &[&str], works: &str) -> (Vec<String>, Result<PathBuf>) {
 fn load(urls: &[&str], dead: &[&str]) -> (Vec<String>, Result<PathBuf>) {
     let cache = tempfile::tempdir().expect("temp dir");
     let tried = RefCell::new(Vec::new());
-    let result = fetch_release(&release_downloads(urls), &|_, _| {}, |url: &str, _| {
+    let result = fetch_release(&release_downloads(urls), |url: &str, _| {
         tried.borrow_mut().push(url.to_string());
         if dead.iter().any(|d| url.ends_with(d)) {
             return Err(anyhow!("{url} is dead"));

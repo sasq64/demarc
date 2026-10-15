@@ -290,18 +290,6 @@ pub fn is_download_cached(url: &str) -> bool {
     DOWNLOADS.is_cached(url, &name)
 }
 
-pub fn is_download_cached_progress(
-    url: &str,
-    _on_progress: OnProgress<'_>,
-) -> anyhow::Result<PathBuf> {
-    let name = url_filename(&primary_url(url));
-    if DOWNLOADS.is_cached(url, &name) {
-        Ok(PathBuf::from("true"))
-    } else {
-        Ok(PathBuf::from("false"))
-    }
-}
-
 /// Copy `files` into a single fresh temp directory and return that directory's
 /// path, so the disks of a set end up side by side in one directory.
 ///
