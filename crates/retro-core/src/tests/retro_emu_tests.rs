@@ -119,7 +119,7 @@ fn retro_threaded_works() {
 #[test]
 fn retro_threaded_multi_works() {
     let uae_core = core("puae");
-    let vice_core = core("vice_x64");
+    let vice_core = core("vice_x64sc");
     // The two cores no longer share a system dir — the Amiga one is a subdir of
     // it (see `amiga_system_dir()`).
     let uae_system = root("system/amiga");
@@ -220,15 +220,14 @@ fn retro_amiga_concurrent_loads_work() {
     });
 }
 
-/// Boots a licence-stripped scene disc with an MP3 audio track — the shape
-/// Beetle can't handle, and the reason pcsx_rearmed is the default. No BIOS
-/// is installed here, so this also covers the HLE path.
+/// Boots a disc image on pcsx_rearmed, the default PSX core. No BIOS is
+/// installed here, so this also covers the HLE path.
 ///
 /// Runs under the PAL region `create_core` now pins, since forcing a region
 /// is the one way this default could break a disc that booted on `auto`.
 #[test]
 fn retro_psx_works() {
-    let core_path = core("mednafen_psx");
+    let core_path = core("pcsx_rearmed");
     // A temp dir, not `system/`: PSX needs nothing from it, and the core
     // writes memory-card files into the system dir — which `build.rs` would
     // then pack into the embedded `system.zip`.
@@ -236,21 +235,13 @@ fn retro_psx_works() {
         .prefix("demarc-")
         .tempdir()
         .unwrap();
-    let game_path = root("testdata/psx/pdx-dlcm.psx");
+    let game_path = root("testdata/psx/thisispsx/thisispsx_rc1c_iso.bin");
 
     let mut meta = HashMap::new();
-    meta.insert("beetle_psx_region".to_string(), "pal".to_string());
-    for f in [
-        "scph5500.bin",
-        "scph5501.bin",
-        "scph5502.bin",
-        "scph5552.bin",
-    ] {
-        std::fs::copy(root("system").join(f), system_dir.path().join(f)).unwrap();
-    }
+    meta.insert("pcsx_rearmed_region".to_string(), "PAL".to_string());
     let mut emu =
         RetroCoreDirect::new(&core_path, system_dir.path(), Some(&game_path), meta).unwrap();
-    for _ in 0..150 {
+    for _ in 0..1000 {
         emu.run();
     }
     // emu.save_png(&root("test_psx.png")).unwrap();
@@ -268,7 +259,7 @@ fn retro_psx_works() {
 
 #[test]
 fn retro_vice_works() {
-    let core_path = core("vice_x64");
+    let core_path = core("vice_x64sc");
     let system_dir = &root("system");
     let game_path = root("testdata/c64/quantum.prg");
 

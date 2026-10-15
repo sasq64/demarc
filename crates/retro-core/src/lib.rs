@@ -5,6 +5,7 @@
 //! crates — so it cross-compiles to targets the rest of demarc cannot reach.
 //! See `docs/ANDROID.md`.
 
+pub mod audio;
 pub mod backend;
 mod find;
 #[allow(warnings)]

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::Result;
 
-use bevy::prelude::*;
+use tracing::{debug, error, info, warn};
 
 use cpal::{
     SampleFormat, SampleRate, StreamConfig, SupportedStreamConfigRange,
@@ -287,7 +287,7 @@ pub fn init_audio_stream(
 }
 
 /// Samples the ring between an emulator and its audio callback holds.
-pub(crate) const RING_SIZE: usize = 4096 * 8;
+pub const RING_SIZE: usize = 4096 * 8;
 
 #[derive(Default)]
 pub struct AudioSink {
@@ -342,13 +342,13 @@ impl AudioSink {
         }
     }
 
-    pub(crate) fn set_adjust(&mut self, audio_rate_adjust: f64) {
+    pub fn set_adjust(&mut self, audio_rate_adjust: f64) {
         if let Some(resampler) = &mut self.resampler {
             resampler.set_adjust(audio_rate_adjust);
         }
     }
 
-    pub(crate) fn occupied_len(&self) -> usize {
+    pub fn occupied_len(&self) -> usize {
         if let Some(producer) = &self.producer {
             producer.lock().unwrap().occupied_len()
         } else {
