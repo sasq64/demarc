@@ -100,6 +100,7 @@ pub fn load_async(
     } else if let Some(name) = over.and_then(|o| o.download) {
         source.pick_download(name);
     }
+    let writeback = over.filter(|o| o.cache_writeback).cloned();
     let job = Job::spawn(name, move |progress| {
         let (path, fetched) = source.resolve_with_progress(&|done, total| {
             progress.set_done(done);
@@ -111,7 +112,10 @@ pub fn load_async(
         // a progress bar doesn't sit at 100% for the rest of the job.
         progress.set_total(0);
         progress.set_done(0);
-        newsys::unpack_release(path, &meta)
+        match &writeback {
+            Some(over) => newsys::unpack_release_writeback(path, &meta, over),
+            None => newsys::unpack_release(path, &meta),
+        }
     });
 
     PendingLoad {

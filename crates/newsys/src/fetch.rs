@@ -285,6 +285,11 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
     DOWNLOADS.get_file(url, &name, |dest| download_to(url, dest, on_progress))
 }
 
+/// Whether `path` is an entry in the download cache.
+pub fn is_download(path: &Path) -> bool {
+    path.starts_with(DOWNLOADS.root())
+}
+
 pub fn is_download_cached(url: &str) -> bool {
     let name = url_filename(&primary_url(url));
     DOWNLOADS.is_cached(url, &name)

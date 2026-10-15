@@ -568,3 +568,28 @@ fn key_hasher_is_stable_and_content_sensitive() {
     assert_ne!(key_of(&["ab", "c"]), key_of(&["a", "bc"]));
     assert_eq!(key_of(&["abc"]).len(), 16);
 }
+
+#[test]
+fn a_written_back_entry_is_a_writable_hit() {
+    let (tmp, cache) = temp_cache();
+    let path = cache
+        .get_file("key", "demo.zip", |dest| Ok(std::fs::write(dest, b"zip")?))
+        .unwrap();
+    let unpacked = tmp.path().join("unpacked");
+    std::fs::create_dir_all(unpacked.join("sub")).unwrap();
+    let file = unpacked.join("sub/demo.exe");
+    std::fs::write(&file, b"exe").unwrap();
+    let mut perms = std::fs::metadata(&file).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&file, perms).unwrap();
+
+    write_back(&path, &unpacked).unwrap();
+
+    assert!(is_writeback(&path));
+    assert!(cache.is_cached("key", "demo.zip"));
+    let hit = cache
+        .get_file("key", "demo.zip", |_| panic!("should be a hit"))
+        .unwrap();
+    assert_eq!(hit, path);
+    std::fs::write(path.join("sub/demo.exe"), b"new").unwrap();
+}

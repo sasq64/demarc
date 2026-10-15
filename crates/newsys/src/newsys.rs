@@ -12,7 +12,7 @@ use crate::release_override::{Override, Patch};
 use crate::retro_emu;
 use crate::system_dir;
 use crate::workfile::WorkFile;
-use crate::{SysOpts, libloader};
+use crate::{SysOpts, cache, fetch, libloader};
 
 use crate::utils::{get_ext, has_archive_filename, has_extension, read_at, sort_disks};
 use crate::utils::{is_archive, unpack_into};
@@ -220,6 +220,32 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
     Ok(wf)
 }
 
+/// [`unpack_release`] for a release with `cache_writeback` set: the first time,
+/// the unpacked and patched release replaces its download in the cache, and
+/// from then on it runs from there.
+pub fn unpack_release_writeback(
+    path: &Path,
+    meta: &HashMap<String, String>,
+    over: &Override,
+) -> Result<WorkFile> {
+    let mut wf = unpack_release(path, meta)?;
+    if cache::is_writeback(path) {
+        info!("Running {path:?} from the cache");
+        if let Some(stem) = path.file_stem() {
+            wf.set_meta(ARCHIVE_NAME, stem.to_string_lossy());
+        }
+        return Ok(WorkFile::new_in_place(path, wf.get_all_meta()));
+    }
+    if !wf.is_temporary() || !fetch::is_download(path) {
+        warn!("Can't write {path:?} back to the cache");
+        return Ok(wf);
+    }
+    apply_patches(&mut wf, &over.patches)?;
+    cache::write_back(path, &wf.path)?;
+    info!("Wrote {path:?} back to the cache");
+    Ok(WorkFile::new_in_place(path, wf.get_all_meta()))
+}
+
 /// Meta key holding the name of the archive a release was unpacked from, which
 /// the temp dir it now sits in no longer carries.
 pub const ARCHIVE_NAME: &str = "archive_name";
@@ -250,7 +276,8 @@ fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
         debug!("Override sets {key}={val}");
         file.set_meta(key, *val);
     }
-    if !over.patches.is_empty() {
+    // An in-place release was patched before it was written back
+    if !over.patches.is_empty() && !file.is_in_place() {
         apply_patches(file, &over.patches)?;
     }
     if let Some(boot) = over.boot_file {

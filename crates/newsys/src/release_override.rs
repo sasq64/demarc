@@ -80,4 +80,7 @@ pub struct Override {
     pub fast: bool,
     // Passed to `Backend::send_events` once the backend is created
     pub events: Vec<(u32, InputEvent)>,
+    // Replace the download in the cache with the unpacked (and patched)
+    // release and run it from there, keeping whatever it writes
+    pub cache_writeback: bool,
 }

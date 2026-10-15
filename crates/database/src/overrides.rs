@@ -40,6 +40,9 @@
 //! [zoo.7236]
 //! fast = true                        # accelerated A1200 with FPU, Z3 mem and JIT
 //!
+//! [zoo.9000]
+//! cache_writeback = true             # unpack into the download cache, run from there
+//!
 //! [zoo.108]
 //! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
 //! events = [{ frame = 400, click = [0.57, 0.94] }]  # left click, 0..1 over the frame
@@ -146,6 +149,10 @@ struct RawOverride {
     /// Keys to press or clicks to make, as `events = [{ frame = 50, key = "Enter" }]`.
     #[serde(default)]
     events: Vec<RawEvent>,
+    /// Run the release from its unpacked copy in the download cache, so data it
+    /// generates on first start is still there the next time.
+    #[serde(default)]
+    cache_writeback: bool,
 }
 
 /// One `events` entry. `key` is turned into a keycode by the [`KeyResolver`];
@@ -303,6 +310,7 @@ impl RawOverride {
             patches,
             fast: self.fast,
             events,
+            cache_writeback: self.cache_writeback,
         })
     }
 }

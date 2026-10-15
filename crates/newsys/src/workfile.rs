@@ -15,6 +15,8 @@ pub struct WorkFile {
     pub path: PathBuf,
     // If Some, must be parent of PathBuf or PathBuf
     pub temp_dir: Option<TempDir>,
+    // The path is a writable copy that persists, so make_temp() leaves it be
+    in_place: bool,
     meta: HashMap<String, String>,
 }
 
@@ -23,6 +25,7 @@ impl WorkFile {
         Self {
             path: path.into(),
             temp_dir: None,
+            in_place: false,
             meta: HashMap::new(),
         }
     }
@@ -31,6 +34,16 @@ impl WorkFile {
         Self {
             path: path.into(),
             temp_dir: None,
+            in_place: false,
+            meta,
+        }
+    }
+
+    pub fn new_in_place(path: impl Into<PathBuf>, meta: HashMap<String, String>) -> Self {
+        Self {
+            path: path.into(),
+            temp_dir: None,
+            in_place: true,
             meta,
         }
     }
@@ -40,6 +53,7 @@ impl WorkFile {
         Ok(Self {
             path: temp_dir.path().into(),
             temp_dir: Some(temp_dir),
+            in_place: false,
             meta: HashMap::new(),
         })
     }
@@ -49,6 +63,7 @@ impl WorkFile {
         Ok(Self {
             path: temp_dir.path().into(),
             temp_dir: Some(temp_dir),
+            in_place: false,
             meta,
         })
     }
@@ -100,7 +115,7 @@ impl WorkFile {
 
     // Make sure 'path' is in a temp dir and can be modified
     pub fn make_temp(&mut self) -> Result<()> {
-        if self.temp_dir.is_none() {
+        if self.temp_dir.is_none() && !self.in_place {
             let temp_dir = tempfile::Builder::new().prefix("demarc-").tempdir()?;
             let dir = temp_dir.path();
             if self.path.is_dir() {
@@ -124,6 +139,10 @@ impl WorkFile {
             path: path.into(),
             ..self
         }
+    }
+
+    pub fn is_in_place(&self) -> bool {
+        self.in_place
     }
 
     pub fn is_temporary(&self) -> bool {

@@ -320,3 +320,18 @@ fn keys_overrides_on_db_and_id() {
     assert_eq!(DemoId::new("Demozoo", 5), Some(zoo(5)));
     assert_eq!(DemoId::new("Files", 5), None);
 }
+
+#[test]
+fn parses_cache_writeback() {
+    let overrides = parse(
+        r#"
+        [zoo.7236]
+        cache_writeback = true
+        [zoo.108]
+        fast = true
+        "#,
+    )
+    .unwrap();
+    assert!(overrides[&zoo(7236)].cache_writeback);
+    assert!(!overrides[&zoo(108)].cache_writeback);
+}

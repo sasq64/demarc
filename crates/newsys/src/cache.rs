@@ -31,7 +31,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
@@ -53,6 +53,10 @@ const STAMP: &str = ".stamp";
 /// holding everything left over, `<entry size>=<budget>` for the ones below
 /// it.
 const LIMIT_FILE: &str = ".limit";
+
+/// Marks an entry whose file was replaced by the directory it unpacked to,
+/// see [`write_back`].
+const WRITEBACK: &str = ".writeback";
 
 /// How long a staging file must have gone untouched before
 /// [`FileCache::prune`] reads it as abandoned rather than in flight.
@@ -155,10 +159,14 @@ impl FileCache {
         }
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn is_cached(&self, key: &str, filename: &str) -> bool {
         let dir = self.root.join(hash_key(key));
         let path = dir.join(filename);
-        path.is_file()
+        path.is_file() || is_writeback(&path)
     }
 
     /// The cached file `filename` for `key`, producing it if it isn't there.
@@ -179,6 +187,10 @@ impl FileCache {
         // A stale entry is not a hit, but it is still a fallback: it stays on
         // disk while the replacement is produced, and is returned unchanged if
         // producing one fails.
+        if is_writeback(&path) {
+            touch(&dir.join(WRITEBACK));
+            return Ok(path);
+        }
         let stale = path.is_file() && {
             if !self.expired(&dir) {
                 // Mark the hit as recent so [`FileCache::prune`] evicts
@@ -450,6 +462,47 @@ impl FileCache {
         };
         entry_age(&dir.join(STAMP)).is_none_or(|age| age > max_age)
     }
+}
+
+/// Whether `path`, a file entry's path, has been replaced by a directory by
+/// [`write_back`].
+pub fn is_writeback(path: &Path) -> bool {
+    path.is_dir()
+        && path
+            .parent()
+            .is_some_and(|dir| dir.join(WRITEBACK).is_file())
+}
+
+/// Replace the cached file at `path` with a writable copy of `contents`, so the
+/// release can run straight out of the cache and keep what it writes there.
+pub fn write_back(path: &Path, contents: &Path) -> Result<()> {
+    let dir = path.parent().context("Cache entry has no directory")?;
+    let name = path.file_name().context("Cache entry has no name")?;
+    let staging = dir.join(format!(".{}.writeback.part", name.to_string_lossy()));
+    let _ = std::fs::remove_dir_all(&staging);
+    crate::utils::copy_dir_all(contents, &staging)?;
+    make_writable(&staging)?;
+    std::fs::write(dir.join(WRITEBACK), "")?;
+    std::fs::remove_file(path)?;
+    std::fs::rename(&staging, path)?;
+    Ok(())
+}
+
+fn make_writable(dir: &Path) -> Result<()> {
+    for entry in walkdir::WalkDir::new(dir) {
+        let path = entry?.into_path();
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(perms.mode() | 0o200);
+        }
+        #[cfg(not(unix))]
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&path, perms)?;
+    }
+    Ok(())
 }
 
 /// Builds a cache key out of content rather than out of a short string.
