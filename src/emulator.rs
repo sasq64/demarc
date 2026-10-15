@@ -14,8 +14,10 @@ use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
-use crate::loading::PendingLoad;
 use crate::workfile::WorkFile;
+
+mod load;
+pub(crate) use load::{LoadStatus, PendingLoad};
 
 type AudioTap = Box<dyn Fn(u32, &[i16]) + Send>;
 
@@ -135,7 +137,7 @@ pub struct Emulator {
     /// cross-faded load moves it to the emulator that just left the screen.
     pub is_crossfade: bool,
     /// Download in flight for the next file, driven by
-    /// [`Emulator::update_load`](crate::loading).
+    /// [`Emulator::update_load`].
     pub(crate) pending_load: Option<PendingLoad>,
     pub state: EmuState,
     /// Frames waiting to be shown, oldest first.

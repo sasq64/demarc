@@ -23,15 +23,9 @@ fn systems() -> Arc<NewSys> {
 /// Starts a load the way `handle_loading` does: `load_async` itself only
 /// spawns the job, and the bookkeeping around it belongs to the caller.
 fn start_load(emu: &mut Emulator, file: &EmuFile, over: Option<&Override>) {
-    if let Some(previous) = &emu.pending_load {
-        previous.phase.cancel();
-        DOWNLOAD_COUNTER.ended();
-    }
-    emu.state = EmuState::Loading;
     emu.run_next = false;
     emu.run_prev = false;
-    emu.pending_load = Some(load_async(file, over, &GlobalSettings::default()));
-    DOWNLOAD_COUNTER.started();
+    emu.start_load(file, over, &GlobalSettings::default());
 }
 
 /// Pumps `update_load` until it stops reporting `Pending`.

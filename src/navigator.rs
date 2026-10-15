@@ -7,7 +7,7 @@ use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 
 use crate::AppState;
-use crate::commands::{DownloadSource, IconMode, PickerSource};
+use crate::picker_sources::{DownloadSource, IconMode, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -26,6 +26,7 @@ use crate::commands::{Cmd, CmdMessage};
 use crate::config::{AppSettings, Args};
 use crate::emulator::Emulator;
 use crate::headless::HeadlessTarget;
+use crate::ui::key_message;
 
 /// What a Lua call asks the app to do, applied on the next `PreUpdate`.
 pub enum Action {
@@ -367,55 +368,6 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
     )?;
 
     Ok(())
-}
-
-/// Best-effort logical key for an injected press. The egui dialogs read this
-/// for text entry; the emulator only looks at `key_code`.
-fn logical_key(key: KeyCode) -> Key {
-    let name = format!("{key:?}");
-    if let Some(letter) = name.strip_prefix("Key")
-        && letter.len() == 1
-    {
-        return Key::Character(letter.to_lowercase().into());
-    }
-    if let Some(digit) = name.strip_prefix("Digit")
-        && digit.len() == 1
-    {
-        return Key::Character(digit.into());
-    }
-    match key {
-        KeyCode::Enter | KeyCode::NumpadEnter => Key::Enter,
-        KeyCode::Space => Key::Space,
-        KeyCode::Tab => Key::Tab,
-        KeyCode::Escape => Key::Escape,
-        KeyCode::Backspace => Key::Backspace,
-        KeyCode::Delete => Key::Delete,
-        KeyCode::Insert => Key::Insert,
-        KeyCode::Home => Key::Home,
-        KeyCode::End => Key::End,
-        KeyCode::PageUp => Key::PageUp,
-        KeyCode::PageDown => Key::PageDown,
-        KeyCode::ArrowUp => Key::ArrowUp,
-        KeyCode::ArrowDown => Key::ArrowDown,
-        KeyCode::ArrowLeft => Key::ArrowLeft,
-        KeyCode::ArrowRight => Key::ArrowRight,
-        KeyCode::ShiftLeft | KeyCode::ShiftRight => Key::Shift,
-        KeyCode::ControlLeft | KeyCode::ControlRight => Key::Control,
-        KeyCode::AltLeft | KeyCode::AltRight => Key::Alt,
-        KeyCode::SuperLeft | KeyCode::SuperRight => Key::Super,
-        _ => Key::Unidentified(NativeKey::Unidentified),
-    }
-}
-
-pub(crate) fn key_message(key: KeyCode, state: ButtonState, window: Entity) -> KeyboardInput {
-    KeyboardInput {
-        key_code: key,
-        logical_key: logical_key(key),
-        state,
-        text: None,
-        repeat: false,
-        window,
-    }
 }
 
 /// `mlua::Lua` is `Send` but not `Sync`, so the runner is a non-send resource

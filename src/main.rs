@@ -50,6 +50,7 @@ mod media_keys;
 mod mouse_cursor;
 mod navigator;
 mod patch_menu;
+mod picker_sources;
 mod playlists;
 mod post_process;
 mod remote_control;
