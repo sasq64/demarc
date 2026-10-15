@@ -149,7 +149,10 @@ impl System for C64System {
         let mut core =
             retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
         if !path.is_disabled("c64_fast_load") {
-            core.send_events(&[(50, InputEvent::Key(RETROK_F1)), (55, InputEvent::Key(RETROK_RETURN))]);
+            core.send_events(&[
+                (50, InputEvent::Key(RETROK_F1)),
+                (55, InputEvent::Key(RETROK_RETURN)),
+            ]);
         }
         Ok(core)
     }

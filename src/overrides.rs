@@ -59,12 +59,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::backend::InputEvent;
 use anyhow::{Context, Result, bail};
 use qbsdiff::Bspatch;
 use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
-use crate::backend::InputEvent;
 
 use crate::emu_file::{DemoId, Override, Patch};
 use crate::emulator::Emulator;

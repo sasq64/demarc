@@ -32,7 +32,10 @@ fn latency_levels_fit_the_frame_fifo_and_the_audio_ring() {
 
     for level in Latency::value_variants() {
         let s = level.setting();
-        assert!((1..=crate::backend::MAX_LATENCY).contains(&s.latency), "{level:?}");
+        assert!(
+            (1..=crate::backend::MAX_LATENCY).contains(&s.latency),
+            "{level:?}"
+        );
         assert!(s.audio_buf_min < s.audio_buf_max, "{level:?}");
         assert!(s.audio_buf_max < crate::audio::RING_SIZE, "{level:?}");
     }

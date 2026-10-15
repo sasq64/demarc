@@ -9,7 +9,11 @@ fn song(path: &str) -> (String, String, &str) {
 fn a_song_is_named_after_its_path() {
     assert_eq!(
         song("Protracker/Tip/coop-Kid Frost/sand in her hair.mod"),
-        ("Sand in her hair".into(), "Tip + Kid Frost".into(), "Protracker")
+        (
+            "Sand in her hair".into(),
+            "Tip + Kid Frost".into(),
+            "Protracker"
+        )
     );
     assert_eq!(
         song("NoiseTrekker/- unknown/robot-ballet.ntk"),
@@ -37,7 +41,11 @@ fn a_song_is_named_after_its_path() {
     );
     assert_eq!(
         song("His Master's Noise/Mahoney/coop Flex/waffle.mod"),
-        ("Waffle".into(), "Mahoney + Flex".into(), "His Master's Noise")
+        (
+            "Waffle".into(),
+            "Mahoney + Flex".into(),
+            "His Master's Noise"
+        )
     );
     assert_eq!(
         song("Video Game Music/Sega Megadrive/- unknown/Battle Golfer Yui/21 due.vgz"),
@@ -88,7 +96,9 @@ fn collections_have_their_own_layout() {
 #[test]
 fn an_index_is_told_from_a_db() {
     assert!(is_index("\n259547\tAce Tracker/505/blocks.am\n"));
-    assert!(!is_index("# Demozoo\nid:1\ttitle:A\tdownload:http://a/b.zip\n"));
+    assert!(!is_index(
+        "# Demozoo\nid:1\ttitle:A\tdownload:http://a/b.zip\n"
+    ));
     assert!(!is_index("id:1\ttitle:A\n"));
 }
 
@@ -132,6 +142,13 @@ fn an_hvsc_name_is_turned_to_match_another_directory() {
     let authors: Vec<_> = out.iter().map(|f| f.game_info.group).collect();
     assert_eq!(
         authors,
-        ["Jeroen Tel", "Mass Murderer", "Mad Max", "20CC", "Jeroen Tel", "Max Mad + Mad Max"]
+        [
+            "Jeroen Tel",
+            "Mass Murderer",
+            "Mad Max",
+            "20CC",
+            "Jeroen Tel",
+            "Max Mad + Mad Max"
+        ]
     );
 }

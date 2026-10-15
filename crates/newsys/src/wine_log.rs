@@ -57,7 +57,13 @@ pub fn capture(argv: Vec<String>) -> Vec<String> {
         return argv;
     };
     let winedebug = std::env::var("WINEDEBUG").unwrap_or_else(|_| WINEDEBUG.to_string());
-    let mut wrapped = vec!["sh".to_string(), "-c".to_string(), SCRIPT.to_string(), arg.to_string(), winedebug];
+    let mut wrapped = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        SCRIPT.to_string(),
+        arg.to_string(),
+        winedebug,
+    ];
     wrapped.extend(argv);
     thread::spawn(move || read_log(pipe, &fifo));
     wrapped

@@ -576,7 +576,10 @@ fn a_skip_ends_when_audio_comes_back() {
     core.lock().audio = vec![0; 64];
     emu.run(&Time::default());
     assert!(!emu.skipping);
-    assert_eq!(emu.audio_fill, 0.0, "the drained fill is not carried past the skip");
+    assert_eq!(
+        emu.audio_fill, 0.0,
+        "the drained fill is not carried past the skip"
+    );
 }
 
 #[test]

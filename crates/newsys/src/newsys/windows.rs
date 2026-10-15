@@ -17,20 +17,20 @@ use super::META_REFRESH;
 use super::dos::{ExeKind, exe_kind};
 use super::{META_WIDESCREEN, System, get_ext, walk_dir};
 use crate::backend::Backend;
-use crate::utils::read_at;
 #[cfg(target_os = "linux")]
 use crate::libloader;
 #[cfg(target_os = "linux")]
 use crate::retro_emu::RetroCoreThreaded;
 #[cfg(target_os = "linux")]
 use crate::system_dir;
+use crate::utils::read_at;
 #[cfg(target_os = "windows")]
 use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
-    DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW, META_GLSL_VERSION,
-    META_SHADER_READ,
-    OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
+    DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
+    META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix,
+    dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
@@ -201,9 +201,16 @@ fn fix_resource_dir(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
 
 /// Where `target` is once the release is in a temp dir that can be written to.
 fn writable_target(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
-    let rel = target.strip_prefix(&file.path).unwrap_or(Path::new("")).to_owned();
+    let rel = target
+        .strip_prefix(&file.path)
+        .unwrap_or(Path::new(""))
+        .to_owned();
     file.make_temp()?;
-    Ok(if rel.as_os_str().is_empty() { file.path.clone() } else { file.path.join(rel) })
+    Ok(if rel.as_os_str().is_empty() {
+        file.path.clone()
+    } else {
+        file.path.join(rel)
+    })
 }
 
 /// The cnc-ddraw files, relative to [`system_dir`].
@@ -504,7 +511,10 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
             {
                 argv.splice(
                     0..0,
-                    ["env".to_string(), format!("MESA_SHADER_READ_PATH={}", dir.display())],
+                    [
+                        "env".to_string(),
+                        format!("MESA_SHADER_READ_PATH={}", dir.display()),
+                    ],
                 );
             }
             let argv = match sandbox {

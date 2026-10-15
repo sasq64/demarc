@@ -153,7 +153,11 @@ pub fn fitting_modes(text: &str, res: &str) -> String {
         (Some((w, h)), Some((width, height))) => w <= width && h <= height,
         _ => true,
     };
-    clean_list(text).split(',').filter(fits).collect::<Vec<_>>().join(",")
+    clean_list(text)
+        .split(',')
+        .filter(fits)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// `WIDTHxHEIGHT`, or nothing.

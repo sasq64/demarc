@@ -131,11 +131,7 @@ fn swap_roles(
 
 /// Take a load meant for view `index` and return the view to run it in: the
 /// spare, which then fades in over the view that asked.
-pub(crate) fn redirect_load(
-    state: &mut CrossFade,
-    views: &mut Views,
-    index: usize,
-) -> usize {
+pub(crate) fn redirect_load(state: &mut CrossFade, views: &mut Views, index: usize) -> usize {
     if state.spare.is_none() || index == CROSSFADE_INDEX {
         return index;
     }

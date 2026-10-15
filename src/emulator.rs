@@ -469,7 +469,10 @@ impl Emulator {
             self.core.as_mut().unwrap().set_mouse_position(p.x, p.y);
         }
         let left = mouse_buttons.pressed(MouseButton::Left) | (self.buttons & 1 == 1);
-        if left && !self.left_down && let Some(p) = abs_pointer {
+        if left
+            && !self.left_down
+            && let Some(p) = abs_pointer
+        {
             let frame = self.core.as_ref().unwrap().frames_stepped();
             info!("{{ frame = {frame}, click = [{:.3}, {:.3}] }}", p.x, p.y);
         }

@@ -27,7 +27,10 @@ pub(super) const KEY_HOLD_FRAMES: u64 = 2;
 
 /// The frame limit a backend starts with, from its `latency` meta.
 pub(super) fn latency_from_meta(meta: &HashMap<String, String>) -> usize {
-    let latency = meta.get("latency").and_then(|l| l.parse().ok()).unwrap_or(3);
+    let latency = meta
+        .get("latency")
+        .and_then(|l| l.parse().ok())
+        .unwrap_or(3);
     clamp_latency(latency)
 }
 
@@ -80,7 +83,9 @@ pub(super) enum RetroCmd {
     },
     /// `(frame, event)` pairs, where the frame is relative to whenever the
     /// worker picks the command up — `0` meaning the next stepped frame.
-    SendEvents { events: Vec<(u32, InputEvent)> },
+    SendEvents {
+        events: Vec<(u32, InputEvent)>,
+    },
 }
 
 /// One step of a scheduled event, due on an absolute frame.
@@ -189,7 +194,8 @@ impl RetroCoreThreaded {
         let game = game.map(|g| g.to_path_buf());
 
         let fill = Arc::new(Fill::default());
-        fill.limit.store(latency_from_meta(&meta), Ordering::Relaxed);
+        fill.limit
+            .store(latency_from_meta(&meta), Ordering::Relaxed);
         let worker_fill = Arc::clone(&fill);
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<RetroCmd>();
@@ -337,8 +343,7 @@ fn worker_loop(
             }
         }
 
-        if !speed_test
-            && fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed)
+        if !speed_test && fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed)
         {
             let t = Instant::now();
             thread::park_timeout(THROTTLE_POLL);
@@ -550,7 +555,9 @@ impl Backend for RetroCoreThreaded {
     }
 
     fn set_latency(&mut self, frames: usize) {
-        self.fill.limit.store(clamp_latency(frames), Ordering::Relaxed);
+        self.fill
+            .limit
+            .store(clamp_latency(frames), Ordering::Relaxed);
         self.wake_worker();
     }
 

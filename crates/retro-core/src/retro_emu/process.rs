@@ -791,7 +791,9 @@ fn worker_loop(
                     for _ in 0..msg.a {
                         match chan.recv_blocking() {
                             Ok(m) if m.tag == MSG_KEY => events.push((m.a, InputEvent::Key(m.b))),
-                            Ok(m) if m.tag == MSG_CLICK => events.push((m.a, InputEvent::Click(m.x, m.y))),
+                            Ok(m) if m.tag == MSG_CLICK => {
+                                events.push((m.a, InputEvent::Click(m.x, m.y)))
+                            }
                             Ok(_) => {}
                             Err(_) => return,
                         }

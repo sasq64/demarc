@@ -287,9 +287,15 @@ fn side_margins_are_twice_the_vertical_ones() {
     let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
     step(&mut h, &mut picker, vec![]);
     let screen = h.ctx.content_rect();
-    let area = h.ctx.memory(|m| m.area_rect(egui::Id::new(AREA_ID))).unwrap();
+    let area = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
+        .unwrap();
     let side = (screen.width() - area.width()) / 2.0;
     let vertical = (screen.height() - area.height()) / 2.0;
     assert!(area.width() > screen.height());
-    assert!((side - 2.0 * vertical).abs() < 2.0, "{side} beside, {vertical} above");
+    assert!(
+        (side - 2.0 * vertical).abs() < 2.0,
+        "{side} beside, {vertical} above"
+    );
 }

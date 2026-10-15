@@ -257,11 +257,7 @@ fn push(shared: &Arc<Mutex<RemoteState>>, action: Action) {
 /// Register the globals a script drives demarc with. Every closure is `Send`
 /// (mlua's `send` feature) and owns a handle to the shared queue rather than
 /// borrowing anything it could not outlive.
-fn register(
-    lua: &Lua,
-    shared: &Arc<Mutex<RemoteState>>,
-    tap: &Arc<Mutex<AudioTap>>,
-) -> Result<()> {
+fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTap>>) -> Result<()> {
     let globals = lua.globals();
 
     // The emulator's map is the set of keys demarc can actually deliver, so it

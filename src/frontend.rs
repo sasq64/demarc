@@ -20,8 +20,8 @@ use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
 use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
-use crate::wine::{META_FILTER, is_yes};
 use crate::ui::{HudLocation, SetHudText, UiState};
+use crate::wine::{META_FILTER, is_yes};
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FrontendSet {
