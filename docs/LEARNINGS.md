@@ -380,3 +380,17 @@
   (`WINEDEBUG=+midi` lists the ports). The winmm proxy now plays `midiOut*`
   through a DirectMusic synth port with `gm.dls`; loading every GM instrument
   costs about a second at open.
+
+- `cargo fmt -- <file>` still formats the whole crate (and the workspace from
+  the root); to format one file use `rustfmt --edition 2024 <file>`.
+
+- "Failed to load X.jpg" for a file that exists (Lobstarrs Attack): the
+  statically linked libjpeg spills progressive JPEGs to `tmpfile()`, which the
+  old MSVC CRT creates as `\tNN.` in the root of the current drive. With the
+  cwd on Z: = `/` that fails with access denied. Found with `+relay` (grep
+  `ret=00[4-6]`) between the `CreateFileA` and the `MessageBoxA`. Fixed by an
+  override patch raising libjpeg's `DEFAULT_MAX_MEM` (`mov eax,1000000` in
+  `jpeg_mem_init`). A generic fix (a writable drive, since wine names the cwd
+  after the deepest drive above it) was tried and dropped: no other cached
+  release with libjpeg and progressive JPEGs hit it. The d3d
+  `state_linepattern_w` fixme was a red herring.

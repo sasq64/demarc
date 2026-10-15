@@ -183,7 +183,9 @@ autodlg works around the known case.
 
 **Message box before any window.** `WINEDEBUG=+relay wine demo.exe 2>&1 | grep
 'ret=004'` lists the calls up to the `MessageBoxA`; often a failed
-`SetCurrentDirectory` or file open, not a codec.
+`SetCurrentDirectory` or file open, not a codec. A `CreateFileA("\\tNN.")` that fails is
+the old CRT's `tmpfile()` writing to the drive root (Z: = `/`); for libjpeg,
+patch `DEFAULT_MAX_MEM` up (`zoo.8196`).
 
 **Old GL demo dies right after `glGetString`/`glGetIntegerv`.** Modern
 values overflow 2000-era assumptions: `GL_EXTENSIONS` into a fixed buffer,

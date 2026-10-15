@@ -918,6 +918,21 @@ patch = {
   source = "win/patches/transformer3.bsdiff",
 }
 
+# Click Clack, Lobster attack! by Lobstarrs. Its libjpeg spills progressive
+# JPEGs to tmpfile(), which the old CRT creates in the drive root (Z: = `/`
+# under wine): "Failed to load wise_guy.jpg". Raise jpeg_mem_init's 1 MB
+# DEFAULT_MAX_MEM to 256 MB so it never does.
+[zoo.8196]
+patch = {
+  info = "libjpeg max memory 256 MB",
+  target = "lobstarrs-attack.exe",
+  offset = 827777,
+  contents = "AAAAEA==",
+}
+
 # Yama by Gopher & LJ: draws and copies a fixed 1920x1080 whatever the window.
 [zoo.398638]
 meta = { wine_res = "1920x1080" }
+
+[zoo.154143]
+meta = { wine_res = "640x480" }
