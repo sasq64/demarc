@@ -11,7 +11,7 @@ fn a_song_is_named_after_its_path() {
         song("Protracker/Tip/coop-Kid Frost/sand in her hair.mod"),
         (
             "Sand in her hair".into(),
-            "Tip + Kid Frost".into(),
+            "Tip & Kid Frost".into(),
             "Protracker"
         )
     );
@@ -31,7 +31,7 @@ fn a_song_is_named_after_its_path() {
         song("Nintendo SPC/Tim Follin/coop-Geoff Follin/Spider-Man/06 - storm.spc"),
         (
             "Spider-Man (06 - storm)".into(),
-            "Tim Follin + Geoff Follin".into(),
+            "Tim Follin & Geoff Follin".into(),
             "Nintendo SPC"
         )
     );
@@ -43,7 +43,7 @@ fn a_song_is_named_after_its_path() {
         song("His Master's Noise/Mahoney/coop Flex/waffle.mod"),
         (
             "Waffle".into(),
-            "Mahoney + Flex".into(),
+            "Mahoney & Flex".into(),
             "His Master's Noise"
         )
     );
@@ -148,7 +148,7 @@ fn an_hvsc_name_is_turned_to_match_another_directory() {
             "Mad Max",
             "20CC",
             "Jeroen Tel",
-            "Max Mad + Mad Max"
+            "Max Mad & Mad Max"
         ]
     );
 }

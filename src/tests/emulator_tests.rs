@@ -525,12 +525,12 @@ fn a_display_at_the_cores_rate_is_followed_frame_for_frame() {
     assert_eq!(core.lock().runs, runs + 1);
 }
 
-/// With no stream the sink reports a level under `audio_buf_min`.
 #[test]
 fn a_dry_audio_buffer_steps_an_extra_frame() {
     let core = FakeBackend::default();
     let mut emu = emulator(&core);
     emu.audio_seen = true;
+    emu.latency.audio_buf_min = emu.sink.occupied_len() + 1;
 
     emu.run(&Time::default());
 

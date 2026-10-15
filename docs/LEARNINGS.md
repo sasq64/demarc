@@ -394,3 +394,9 @@
   after the deepest drive above it) was tried and dropped: no other cached
   release with libjpeg and progressive JPEGs hit it. The d3d
   `state_linepattern_w` fixme was a red herring.
+
+- Run `cargo test --workspace`, not `-p demarc`: a crate whose tests don't
+  even compile (retro-ui after an `open()` signature change) stays invisible
+  otherwise. The `retro_emu` core tests need the cores in `~/.cache/demarc/cores`,
+  so they must name the cores demarc actually fetches (`vice_x64sc`,
+  `pcsx_rearmed`).

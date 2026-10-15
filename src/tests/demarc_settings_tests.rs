@@ -75,7 +75,7 @@ fn latency_is_picked_from_its_levels() {
         panic!("latency is not a combo box");
     };
     let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();
-    assert_eq!(labels, vec!["Low", "Medium", "High"]);
+    assert_eq!(labels, vec!["VeryLow", "Low", "Medium", "High"]);
 }
 
 #[test]
