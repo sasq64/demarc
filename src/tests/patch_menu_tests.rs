@@ -43,3 +43,19 @@ fn apply_to(text: &str, id: u32, change: Change) -> String {
     edit(&mut doc, DemoId::new("zoo", id).unwrap(), &change).unwrap();
     doc.to_string()
 }
+
+#[test]
+fn replaces_events_with_recording() {
+    let out = apply(5, Change::Enters);
+    let recorded = vec![
+        (0, Recorded::Key(KeyCode::KeyY)),
+        (12, Recorded::Key(KeyCode::Enter)),
+        (40, Recorded::Click(Vec2::new(0.5, 0.25))),
+    ];
+    let out = apply_to(&out, 5, Change::Events(recorded));
+    assert!(!out.contains("frame = 50"), "{out}");
+    assert!(out.contains(r#"{ frame = 0, key = "Y" }"#), "{out}");
+    assert!(out.contains(r#"{ frame = 12, key = "Enter" }"#), "{out}");
+    assert!(out.contains("{ frame = 40, click = [0.5, 0.25] }"), "{out}");
+    overrides::parse(&out, Emulator::resolve_key_name).unwrap();
+}

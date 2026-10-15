@@ -66,6 +66,12 @@ impl InputMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Recorded {
+    Key(KeyCode),
+    Click(Vec2),
+}
+
 #[allow(dead_code)] // TODO: Use for better cross fading
 #[derive(Default)]
 pub enum EmuState {
@@ -128,6 +134,9 @@ pub struct Emulator {
     pub buttons: u32,
     /// The left button as last fed, to log each click once.
     left_down: bool,
+    /// Patch menu "Record Events": the frame recording started at, and what was
+    /// pressed since.
+    pub recording: Option<(u64, Vec<(u64, Recorded)>)>,
     pub last_active_time: f32,
     pub idle_time: f32,
     pub emu_file: EmuFile,
@@ -463,9 +472,17 @@ impl Emulator {
             mods |= libretro::RETROKMOD_SCROLLOCK as u16;
         }
         let joypad_port = self.input_mode.joypad_port();
+        let frame = self.core.as_ref().unwrap().frames_stepped();
+        let hot_key = input.any_pressed([KeyCode::AltRight, KeyCode::ControlRight]);
         for e in input.get_just_pressed() {
             if *e == KeyCode::F12 || *e == KeyCode::ControlRight || *e == KeyCode::AltRight {
                 continue;
+            }
+            if let Some((start, events)) = &mut self.recording
+                && !hot_key
+                && self.key_map.contains_key(e)
+            {
+                events.push((frame.saturating_sub(*start), Recorded::Key(*e)));
             }
             if let Some(port) = joypad_port
                 && let Some(id) = Self::joypad_button(*e)
@@ -505,8 +522,10 @@ impl Emulator {
             && !self.left_down
             && let Some(p) = abs_pointer
         {
-            let frame = self.core.as_ref().unwrap().frames_stepped();
             info!("{{ frame = {frame}, click = [{:.3}, {:.3}] }}", p.x, p.y);
+            if let Some((start, events)) = &mut self.recording {
+                events.push((frame.saturating_sub(*start), Recorded::Click(p)));
+            }
         }
         self.left_down = left;
         self.core.as_mut().unwrap().set_mouse_buttons(

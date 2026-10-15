@@ -11,7 +11,7 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, value};
 
 use crate::config::AppSettings;
 use crate::emu_file::DemoId;
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, Recorded};
 use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
 use crate::overrides;
@@ -24,7 +24,9 @@ const ITEMS: &[&str] = &[
     "Apply dos4gw",
     "Apply boot file",
     "Add Enter x 3",
+    "Record Events",
 ];
+const RECORD: usize = 4;
 
 pub struct PatchMenuPlugin;
 
@@ -41,6 +43,7 @@ fn overrides_path() -> PathBuf {
 fn open_menu(
     input: Res<ButtonInput<KeyCode>>,
     ui_state: Res<UiState>,
+    emus: Query<(&Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut show_list: MessageWriter<ShowFuzzyList>,
 ) {
@@ -54,7 +57,11 @@ fn open_menu(
     }
     // Keeps the hot key's release from also opening the command list.
     settings.hotkey_pressed_at = 0.0;
-    let items = ITEMS.iter().map(|s| s.to_string()).collect();
+    let recording = current(&emus, &settings).is_some_and(|emu| emu.recording.is_some());
+    let mut items: Vec<String> = ITEMS.iter().map(|s| s.to_string()).collect();
+    if recording {
+        items[RECORD] = "Commit Events".into();
+    }
     show_list.write(ShowFuzzyList {
         id: MENU_ID,
         source: Arc::new(AllWordsSource::new(items)),
@@ -67,7 +74,7 @@ fn open_menu(
 
 fn handle_select(
     mut reader: MessageReader<FuzzyListSelect>,
-    emus: Query<(&Emulator, &EmuView)>,
+    mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
     mut hud: MessageWriter<SetHudText>,
 ) {
@@ -75,13 +82,13 @@ fn handle_select(
         if msg.id != MENU_ID {
             continue;
         }
-        let Some((emu, _)) = emus
-            .iter()
+        let Some((mut emu, _)) = emus
+            .iter_mut()
             .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu)
         else {
             continue;
         };
-        let text = match patch(emu, msg.item, &mut settings) {
+        let text = match patch(&mut emu, msg.item, &mut settings) {
             Ok(text) => text,
             Err(err) => {
                 warn!("Patch menu: {err:#}");
@@ -97,11 +104,21 @@ fn handle_select(
     }
 }
 
+fn current<'a>(
+    emus: &'a Query<(&Emulator, &EmuView)>,
+    settings: &AppSettings,
+) -> Option<&'a Emulator> {
+    emus.iter()
+        .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu)
+        .map(|(emu, _)| emu)
+}
+
 #[derive(Debug, PartialEq)]
 enum Change {
     Meta(&'static str, String),
     Boot(String),
     Enters,
+    Events(Vec<(u64, Recorded)>),
 }
 
 fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
@@ -127,9 +144,20 @@ fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
     })
 }
 
-fn patch(emu: &Emulator, item: usize, settings: &mut AppSettings) -> Result<String> {
+fn patch(emu: &mut Emulator, item: usize, settings: &mut AppSettings) -> Result<String> {
     let id = emu.emu_file.demo_id().context("No db id")?;
-    let change = change_for(emu, item)?;
+    let change = if item == RECORD {
+        match emu.recording.take() {
+            Some((_, events)) => Change::Events(events),
+            None => {
+                let frame = emu.core.as_ref().context("No core")?.frames_stepped();
+                emu.recording = Some((frame, Vec::new()));
+                return Ok("Recording events".into());
+            }
+        }
+    } else {
+        change_for(emu, item)?
+    };
     let path = overrides_path();
     let text = std::fs::read_to_string(&path)?;
     let mut doc: DocumentMut = text.parse().context("Can't parse overrides")?;
@@ -140,7 +168,8 @@ fn patch(emu: &Emulator, item: usize, settings: &mut AppSettings) -> Result<Stri
         .context("Entry did not parse")?;
     std::fs::write(&path, text)?;
     settings.overrides.insert(id, over);
-    Ok(format!("{} -> [{}.{}]", ITEMS[item], id.db, id.id))
+    let name = if item == RECORD { "Commit Events" } else { ITEMS[item] };
+    Ok(format!("{name} -> [{}.{}]", id.db, id.id))
 }
 
 fn edit(doc: &mut DocumentMut, id: DemoId, change: &Change) -> Result<()> {
@@ -184,8 +213,38 @@ fn edit(doc: &mut DocumentMut, id: DemoId, change: &Change) -> Result<()> {
                 events.push(event);
             }
         }
+        Change::Events(recorded) => {
+            let mut events = Array::new();
+            for (frame, rec) in recorded {
+                let mut event = InlineTable::new();
+                event.insert("frame", (*frame as i64).into());
+                match rec {
+                    Recorded::Key(code) => {
+                        event.insert("key", key_name(*code).into());
+                    }
+                    Recorded::Click(p) => {
+                        let round = |v: f32| ((v * 1000.0).round() / 1000.0) as f64;
+                        let mut pos = Array::new();
+                        pos.push(round(p.x));
+                        pos.push(round(p.y));
+                        event.insert("click", pos.into());
+                    }
+                }
+                events.push(event);
+            }
+            entry.insert("events", value(events));
+        }
     }
     Ok(())
+}
+
+/// `KeyA` -> `A`, `Digit5` -> `5`, everything else as its `KeyCode` name.
+fn key_name(code: KeyCode) -> String {
+    let name = format!("{code:?}");
+    ["Key", "Digit"]
+        .iter()
+        .find_map(|p| name.strip_prefix(p).filter(|rest| rest.len() == 1))
+        .map_or(name.clone(), str::to_string)
 }
 
 #[cfg(test)]
