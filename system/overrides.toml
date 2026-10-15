@@ -95,6 +95,17 @@ patch = {
   contents = "jbhoTsAOag9ZvqBMQAA=",
 }
 
+# Butterfly Thoughts: QueryPerformanceFrequency gets a garbage pointer
+# (0xFEEDFACE). Windows' syscall returns FALSE and the timer falls back to
+# timeGetTime; wine's QPF writes through it and faults.
+[zoo.3815]
+patch = {
+  info = "QueryPerformanceFrequency fails, use timeGetTime",
+  target = "demotractor.dll",
+  offset = 153301,
+  contents = "McCQkJCQkA==",
+}
+
 [zoo.4767]
 boot = "final.png"
 
