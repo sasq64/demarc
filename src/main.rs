@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 
 // The libretro layer lives in its own crate now; re-exported here so the rest
 // of demarc keeps its `crate::backend` / `crate::retro_emu` paths.
-pub use retro_core::{backend, libretro, pixels, retro_emu};
+pub use retro_core::{audio, backend, libretro, pixels, retro_emu};
 
 // Likewise the loading pipeline and the backends that need no frontend. Both
 // re-export blocks keep the rest of demarc's `crate::<module>` paths working.
@@ -29,7 +29,6 @@ pub use ::newsys::{
 pub use ::database::{emu_file, files, load_error, modland, overrides};
 pub use ::retro_ui::fuzzy_list;
 
-mod audio;
 mod commands;
 mod config;
 mod cross_fade;
@@ -58,9 +57,6 @@ mod screensaver;
 mod shader_dialog;
 mod speed_test;
 mod ui;
-
-#[cfg(feature = "flash")]
-mod flash_emu;
 
 use commands::CommandPlugin;
 use cross_fade::CrossFadePlugin;

@@ -214,7 +214,7 @@ versions used, so no C++ runtime has to be shipped beside the core. AAudio is AP
 
 There is no drift control: the core is paced by the wall clock and the device by its own,
 so the ring slowly fills or empties and glitches when it hits an end. demarc's own sink
-(`src/audio.rs`) corrects that by nudging a rubato resample ratio from the ring's occupancy,
+(`crates/retro-core/src/audio.rs`) corrects that by nudging a rubato resample ratio from the ring's occupancy,
 which is the thing to port here if it turns out to matter.
 
 ### Step 7 — rendering and performance

@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/database", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
+members = ["crates/database", "crates/flash-emu", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -77,7 +77,6 @@ bevy = {
   ]
 }
 clap = { version = "4.6.1", features = ["color", "derive"] }
-cpal = "0.17.1"
 dirs.workspace = true
 libloading.workspace = true
 # Unpacking a release, working out which machine it is, and getting it booted.
@@ -92,8 +91,9 @@ retro-ui = { path = "crates/retro-ui" }
 retroarc = { path = "crates/retroarc" }
 # Demo databases, file listings and `overrides.toml`, read into `EmuFile`s.
 database = { path = "crates/database" }
+# The Flash (SWF) backend, behind the `flash` feature.
+flash-emu = { path = "crates/flash-emu", optional = true }
 ringbuf = "0.5.0"
-rubato = "0.16"
 sha2.workspace = true
 tempfile.workspace = true
 thiserror = "2"
@@ -122,38 +122,9 @@ image.workspace = true
 # `AppSettings::files`: the loaded databases, in the order they were given.
 indexmap = "2"
 mlua.workspace = true
-# `block_on` for the Flash backend's wgpu adapter/device requests.
-pollster = { workspace = true, optional = true }
 # `--include`: handed to `DbFilter`, matched against each raw db line.
 regex = "1"
 
-# Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
-#
-# That pulls wgpu-hal 27 into the lock file even with `flash` off, and wgpu-hal 27
-# requires `windows = "0.58"` exactly. gpu-allocator 0.28 (a dep of wgpu-hal 29)
-# only asks for `windows = ">=0.53, <=0.62"`, so the resolver is free to collapse
-# it onto that 0.58 -- and then wgpu-hal 29's dx12 backend hands 0.58 `ID3D12Heap`
-# values to `windows` 0.62 APIs and the MSVC build fails to compile. Cargo.lock
-# therefore pins gpu-allocator 0.28 to `windows 0.62.2`; if `just win` ever dies
-# in wgpu-hal/src/dx12 with "multiple different versions of crate windows", check
-# that edge in Cargo.lock first.
-ruffle_core = {
-  git = "https://github.com/ruffle-rs/ruffle",
-  rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9",
-  features = [
-    "default_compatibility_rules",
-    "default_font",
-    "aac",
-    "audio",
-    "lzma",
-    "mp3",
-    "nellymoser",
-  ],
-  optional = true
-}
-ruffle_render = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
-ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
-swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9", optional = true }
 
 resvg = "0.48.1"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -181,14 +152,8 @@ libc.workspace = true
 
 [features]
 default = []
-# Enables the Flash (SWF) backend (src/flash_emu.rs) and its Ruffle dependencies.
-flash = [
-  "dep:pollster",
-  "dep:ruffle_core",
-  "dep:ruffle_render",
-  "dep:ruffle_render_wgpu",
-  "dep:swf",
-]
+# Enables the Flash (SWF) backend (crates/flash-emu) and its Ruffle dependencies.
+flash = ["dep:flash-emu"]
 
 [profile.release]
 opt-level = 2
@@ -203,7 +168,7 @@ lto = "thin"
 
 # Profiling build: release-optimized but with debug symbols and no stripping so
 # `perf`/flamegraph can attribute samples to Ruffle internals. Used for
-# benchmarking the Flash backend (see src/flash_emu.rs `flash_bench`).
+# benchmarking the Flash backend (see crates/flash-emu `flash_bench`).
 [profile.profiling]
 inherits = "release"
 debug = true
