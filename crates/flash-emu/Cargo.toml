@@ -1,0 +1,42 @@
+[package]
+name = "flash-emu"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "A libretro-style Backend that plays Flash (SWF) movies through Ruffle"
+
+[dependencies]
+retro-core = { path = "../retro-core" }
+
+anyhow.workspace = true
+# `block_on` for the wgpu adapter/device requests.
+pollster.workspace = true
+# `save_png`'s screenshots.
+image.workspace = true
+
+# Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
+#
+# That pulls wgpu-hal 27 into the lock file even with `flash` off, and wgpu-hal 27
+# requires `windows = "0.58"` exactly. gpu-allocator 0.28 (a dep of wgpu-hal 29)
+# only asks for `windows = ">=0.53, <=0.62"`, so the resolver is free to collapse
+# it onto that 0.58 -- and then wgpu-hal 29's dx12 backend hands 0.58 `ID3D12Heap`
+# values to `windows` 0.62 APIs and the MSVC build fails to compile. Cargo.lock
+# therefore pins gpu-allocator 0.28 to `windows 0.62.2`; if `just win` ever dies
+# in wgpu-hal/src/dx12 with "multiple different versions of crate windows", check
+# that edge in Cargo.lock first.
+ruffle_core = {
+  git = "https://github.com/ruffle-rs/ruffle",
+  rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9",
+  features = [
+    "default_compatibility_rules",
+    "default_font",
+    "aac",
+    "audio",
+    "lzma",
+    "mp3",
+    "nellymoser",
+  ]
+}
+ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }
+# `impl_audio_mixer_backend!` expands to paths into it.
+swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5fe80875f5cab64c1c6a9" }

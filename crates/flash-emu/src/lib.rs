@@ -13,7 +13,7 @@
 //! `Send + Sync` (required for the Bevy `Emulator` component) and keeps all wgpu
 //! work off Bevy's main thread.
 //!
-//! [`RetroCoreThreaded`]: crate::retro_emu::RetroCoreThreaded
+//! [`RetroCoreThreaded`]: retro_core::retro_emu::RetroCoreThreaded
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
@@ -43,13 +43,13 @@ use ruffle_render_wgpu::wgpu;
 
 use std::sync::Arc;
 
-use crate::backend::Backend;
+use retro_core::backend::Backend;
 
 /// Audio output rate handed to the frontend. Matches the other cores so the
-/// existing [`crate::audio::AudioResampler`] converts to the device rate.
+/// existing [`retro_core::audio::AudioResampler`] converts to the device rate.
 const SAMPLE_RATE: u32 = 44100;
 /// Channel depth for frame updates; a few frames of slack, like the libretro
-/// worker ([`crate::retro_emu::RetroCoreThreaded`]). Blocking sends provide
+/// worker ([`retro_core::retro_emu::RetroCoreThreaded`]). Blocking sends provide
 /// backpressure so the worker runs at the frontend's consumption rate.
 const UPDATE_QUEUE: usize = 3;
 
@@ -134,6 +134,13 @@ pub struct FlashEmu {
 }
 
 impl FlashEmu {
+    pub fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        self.cmd_tx
+            .send(FlashCmd::SavePng(path.to_path_buf()))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        Ok(())
+    }
+
     pub fn new(game: &Path, _meta: std::collections::HashMap<String, String>) -> Result<Self> {
         let game = game.to_path_buf();
         let (cmd_tx, cmd_rx) = channel::<FlashCmd>();
@@ -247,19 +254,8 @@ impl Backend for FlashEmu {
         let _ = self.cmd_tx.send(FlashCmd::Reset);
     }
 
-    fn save_png(&self, path: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
-        self.cmd_tx
-            .send(FlashCmd::SavePng(path.to_path_buf()))
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-        Ok(())
-    }
-
     fn skip_frames(&mut self, frames: u32) {
         let _ = self.cmd_tx.send(FlashCmd::Skip(frames));
-    }
-
-    fn unload(&mut self) {
-        let _ = self.cmd_tx.send(FlashCmd::Unload);
     }
 }
 
@@ -324,7 +320,7 @@ fn worker_loop(
 
         // Produce exactly one movie frame per iteration and hand it to the
         // channel, mirroring the libretro worker
-        // ([`crate::retro_emu::RetroCoreThreaded`]): the worker does no timing of
+        // ([`retro_core::retro_emu::RetroCoreThreaded`]): the worker does no timing of
         // its own. The blocking send below makes it run at the frontend's
         // consumption rate, and the frontend's `Emulator` layer owns pacing and
         // audio-rate matching just as it does for a libretro core.
@@ -767,5 +763,5 @@ fn retro_key_to_descriptor(code: u32) -> Option<KeyDescriptor> {
 }
 
 #[cfg(test)]
-#[path = "tests/flash_emu_tests.rs"]
+#[path = "tests/lib_tests.rs"]
 mod tests;

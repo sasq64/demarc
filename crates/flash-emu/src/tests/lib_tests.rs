@@ -138,7 +138,11 @@ fn flash_bench() {
     if let Ok(png) = std::env::var("FLASH_TEST_PNG") {
         let mut frame = Vec::new();
         if capture_frame_fast(&player, &descriptors, &mut frame) {
-            if let Some(img) = image::RgbaImage::from_raw(width, height, frame) {
+            if let Some(img) = image::RgbaImage::from_raw(
+                width,
+                height,
+                retro_core::backend::frame_bytes(&frame).to_vec(),
+            ) {
                 let _ = img.save(&png);
                 eprintln!("wrote {png} ({width}x{height})");
             }
@@ -237,7 +241,7 @@ fn flash_smoke() {
             let img = image::RgbaImage::from_raw(
                 fw as u32,
                 fh as u32,
-                crate::backend::frame_bytes(buf).to_vec(),
+                retro_core::backend::frame_bytes(buf).to_vec(),
             )
             .expect("valid rgba buffer");
             img.save(&png).expect("save png");
