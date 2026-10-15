@@ -503,7 +503,7 @@ impl Latency {
             Latency::VeryLow => (1, 0, 2000, 6000),
             Latency::Low => (1, 0, 2000, 12000),
             Latency::Medium => (2, 6, 3000, 18000),
-            Latency::High => (4, 16, 54000, 20000),
+            Latency::High => (4, 16, 5400, 20000),
         };
         LatencySetting {
             latency,
