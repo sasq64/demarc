@@ -1,4 +1,17 @@
 use super::*;
+use newsys::libretro::{RETROK_RETURN, RETROK_a};
+
+fn resolve_key(name: &str) -> Option<retro_key> {
+    match name {
+        "Enter" => Some(RETROK_RETURN),
+        "a" => Some(RETROK_a),
+        _ => None,
+    }
+}
+
+fn parse(text: &str) -> Result<HashMap<DemoId, Override>> {
+    super::parse(text, resolve_key)
+}
 
 fn zoo(id: u32) -> DemoId {
     DemoId::new("zoo", id).unwrap()
@@ -167,14 +180,14 @@ fn patch_from_system_dir_source() {
     assert!(!patch.bytes().unwrap().is_empty());
 }
 
-/// `events` names keys the way remote scripts do, and arrives as retro keycodes.
+/// `events` keys go through the resolver, and an unknown one drops the entry.
 #[test]
 fn parses_key_events() {
-    use crate::backend::InputEvent::Key;
+    use newsys::backend::InputEvent::Key;
     let overrides = parse(
         r#"
         [zoo.108]
-        events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "KeyA" }, { frame = 70, key = "1" }, { frame = 80, key = "b" }]
+        events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "a" }]
 
         [zoo.2]
         events = [{ frame = 1, key = "NoSuchKey" }]
@@ -183,12 +196,7 @@ fn parses_key_events() {
     .unwrap();
     assert_eq!(
         overrides[&zoo(108)].events,
-        [
-            (50, Key(crate::libretro::RETROK_RETURN)),
-            (60, Key(crate::libretro::RETROK_a)),
-            (70, Key(crate::libretro::RETROK_1)),
-            (80, Key(crate::libretro::RETROK_b))
-        ]
+        [(50, Key(RETROK_RETURN)), (60, Key(RETROK_a))]
     );
     assert!(!overrides.contains_key(&zoo(2)));
 }
@@ -196,7 +204,7 @@ fn parses_key_events() {
 /// `click` is a position over the frame, and an event is a key or a click.
 #[test]
 fn parses_click_events() {
-    use crate::backend::InputEvent::Click;
+    use newsys::backend::InputEvent::Click;
     let overrides = parse(
         r#"
         [zoo.108]

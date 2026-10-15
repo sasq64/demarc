@@ -5,12 +5,12 @@ use std::{
     ops::Range,
 };
 
+use newsys::NewSys;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::{
     emu_file::{EmuFile, FileSource, GameInfo, UrlList},
     files::{DbFilter, leak},
-    newsys::NewSys,
 };
 
 pub const MODLAND_BASEURL: &str = "https://modland.com/pub/modules/";

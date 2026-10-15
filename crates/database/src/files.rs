@@ -58,7 +58,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
 }
 
 // Lives beside `Override`, whose fields are what wants the `'static`.
-pub(crate) use newsys::leak;
+pub use newsys::leak;
 
 /// Parse a `key:value`-per-field line, e.g.
 /// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`, into its pairs. Fields without a
@@ -255,7 +255,7 @@ fn parse_db_header(
 }
 
 /// Parse the contents of a db file — see [`collect_db`] for the format.
-pub(crate) fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
+pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&'static str> = None;
 
     // Meta from header comments, applied to every entry below them.

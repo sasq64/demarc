@@ -1,0 +1,31 @@
+[package]
+name = "database"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Reads demo databases, file lists and per-release overrides into EmuFile entries"
+
+[dependencies]
+newsys = { path = "../newsys" }
+
+anyhow.workspace = true
+dirs.workspace = true
+percent-encoding.workspace = true
+suppaftp.workspace = true
+thiserror = "2"
+tracing.workspace = true
+ureq.workspace = true
+
+# `overrides.toml`: bsdiff deltas, db URLs, and the TOML 1.1 parser that lets
+# an entry's `patch = { ... }` span several lines.
+qbsdiff = "1.4.4"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = { version = "1.1.4", features = ["preserve_order"] }
+url = "2"
+# `DbFilter`: matched against each raw db line while collecting.
+regex = "1"
+
+[dev-dependencies]
+# Encoding a patch the way overrides.toml carries one, in overrides_tests.
+base64 = "0.23.1"
+tempfile.workspace = true

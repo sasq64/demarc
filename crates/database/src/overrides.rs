@@ -54,25 +54,29 @@
 //! load — `file`/`download` when it is downloaded
 //! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
 //! `patch` once it is unpacked and `boot`/`libretro`/`fast` as it is handed to
-//! a system (both in [`NewSys::load_file`](crate::newsys::NewSys::load_file)).
+//! a system (both in [`NewSys::load_file`](newsys::newsys::NewSys::load_file)).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::backend::InputEvent;
 use anyhow::{Context, Result, bail};
 use qbsdiff::Bspatch;
 use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
 
+use newsys::backend::InputEvent;
+use newsys::libretro::retro_key;
+
 use crate::emu_file::{DemoId, Override, Patch};
-use crate::emulator::Emulator;
 use crate::files::leak;
 use crate::system_dir;
 
 /// What the file is called wherever it is looked for.
 pub const FILE_NAME: &str = "overrides.toml";
+
+/// Turns an `events` key name into a retro keycode, `None` for an unknown key.
+pub type KeyResolver = fn(&str) -> Option<retro_key>;
 
 /// Where an overrides file is looked for, in order: the directory demarc was
 /// started in, the user's config directory, and finally the system dir the
@@ -90,30 +94,22 @@ fn search_paths() -> Vec<PathBuf> {
 
 /// The overrides to run with, from the first file [`search_paths`] finds.
 ///
-/// Overrides are a convenience, not a requirement: no file at all is the normal
-/// case and gives an empty map, and a file that doesn't parse is reported and
-/// then likewise ignored rather than taking the run down with it.
-pub fn load_default() -> HashMap<DemoId, Override> {
+/// No file at all is the normal case and gives an empty map.
+pub fn load_default(resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
     let Some(path) = search_paths().into_iter().find(|p| p.is_file()) else {
-        return HashMap::new();
+        return Ok(HashMap::new());
     };
-    match load(&path) {
-        Ok(overrides) => {
-            info!("Read {} overrides from {path:?}", overrides.len());
-            overrides
-        }
-        Err(err) => {
-            crate::println(format!("** Error: Can't read {}: {err:#}", path.display()));
-            HashMap::new()
-        }
-    }
+    let overrides =
+        load(&path, resolve_key).with_context(|| format!("Can't read {}", path.display()))?;
+    info!("Read {} overrides from {path:?}", overrides.len());
+    Ok(overrides)
 }
 
 /// Read and parse one overrides file.
-pub fn load(path: &Path) -> Result<HashMap<DemoId, Override>> {
+pub fn load(path: &Path, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("Could not read {}", path.display()))?;
-    parse(&text)
+    parse(&text, resolve_key)
 }
 
 /// One `[<db>.<id>]` table, as written.
@@ -136,13 +132,13 @@ struct RawOverride {
     /// `fast = true` to run the release on the fast Amiga configuration —
     /// an accelerated A1200 with fast/Z3 memory, an FPU and the JIT. Shorthand
     /// for the half-dozen core options that spells out, see
-    /// [`apply_fast`](crate::newsys::amiga::apply_fast).
+    /// [`apply_fast`](newsys::newsys::amiga::apply_fast).
     #[serde(default)]
     fast: bool,
     /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
     /// They are folded into the single `assign` meta value the Amiga system
     /// reads when it writes the startup-sequence — see
-    /// [`handle_exe`](crate::newsys::amiga).
+    /// [`handle_exe`](newsys::newsys::amiga).
     #[serde(default)]
     assign: toml::Table,
     /// One patch, or an array of them.
@@ -152,7 +148,7 @@ struct RawOverride {
     events: Vec<RawEvent>,
 }
 
-/// One `events` entry. `key` is a Bevy `KeyCode` name, as in remote scripts;
+/// One `events` entry. `key` is turned into a keycode by the [`KeyResolver`];
 /// `click` is a position normalized 0..1 over the frame.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -209,7 +205,7 @@ struct RawPatch {
 /// An entry that doesn't make sense (an id that isn't a number, base64 that
 /// doesn't decode) is reported and dropped on its own; the rest of the file
 /// still applies, since one bad entry says nothing about the others.
-pub fn parse(text: &str) -> Result<HashMap<DemoId, Override>> {
+pub fn parse(text: &str, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
     let file: toml::Table = toml::from_str(text).context("Not a valid overrides file")?;
     let mut overrides = HashMap::new();
     for (db, table) in file {
@@ -227,7 +223,7 @@ pub fn parse(text: &str) -> Result<HashMap<DemoId, Override>> {
                 warn!("Ignoring [{db}.{id}]: not an id");
                 continue;
             };
-            match raw.build() {
+            match raw.build(resolve_key) {
                 Ok(over) => {
                     overrides.insert(demo_id, over);
                 }
@@ -245,7 +241,7 @@ impl RawOverride {
     /// [`Override`] holds and what the entries it is applied to hold — see
     /// [`crate::files::leak`]. The file is read once at startup and lives for
     /// the run, so nothing here would ever be freed anyway.
-    fn build(self) -> Result<Override> {
+    fn build(self, resolve_key: KeyResolver) -> Result<Override> {
         let mut meta = HashMap::new();
         for table in [self.libretro, self.meta] {
             for (key, value) in table {
@@ -287,29 +283,16 @@ impl RawOverride {
             .collect::<Result<Vec<Patch>>>()?;
 
         let mut events = Vec::with_capacity(self.events.len());
-        if !self.events.is_empty() {
-            let keys = Emulator::build_keycode_map();
-            for event in self.events {
-                let key = match (event.key, event.click) {
-                    (Some(key), None) => key,
-                    (None, Some([x, y])) => {
-                        events.push((event.frame, InputEvent::Click(x, y)));
-                        continue;
-                    }
-                    _ => bail!("an event needs one of key or click"),
-                };
-                let name = match key.as_str() {
-                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
-                    c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
-                        format!("Key{}", c.to_ascii_uppercase())
-                    }
-                    name => name.to_string(),
-                };
-                let Some((_, code)) = keys.iter().find(|(k, _)| format!("{k:?}") == name) else {
-                    bail!("unknown key {key:?} in events");
-                };
-                events.push((event.frame, InputEvent::Key(*code)));
-            }
+        for event in self.events {
+            let event_input = match (event.key, event.click) {
+                (Some(key), None) => match resolve_key(&key) {
+                    Some(code) => InputEvent::Key(code),
+                    None => bail!("unknown key {key:?} in events"),
+                },
+                (None, Some([x, y])) => InputEvent::Click(x, y),
+                _ => bail!("an event needs one of key or click"),
+            };
+            events.push((event.frame, event_input));
         }
 
         Ok(Override {

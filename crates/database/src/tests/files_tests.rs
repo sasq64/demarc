@@ -99,7 +99,7 @@ fn collect_db_parses_named_fields() {
 /// the way in.
 #[test]
 fn collect_db_reads_packed_dbs() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("DEMARC_ROOT"));
     for packed in ["testdata/demos.txt.gz", "testdata/demos.txt.bz2"] {
         let mut out = vec![];
         collect_db(&root.join(packed), &DbFilter::default(), &mut out).unwrap();

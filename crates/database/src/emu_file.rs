@@ -467,7 +467,7 @@ impl FileSource {
     ///
     /// This blocks for as long as the download takes, so on the main thread it
     /// is only safe for a source that is already a path. Loads that may hit the
-    /// network go through [`load_async`](crate::loading::load_async),
+    /// network go through `load_async`,
     /// which runs this on the I/O pool.
     pub fn resolve(&mut self) -> Result<&PathBuf> {
         Ok(self.resolve_with_progress(&|_, _| {})?.0)

@@ -1,4 +1,4 @@
-//! Classifying a failed [`crate::emulator::Emulator::load`] into something the
+//! Classifying a failed load into something the
 //! user can act on.
 //!
 //! `load` returns `anyhow::Result`, which keeps every `?` and `.context()` call
