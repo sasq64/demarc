@@ -45,7 +45,7 @@ See `scripts/remote_example.lua`
 ### Crates
 
 The repo root is both the workspace root and the `demarc` package, so `src/` is
-demarc's own. The four crates under `crates/` hold the parts that do **not**
+demarc's own. The five crates under `crates/` hold the parts that do **not**
 need Bevy, which is what lets the libretro layer be built for Android
 (`docs/ANDROID.md`):
 

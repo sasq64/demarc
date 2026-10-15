@@ -134,6 +134,21 @@ pub struct Emulator {
 }
 
 impl Emulator {
+    /// A key as `overrides.toml` names it: a `KeyCode` name, or a lone letter or digit.
+    pub fn resolve_key_name(key: &str) -> Option<libretro::retro_key> {
+        let name = match key {
+            c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
+            c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
+                format!("Key{}", c.to_ascii_uppercase())
+            }
+            name => name.to_string(),
+        };
+        Self::build_keycode_map()
+            .into_iter()
+            .find(|(k, _)| format!("{k:?}") == name)
+            .map(|(_, code)| code)
+    }
+
     pub fn build_keycode_map() -> HashMap<KeyCode, libretro::retro_key> {
         use KeyCode::*;
         use libretro::*;

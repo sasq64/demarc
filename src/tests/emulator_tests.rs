@@ -603,3 +603,13 @@ fn the_key_map_covers_letters_digits_and_cursor_keys() {
     assert_eq!(map[&KeyCode::NumpadEnter], libretro::RETROK_KP_ENTER);
     assert_eq!(map[&KeyCode::F12], libretro::RETROK_F12);
 }
+
+#[test]
+fn override_key_names_resolve_like_remote_scripts() {
+    let resolve = Emulator::resolve_key_name;
+    assert_eq!(resolve("Enter"), Some(libretro::RETROK_RETURN));
+    assert_eq!(resolve("KeyA"), Some(libretro::RETROK_a));
+    assert_eq!(resolve("1"), Some(libretro::RETROK_1));
+    assert_eq!(resolve("b"), Some(libretro::RETROK_b));
+    assert_eq!(resolve("NoSuchKey"), None);
+}

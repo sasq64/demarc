@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
+members = ["crates/database", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -90,6 +90,8 @@ retro-core = { path = "crates/retro-core" }
 retro-ui = { path = "crates/retro-ui" }
 # The `.slangp` filter chains, and the only thing that links librashader.
 retroarc = { path = "crates/retroarc" }
+# Demo databases, file listings and `overrides.toml`, read into `EmuFile`s.
+database = { path = "crates/database" }
 ringbuf = "0.5.0"
 rubato = "0.16"
 sha2.workspace = true
@@ -120,16 +122,10 @@ image.workspace = true
 # `AppSettings::files`: the loaded databases, in the order they were given.
 indexmap = "2"
 mlua.workspace = true
-percent-encoding.workspace = true
 # `block_on` for the Flash backend's wgpu adapter/device requests.
 pollster = { workspace = true, optional = true }
-qbsdiff = "1.4.4"
-# `--filter`: matched against each raw db line while collecting (see collect_db).
+# `--include`: handed to `DbFilter`, matched against each raw db line.
 regex = "1"
-suppaftp.workspace = true
-ureq.workspace = true
-# `src/overrides.rs`: db URLs, and the bsdiff deltas an override can carry.
-url = "2"
 
 # Ruffle brings its own `wgpu` (v27), distinct from the `wgpu = 29` above.
 #
@@ -162,18 +158,8 @@ swf = { git = "https://github.com/ruffle-rs/ruffle", rev = "6b83e349125a872e7db5
 resvg = "0.48.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-# `overrides.toml`, the per-release fixups read at startup (src/overrides.rs).
-# 1.x follows the TOML 1.1 spec, which is what lets an entry's `patch = { ... }`
-# span several lines; a 0.9 parser would reject the file as written.
-# `preserve_order` keeps `shaders.toml`'s collections in the order it writes them
-# (src/shader_dialog.rs).
-toml = { version = "1.1.4", features = ["preserve_order"] }
 # Writing to `system/overrides.toml` without losing its layout (src/patch_menu.rs).
 toml_edit = "0.25.13"
-
-[dev-dependencies]
-# Encoding a patch the way overrides.toml carries one, in overrides_tests.
-base64 = "0.23.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"

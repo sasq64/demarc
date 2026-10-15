@@ -26,6 +26,7 @@ pub use ::newsys::{
     system_dir, tiff_pal, utils, workfile, zx_scr,
 };
 
+pub use ::database::{emu_file, files, load_error, modland, overrides};
 pub use ::retro_ui::fuzzy_list;
 
 mod audio;
@@ -36,24 +37,19 @@ mod demarc_settings;
 mod dj;
 mod egui_settings;
 mod egui_ui;
-mod emu_file;
 mod emulator;
 #[cfg(test)]
 #[path = "tests/fake_backend.rs"]
 mod fake_backend;
-mod files;
 mod frame_log;
 mod frame_upload;
 mod frontend;
 mod headless;
 mod jobs;
-mod load_error;
 mod loading;
 mod media_keys;
-mod modland;
 mod mouse_cursor;
 mod navigator;
-mod overrides;
 mod patch_menu;
 mod playlists;
 mod post_process;
@@ -538,7 +534,12 @@ fn main() {
     };
     let sys = std::sync::Arc::new(NewSys::new(&(&args).into()));
     let settings = AppSettings {
-        overrides: overrides::load_default(),
+        overrides: overrides::load_default(emulator::Emulator::resolve_key_name).unwrap_or_else(
+            |err| {
+                println(format!("** Error: {err:#}"));
+                Default::default()
+            },
+        ),
         boot_file: args.boot_file.clone().map(files::leak),
         system: sys,
         current_game: -1,

@@ -14,7 +14,7 @@ fn apply(id: u32, change: Change) -> String {
     let mut doc: DocumentMut = TEXT.parse().unwrap();
     edit(&mut doc, DemoId::new("zoo", id).unwrap(), &change).unwrap();
     let out = doc.to_string();
-    overrides::parse(&out).unwrap();
+    overrides::parse(&out, Emulator::resolve_key_name).unwrap();
     out
 }
 

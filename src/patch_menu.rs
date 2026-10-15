@@ -135,7 +135,7 @@ fn patch(emu: &Emulator, item: usize, settings: &mut AppSettings) -> Result<Stri
     let mut doc: DocumentMut = text.parse().context("Can't parse overrides")?;
     edit(&mut doc, id, &change)?;
     let text = doc.to_string();
-    let over = overrides::parse(&text)?
+    let over = overrides::parse(&text, Emulator::resolve_key_name)?
         .remove(&id)
         .context("Entry did not parse")?;
     std::fs::write(&path, text)?;
