@@ -213,6 +213,9 @@ events = [
 [zoo.8960]
 file = "petroleo_boah.zip"
 
+[zoo.9245]
+cache_writeback = true
+
 [zoo.9286]
 events = [{ frame = 10, key = "1" }]
 
@@ -947,3 +950,50 @@ meta = { wine_res = "1920x1080" }
 
 [zoo.154143]
 meta = { wine_res = "640x480" }
+
+[zoo.8548]
+events = [{ frame = 33, key = "4" }]
+
+[zoo.389802]
+events = [
+  { frame = 27, key = "Enter" },
+  { frame = 63, key = "Enter" },
+  { frame = 86, key = "Enter" },
+  { frame = 340, key = "Enter" },
+]
+
+[zoo.162312]
+events = [
+  { frame = 89, key = "0" },
+  { frame = 176, key = "Enter" },
+  { frame = 197, key = "Enter" },
+]
+
+[zoo.7383]
+events = [{ frame = 20, key = "4" }]
+
+[zoo.22608]
+events = [
+  { frame = 21, key = "Enter" },
+  { frame = 38, key = "Enter" },
+  { frame = 62, key = "Enter" },
+]
+
+[zoo.18838]
+events = [
+  { frame = 50, key = "Enter" },
+  { frame = 60, key = "Enter" },
+  { frame = 70, key = "Enter" },
+]
+
+[zoo.123318]
+events = [{ frame = 460, key = "C" }]
+
+[zoo.87509]
+events = [{ frame = 45, key = "1" }]
+
+[zoo.28930]
+events = [{ frame = 83, key = "4" }]
+
+[zoo.6146]
+events = [{ frame = 25, key = "4" }]
