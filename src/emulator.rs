@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
@@ -16,6 +16,21 @@ use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
 use crate::loading::PendingLoad;
 use crate::workfile::WorkFile;
+
+type AudioTap = Box<dyn Fn(u32, &[i16]) + Send>;
+
+/// Sees every emulator's audio, for the remote control script.
+static AUDIO_TAP: Mutex<Option<AudioTap>> = Mutex::new(None);
+
+pub(crate) fn set_audio_tap(tap: impl Fn(u32, &[i16]) + Send + 'static) {
+    *AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(tap));
+}
+
+fn tap_audio(rate: u32, samples: &[i16]) {
+    if let Some(tap) = AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        tap(rate, samples);
+    }
+}
 
 /// Where the cursor keys and Enter are routed by [`Emulator::feed_inputs`].
 /// In [`InputMode::Keyboard`] (the default) they map to the corresponding
@@ -386,7 +401,7 @@ impl Emulator {
             }
             *audio_seen = true;
             got_audio = true;
-            crate::remote_control::tap_audio(from as u32, samples);
+            tap_audio(from as u32, samples);
             sink.push_audio(from as f32, samples);
         });
         got_audio

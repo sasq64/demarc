@@ -12,7 +12,8 @@ use retro_ui::shader_dialog::{ShaderAction, ShaderParam};
 
 use crate::config::{Args, RenderSettings, ShaderArg};
 use crate::egui_ui::{HudState, update_ui};
-use crate::post_process::{ShaderEffect, ShaderPath};
+use crate::config::ShaderEffect;
+use crate::post_process::ShaderPath;
 use crate::system_dir;
 
 /// Opens the shader dialog (RightAlt+Shift+E, [`crate::commands::Cmd`]).

@@ -5,7 +5,7 @@ use super::*;
 /// the `system` dir, which is the Bevy asset root); the presets are absolute.
 #[test]
 fn every_shader_variant_resolves_to_a_file() {
-    use crate::post_process::ShaderEffect;
+    use crate::config::ShaderEffect;
     use clap::ValueEnum;
 
     for shader in ShaderArg::value_variants() {

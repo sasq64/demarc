@@ -67,7 +67,7 @@ use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
 use navigator::NavigatorPlugin;
 use newsys::NewSys;
-use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderEffect, ShaderPath};
+use post_process::{DOWNSAMPLE_PRESET, PostProcessPlugin, ShaderPath};
 use remote_control::RemoteControlPlugin;
 use screensaver::ScreenSaverPlugin;
 use speed_test::SpeedTestPlugin;
@@ -75,7 +75,7 @@ use speed_test::SpeedTestPlugin;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
-    AppSettings, Args, GlobalSettings, InfoDisplay, RenderSettings, ShaderArg, SortArg,
+    AppSettings, Args, GlobalSettings, InfoDisplay, RenderSettings, ShaderArg, ShaderEffect, SortArg,
 };
 use crate::egui_ui::EguiUiPlugin;
 use crate::emu_file::EmuFile;

@@ -20,14 +20,13 @@
 //! the dialogs belong on this side of the desk.
 
 use bevy::camera::RenderTarget;
-use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::window::WindowRef;
 use bevy::{camera::visibility::RenderLayers, prelude::*};
 use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext, input::FocusedNonWindowEguiContext};
 
 use crate::config::Args;
 use crate::emulator::Emulator;
-use crate::post_process::{EmuCamera, PostProcess, ViewRect};
+use crate::post_process::{DjCamera, DjView, EmuCamera, PostProcess, ViewRect};
 
 /// Present only in DJ mode, so its absence is what the rest of the app tests.
 #[derive(Resource)]
@@ -47,14 +46,6 @@ pub fn has_focus(dj: Option<&DjWindow>) -> bool {
 pub fn enabled(args: &Args) -> bool {
     args.dj_mode && !args.headless
 }
-
-/// Marks the camera that draws the DJ window.
-#[derive(Component, Clone, Copy, ExtractComponent)]
-pub struct DjCamera;
-
-/// Marks the one view that camera draws.
-#[derive(Component, Clone, Copy, ExtractComponent)]
-pub struct DjView;
 
 const DJ_SIZE: (u32, u32) = (720, 540);
 
@@ -157,12 +148,8 @@ impl Plugin for DjPlugin {
         if !enabled(app.world().resource::<Args>()) {
             return;
         }
-        app.add_plugins((
-            ExtractComponentPlugin::<DjCamera>::default(),
-            ExtractComponentPlugin::<DjView>::default(),
-        ))
-        .add_systems(Startup, setup_dj)
-        .add_systems(PreUpdate, track_focus)
-        .add_systems(PostUpdate, update_dj_view);
+        app.add_systems(Startup, setup_dj)
+            .add_systems(PreUpdate, track_focus)
+            .add_systems(PostUpdate, update_dj_view);
     }
 }

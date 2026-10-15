@@ -32,11 +32,10 @@ use retroarc::{ChainKind, ChainOutput};
 use super::SlangChains;
 use super::geometry::{view_transform, wants_downsample};
 use super::{
-    BorderMode, BorderScissor, EmuCamera, PostProcess, PostProcessUniform, ShaderEffect,
+    BorderMode, BorderScissor, DjCamera, DjView, EmuCamera, PostProcess, PostProcessUniform, ShaderEffect,
     ShaderPath, TARGET_FORMAT,
 };
 use crate::config::RenderSettings;
-use crate::dj::{DjCamera, DjView};
 
 /// Draws every emulator view into the one emulator camera's view target.
 ///

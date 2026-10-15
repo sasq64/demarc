@@ -19,7 +19,8 @@ use crate::headless::{HeadlessTarget, camera_target};
 use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
-use crate::post_process::{EmuCamera, PostProcess, ScaleMode, ViewRect};
+use crate::config::ScaleMode;
+use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::ui::{HudLocation, SetHudText, UiState};
 use crate::wine::{META_FILTER, is_yes};
 

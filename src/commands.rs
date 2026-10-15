@@ -24,7 +24,7 @@ use crate::fuzzy_list::{FuzzySource, IndexedSource};
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::Navigator;
 use crate::playlists::{PlaylistPicker, Playlists};
-use crate::post_process::{BorderMode, ScaleMode};
+use crate::config::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
 

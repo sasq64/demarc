@@ -12,7 +12,6 @@ use regex::Regex;
 use crate::{
     emu_file::{DemoId, EmuFile, Override},
     newsys::NewSys,
-    post_process::{BorderMode, ScaleMode, ShaderEffect},
     system_dir::system_dir,
 };
 
@@ -588,6 +587,55 @@ impl From<BorderModeArg> for BorderMode {
             BorderModeArg::Black => BorderMode::Black,
         }
     }
+}
+
+/// Which post-process backend to run.
+#[derive(Clone, Debug)]
+pub enum ShaderEffect {
+    /// librashader `.slangp` filter chain, run into an intermediate texture
+    /// that the (passthrough) composite blit then draws. An absolute path,
+    /// resolved from the `system` dir — or given verbatim by `--slangp`.
+    /// With the effect toggled off there is no chain at all: the composite
+    /// samples the emulator framebuffer directly (see
+    /// `composite::post_process_pass`).
+    Slangp(PathBuf),
+    /// The pre-librashader single-pass WGSL path: one shader asset (e.g.
+    /// `shaders/lottes.wgsl`) that samples the emulator framebuffer directly
+    /// and applies the effect in the composite pass itself. The
+    /// effect/passthrough toggle is handled in-shader via `crt_enabled`.
+    Wgsl(String),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum ScaleMode {
+    /// Fill the window, distorting the source aspect ratio.
+    Stretch,
+    /// Preserve the source aspect ratio with letterbox/pillarbox bars.
+    #[default]
+    Fit,
+    /// Preserve the source aspect ratio by scaling to fill the window and
+    /// cropping the overflow (top/bottom or left/right).
+    Zoom,
+    /// Scale the source by a fixed factor `n` and centre the result in the
+    /// window. Square-pixel systems get `n`×`n` screen pixels; the core's
+    /// reported aspect corrects non-square pixels (e.g. Amiga half-width →
+    /// 2n×n). Whole-number factors keep pixels integer-sized for crispness;
+    /// fractional factors (e.g. 2.5) are applied exactly. If the scaled image
+    /// is larger than the window it overflows and is cropped.
+    Fixed(f32),
+}
+
+/// How the shader samples outside the source image (in the letterbox/pillarbox
+/// bars, or anywhere `warp` pushes a fetch off the edge).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BorderMode {
+    /// `ClampToEdge`: replicate the nearest edge texel, so edge pixels stretch
+    /// outward into the border.
+    Stretch,
+    /// `ClampToBorder` with a black border color: sample black outside the
+    /// image, giving a clean black border.
+    #[default]
+    Black,
 }
 
 /// The subset of settings the render world needs. This is the only resource

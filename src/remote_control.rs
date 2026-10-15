@@ -114,18 +114,6 @@ fn wav_header(rate: u32, data_len: u32) -> Vec<u8> {
     h
 }
 
-/// The running script's tap, where [`crate::emulator::Emulator`] can reach it.
-static AUDIO_TAP: Mutex<Option<Arc<Mutex<AudioTap>>>> = Mutex::new(None);
-
-pub fn tap_audio(rate: u32, samples: &[i16]) {
-    let tap = AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(tap) = tap.as_ref() {
-        tap.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(rate, samples);
-    }
-}
-
 /// Run after the script, so `Main` is already defined when `Run` wraps it.
 const BOOTSTRAP: &str = r#"
 function wait_frames(n)
@@ -441,7 +429,12 @@ fn init_script(world: &mut World) {
     };
     match ScriptRunner::new(&path) {
         Ok(runner) => {
-            *AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()) = Some(runner.tap.clone());
+            let tap = runner.tap.clone();
+            crate::emulator::set_audio_tap(move |rate, samples| {
+                tap.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(rate, samples);
+            });
             world.insert_non_send(RemoteControl(runner));
         }
         Err(e) => error!("No remote control: {e:#}"),
