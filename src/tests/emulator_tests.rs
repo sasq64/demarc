@@ -254,7 +254,7 @@ fn info_names_the_release_its_year_and_its_system() {
     emu.emu_file.game_info = GameInfo {
         title: "Deus Ex Machina",
         group: "Crest",
-        date: CompactDate::new(2000, 10, 1),
+        date: CompactDate::new(2000, 10, 1).unwrap(),
         category: "demo",
         ..Default::default()
     };

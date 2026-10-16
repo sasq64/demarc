@@ -258,6 +258,12 @@
   `MESA_SHADER_READ_PATH` replaces it, which is what `wine_shader_read` plus a
   `patch` does for a Crinkler exe that cannot be patched itself.
 
+- "GLSL 1.20 required" from an unversioned shader (Inflorescence's uniform
+  initializers): use `wine_glsl_version=130`, never `120`. The forced version
+  also applies to glamor's `#version 130` shaders, so 120 kills Xwayland
+  ("X11 I/O error! This is fatal"). `wine_glsl_120_subset` does not cover
+  uniform initializers.
+
 - `err:seh:NtRaiseException ... c0000005` at an ntdll address as a demo's only
   log line, with `+loaddll` stopping after kernel32: the fault is wine's import
   walk, not the demo. Glutamat's 1k header overlaps code with the import
@@ -409,3 +415,17 @@
   chasing the first crash a bare-wine run shows. `pgrep -f <exe>` also matches
   the agent's own shell, whose command line contains the name: use `pgrep -x`
   (comm is cut to 15 chars, `rgba_kindercras`).
+
+- Arise (`zoo.31637`) "No OpenGL 1.2 compatible driver found" was not a
+  missing entry point: every `wglGetProcAddress` succeeded. It reads the minor
+  version as the digit after `strstr(GL_VERSION, "1.")`, which lands on
+  `arch1.1` in Mesa's version string. A version check failing on a 4.6 context
+  is worth disassembling from the `glGetString(0x1f02)` return address before
+  tracing GL calls.
+
+- 86Box device names in a `.cfg` are the `internal_name` from the source, not
+  guesses from the display name: the Sound Blaster 2.0 is `sndcard = sb2.0`
+  (`sb2` silently installs nothing, so the demo says it cannot initialise the
+  card). Check `src/sound/snd_sb.c` for a card's name and config keys; sb2.0 has
+  `base`/`irq` (IRQ 5 by default, which the XT disk adapter also uses) and no
+  `dma` key.

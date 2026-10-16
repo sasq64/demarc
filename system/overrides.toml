@@ -56,6 +56,7 @@ meta = { dosbox_pure_cycles = 10000, dosbox_pure_sblaster_type = "sbpro2" }
 
 [zoo.374]
 meta = { dos4gw = "true" }
+boot = ["dos4gw.exe", "demo.exe"]
 
 # Panic / Future Crew: finds no Sound Blaster at 200000 cycles.
 [zoo.711]
@@ -336,6 +337,15 @@ boot = "texas_safe_1280x720.exe"
 meta = { wine_gl_compat = true }
 file = "gaiamachinafinal.zip"
 events = [{ frame = 450, click = [0.594, 0.814] }, { frame = 500, click = [0.573, 0.939] }]
+
+# Arise by Stravaganza. Finds the GL minor version with strstr(GL_VERSION, "1."),
+# which hits "arch1.1" in Mesa's string: "No OpenGL 1.2 compatible driver found".
+[zoo.31637]
+file = "sgz_arise.zip"
+patch = [
+  { info = "assume GL 1.4", target = "sgz_arise.exe", offset = 718923, contents = "6wY=" },
+  { info = "skip the version digit checks", target = "sgz_arise.exe", offset = 718949, contents = "6xw=" },
+]
 
 [zoo.40674]
 events = [{ frame = 450, key = "1" }]
@@ -803,6 +813,10 @@ meta = { wine_res = "640x480" }
 [zoo.98284]
 meta = { wine_res = "640x480" }
 
+# Inflorescence: unversioned shaders initialize uniforms (1.20); forcing 120 kills glamor
+[zoo.98649]
+meta = { wine_glsl_version = "130" }
+
 # Spot: a small buttonless window comes up before the setup dialog
 [zoo.9828]
 meta = { wine_res = "512x384", gamescope_dialog_wait_ms = 3000 }
@@ -997,3 +1011,16 @@ events = [{ frame = 83, key = "4" }]
 
 [zoo.6146]
 events = [{ frame = 25, key = "4" }]
+
+[zoo.265]
+file = "cns!f07.zip"
+
+[zoo.20922]
+events = [{ frame = 19, key = "Enter" }, { frame = 39, key = "Enter" }, { frame = 68, key = "Enter" }]
+
+[zoo.43263]
+meta = { dos4gw = "true" }
+boot = ["dos4gw.exe", "demo.exe"]
+
+[zoo.9264]
+events = [{ frame = 18, key = "4" }]
