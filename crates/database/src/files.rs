@@ -39,7 +39,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             group = leak(val);
         } else if key == "year" {
             let year = val.parse::<u32>().unwrap_or(0);
-            date = CompactDate::new(year, 0, 0);
+            date = CompactDate::new(year, 0, 0)?;
         } else {
             meta.insert(leak(key), leak(val));
         }
@@ -389,7 +389,7 @@ pub fn collect_files(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<(
     let len = out.len();
     collect_files_(dir, out, many).and_then(|_| {
         if len == out.len() {
-            out.push(collect_file(&dir).unwrap());
+            out.push(collect_file(dir)?);
         };
         Ok(())
     })

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use newsys::fetch::is_download_cached;
 use std::{
     cell::RefCell,
@@ -526,15 +526,18 @@ impl FileSource {
 #[derive(Debug, Copy, Clone, Default, PartialOrd, Ord, PartialEq, Eq)]
 pub struct CompactDate(u32);
 impl CompactDate {
-    pub fn new(year: u32, month: u32, day: u32) -> Self {
-        Self((year << 9) | (month << 5) | day)
+    pub fn new(year: u32, month: u32, day: u32) -> Result<Self> {
+        if year > 3000 || month > 11 || day > 30 {
+            bail!("Data can't be represented");
+        }
+        Ok(Self((year << 9) | (month << 5) | day))
     }
-    pub fn parse(date: &str) -> Self {
+    pub fn parse(date: &str) -> Result<Self> {
         let date_s: Vec<&str> = date.split(['-', '/', '.']).collect();
         let year_s = date_s[0];
-        let year = year_s.parse::<u32>().unwrap_or(0);
-        let month = date_s.get(1).unwrap_or(&"0").parse::<u32>().unwrap_or(0);
-        let day = date_s.get(2).unwrap_or(&"0").parse::<u32>().unwrap_or(0);
+        let year = year_s.parse::<u32>()?;
+        let month = date_s.get(1).unwrap_or(&"0").parse::<u32>()?;
+        let day = date_s.get(2).unwrap_or(&"0").parse::<u32>()?;
         Self::new(year, month, day)
     }
     pub fn year(&self) -> u32 {
@@ -761,7 +764,7 @@ impl GameInfo {
         let author = meta.get("author").copied().unwrap_or("");
         let category = meta.get("category").copied().unwrap_or("");
 
-        let date = CompactDate::parse(meta.get("date").unwrap_or(&""));
+        let date = CompactDate::parse(meta.get("date").unwrap_or(&"")).unwrap_or_default();
 
         let mut rank = 0;
         if let Some(pouet) = meta.get("pouet") {
