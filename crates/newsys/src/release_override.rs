@@ -71,6 +71,8 @@ pub struct Override {
     pub download_url: Option<&'static str>,
     // If Some, override file selection by system and pass this file directly to load()
     pub boot_file: Option<&'static str>,
+    // Arguments to start `boot_file` with
+    pub boot_args: Vec<&'static str>,
     // Add this meta-data to WorkFile
     pub meta: HashMap<&'static str, &'static str>,
     // Patch these files after unpacking

@@ -18,6 +18,9 @@
 //! file = "rgba_tbc_elevated.zip"      # which download to fetch
 //! boot = "elevated_1280x720.exe"      # which file inside it to start
 //!
+//! [zoo.43263]
+//! boot = ["dos4gw.exe", "demo.exe"]   # a program and its arguments
+//!
 //! [zoo.311767]
 //! download = "https://example.org/area5150_86box.zip"  # fetch this, not the db's links
 //!
@@ -115,6 +118,13 @@ pub fn load(path: &Path, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Ove
     parse(&text, resolve_key)
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Boot {
+    File(String),
+    Command(Vec<String>),
+}
+
 /// One `[<db>.<id>]` table, as written.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,8 +134,9 @@ struct RawOverride {
     /// A URL to fetch instead of anything the db lists, for a release whose
     /// own links are dead or unusable.
     download: Option<String>,
-    /// File name inside the release of the program to start.
-    boot: Option<String>,
+    /// File name inside the release of the program to start, or an array of
+    /// it followed by its arguments.
+    boot: Option<Boot>,
     /// Core options, which is what most meta on an entry is.
     #[serde(default)]
     libretro: toml::Table,
@@ -302,10 +313,21 @@ impl RawOverride {
             events.push((event.frame, event_input));
         }
 
+        let (boot_file, boot_args) = match self.boot {
+            None => (None, vec![]),
+            Some(Boot::File(file)) => (Some(leak(file)), vec![]),
+            Some(Boot::Command(command)) => {
+                let mut command = command.into_iter().map(leak);
+                let file = command.next().context("boot is an empty array")?;
+                (Some(file), command.collect())
+            }
+        };
+
         Ok(Override {
             download: self.file.map(leak),
             download_url,
-            boot_file: self.boot.map(leak),
+            boot_file,
+            boot_args,
             meta,
             patches,
             fast: self.fast,

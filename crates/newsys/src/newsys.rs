@@ -198,8 +198,11 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
             }
             debug!("Unpacking {path:?} to {wf:?}");
             unpack_into(path, &wf)?;
-            // TODO: Better way of figuring out if we should recursively unpack.
-            if meta.get("platform") != Some(&("Windows".to_string())) {
+            let has_exe = walk_dir_find(&wf, 2, |_, _, header| {
+                Ok(matches!(header, b"MZ" | b"ZM").then_some(()))
+            })?
+            .is_some();
+            if !has_exe {
                 walk_dir(&wf, 4, |f, _, _| {
                     if has_archive_filename(f)? {
                         debug!("File was double packed");
@@ -256,6 +259,10 @@ pub const ARCHIVE_NAME: &str = "archive_name";
 /// what it is holding is one file out of a release rather than a loose program.
 pub const RELEASE_DIR: &str = "release_dir";
 
+/// Meta key holding the command line of an override's `boot` that has
+/// arguments, e.g. `dos4gw.exe demo.exe`.
+pub const BOOT_COMMAND: &str = "boot_command";
+
 /// Apply what `overrides.toml` says about this release, once it is unpacked and
 /// before any system looks at it — see [`crate::overrides`].
 ///
@@ -281,6 +288,10 @@ fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
         apply_patches(file, &over.patches)?;
     }
     if let Some(boot) = over.boot_file {
+        if !over.boot_args.is_empty() {
+            let command = [&[boot], &over.boot_args[..]].concat().join(" ");
+            file.set_meta(BOOT_COMMAND, command);
+        }
         match find_named(&release_dir(file), boot)? {
             Some(path) => {
                 info!("Override starts {path:?}");

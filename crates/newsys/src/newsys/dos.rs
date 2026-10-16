@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::{ARCHIVE_NAME, RELEASE_DIR, System, get_ext, walk_dir};
+use super::{ARCHIVE_NAME, BOOT_COMMAND, RELEASE_DIR, System, get_ext, walk_dir};
 use crate::backend::Backend;
 use crate::libloader;
 use crate::retro_emu::RetroCoreThreaded;
@@ -22,6 +22,9 @@ const META_DOS4GW: &str = "dos4gw";
 /// What the extender is called once it is in place. DOS uppercases every name
 /// it prints and most releases ship it this way, so the copy matches.
 const DOS4GW_EXE: &str = "DOS4GW.EXE";
+
+/// The batch file an override's command line is written to.
+const BOOT_BAT: &str = "DEMARC.BAT";
 
 /// Where a copy of it is kept, under the system dir.
 fn dos4gw_source() -> PathBuf {
@@ -271,6 +274,70 @@ fn give_dos_name(path: &Path) -> Result<PathBuf> {
     Ok(target)
 }
 
+/// Where the archive a DOS program carries after its own image starts, if
+/// it is one of INF's self-running `XL` archives.
+fn xl_archive_start(path: &Path) -> Option<u64> {
+    let header = read_at(path, 0, 6).ok()?;
+    if header.len() < 6 || &header[..2] != b"MZ" {
+        return None;
+    }
+    let last = u64::from(u16::from_le_bytes([header[2], header[3]]));
+    let pages = u64::from(u16::from_le_bytes([header[4], header[5]]));
+    let start = if last == 0 {
+        pages * 512
+    } else {
+        pages.checked_sub(1)? * 512 + last
+    };
+    (read_at(path, start, 4).ok()? == b"XL\x02\x82").then_some(start)
+}
+
+/// Unpack an `XL` archive beside the program carrying it, returning the
+/// program it would start.
+///
+/// The loader in front serves its files by hooking DOS file calls, which our
+/// DOS/4GW gets past, so it can't be left to unpack itself.
+fn unpack_xl(path: &Path, start: u64) -> Result<PathBuf> {
+    let data = fs::read(path)?;
+    let dir = path.parent().context("Program has no directory")?;
+    let at = |offset: u64, len: usize| -> Result<&[u8]> {
+        let offset = usize::try_from(start + offset)?;
+        data.get(offset..offset + len)
+            .context("XL archive is truncated")
+    };
+    let file_name = |bytes: &[u8]| -> Result<PathBuf> {
+        let name = bytes.split(|b| *b == 0).next().unwrap_or_default();
+        let name = String::from_utf8_lossy(name);
+        let name = Path::new(name.as_ref())
+            .file_name()
+            .context("XL entry has no name")?;
+        Ok(dir.join(name))
+    };
+    let descramble = |bytes: &[u8]| -> Vec<u8> {
+        bytes
+            .iter()
+            .enumerate()
+            .map(|(i, b)| b.wrapping_sub(i as u8))
+            .collect()
+    };
+    let word = |b: &[u8], i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
+    let dword = |b: &[u8], i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+
+    let header = at(0, 16)?;
+    let count = usize::from(word(header, 8));
+    let dir_offset = u64::from(dword(header, 12));
+    let entries = descramble(at(dir_offset, count * 32)?);
+    for entry in entries.chunks(32) {
+        let size = dword(entry, 16) as usize;
+        let offset = u64::from(dword(entry, 20));
+        fs::write(file_name(&entry[..16])?, at(offset, size)?)?;
+    }
+    // The commands it runs follow the directory; the first one names the program
+    let command = descramble(at(dir_offset + count as u64 * 32, 0x8d)?);
+    let program = file_name(&command)?;
+    info!("Unpacked {count} files from {path:?}, starting {program:?}");
+    Ok(program)
+}
+
 /// The DOS extenders and DPMI hosts a release ships beside its program.
 const EXTENDERS: &[&str] = &[
     "dos4gw", "dos4g", "dos32a", "cwsdpmi", "cwsdpr0", "pmodew", "wdosx", "dpmiload", "dpmi16bi",
@@ -386,7 +453,9 @@ impl System for DosSystem {
         if use_4gw {
             debug!("Needs DOS4GW");
         }
-        if use_4gw || rename {
+        let command = file.get_meta_or(BOOT_COMMAND, "");
+        let xl = xl_archive_start(&target).is_some();
+        if use_4gw || rename || !command.is_empty() || xl {
             // A `boot_file` left the path on one program of a release.
             let name = (file.is_file() && file.has_meta(RELEASE_DIR) && !file.is_temporary())
                 .then(|| target.file_name().map(ToOwned::to_owned))
@@ -402,12 +471,21 @@ impl System for DosSystem {
         let Some(mut target) = self.pick_target_named(file, &release)? else {
             return Ok(false);
         };
+        if let Some(start) = xl_archive_start(&target) {
+            target = unpack_xl(&target, start)?;
+        }
         if rename {
             target = give_dos_name(&target)?;
         }
         file.path = target.clone();
         if use_4gw {
             place_extender(file, &dos4gw_source())?;
+        }
+        if !command.is_empty() {
+            let bat = target.with_file_name(BOOT_BAT);
+            fs::write(&bat, format!("{command}\r\n"))?;
+            info!("Starting {command:?} from {bat:?}");
+            file.path = bat;
         }
         Ok(true)
     }

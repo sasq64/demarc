@@ -33,6 +33,7 @@ fn parses_an_override_per_release() {
         [zoo.57849]
         libretro = { dosbox_pure_cycles = 150000 }
         meta = { dos4gw = true }
+        boot = ["dos4gw.exe", "demo.exe"]
 
         [zoo.18030]
         file = "inside.zip"
@@ -51,6 +52,8 @@ fn parses_an_override_per_release() {
     // A number written unquoted is still a meta value, as is a bool.
     assert_eq!(overrides[&zoo(57849)].meta["dosbox_pure_cycles"], "150000");
     assert_eq!(overrides[&zoo(57849)].meta["dos4gw"], "true");
+    assert_eq!(overrides[&zoo(57849)].boot_file, Some("dos4gw.exe"));
+    assert_eq!(overrides[&zoo(57849)].boot_args, ["demo.exe"]);
 
     let inside = &overrides[&zoo(18030)];
     assert_eq!(inside.patches.len(), 1);

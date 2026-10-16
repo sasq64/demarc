@@ -517,3 +517,81 @@ fn renames_a_long_named_program_in_a_copy() {
     let renamed = give_dos_name(&long).unwrap();
     assert!(renamed.ends_with("LONGERN1.COM"), "{renamed:?}");
 }
+
+/// A `boot` with arguments is run from a batch file beside the program.
+#[test]
+fn starts_a_boot_command_from_a_batch_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = DosSystem {};
+    let release = dir.path().join("krom");
+    fs::create_dir_all(&release).unwrap();
+    let mut exe = vec![0u8; 0x40];
+    exe[..2].copy_from_slice(b"MZ");
+    write_bytes(&release, "DEMO.EXE", &exe);
+
+    let meta = HashMap::from([(BOOT_COMMAND.to_string(), "dos4gw.exe demo.exe".to_string())]);
+    let mut wf = WorkFile::new_with_meta(release.clone(), meta);
+    assert!(sys.load(&mut wf).unwrap());
+
+    assert!(wf.is_temporary(), "{:?} is not a copy", wf.path);
+    assert!(wf.path.ends_with(BOOT_BAT), "{:?}", wf.path);
+    assert_eq!(
+        fs::read_to_string(&wf.path).unwrap(),
+        "dos4gw.exe demo.exe\r\n"
+    );
+    assert!(wf.path.with_file_name("DEMO.EXE").is_file());
+    assert!(!release.join(BOOT_BAT).exists());
+}
+
+/// An INF `XL` archive behind a loader stub is unpacked beside it, and the
+/// program its command names is what gets started.
+#[test]
+fn unpacks_an_xl_archive() {
+    let scramble = |b: &[u8]| -> Vec<u8> {
+        b.iter()
+            .enumerate()
+            .map(|(i, x)| x.wrapping_add(i as u8))
+            .collect()
+    };
+    let entry = |name: &str, size: u32, offset: u32| {
+        let mut e = [0u8; 32];
+        e[..name.len()].copy_from_slice(name.as_bytes());
+        e[16..20].copy_from_slice(&size.to_le_bytes());
+        e[20..24].copy_from_slice(&offset.to_le_bytes());
+        e
+    };
+    // A one-page stub: 0x40 bytes in its last (only) page
+    let mut exe = vec![0u8; 0x40];
+    exe[..6].copy_from_slice(&[b'M', b'Z', 0x40, 0, 1, 0]);
+    let mut archive = b"XL\x02\x82\0\0\0\0".to_vec();
+    archive.extend(2u16.to_le_bytes());
+    archive.extend(1u16.to_le_bytes());
+    archive.extend(16u32.to_le_bytes());
+    let data = 16 + 2 * 32 + 0x8d;
+    let dir = [
+        entry("DEMO.EXE", 2, data),
+        entry("../TUNE.MP3", 3, data + 2),
+    ]
+    .concat();
+    archive.extend(scramble(&dir));
+    let mut command = vec![0u8; 0x8d];
+    command[..8].copy_from_slice(b"DEMO.EXE");
+    archive.extend(scramble(&command));
+    archive.extend(b"MZabc");
+    exe.extend(archive);
+
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("release");
+    fs::create_dir_all(&release).unwrap();
+    let path = write_bytes(&release, "INFYUME2.EXE", &exe);
+
+    let start = xl_archive_start(&path).unwrap();
+    assert_eq!(start, 0x40);
+    assert_eq!(unpack_xl(&path, start).unwrap(), release.join("DEMO.EXE"));
+    assert_eq!(fs::read(release.join("DEMO.EXE")).unwrap(), b"MZ");
+    assert_eq!(fs::read(release.join("TUNE.MP3")).unwrap(), b"abc");
+    assert!(!dir.path().join("TUNE.MP3").exists());
+
+    let plain = write_bytes(&release, "PLAIN.EXE", &exe[..0x40]);
+    assert_eq!(xl_archive_start(&plain), None);
+}
