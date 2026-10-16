@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use regex::Regex;
 use tracing::info;
 
@@ -101,10 +101,8 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 ///
 /// Returns the name the db goes by — see [`db_name`].
 pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<String> {
-    let data = match fs::read(path) {
-        Ok(data) => data,
-        Err(err) => bail!("Failed to read db file {}: {err}", path.display()),
-    };
+    let data =
+        fs::read(path).with_context(|| format!("Failed to read db file {}", path.display()))?;
     let text = db_text(data, &format!("db file {}", path.display()))?;
     let fallback = path
         .file_stem()
@@ -157,14 +155,9 @@ fn db_name(text: &str, fallback: String) -> String {
 /// [`leak`]. This is the one big leak: a db is read once, and slicing it beats
 /// copying every field of every line into its own `String`.
 fn db_text(data: Vec<u8>, what: &str) -> Result<&'static str> {
-    let data = match unpack_if_packed(data) {
-        Ok(data) => data,
-        Err(err) => bail!("Failed to unpack {what}: {err}"),
-    };
-    match String::from_utf8(data) {
-        Ok(text) => Ok(leak(text)),
-        Err(err) => bail!("Failed to read {what}: {err}"),
-    }
+    let data = unpack_if_packed(data).with_context(|| format!("Failed to unpack {what}"))?;
+    let text = String::from_utf8(data).with_context(|| format!("Failed to read {what}"))?;
+    Ok(leak(text))
 }
 
 /// Which db lines to keep, as regexes matched against the raw fields of a line
@@ -212,9 +205,9 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<Opt
         return Ok(None);
     }
     let mut data = Vec::new();
-    if let Err(err) = io::stdin().read_to_end(&mut data) {
-        bail!("Failed to read db from stdin: {err}");
-    }
+    io::stdin()
+        .read_to_end(&mut data)
+        .context("Failed to read db from stdin")?;
     let text = db_text(data, "db from stdin")?;
     let start = out.len();
     collect_db_text(text, filter, out);
@@ -353,12 +346,8 @@ pub fn collect_file(in_path: &Path) -> Result<EmuFile> {
 /// Does not unpack archives, but collects metadata from m3u files
 /// Rule-of-thumb: Collect only cheap information, since there can be a lot of files
 fn collect_files_(dir: &Path, out: &mut Vec<EmuFile>, many: bool) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            bail!("Failed to read directory {}: {err}", dir.display());
-        }
-    };
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read directory {}", dir.display()))?;
     let mut files = vec![];
     let mut dirs = vec![];
     let mut disk_images = true;
