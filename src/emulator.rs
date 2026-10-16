@@ -14,6 +14,7 @@ use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
+use crate::ui::{HudLocation, SetHudText};
 use crate::workfile::WorkFile;
 
 mod load;
@@ -576,8 +577,22 @@ impl Emulator {
             }
         };
 
-        let heart = if self.favorite { " \u{f02d1}" } else { "" };
-        format!("\"{title}\"{heart}\n{group}{year}\n{desc}")
+        format!("\"{title}\"\n{group}{year}\n{desc}")
+    }
+
+    /// The info text and its favorite marker, for the HUD.
+    pub fn info_hud(&self, delay: std::time::Duration, duration: std::time::Duration) -> [SetHudText; 2] {
+        let heart = if self.favorite { "\u{f02d1}" } else { "" };
+        [
+            (self.get_info(), HudLocation::InfoText),
+            (heart.to_string(), HudLocation::Favorite),
+        ]
+        .map(|(text, location)| SetHudText {
+            text,
+            delay,
+            duration,
+            location,
+        })
     }
 
     pub fn skip(&mut self, frames: u32) {

@@ -149,12 +149,10 @@ pub(crate) fn handle_loading(
         if matches!(emu.state, EmuState::InfoDelay) {
             emu.state = EmuState::Running;
             if settings.show_info && settings.maximized {
-                writer.write(SetHudText {
-                    text: emu.get_info(),
-                    delay: Duration::from_secs(settings.info_delay),
-                    duration: Duration::from_secs(settings.info_duration),
-                    location: HudLocation::InfoText,
-                });
+                writer.write_batch(emu.info_hud(
+                    Duration::from_secs(settings.info_delay),
+                    Duration::from_secs(settings.info_duration),
+                ));
             }
         }
     }

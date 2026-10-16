@@ -14,6 +14,7 @@ const TOP_RIGHT_SCALE: f32 = 2.5;
 const BOTTOM_LEFT_SCALE: f32 = 1.0;
 const INFO_TEXT_SCALE: f32 = 1.0;
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x10, 0x10);
+const FAVORITE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0x20, 0x20);
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum HudLocation {
@@ -23,6 +24,8 @@ pub enum HudLocation {
     TopLeft,
     TopRight,
     Error,
+    /// Left of the first line of [`HudLocation::InfoText`], shown only with it.
+    Favorite,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -78,6 +81,7 @@ impl Hud {
             .order(egui::Order::Background)
             .show(ctx, |ui| {
                 ui.set_min_size(rect.size());
+                let mut info_line = None;
                 for (text, corner, scale) in [
                     (HudLocation::TopLeft, egui::Align2::LEFT_TOP, TOP_LEFT_SCALE),
                     (
@@ -101,9 +105,7 @@ impl Hud {
                         BOTTOM_LEFT_SCALE * 0.75,
                     ),
                 ] {
-                    let info = self.current_texts.get(&text).cloned().unwrap_or_default();
-                    let on = info.duration.contains(&now);
-                    let t = ctx.animate_bool_with_time(egui::Id::new(&info.text), on, 0.5);
+                    let (info, t) = self.fade(ctx, text, now);
                     if t > 0.0 {
                         let quad =
                             egui::Rect::from_two_pos(corner.pos_in_rect(&rect), rect.center());
@@ -123,20 +125,45 @@ impl Hud {
                         ui.scope_builder(
                             egui::UiBuilder::new().max_rect(quad).layout(layout),
                             |ui| {
-                                heading_with_shadow(
+                                let line = heading_with_shadow(
                                     ui,
                                     &info.text,
                                     HEADING_SIZE * scale,
                                     color,
                                     corner.x(),
                                 );
+                                if text == HudLocation::InfoText {
+                                    info_line = line;
+                                }
                             },
                         );
                     }
                 }
+                let (info, t) = self.fade(ctx, HudLocation::Favorite, now);
+                if t > 0.0
+                    && let Some(line) = info_line
+                {
+                    let size = HEADING_SIZE * INFO_TEXT_SCALE;
+                    let galley = ui.painter().layout_no_wrap(
+                        info.text,
+                        egui::FontId::proportional(size),
+                        egui::Color32::PLACEHOLDER,
+                    );
+                    let pos = line.left_center()
+                        - egui::vec2(galley.size().x + size * 0.3, galley.size().y / 2.0);
+                    paint_with_shadow(ui, pos, galley, size, FAVORITE_COLOR.linear_multiply(t));
+                }
             });
 
         render_downloads(ctx, rect.min, download_bytes);
+    }
+
+    /// The text at `location` and how far it is faded in.
+    fn fade(&self, ctx: &egui::Context, location: HudLocation, now: f32) -> (HudText, f32) {
+        let info = self.current_texts.get(&location).cloned().unwrap_or_default();
+        let on = info.duration.contains(&now);
+        let t = ctx.animate_bool_with_time(egui::Id::new(&info.text), on, 0.5);
+        (info, t)
     }
 }
 
@@ -185,13 +212,14 @@ const SHADOW_OFFSET: f32 = 0.05;
 ///
 /// `align` is the edge the individual lines line up on, so a multi-line text in
 /// a right-hand corner reads flush against that corner rather than ragged.
+/// Returns where the first line was drawn.
 fn heading_with_shadow(
     ui: &mut Ui,
     text: &str,
     size: f32,
     color: egui::Color32,
     align: egui::Align,
-) {
+) -> Option<egui::Rect> {
     // Laid out uncoloured so the one galley can be painted twice, with
     // `Painter::galley` filling in a colour each time. A job rather than
     // `layout_no_wrap`, which has no say over `halign`.
@@ -209,6 +237,22 @@ fn heading_with_shadow(
     // edge for `Align::Max`), so the box just allocated is mapped onto it by
     // cancelling out where the galley starts.
     let pos = rect.min - galley.rect.min.to_vec2();
+    let first_line = galley
+        .rows
+        .first()
+        .map(|row| row.rect_without_leading_space().translate(pos.to_vec2()));
+    paint_with_shadow(ui, pos, galley, size, color);
+    first_line
+}
+
+fn paint_with_shadow(
+    ui: &Ui,
+    pos: egui::Pos2,
+    galley: std::sync::Arc<egui::Galley>,
+    size: f32,
+    color: egui::Color32,
+) {
+    let offset = egui::Vec2::splat(size * SHADOW_OFFSET);
     // Black at the text's own alpha, so shadow and text fade together.
     let shadow = egui::Color32::from_black_alpha(color.a());
     ui.painter().galley(pos + offset, galley.clone(), shadow);

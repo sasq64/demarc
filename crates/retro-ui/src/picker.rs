@@ -43,7 +43,6 @@ const ICON_GAP: f32 = 8.0;
 
 const TITLE_SIZE: f32 = 30.0;
 const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xee, 0xcc);
-const SELECTED_TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xee, 0xcc);
 const SELECTED_TITLE_BG: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x70, 0x50);
 
 const INFO_SIZE: f32 = 22.0;

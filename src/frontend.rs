@@ -507,12 +507,7 @@ pub(crate) fn run_frontend(
         emu.focus(focus);
 
         if show_info && i == settings.current_emu {
-            writer.write(SetHudText {
-                text: emu.get_info(),
-                duration: Duration::from_secs(2),
-                location: HudLocation::InfoText,
-                ..Default::default()
-            });
+            writer.write_batch(emu.info_hud(Duration::ZERO, Duration::from_secs(2)));
         }
 
         if !emu.is_crossfade {

@@ -772,9 +772,10 @@ fn a_click_selects_the_view_and_shows_its_info() {
     assert_eq!(settings(&mut world).select_box_drawn_at, 1.0);
     assert!(!settings(&mut world).maximized);
     let hud = hud(&mut world);
-    assert_eq!(hud.len(), 1);
+    assert_eq!(hud.len(), 2);
     assert_eq!(hud[0].location, HudLocation::InfoText);
     assert!(hud[0].text.starts_with("\"Second\""));
+    assert_eq!(hud[1].location, HudLocation::Favorite);
 }
 
 #[test]

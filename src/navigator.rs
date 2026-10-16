@@ -7,12 +7,12 @@ use indexmap::{IndexMap, IndexSet};
 use regex::Regex;
 
 use crate::AppState;
-use crate::picker_sources::{DownloadSource, IconMode, PickerSource};
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
 use crate::emu_file::EmuFile;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 use crate::loading::LoadFile;
+use crate::picker_sources::{DownloadSource, IconMode, PickerSource};
 use crate::playlists::{FAVORITES, Playlists};
 use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
 
@@ -126,10 +126,6 @@ impl Navigator {
             playlists: HashSet::new(),
             current_launch: None,
         }
-    }
-
-    fn is_setup(&self) -> bool {
-        self.pos >= 0
     }
 
     fn push(&mut self, nav_list: NavList) -> &mut Self {

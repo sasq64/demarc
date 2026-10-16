@@ -647,12 +647,7 @@ pub(crate) fn handle_cmd(
             }
             let i = view.index;
             if show_info && i == settings.current_emu {
-                writer.write(SetHudText {
-                    text: emu.get_info(),
-                    duration: Duration::from_secs(2),
-                    location: HudLocation::InfoText,
-                    ..Default::default()
-                });
+                writer.write_batch(emu.info_hud(Duration::ZERO, Duration::from_secs(2)));
             }
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;
@@ -741,17 +736,18 @@ pub(crate) fn handle_cmd(
                     }
                     Cmd::ToggleInfo => {
                         if emu.show_info {
-                            writer.write(SetHudText {
-                                location: HudLocation::InfoText,
-                                ..Default::default()
-                            });
+                            writer.write_batch(
+                                [HudLocation::InfoText, HudLocation::Favorite].map(|location| {
+                                    SetHudText {
+                                        location,
+                                        ..Default::default()
+                                    }
+                                }),
+                            );
                         } else {
-                            writer.write(SetHudText {
-                                text: emu.get_info(),
-                                delay: Duration::from_secs(0),
-                                duration: Duration::from_secs(5000),
-                                location: HudLocation::InfoText,
-                            });
+                            writer.write_batch(
+                                emu.info_hud(Duration::ZERO, Duration::from_secs(5000)),
+                            );
                         }
                         emu.show_info = !emu.show_info;
                     }
@@ -906,12 +902,9 @@ fn handle_playlist_pick(
                 if emu.favorite != favorite {
                     emu.favorite = favorite;
                     if emu.show_info {
-                        writer.write(SetHudText {
-                            text: emu.get_info(),
-                            duration: Duration::from_secs(5000),
-                            location: HudLocation::InfoText,
-                            ..Default::default()
-                        });
+                        writer.write_batch(
+                            emu.info_hud(Duration::ZERO, Duration::from_secs(5000)),
+                        );
                     }
                 }
             }

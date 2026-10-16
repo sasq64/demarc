@@ -264,10 +264,10 @@ fn info_names_the_release_its_year_and_its_system() {
     );
 
     emu.favorite = true;
-    assert!(
-        emu.get_info()
-            .starts_with("\"Deus Ex Machina\" \u{f02d1}\n")
-    );
+    let [info, heart] = emu.info_hud(Duration::ZERO, Duration::ZERO);
+    assert_eq!(info.text, emu.get_info());
+    assert_eq!(heart.location, HudLocation::Favorite);
+    assert_eq!(heart.text, "\u{f02d1}");
 }
 
 #[test]
