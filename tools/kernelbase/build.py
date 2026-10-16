@@ -17,6 +17,10 @@ TARGET = "i686-pc-windows-msvc"
 NTDLL = ["LdrLoadDll@16", "LdrGetProcedureAddress@16", "RtlQueryEnvironmentVariable_U@12",
          "LdrDisableThreadCalloutsForDll@4"]
 
+# Names Windows' kernelbase lookup finds that wine's kernelbase lacks. Crinkler
+# falls back to export #1 for a missing name; these jump into wine's kernel32.
+EXTRA = ["CreateSemaphoreA", "OpenFile"]
+
 
 def read_exports(path):
     """(ordinal, name or None) for every export of the PE at `path`."""
@@ -55,15 +59,24 @@ def thunks(rows):
     out = [".text"]
     for i in range(len(rows)):
         out += [f".globl _t{i}", f"_t{i}:", f"    jmp *_slots+{4 * i}"]
+    for j in range(len(EXTRA)):
+        out += [f".globl _x{j}", f"_x{j}:", f"    movl _extra_slots+{4 * j}, %eax",
+                "    testl %eax, %eax", f"    jz 1f", "    jmp *%eax",
+                f"1:  pushl ${j}", "    call _resolve_extra@4", "    jmp *%eax"]
     out += ["_stub:", "    xorl %eax, %eax", "    ret"]
     out += [".data", ".globl _slots", "_slots:"]
     out += ["    .long _stub" for _ in rows]
+    out += [".globl _extra_slots", "_extra_slots:"]
+    out += ["    .long 0" for _ in EXTRA]
     out += [".section .rdata,\"dr\"", ".globl _export_count", "_export_count:",
             f"    .long {len(rows)}", ".globl _ordinals", "_ordinals:"]
     out += [f"    .short {ordinal}" for ordinal, _ in rows]
     out += [".p2align 2", ".globl _names", "_names:"]
     out += [f"    .long _n{i}" if name else "    .long 0" for i, (_, name) in enumerate(rows)]
     out += [f"_n{i}: .asciz \"{name}\"" for i, (_, name) in enumerate(rows) if name]
+    out += [".p2align 2", ".globl _extra_names", "_extra_names:"]
+    out += [f"    .long _xn{j}" for j in range(len(EXTRA))]
+    out += [f"_xn{j}: .asciz \"{name}\"" for j, name in enumerate(EXTRA)]
     return "\n".join(out) + "\n"
 
 
@@ -72,6 +85,11 @@ def def_file(rows):
     for i, (ordinal, name) in enumerate(rows):
         out.append(f"    {name}=t{i} @{ordinal}" if name
                    else f"    _noname{ordinal}=t{i} @{ordinal} NONAME")
+    last = max(ordinal for ordinal, _ in rows)
+    names = {name for _, name in rows}
+    for j, name in enumerate(EXTRA):
+        if name not in names:
+            out.append(f"    {name}=x{j} @{last + 1 + j}")
     return "\n".join(out) + "\n"
 
 

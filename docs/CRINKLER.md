@@ -95,6 +95,15 @@ All three resolutions are affected identically; the corrupted width is always `w
 
 ---
 
+### Kindercrasher (RGBA, Inspire 2008, `zoo.86129`)
+
+`OpenFile("drivers/gm.dls", ...)` became `AccessCheck`, which returned 0. The synth then
+read every sample size from handle 0, kept uninitialised stack words as lengths
+(`0x733ff9f` samples) and mixed each note to the end of a 37 MB buffer: the first frame
+(white bubbles) stayed up forever, at 100% CPU, with no sound.
+
+---
+
 ## Mode 3 — forwarded exports
 
 Crinkler reads `base + EAT[i]` without following forwarders, and 94 of wine's
@@ -165,7 +174,9 @@ Options, in order of how much they touch:
 3. **Nothing.** The prod stays black. Worth knowing that no amount of core-option or
    prefix tuning will move it — this is below all of that.
 
-Neither 1 nor 2 is implemented. Note that any fix for this class has to preserve the
+Option 2 is done for `CreateSemaphoreA` and `OpenFile`: `tools/kernelbase` exports
+them (list `EXTRA` in `build.py`) and jumps into wine's kernel32. Add a name there for the
+next one. Note that any fix for this class has to preserve the
 *argument count*, not just the name: a stub returning 0 with the wrong `ret N` reproduces
 the bug exactly.
 

@@ -400,3 +400,12 @@
   otherwise. The `retro_emu` core tests need the cores in `~/.cache/demarc/cores`,
   so they must name the cores demarc actually fetches (`vice_x64sc`,
   `pcsx_rearmed`).
+
+- Kindercrasher (`zoo.86129`) stuck on its first frame was Crinkler mode 2
+  (`docs/CRINKLER.md`): `OpenFile` missing from wine's kernelbase became
+  `AccessCheck`. A radeonsi glthread segfault seen first was a red herring that
+  only showed in plain wine without demarc's kernelbase proxy; check what a
+  spinning 4k is doing (perf on the exe, then the stack frame) before
+  chasing the first crash a bare-wine run shows. `pgrep -f <exe>` also matches
+  the agent's own shell, whose command line contains the name: use `pgrep -x`
+  (comm is cut to 15 chars, `rgba_kindercras`).

@@ -71,6 +71,24 @@ static HMODULE load_wine_kernelbase(void)
     return 0;
 }
 
+extern void *extra_slots[];
+extern const char *const extra_names[];
+
+// kernel32 imports kernelbase, so it is only there once the demo calls in.
+void *__stdcall resolve_extra(unsigned i)
+{
+    static WCHAR dll[] = u"kernel32.dll";
+    UNICODE_STRING file = {sizeof(dll) - 2, sizeof(dll), dll};
+    HMODULE kernel32 = 0;
+    void *address = 0;
+    unsigned short n = length(extra_names[i]);
+    ANSI_STRING name = {n, n + 1, extra_names[i]};
+    if (!LdrLoadDll(0, 0, &file, &kernel32))
+        LdrGetProcedureAddress(kernel32, &name, 0, &address);
+    extra_slots[i] = address;
+    return address;
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;

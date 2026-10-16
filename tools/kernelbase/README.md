@@ -10,6 +10,11 @@ wine forwards 94 of kernelbase's exports to ntdll (`QueryPerformanceFrequency`,
 forwarder string; quite's "yes we can" jumps into
 `"ntdll.RtlQueryPerformanceFrequency"` and dies on the `outsb` that `n` decodes to.
 
+It also exports a few names wine's kernelbase lacks (`EXTRA` in `build.py`:
+`CreateSemaphoreA`, `OpenFile`), after wine's ordinals, each resolved into
+wine's kernel32 on first call. Crinkler falls back to export #1 (`AccessCheck`)
+for a name it cannot find; Kindercrasher's `OpenFile` of `drivers/gm.dls` did.
+
 kernel32 imports kernelbase, so this imports only ntdll. kernelbase is a
 KnownDLL, so it has to be in `syswow64`; an app-dir copy is ignored.
 

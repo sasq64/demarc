@@ -116,10 +116,15 @@ Only some d3dx9 versions are native; others still hit wine's stubs.
 
 **Crinkler / packed 4k.** Imports are resolved by walking export tables, so a
 wine export list that differs from Windows breaks silently. Existing proxies:
-`winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders),
+`winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders, plus
+Windows-only names in `EXTRA`),
 `opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits), `dx8vb`
 (`VB_D3DX*` math). Odd DLL casing in `+loaddll` is deliberate. See
-`docs/CRINKLER.md`. The exe cannot be patched; an unpacked one can, with an
+`docs/CRINKLER.md`. A `+relay` call to `AccessCheck` with `ret=004...` is a
+name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
+frozen at 100% CPU: `perf record -p` shows the hot loop, and a scan of
+`/proc/<pid>/mem` (from gamescope's parent) for its stack frame shows the
+bad locals. The exe cannot be patched; an unpacked one can, with an
 override `patch`.
 
 **GLSL compile errors (white or black GL intro).** Read Mesa's errors at
