@@ -106,8 +106,8 @@ patch = {
   contents = "McCQkJCQkA==",
 }
 
-[zoo.4767]
-boot = "final.png"
+# [zoo.4767]
+# boot = "final.png"
 
 # Grayscale by Keyboarders: wined3d's ddraw draws to the GL front buffer, black
 [zoo.5252]
