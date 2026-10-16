@@ -59,3 +59,9 @@ fn replaces_events_with_recording() {
     assert!(out.contains("{ frame = 40, click = [0.5, 0.25] }"), "{out}");
     overrides::parse(&out, Emulator::resolve_key_name).unwrap();
 }
+
+#[test]
+fn sets_file() {
+    let out = apply(81, Change::File("demo.zip".into()));
+    assert!(out.contains("[zoo.81]\nmeta = { dos4gw = \"true\" }\nfile = \"demo.zip\""), "{out}");
+}

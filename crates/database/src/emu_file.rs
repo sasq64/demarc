@@ -167,7 +167,7 @@ fn url_extension(url: &str) -> Option<String> {
 /// The file name at the end of a URL's *path*, percent-decoded, so it can be
 /// compared with the name an override names. `None` for a URL with no path at
 /// all, e.g. `https://example.com`.
-fn url_file_name(url: &str) -> Option<String> {
+pub fn url_file_name(url: &str) -> Option<String> {
     let url = Url::parse(url).ok()?;
     let name = Path::new(url.path()).file_name()?.to_str()?;
     Some(

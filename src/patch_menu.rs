@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, value};
 
 use crate::config::AppSettings;
-use crate::emu_file::DemoId;
+use crate::emu_file::{DemoId, url_file_name};
 use crate::emulator::{Emulator, Recorded};
 use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
@@ -23,10 +23,11 @@ const ITEMS: &[&str] = &[
     "Apply wine_res",
     "Apply dos4gw",
     "Apply boot file",
+    "Apply download",
     "Add Enter x 3",
     "Record Events",
 ];
-const RECORD: usize = 4;
+const RECORD: usize = 5;
 
 pub struct PatchMenuPlugin;
 
@@ -117,6 +118,7 @@ fn current<'a>(
 enum Change {
     Meta(&'static str, String),
     Boot(String),
+    File(String),
     Enters,
     Events(Vec<(u64, Recorded)>),
 }
@@ -139,7 +141,13 @@ fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
                 .context("No boot file")?;
             Change::Boot(name.to_string_lossy().into_owned())
         }
-        3 => Change::Enters,
+        3 => {
+            let fetched = emu.work_file.get_meta_or("fetched", "");
+            let url = fetched.split(';').next().unwrap_or_default();
+            let name = url_file_name(url).context("No download")?;
+            Change::File(name)
+        }
+        4 => Change::Enters,
         _ => bail!("Unknown patch"),
     })
 }
@@ -199,6 +207,9 @@ fn edit(doc: &mut DocumentMut, id: DemoId, change: &Change) -> Result<()> {
         }
         Change::Boot(name) => {
             entry.insert("boot", value(name.as_str()));
+        }
+        Change::File(name) => {
+            entry.insert("file", value(name.as_str()));
         }
         Change::Enters => {
             let events = entry
