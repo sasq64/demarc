@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_ushort, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint, c_ushort, c_void};
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
@@ -546,10 +546,10 @@ impl RetroCoreDirect {
                     self.state.pixel_format = fmt;
                 }
                 RETRO_ENVIRONMENT_GET_CAN_DUPE => {
-                    *(data as *mut bool) = true;
+                    *(data as *mut c_uchar) = 1;
                 }
                 RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
-                    *(data as *mut bool) = false;
+                    *(data as *mut c_uchar) = 0;
                 }
                 RETRO_ENVIRONMENT_SET_VARIABLES => {
                     if !data.is_null() {
@@ -604,7 +604,7 @@ impl RetroCoreDirect {
                 // Ignore option display hints
                 RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY => {}
                 RETRO_ENVIRONMENT_GET_FASTFORWARDING => {
-                    *(data as *mut c_uint) = if self.skip_frames > 0 { 1 } else { 0 };
+                    *(data as *mut c_uchar) = if self.skip_frames > 0 { 1 } else { 0 };
                 }
                 RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER => {
                     // TODO: Return unsafe pointer to frame?
