@@ -891,3 +891,7 @@ const _: () = {
         _assert_send_sync::<RetroCoreProcess>();
     }
 };
+
+#[cfg(test)]
+#[path = "tests/process_tests.rs"]
+mod tests;

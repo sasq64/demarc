@@ -328,6 +328,10 @@ impl AudioSink {
         self.volume.set(level);
     }
 
+    pub fn volume(&self) -> f32 {
+        self.volume.get()
+    }
+
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
         if let Some(resampler) = &mut self.resampler
             && let Some(producer) = &self.producer

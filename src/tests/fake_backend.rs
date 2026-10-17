@@ -23,6 +23,7 @@ pub struct FakeState {
     pub fps: f64,
     pub aspect: f32,
     pub idle: bool,
+    pub activity: f32,
     pub state: u64,
     pub info: Option<String>,
 }
@@ -48,6 +49,7 @@ impl Default for FakeState {
             fps: 50.0,
             aspect: 4.0 / 3.0,
             idle: false,
+            activity: 0.5,
             state: 0,
             info: None,
         }
@@ -165,6 +167,10 @@ impl Backend for FakeBackend {
 
     fn is_idle(&self) -> bool {
         self.lock().idle
+    }
+
+    fn screen_activity(&self) -> f32 {
+        self.lock().activity
     }
 
     fn focus(&mut self, focus: ViewFocus) {

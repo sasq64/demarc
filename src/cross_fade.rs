@@ -254,3 +254,7 @@ impl Plugin for CrossFadePlugin {
             );
     }
 }
+
+#[cfg(test)]
+#[path = "tests/cross_fade_tests.rs"]
+mod tests;

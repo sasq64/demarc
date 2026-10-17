@@ -153,3 +153,7 @@ impl Plugin for DjPlugin {
             .add_systems(PostUpdate, update_dj_view);
     }
 }
+
+#[cfg(test)]
+#[path = "tests/dj_tests.rs"]
+mod tests;

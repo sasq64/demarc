@@ -382,6 +382,11 @@ impl Emulator {
         self.sink.set_volume(level);
     }
 
+    #[cfg(test)]
+    pub fn volume(&self) -> f32 {
+        self.sink.volume()
+    }
+
     pub fn audio_active(&mut self, on: bool) {
         if on && self.sink.stream.is_none() {
             self.sink.activate();
