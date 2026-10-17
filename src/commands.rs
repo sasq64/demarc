@@ -74,6 +74,7 @@ impl Cmd {
         Cmd::ToggleInfo,
         Cmd::Reset,
         Cmd::Screenshot,
+        Cmd::ScreenshotAll,
         Cmd::Warp10,
         Cmd::Warp30,
         Cmd::Fullscreen,

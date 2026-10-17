@@ -83,7 +83,9 @@ pub(crate) fn handle_loading(
         } else {
             let db = settings.default_db();
             let flen = db.len() as isize;
-            let d = if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
+            let d = if flen == 0 {
+                0
+            } else if emu.run_next && (settings.tv_mode || settings.current_game < flen - 1) {
                 1
             } else if emu.run_prev && (settings.tv_mode || settings.current_game > 0) {
                 -1
@@ -172,3 +174,6 @@ impl Plugin for LoadingPlugin {
     }
 }
 
+#[cfg(test)]
+#[path = "tests/loading_tests.rs"]
+mod tests;

@@ -429,3 +429,7 @@
   card). Check `src/sound/snd_sb.c` for a card's name and config keys; sb2.0 has
   `base`/`irq` (IRQ 5 by default, which the XT disk adapter also uses) and no
   `dma` key.
+
+- `ButtonInput::clear()` only drops the just-pressed/released sets; the key
+  stays held, so a second `press()` of it in a test is not `just_pressed`.
+  `release()` it before `clear()`.
