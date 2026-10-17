@@ -426,6 +426,7 @@ fn cursor_frame_uv(
 
 /// Copy `frame` into the top-left of a `dst_w`x`dst_h` RGBA texture, clipping
 /// whatever does not fit.
+#[hotpath::measure]
 fn blit_frame(dst: &mut [u8], dst_w: usize, dst_h: usize, frame: &VideoFrame) {
     let w = frame.width;
     let src = crate::backend::frame_bytes(&frame.pixels);
@@ -438,6 +439,7 @@ fn blit_frame(dst: &mut [u8], dst_w: usize, dst_h: usize, frame: &VideoFrame) {
     }
 }
 
+#[hotpath::measure]
 pub(crate) fn run_frontend(
     mut emus: Query<(&mut Emulator, &EmuView, &mut PostProcess)>,
     input: Res<ButtonInput<KeyCode>>,

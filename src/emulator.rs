@@ -325,6 +325,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[hotpath::measure(impl_type = "Emulator")]
     pub fn new(
         images: &mut Assets<Image>,
         max_time: Option<usize>,
@@ -392,6 +393,7 @@ impl Emulator {
     /// Hands the core's pending audio to the sink. Returns whether any samples
     /// actually arrived, which is what [`Emulator::run`] reads to tell that a
     /// frame skip has run its course.
+    #[hotpath::measure(impl_type = "Emulator")]
     pub fn update(&mut self) -> bool {
         let Emulator {
             core,
@@ -441,6 +443,7 @@ impl Emulator {
         }
     }
 
+    #[hotpath::measure(impl_type = "Emulator")]
     pub fn feed_inputs(
         &mut self,
         input: &ButtonInput<KeyCode>,
@@ -654,6 +657,7 @@ impl Emulator {
         }
     }
 
+    #[hotpath::measure(impl_type = "Emulator")]
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
         if delta > 0.0 {

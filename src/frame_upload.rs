@@ -28,6 +28,7 @@ pub struct FrameUploadPlugin;
 #[derive(Resource, Default)]
 struct ExtractedFrames(Vec<(AssetId<Image>, VideoFrame)>);
 
+#[hotpath::measure]
 fn extract_frames(mut frames: ResMut<ExtractedFrames>, emus: Extract<Query<&Emulator>>) {
     frames.0.clear();
     for emu in &emus {
@@ -39,6 +40,7 @@ fn extract_frames(mut frames: ResMut<ExtractedFrames>, emus: Extract<Query<&Emul
 
 /// `uploaded` remembers the last frame written to each texture, so a core that
 /// has not produced a new one costs nothing. A resize brings a new texture.
+#[hotpath::measure]
 fn upload_frames(
     frames: Res<ExtractedFrames>,
     gpu_images: Res<RenderAssets<GpuImage>>,

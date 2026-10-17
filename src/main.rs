@@ -315,6 +315,10 @@ fn cap_rayon_threads() {
     unsafe { std::env::set_var("RAYON_NUM_THREADS", threads.to_string()) };
 }
 
+// A pass-through to `System` unless `hotpath-alloc` is on.
+#[global_allocator]
+static GLOBAL: hotpath::CountingAllocator = hotpath::CountingAllocator::new();
+
 fn main() {
     #[cfg(all(unix, target_env = "gnu"))]
     cap_malloc_arenas();
@@ -333,6 +337,8 @@ fn main() {
     if let Some(code) = retro_emu::process_worker_main() {
         std::process::exit(code);
     }
+    // After the worker check, so worker processes don't profile themselves.
+    let _hotpath = hotpath::HotpathGuardBuilder::new("main").build();
 
     // Parse args before touching stdout/stderr so clap's help/errors are visible,
     // and so `--no-silence` can be honoured when setting up logging below.

@@ -13,6 +13,7 @@ use crate::config::{AppSettings, RenderSettings};
 /// go through `set_if_neq` and the components are only inserted when missing.
 /// An unconditional write would mark them changed (and re-queue an archetype
 /// insert through `Commands`) on every single frame.
+#[hotpath::measure]
 pub(super) fn update_post_process_uniform(
     images: Res<Assets<Image>>,
     settings: Res<RenderSettings>,

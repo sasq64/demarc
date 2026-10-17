@@ -126,6 +126,8 @@ mlua.workspace = true
 regex = "1"
 
 
+# Profiling, inert unless the `hotpath` feature is on (https://hotpath.rs).
+hotpath = "0.28"
 resvg = "0.48.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -154,6 +156,10 @@ libc.workspace = true
 default = []
 # Enables the Flash (SWF) backend (crates/flash-emu) and its Ruffle dependencies.
 flash = ["dep:flash-emu"]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
+hotpath-prometheus = ["hotpath/hotpath-prometheus"]
+hotpath-cloud = ["hotpath/hotpath-cloud"]
 
 [profile.release]
 opt-level = 2
