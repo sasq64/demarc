@@ -1024,3 +1024,16 @@ boot = ["dos4gw.exe", "demo.exe"]
 
 [zoo.9264]
 events = [{ frame = 18, key = "4" }]
+
+# Mojo Dreams by Frenetic & r0k. Each .com is a DOS dropper (aPACK) that writes
+# t.exe and execs it through int 21h, which only NTVDM could do. This is the
+# 800x600 PE taken out of it, with `mov cl,0Fh` before the gm.dls path's
+# `rep movsb` made a full `mov ecx`: wine leaves ECX's upper bytes set.
+[zoo.3286]
+file = "mojodreams4k_final.zip"
+boot = "MojoDreams_final800x600.exe"
+patch = {
+  info = "PE from the COM dropper, ECX fix",
+  target = "MojoDreams_final800x600.exe",
+  source = "win/patches/mojodreams.exe",
+}

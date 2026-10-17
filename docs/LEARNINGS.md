@@ -433,3 +433,10 @@
 - `ButtonInput::clear()` only drops the just-pressed/released sets; the key
   stays held, so a second `press()` of it in a test is not `just_pressed`.
   `release()` it before `clear()`.
+
+- A `.com` in a `platform:Windows` release (early-2000s 4Ks, e.g. Mojo Dreams
+  `zoo.3286`) is a DOS dropper: an aPACK stub that writes a PE and starts it
+  through `int 21h/4B00`, which only NTVDM did. DOSBox runs it to a black
+  screen. Depack it (aPLib-style; the stub's own loop is short enough to
+  translate), cut the PE out at its `MZ`, and ship that as an override `patch`
+  with `boot`.
