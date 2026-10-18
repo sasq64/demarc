@@ -52,6 +52,7 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_SET_GEOMETRY, RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,
     RETRO_ENVIRONMENT_SET_MESSAGE, RETRO_ENVIRONMENT_SET_MESSAGE_EXT,
     RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL, RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,
+    RETRO_ENVIRONMENT_SET_ROTATION,
     RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
     RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
     RETRO_THROTTLE_FAST_FORWARD, RETRO_THROTTLE_NONE, retro_audio_sample_batch_t,
@@ -610,6 +611,8 @@ impl RetroCoreDirect {
                     // TODO: Return unsafe pointer to frame?
                 }
                 RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL => {}
+                // Accepted but not applied; Holani panics if this fails.
+                RETRO_ENVIRONMENT_SET_ROTATION => {}
                 RETRO_ENVIRONMENT_GET_THROTTLE_STATE => {
                     let state = data as *mut retro_throttle_state;
                     (*state).rate = 1.0;

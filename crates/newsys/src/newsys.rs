@@ -27,6 +27,7 @@ use dos::DosSystem;
 use gameboy::GameboySystem;
 use gba::GBASystem;
 use images::ImageSystem;
+use lynx::LynxSystem;
 use megadrive::MegadriveSystem;
 use music::MusicSystem;
 use neo_geo::NeoGeoSystem;
@@ -55,6 +56,7 @@ mod dos;
 mod gameboy;
 mod gba;
 mod images;
+mod lynx;
 mod megadrive;
 mod music;
 mod neo_geo;
@@ -541,6 +543,7 @@ impl NewSys {
             // Before the C64, which would otherwise claim the same disks and
             // programs; it stands aside unless --cbm-variant asked for it.
             Box::new(Plus4System::new(args)),
+            Box::new(LynxSystem {}),
             Box::new(C64System::new(args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),

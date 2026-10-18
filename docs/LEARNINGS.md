@@ -440,3 +440,8 @@
   screen. Depack it (aPLib-style; the stub's own loop is short enough to
   translate), cut the PE out at its `MZ`, and ship that as an override `patch`
   with `boot`.
+
+- Holani (Lynx) is described as needing no BIOS, but without `lynxboot.img` in
+  the system dir it runs at full speed with a black screen and no audio. A
+  black headless screenshot means nothing on its own; check `audio_level()`
+  and compare against a system known to capture (`testdata/gb`).
