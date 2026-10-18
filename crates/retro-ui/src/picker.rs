@@ -159,7 +159,7 @@ pub struct Picked<T> {
 }
 
 pub struct Picker<T> {
-    show_list: bool,
+    pub show_list: bool,
     /// Caller-chosen id of the open list, echoed back in [`Picked`].
     list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`Picker::show`],

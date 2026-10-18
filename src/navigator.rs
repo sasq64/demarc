@@ -147,6 +147,14 @@ impl Navigator {
         self
     }
 
+    fn pop(&mut self) -> &mut Self {
+        if self.pos > 0 {
+            self.stack.truncate(self.pos as usize);
+            self.pos = (self.stack.len() as isize) - 1;
+        }
+        self
+    }
+
     /// Take the search text and selection out of the open list, so going back
     /// to this level later restores them.
     fn remember_state(&mut self, hud: &HudState) {
@@ -549,7 +557,7 @@ fn update_navigator(
     input: Res<ButtonInput<KeyCode>>,
     mut navigator: ResMut<Navigator>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
-    hud: Res<HudState>,
+    mut hud: ResMut<HudState>,
 ) {
     navigator.remember_state(&hud);
     let id = navigator.stack[navigator.pos as usize].id;
@@ -560,7 +568,10 @@ fn update_navigator(
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {
         navigator.forward().show(&mut list_writer);
-    } else if input.just_pressed(KeyCode::Enter) {
+    } else if input.just_pressed(KeyCode::F11) {
+        if navigator.pos > 0 {
+            navigator.pop();
+        }
         //navigator.get_selected();
     }
 }

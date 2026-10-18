@@ -161,6 +161,10 @@ impl HudState {
             self.open_dialogs.saturating_sub(1)
         };
     }
+
+    pub fn close_list(&mut self) {
+        self.picker.show_list = false;
+    }
 }
 
 /// The modifier keys held *right now*, read from Bevy rather than from egui.

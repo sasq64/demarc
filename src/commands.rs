@@ -338,7 +338,7 @@ const PAD_NAV: &[(GamepadButton, KeyCode, bool)] = &[
     (GamepadButton::LeftTrigger, KeyCode::PageUp, true),
     (GamepadButton::RightTrigger, KeyCode::PageDown, true),
     (GamepadButton::South, KeyCode::Enter, false),
-    (GamepadButton::West, KeyCode::Escape, false),
+    (GamepadButton::East, KeyCode::Escape, false),
 ];
 
 const PAD_REPEAT_DELAY: f32 = 0.4;
