@@ -49,7 +49,7 @@ Open:
   demozoo.txt.gz csdb.txt.gz
   natrium.prg rebels.adf                     test files
   one.lua multi.lua hold.lua mon.sh gput.sh  test scripts, see "Testing"
-  prefix-setup/        mk_wine_prefix.sh, files/, winetricks, setup.log
+  prefix-setup/        mk_wine_prefix.sh, wine_prefix_files.sh, files/, winetricks, setup.log
 ~/.local/share/demarc/wine/    Kron4ek wine 11.17 amd64-wow64, + cabextract in bin/
 ~/.wine-demarc/                the prefix
 ~/Demos/{1995,Lifeforce,Masagin}   Windows demos that were already there

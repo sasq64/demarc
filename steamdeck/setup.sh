@@ -34,6 +34,11 @@ if [ ! -d ~/.wine-demarc ]; then
     (cd prefix-setup &&
         DISPLAY=:0 WINEDLLOVERRIDES="mscoree=d;mshtml=d;wineusb.sys=d" ./mk_wine_prefix.sh >setup.log 2>&1) ||
         echo "mk_wine_prefix.sh failed, see ~/demarc/prefix-setup/setup.log"
+else
+    echo "Updating the wine prefix"
+    (cd prefix-setup &&
+        DISPLAY=:0 WINEDLLOVERRIDES="mscoree=d;mshtml=d;wineusb.sys=d" ./wine_prefix_files.sh >update.log 2>&1) ||
+        echo "wine_prefix_files.sh failed, see ~/demarc/prefix-setup/update.log"
 fi
 
 if ! grep -qs demarc.sh ~/.local/share/Steam/userdata/*/config/shortcuts.vdf; then

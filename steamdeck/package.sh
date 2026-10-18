@@ -20,7 +20,7 @@ for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 \
     cp -L "/usr/lib/$lib" "$stage/glibc/"
 done
 cp demodb/demozoo.txt.gz demodb/csdb.txt.gz "$stage/"
-cp scripts/mk_wine_prefix.sh "$stage/prefix-setup/"
+cp scripts/mk_wine_prefix.sh scripts/wine_prefix_files.sh "$stage/prefix-setup/"
 cp files/*.dll files/*.acm files/gm.dls "$stage/prefix-setup/files/"
 # SteamOS has no cabextract, which winetricks needs.
 cp -L "$(command -v cabextract)" "$stage/prefix-setup/"
