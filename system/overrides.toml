@@ -107,6 +107,11 @@ patch = {
   contents = "McCQkJCQkA==",
 }
 
+# Monstra Kosa: "1" picks fullscreen on its mode screen; ddraw draws black
+[zoo.4364]
+meta = { wine_cnc_ddraw = "true" }
+events = [{ frame = 400, key = "1" }]
+
 # [zoo.4767]
 # boot = "final.png"
 

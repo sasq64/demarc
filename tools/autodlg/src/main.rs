@@ -70,6 +70,8 @@ unsafe extern "system" {
     fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
     fn Process32FirstW(snap: isize, entry: *mut ProcessEntry32W) -> Bool32;
     fn Process32NextW(snap: isize, entry: *mut ProcessEntry32W) -> Bool32;
+    fn GetModuleHandleW(name: *const u16) -> isize;
+    fn GetProcAddress(module: isize, name: *const u8) -> usize;
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
@@ -314,6 +316,7 @@ fn fix_import_thunks(process: isize, exe: &str) -> Option<()> {
 /// and this driver share one `explorer /desktop=` virtual desktop: the desktop
 /// hosts a single command, and a child process inherits it.
 fn launch(exe: &str) -> Option<(isize, u32)> {
+    let exe = &dos_path(exe);
     let dir = std::path::Path::new(exe)
         .parent()
         .map(|d| d.to_string_lossy().to_string())
@@ -357,6 +360,28 @@ fn launch(exe: &str) -> Option<(isize, u32)> {
         CloseHandle(pi.thread);
     }
     Some((pi.process, pi.process_id))
+}
+
+/// `path` as wine's DOS name when it is a Unix one. A demo that restarts itself
+/// from argv[0] needs a Windows path there (Monstra Kosa).
+fn dos_path(path: &str) -> String {
+    if !path.starts_with('/') {
+        return path.to_string();
+    }
+    let unix = format!("{path}\0");
+    let dos = unsafe {
+        let get = GetProcAddress(GetModuleHandleW(wide("kernel32").as_ptr()), c"wine_get_dos_file_name".as_ptr().cast());
+        if get == 0 {
+            return path.to_string();
+        }
+        let get: unsafe extern "system" fn(*const u8) -> *const u16 = std::mem::transmute(get);
+        get(unix.as_ptr())
+    };
+    if dos.is_null() {
+        return path.to_string();
+    }
+    let len = (0..).take_while(|&i| unsafe { *dos.add(i) } != 0).count();
+    String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(dos, len) })
 }
 
 /// Turn on wine's `EmulateModeset` for the demo about to be launched. The
@@ -970,6 +995,11 @@ fn main() {
     match demo {
         Some(handle) => {
             unsafe { WaitForSingleObject(handle, INFINITE) };
+            // Monstra Kosa's launcher restarts the exe and exits.
+            let pid = TARGET_PID.load(Ordering::Relaxed);
+            while process_tree(pid).len() > 1 {
+                unsafe { Sleep(500) };
+            }
             report("exited");
         }
         None if !driven => std::process::exit(1),

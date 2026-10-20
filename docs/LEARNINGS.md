@@ -465,3 +465,11 @@
   which has a different pixel format; the opengl32 proxy copies with a
   context made on the pbuffer's DC instead. Plain wine opens the demo on the
   user's screen; use demarc headless.
+
+- A silent exit right after a demo's own mode screen (Monstra Kosa,
+  `zoo.4364`): `+relay` showed its launcher re-running itself with
+  `ShellExecuteA("D:\\", "1")`, built from argv[0], which autodlg passed as a
+  Unix path. autodlg now launches with wine's DOS path and waits for the demo's
+  child processes before reporting `exited`. An SVKP-protected exe shows no
+  strings; a relay of a demarc run is readable by `tail -F` on
+  `/tmp/demarc-wine-*.log` while it runs (it is deleted at the end).
