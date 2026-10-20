@@ -31,6 +31,8 @@ pub struct SysOpts {
     pub extra_options: Vec<String>,
     /// Amiga: force high specs (68030 + FPU).
     pub fast: bool,
+    /// Atari ST: run as a Falcon.
+    pub falcon: bool,
     /// Several emulators at once, which is what makes a system economise.
     pub grid: Option<(u32, u32)>,
     /// Max queued frames.

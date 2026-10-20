@@ -445,3 +445,13 @@
   the system dir it runs at full speed with a black screen and no audio. A
   black headless screenshot means nothing on its own; check `audio_level()`
   and compare against a system known to capture (`testdata/gb`).
+
+- The hatari core source is `libretro/hatari` (branch `demarc`). The cached
+  core can be older than it: one that ignored machine/CPU/RAM options was
+  "fixed" again in a scratch clone of the fork's default branch before the
+  `demarc` branch turned out to have it already. Build that branch and point
+  `DEMARC_CORE_DIR` at it before patching the core.
+
+- A db line's `download` must be an http(s) URL: a bare path is "unparseable",
+  `file://` fails in the fetcher. Serve a local file with
+  `python3 -m http.server` to test a db entry.

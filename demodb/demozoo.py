@@ -408,6 +408,8 @@ PLATFORM_WHITELIST = [
     "Atari ST*",
     "Atari XL",
     "Atari 2600",
+    "Atari Falcon",
+    "Atari Lynx",
     "C64",
     "C16",
     "Megadrive",
@@ -1052,8 +1054,7 @@ def export(conn, out_path, pouet_data=None, pouet_lookup=None):
         comp_party[cid] = (pid, name or "")
     prod_party = {}
     for comp_id, prod_id, ranking in cur.execute(
-        "SELECT competition_id, production_id, ranking "
-        "FROM parties_competitionplacing"
+        "SELECT competition_id, production_id, ranking FROM parties_competitionplacing"
     ):
         party_id, compo = comp_party.get(comp_id, (None, ""))
         if party_id is None:

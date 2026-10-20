@@ -158,6 +158,10 @@ pub struct Args {
     #[arg(long)]
     pub ste: bool,
 
+    /// Atari ST: Run as a Falcon (TOS 4.04, 68030, DSP)
+    #[arg(long)]
+    pub falcon: bool,
+
     /// Amiga: Force high specs (68030 + FPU)
     #[arg(long)]
     pub fast: bool,
@@ -451,6 +455,7 @@ impl From<&Args> for SysOpts {
             cbm_variant: a.cbm_variant.into(),
             extra_options: a.extra_options.clone(),
             fast: a.fast,
+            falcon: a.falcon,
             grid: a.grid,
             latency: a.latency.setting().latency as u32,
             lua: a.lua.clone(),

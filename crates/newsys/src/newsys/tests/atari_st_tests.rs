@@ -124,3 +124,35 @@ fn program_in_auto_starts_itself() {
     assert!(!drive.join("AUTO").join(AUTO_PROGRAM).exists());
     assert!(!drive.join(DISABLED_AUTO).exists());
 }
+
+/// TT-RAM is asked for by bits 1 and 2 of the header's `ph_prgflags`.
+#[test]
+fn tt_ram_flags_are_read_from_the_header() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut header = [0u8; 28];
+    header[..2].copy_from_slice(&GEMDOS_MAGIC);
+
+    let plain = dir.path().join("PLAIN.PRG");
+    header[25] = 0x01;
+    write(&plain, &header);
+    let tt = dir.path().join("TT.PRG");
+    header[25] = 0x07;
+    write(&tt, &header);
+    let short = dir.path().join("SHORT.PRG");
+    write(&short, &GEMDOS_MAGIC);
+
+    assert!(!wants_tt_ram(&plain));
+    assert!(wants_tt_ram(&tt));
+    assert!(!wants_tt_ram(&short));
+}
+
+/// Only a release for the Falcon alone is run as one.
+#[test]
+fn falcon_platform_must_be_the_only_one() {
+    let mut file = WorkFile::new("x");
+    assert!(!is_falcon_platform(&file));
+    file.set_meta("platform", "Atari Falcon");
+    assert!(is_falcon_platform(&file));
+    file.set_meta("platform", "Atari ST;Atari Falcon");
+    assert!(!is_falcon_platform(&file));
+}

@@ -538,7 +538,7 @@ impl NewSys {
             Box::new(Tic80System {}),
             Box::new(Pico8System {}),
             Box::new(AmigaSystem::new(args)),
-            Box::new(AtariStSystem::new()),
+            Box::new(AtariStSystem::new(args)),
             Box::new(AtariXlSystem::new(args)),
             // Before the C64, which would otherwise claim the same disks and
             // programs; it stands aside unless --cbm-variant asked for it.

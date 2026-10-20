@@ -1012,11 +1012,11 @@ knows. `date` is demarc's own stand-in for "decide from the release's year" and 
 the core knows, so it must be resolved whether the year says anything or not; undated defaults to
 `st`, because an STE release usually says so while plenty of ST ones break on an STE.
 
-**Falcon/TT hires.** Hatari sizes its internal "desktop" from the libretro core's `retrow`/`retroh`,
-which only the ST/STE renderer ever updates — the Falcon/TT Videl path never does. Left at the core's
-low-res default (392x248) every Videl mode is larger than that fake desktop, so `hostscreen.c` halves
-it ("too large screen size 640x480 -> divided by 2x2") and draws the shrunken image into the top-left
-of the frame. Setting `hatari_video_hires` raises it to 832x548, which covers the usual Falcon modes.
+**Falcon.** `--falcon`, or a `platform` of `Atari Falcon` alone, sets the core options of a Falcon
+(68030/16 MHz, DSP, 68882, 14 MB). The core always boots `<system dir>/tos.img`, an ST TOS the Falcon
+refuses, so a Falcon is handed `system/hatari/falcon/` instead, built at first use from
+`hatari/tos/tos404.img` and `hatari/BOOT.ST`. A program whose header asks for TT-RAM (Derealization's
+15 MB BSS) also gets 64 MB of it, which needs 32-bit addressing.
 
 A release shipped to run off a hard drive is a late one: it expects the STE and the memory that came
 with it, and a demo like molz quietly drops back to the desktop on the 1 MB ST that is the core's

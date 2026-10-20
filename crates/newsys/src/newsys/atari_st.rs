@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::{
     cmp::Reverse,
     collections::HashMap,
@@ -9,7 +9,10 @@ use tracing::{debug, info, warn};
 
 use crate::utils::{build_m3u, copy_dir_all, find_child, has_extension, sort_disks};
 
-use crate::{newsys::walk_dir, workfile::WorkFile};
+use crate::{
+    SysOpts, backend::Backend, libloader, newsys::walk_dir, retro_emu, system_dir,
+    workfile::WorkFile,
+};
 
 use super::System;
 
@@ -25,12 +28,67 @@ const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
 const MACHINE_TYPES: [&str; 4] = ["st", "ste", "tt", "falcon"];
 
 #[derive(Default)]
-pub struct AtariStSystem {}
+pub struct AtariStSystem {
+    falcon: bool,
+}
 
 impl AtariStSystem {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(args: &SysOpts) -> Self {
+        Self {
+            falcon: args.falcon,
+        }
     }
+}
+
+/// Falcon defaults, each applied unless the release already sets it.
+const FALCON_META: [(&str, &str); 6] = [
+    ("hatari_dsp_type", "emu"),
+    ("hatari_cpu_level", "3"),
+    ("hatari_cpu_clock", "16"),
+    ("hatari_fpu_type", "68882"),
+    ("hatari_memory_size", "14336"),
+    ("hatari_monitor_type", "rgb"),
+];
+
+const FALCON_TOS: &str = "tos404.img";
+
+/// Does the program's header ask to be loaded into, or allocate from, TT-RAM?
+fn wants_tt_ram(prg: &Path) -> bool {
+    let mut header = [0u8; 26];
+    fs::File::open(prg)
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut header))
+        .is_ok_and(|_| header[25] & 0x06 != 0)
+}
+
+fn is_falcon_platform(file: &WorkFile) -> bool {
+    let platform = file.get_meta_or("platform", "");
+    !platform.is_empty()
+        && platform
+            .split(';')
+            .all(|name| name.trim().eq_ignore_ascii_case("Atari Falcon"))
+}
+
+/// The core always boots `<system dir>/tos.img`, which is an ST TOS that the
+/// Falcon refuses, so a Falcon gets a system dir of its own holding TOS 4.04
+/// under that name, plus the `hatari/BOOT.ST` the hard drive boot needs.
+fn falcon_system_dir() -> Result<PathBuf> {
+    let hatari = system_dir().join("hatari");
+    let dir = hatari.join("falcon");
+    let files = [
+        (hatari.join("tos").join(FALCON_TOS), dir.join("tos.img")),
+        (hatari.join("BOOT.ST"), dir.join("hatari").join("BOOT.ST")),
+    ];
+    for (from, to) in files {
+        let stale = match (from.metadata(), to.metadata()) {
+            (Ok(f), Ok(t)) => f.len() != t.len(),
+            _ => true,
+        };
+        if stale {
+            fs::create_dir_all(to.parent().unwrap())?;
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(dir)
 }
 
 /// Name given to the program copied into the drive's `AUTO` folder. TOS only
@@ -202,6 +260,10 @@ impl System for AtariStSystem {
             file.set_meta(key, val);
         }
 
+        if self.falcon || is_falcon_platform(file) {
+            file.set_meta("hatari_machinetype", "falcon");
+        }
+
         // What the release itself asks for, as against what is guessed for it
         // below: a hard drive load replaces a guess, but never a request.
         let machine_given = {
@@ -243,16 +305,12 @@ impl System for AtariStSystem {
             file.set_meta("hatari_machinetype", machine.as_str());
         }
 
-        // Hatari sizes its internal "desktop" from the libretro core's
-        // retrow/retroh, which only the ST/STE renderer ever updates — the
-        // Falcon/TT Videl path never does. Left at the core's low-res default
-        // (392x248) every Videl mode is larger than that fake desktop, so
-        // hostscreen.c halves it ("too large screen size 640x480 -> divided by
-        // 2x2") and draws the shrunken image into the top-left of the frame we
-        // are handed. Hires raises it to 832x548, which covers the usual Falcon
-        // modes.
-        if (machine == "falcon" || machine == "tt") && !file.has_meta("hatari_video_hires") {
-            file.set_meta("hatari_video_hires", "true");
+        if machine == "falcon" {
+            for (key, val) in FALCON_META {
+                if !file.has_meta(key) {
+                    file.set_meta(key, val);
+                }
+            }
         }
         if file.has_tag("requires-4mb") {
             file.set_meta("hatari_memory_size", "4096");
@@ -291,7 +349,11 @@ impl System for AtariStSystem {
             if !machine_given {
                 file.set_meta("hatari_machinetype", "ste");
             }
-            if !ram_given {
+            if machine == "falcon" && wants_tt_ram(prg) && !file.has_meta("hatari_ttram_size") {
+                file.set_meta("hatari_cpu_addr24", "disabled");
+                file.set_meta("hatari_ttram_size", "64");
+            }
+            if !ram_given && machine != "falcon" {
                 file.set_meta("hatari_memory_size", "4096");
             }
 
@@ -303,6 +365,16 @@ impl System for AtariStSystem {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
+        let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
+        let system = if path.get_meta_or("hatari_machinetype", "") == "falcon" {
+            falcon_system_dir()?
+        } else {
+            system_dir().to_path_buf()
+        };
+        retro_emu::create_core(&core, &system, Some(path), path.get_all_meta(), false)
     }
 }
 
