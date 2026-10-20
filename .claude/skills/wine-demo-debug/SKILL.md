@@ -161,7 +161,8 @@ jar (`zoo.202844`).
 **Black screen with music.** Check `+opengl` for `glDrawBuffer buf 1028` or a
 single-buffered pixel format: front-buffer drawing never reaches the session
 (the opengl32 proxy remaps a single-buffered `wglSetPixelFormat`).
-wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos.
+wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos. SDL 1.2 demos (`SDL.DLL` beside the exe) are ddraw too: black and
+silent without it (Dose 2, `zoo.8540`).
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
 extensions such as `glLoadProgramNV`.
 

@@ -493,3 +493,13 @@
   (`/etc/OpenCL/vendors`); wine's `opencl.dll` loads and unloads at once
   without one and the intro stays black and silent.
 
+- The opengl32 proxy is i386 only, so an override `glsl` patch does nothing for
+  a 64-bit demo: no `opengl32: shader` lines at all. Run `file` on whatever the
+  launcher starts before converting a fix to `glsl` (Tempus and Umbra launch
+  an x86-64 `demo.dat`).
+
+- Testing `wine_cnc_ddraw` on a bare `.exe` (`demarc dir/x.exe`) copies only
+  that exe to the temp dir, so its DLLs are missing (`import_dll ... not
+  found`). Pass the release directory, or a one-line `demozoo.txt`, instead.
+  Dose 2 (`zoo.8540`) cost a run that way.
+
