@@ -301,6 +301,23 @@ static int __stdcall choose_pixel_format(void *hdc, const unsigned char *pfd)
     return wine_choose_pixel_format(hdc, pfd);
 }
 
+// The Explorer hard-codes format 8, double-buffered on Windows but not in
+// wine's list, and front-buffer drawing never reaches the session.
+static int(__stdcall *wine_set_pixel_format)(void *hdc, int format, const void *pfd);
+
+static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
+{
+    int(__stdcall * describe)(void *, int, unsigned, unsigned char *) = lookup(wine, "wglDescribePixelFormat");
+    unsigned char desc[40];
+    if (describe && describe(hdc, format, sizeof(desc), desc) && !(desc[4] & 1)) {
+        desc[4] |= 1;
+        int double_buffered = wine_choose_pixel_format(hdc, desc);
+        if (double_buffered && describe(hdc, double_buffered, sizeof(desc), desc) && (desc[4] & 1))
+            format = double_buffered;
+    }
+    return wine_set_pixel_format(hdc, format, pfd);
+}
+
 // Windows leaves the x87 stack empty after a swap. Yama leaks one value per
 // frame and gets a NaN time once it overflows.
 static int(__stdcall *wine_swap_buffers)(void *hdc);
@@ -331,6 +348,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglChoosePixelFormat")) {
                 wine_choose_pixel_format = address;
                 address = choose_pixel_format;
+            } else if (address && equal(names[i], "wglSetPixelFormat")) {
+                wine_set_pixel_format = address;
+                address = set_pixel_format;
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;

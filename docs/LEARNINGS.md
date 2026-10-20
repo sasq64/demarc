@@ -233,7 +233,8 @@
   session: a single-buffered pixel format, or `glDrawBuffer(GL_FRONT)` plus
   `glFlush`, stays black while the music plays. wined3d's ddraw draws that way
   (Grayscale), and an intro that hard-codes a pixel format index can land on a
-  single-buffered one (The Explorer's 8; wine's list alternates DB,DB,SB,SB).
+  single-buffered one (The Explorer's 8; wine's list alternates DB,DB,SB,SB;
+  the opengl32 proxy now remaps that to a double-buffered format).
   Check `+opengl` for `glDrawBuffer buf 1028` / a bare `wglSetPixelFormat`
   before reading shaders: an hour went into shader compile logs that were fine.
   A VIP 2 "control" only showed its GDI launcher, so it proved nothing about GL.
@@ -491,3 +492,4 @@
 - A Crinkler 4k tagged `opencl` (Shoal) needs an OpenCL ICD on the host
   (`/etc/OpenCL/vendors`); wine's `opencl.dll` loads and unloads at once
   without one and the intro stays black and silent.
+

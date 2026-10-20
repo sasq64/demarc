@@ -12,6 +12,11 @@ fetches `glGenTextures` that way and calls the NULL.
 request of 24+ bits asks for no alpha, as Windows drivers hand out alpha
 anyway. Kewlers' "Aesterozoa" quits when `GL_ALPHA_BITS` is 0.
 
+`wglSetPixelFormat` swaps a single-buffered format for the double-buffered
+one wine's `wglChoosePixelFormat` picks for the same descriptor. Front-buffer
+drawing never reaches the session, and Alcatraz's "The Explorer" hard-codes
+format 8, single-buffered in wine's list.
+
 `wglSwapBuffers` empties the x87 register stack (`emms`) after the swap.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.
