@@ -338,3 +338,25 @@ fn parses_cache_writeback() {
     assert!(overrides[&zoo(7236)].cache_writeback);
     assert!(!overrides[&zoo(108)].cache_writeback);
 }
+
+#[test]
+fn folds_glsl_patches_into_one_meta_value() {
+    let overrides = parse(
+        r#"
+        [zoo.1]
+        glsl = [
+            { match = "pow\\(", search = "a", replace = "b" },
+            { hash = "00112233445566AA", edits = [["c", "d"], ["e", ""]] },
+        ]
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        overrides[&zoo(1)].meta[newsys::wine::META_GLSL_PATCHES],
+        "mpow\\(\u{1e}a\u{1e}b\u{1d}h00112233445566aa\u{1e}c\u{1e}d\u{1e}e\u{1e}"
+    );
+    let bad = parse("[zoo.2]\nglsl = { hash = \"12\", search = \"a\", replace = \"b\" }\n");
+    assert!(bad.unwrap().is_empty());
+    let bad = parse("[zoo.3]\nglsl = { match = \"a\" }\n");
+    assert!(bad.unwrap().is_empty());
+}

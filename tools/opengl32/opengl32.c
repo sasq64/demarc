@@ -8,6 +8,8 @@ typedef unsigned long ULONG;
 typedef long NTSTATUS;
 typedef void *HMODULE;
 
+#include "glsl.h"
+
 typedef struct {
     USHORT Length, MaximumLength;
     WCHAR *Buffer;
@@ -25,6 +27,9 @@ __declspec(dllimport) NTSTATUS __stdcall LdrGetProcedureAddress(HMODULE module, 
 __declspec(dllimport) NTSTATUS __stdcall RtlQueryEnvironmentVariable_U(WCHAR *env, UNICODE_STRING *name,
                                                                       UNICODE_STRING *value);
 __declspec(dllimport) NTSTATUS __stdcall LdrDisableThreadCalloutsForDll(HMODULE module);
+__declspec(dllimport) void *__stdcall RtlAllocateHeap(void *heap, ULONG flags, ULONG size);
+__declspec(dllimport) int __stdcall RtlFreeHeap(void *heap, ULONG flags, void *p);
+__declspec(dllimport) int __cdecl __wine_dbg_output(const char *text);
 
 // From thunks.S: one slot per export, preset to a stub that returns 0.
 extern void *slots[];
@@ -169,10 +174,105 @@ static int __stdcall bind_tex_image(void *pbuffer, int buffer)
     return 1;
 }
 
+// GLSL patches from the override, applied as shaders are handed to GL.
+static char *peb(void)
+{
+    char *p;
+    __asm__("movl %%fs:0x30, %0" : "=r"(p));
+    return p;
+}
+
+void *glsl_alloc(unsigned size) { return RtlAllocateHeap(*(void **)(peb() + 0x18), 0, size); }
+
+void glsl_release(void *p)
+{
+    if (p)
+        RtlFreeHeap(*(void **)(peb() + 0x18), 0, p);
+}
+
+// Wine's stderr, whatever WINEDEBUG says; the demo's own std handles are unset.
+void glsl_log(const char *line) { __wine_dbg_output(line); }
+
+static void load_glsl_patches(void)
+{
+    static int loaded;
+    if (loaded)
+        return;
+    loaded = 1;
+    WCHAR var[] = u"DEMARC_GLSL_PATCHES";
+    UNICODE_STRING name = {sizeof(var) - 2, sizeof(var), var};
+    UNICODE_STRING value = {0, 0, 0};
+    RtlQueryEnvironmentVariable_U(0, &name, &value);
+    if (!value.Length)
+        return;
+    value.MaximumLength = value.Length + 2;
+    value.Buffer = glsl_alloc(value.MaximumLength);
+    char *config = glsl_alloc(value.Length / 2 + 1);
+    if (value.Buffer && config && !RtlQueryEnvironmentVariable_U(0, &name, &value)) {
+        unsigned n = value.Length / 2;
+        for (unsigned i = 0; i < n; i++)
+            config[i] = value.Buffer[i] < 128 ? value.Buffer[i] : '?';
+        config[n] = 0;
+        glsl_configure(config);
+    }
+    glsl_release(value.Buffer);
+    glsl_release(config);
+}
+
+static void(__stdcall *wine_shader_source)(unsigned, int, const char *const *, const int *);
+static void(__stdcall *wine_shader_source_arb)(unsigned, int, const char *const *, const int *);
+static unsigned(__stdcall *wine_create_shader_programv)(unsigned, int, const char *const *);
+
+static void __stdcall shader_source(unsigned shader, int count, const char *const *strings,
+                                    const int *lengths)
+{
+    load_glsl_patches();
+    const char *patched = glsl_patch(count, strings, lengths);
+    if (patched)
+        wine_shader_source(shader, 1, &patched, 0);
+    else
+        wine_shader_source(shader, count, strings, lengths);
+    glsl_release((void *)patched);
+}
+
+static void __stdcall shader_source_arb(unsigned shader, int count, const char *const *strings,
+                                        const int *lengths)
+{
+    load_glsl_patches();
+    const char *patched = glsl_patch(count, strings, lengths);
+    if (patched)
+        wine_shader_source_arb(shader, 1, &patched, 0);
+    else
+        wine_shader_source_arb(shader, count, strings, lengths);
+    glsl_release((void *)patched);
+}
+
+static unsigned __stdcall create_shader_programv(unsigned type, int count, const char *const *strings)
+{
+    load_glsl_patches();
+    const char *patched = glsl_patch(count, strings, 0);
+    unsigned program = patched ? wine_create_shader_programv(type, 1, &patched)
+                               : wine_create_shader_programv(type, count, strings);
+    glsl_release((void *)patched);
+    return program;
+}
+
 // NVIDIA's driver hands out the GL 1.1 functions too, and Hexer relies on it.
 static void *__stdcall get_proc_address(const char *name)
 {
     void *address = wine_get_proc_address(name);
+    if (address && equal(name, "glShaderSource")) {
+        wine_shader_source = address;
+        return shader_source;
+    }
+    if (address && equal(name, "glShaderSourceARB")) {
+        wine_shader_source_arb = address;
+        return shader_source_arb;
+    }
+    if (address && equal(name, "glCreateShaderProgramv")) {
+        wine_create_shader_programv = address;
+        return create_shader_programv;
+    }
     if (address && equal(name, "wglBindTexImageARB")) {
         wine_bind_tex_image = address;
         get_pbuffer_dc = wine_get_proc_address("wglGetPbufferDCARB");

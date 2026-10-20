@@ -81,6 +81,14 @@ pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 #[cfg(target_os = "linux")]
 pub const META_SHADER_READ: &str = "wine_shader_read";
 
+/// Meta key: the override's `glsl` patches, which the opengl32 proxy applies to
+/// shader sources (`tools/opengl32`). Patches are separated by
+/// [`GLSL_PATCH_SEP`], their fields by [`GLSL_FIELD_SEP`]: `h<hash>` or
+/// `m<regex>`, then regex/replacement pairs.
+pub const META_GLSL_PATCHES: &str = "wine_glsl_patches";
+pub const GLSL_PATCH_SEP: char = '\u{1d}';
+pub const GLSL_FIELD_SEP: char = '\u{1e}';
+
 /// Whether one is used when nothing says otherwise.
 pub const DEFAULT_DESKTOP: bool = false;
 

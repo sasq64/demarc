@@ -255,8 +255,9 @@
   `wine_glsl_version` did nothing. `RUST_LOG=retro=warn` prints Mesa's compile
   errors now; read them first. `MESA_SHADER_DUMP_PATH=<dir>` names each shader
   `FS_<hash>.glsl`; a corrected file of the same name under
-  `MESA_SHADER_READ_PATH` replaces it, which is what `wine_shader_read` plus a
-  `patch` does for a Crinkler exe that cannot be patched itself.
+  `MESA_SHADER_READ_PATH` replaces it. That hash covers constants baked into
+  the shader, so a replacement made for Surveillance's 1920x1080 exe never
+  applied to its other three; an override `glsl` regex patch does.
 
 - "GLSL 1.20 required" from an unversioned shader (Inflorescence's uniform
   initializers): use `wine_glsl_version=130`, never `120`. The forced version
@@ -481,8 +482,11 @@
 - On NVIDIA a GL demo's shader error only shows in its own message box: a
   `+relay` grep for `MessageBoxA` gave fr-080's `C1115 pow(vec4, float)`.
   Its shaders are 2011 ATI-lax GLSL that neither NVIDIA nor Mesa accepts, and
-  `wine_shader_read` only works on Mesa. Its sources can be read from
-  `/proc/<pid>/mem` of a gamescope+wine run started by a Python script.
+  Its sources can be read from `/proc/<pid>/mem` of a gamescope+wine run
+  started by a Python script, but `WINEDEBUG=+msgbox` prints the box's text
+  without a relay. Fixed with an override `glsl` patch (opengl32 proxy).
+  A GUI demo started by autodlg has no std handles, so the proxy logs with
+  ntdll's `__wine_dbg_output`; `NtWriteFile` to `hStdError` printed nothing.
 
 - A Crinkler 4k tagged `opencl` (Shoal) needs an OpenCL ICD on the host
   (`/etc/OpenCL/vendors`); wine's `opencl.dll` loads and unloads at once

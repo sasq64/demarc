@@ -133,8 +133,13 @@ override `patch`.
 `glCreateShaderProgramv` hides it. `MESA_SHADER_DUMP_PATH=<dir>` writes each
 shader as `FS_<hash>.glsl`. Fixes: `wine_glsl_version=130` for unversioned
 shaders using `texture()`/`round()`; `wine_glsl_120_subset` (on by default) for
-int/float mixing; for NVIDIA-only GLSL, `wine_shader_read` plus a `patch`
-providing the corrected `FS_<hash>.glsl` (see Surveillance, `zoo.155010`).
+int/float mixing; for anything else an override `glsl` patch edits the
+source by regex before it is compiled (fr-080 `zoo.4701`, Surveillance
+`zoo.155010`); `retro=debug` logs `opengl32: shader <hash>` for each.
+`__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1` gets Mesa's errors and
+dumps on an NVIDIA machine; `-x wine_glsl_patches=...` tries a patch without an
+override. NVIDIA's compile error only shows in the demo's own message
+box: `WINEDEBUG=fixme-all,+msgbox` prints its text.
 
 **HLSL compile errors.** Use the builtin compiler to see return codes
 (`WINEDLLOVERRIDES=d3dcompiler_47=b` with `+relay`) and

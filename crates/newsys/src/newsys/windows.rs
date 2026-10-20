@@ -29,7 +29,7 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
-    META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix,
+    META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix,
     dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
@@ -506,6 +506,12 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
             meta.entry("gamescope_resolution".into())
                 .or_insert_with(|| format!("{}x{}", cmd.width, cmd.height));
             let mut argv = cmd.argv;
+            if let Some(patches) = meta.get(META_GLSL_PATCHES) {
+                argv.splice(
+                    0..0,
+                    ["env".to_string(), format!("DEMARC_GLSL_PATCHES={patches}")],
+                );
+            }
             if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
                 && let Some(dir) = path.path.parent()
             {

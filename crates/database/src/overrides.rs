@@ -46,6 +46,10 @@
 //! [zoo.9000]
 //! cache_writeback = true             # unpack into the download cache, run from there
 //!
+//! [zoo.4701]
+//! glsl = { match = "pow\\(c,", search = "pow\\(c,([^;]*)\\);", replace = "pow(c,vec4($1));" }
+//! glsl = [{ hash = "1f2e3d4c5b6a7988", edits = [["1-c", "1.-c"], ["\\btc\\.z=1\\.;", ""]] }]
+//!
 //! [zoo.108]
 //! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
 //! events = [{ frame = 400, click = [0.57, 0.94] }]  # left click, 0..1 over the frame
@@ -164,6 +168,64 @@ struct RawOverride {
     /// generates on first start is still there the next time.
     #[serde(default)]
     cache_writeback: bool,
+    /// Regex edits to the GLSL a Windows demo compiles, one table or an array.
+    glsl: Option<GlslPatches>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum GlslPatches {
+    One(RawGlsl),
+    Many(Vec<RawGlsl>),
+}
+
+/// Edits for the shaders whose source hashes to `hash` (as the opengl32 proxy
+/// logs it) or contains a match of `match`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawGlsl {
+    hash: Option<String>,
+    #[serde(rename = "match")]
+    pattern: Option<String>,
+    search: Option<String>,
+    replace: Option<String>,
+    #[serde(default)]
+    edits: Vec<[String; 2]>,
+}
+
+impl RawGlsl {
+    /// The patch in the form `META_GLSL_PATCHES` holds.
+    fn build(self) -> Result<String> {
+        use newsys::wine::{GLSL_FIELD_SEP, GLSL_PATCH_SEP};
+        let selector = match (self.hash, self.pattern) {
+            (Some(hash), None) => {
+                if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    bail!("glsl hash {hash:?} is not 16 hex digits");
+                }
+                format!("h{}", hash.to_ascii_lowercase())
+            }
+            (None, Some(pattern)) => format!("m{pattern}"),
+            _ => bail!("a glsl patch needs one of hash or match"),
+        };
+        let mut edits = match (self.search, self.replace) {
+            (Some(search), Some(replace)) => vec![[search, replace]],
+            (None, None) => vec![],
+            _ => bail!("glsl search and replace go together"),
+        };
+        edits.extend(self.edits);
+        if edits.is_empty() {
+            bail!("a glsl patch needs search/replace or edits");
+        }
+        let mut fields = vec![selector];
+        fields.extend(edits.into_iter().flatten());
+        if fields
+            .iter()
+            .any(|f| f.contains([GLSL_PATCH_SEP, GLSL_FIELD_SEP, '\0']) || !f.is_ascii())
+        {
+            bail!("glsl patches must be ASCII without control separators");
+        }
+        Ok(fields.join(&GLSL_FIELD_SEP.to_string()))
+    }
 }
 
 /// One `events` entry. `key` is turned into a keycode by the [`KeyResolver`];
@@ -299,6 +361,20 @@ impl RawOverride {
             .into_iter()
             .map(RawPatch::build)
             .collect::<Result<Vec<Patch>>>()?;
+
+        let glsl = match self.glsl {
+            Some(GlslPatches::One(patch)) => vec![patch.build()?],
+            Some(GlslPatches::Many(patches)) => {
+                patches.into_iter().map(RawGlsl::build).collect::<Result<_>>()?
+            }
+            None => vec![],
+        };
+        if !glsl.is_empty() {
+            meta.insert(
+                newsys::wine::META_GLSL_PATCHES,
+                leak(glsl.join(&newsys::wine::GLSL_PATCH_SEP.to_string())),
+            );
+        }
 
         let mut events = Vec::with_capacity(self.events.len());
         for event in self.events {

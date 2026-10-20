@@ -21,5 +21,16 @@ the pbuffer's DC and sharing with the caller's. wine's copies with an
 internal context of another pixel format, a fatal GLX `BadMatch` on NVIDIA
 (Plastic's "Your Fingers So Gently On My Skin").
 
+`glShaderSource`, `glShaderSourceARB` and `glCreateShaderProgramv` (taken
+through `wglGetProcAddress`) apply an override's `glsl` patches, which demarc
+passes in `DEMARC_GLSL_PATCHES`. Every shader is logged to wine's stderr as
+`opengl32: shader <hash>` (FNV-1a 64 of the source), and `patched shader
+<hash>` when a patch changed it. A patch picks shaders by that hash or by a
+regex match, then applies regex search/replace pairs. The regex engine in
+`glsl.c` knows `. [] [^] \d \w \s \b ^ $ ( ) (?: ) |`, the quantifiers
+`* + ? {n,m}` and their lazy `?` forms; replacements take `$0`-`$9` and `$$`.
+`glsl_test.c` tests it natively and runs on every build. fr-080's ATI-era
+GLSL is fixed this way.
+
 `just opengl32` rebuilds `files/opengl32.dll`. `scripts/mk_wine_prefix.sh`
 installs it, demarc sets `opengl32=n,b`.

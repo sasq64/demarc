@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Build opengl32.dll from wine's i386 opengl32.dll and opengl32.c with
-clang and lld-link.
+"""Build opengl32.dll from wine's i386 opengl32.dll, opengl32.c and glsl.c
+with clang and lld-link, after running glsl.c's native tests.
 
 Usage: build.py <wine opengl32.dll> <out.dll>
 """
@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = "i686-pc-windows-msvc"
 
 NTDLL = ["LdrLoadDll@16", "LdrGetProcedureAddress@16", "RtlQueryEnvironmentVariable_U@12",
-         "LdrDisableThreadCalloutsForDll@4"]
+         "LdrDisableThreadCalloutsForDll@4", "RtlAllocateHeap@12", "RtlFreeHeap@12", "__wine_dbg_output"]
 
 
 def read_exports(path):
@@ -86,16 +86,20 @@ def main():
         def run(*cmd):
             subprocess.run(cmd, check=True, cwd=tmp)
 
+        run("cc", "-Wall", "-O1", "-fsanitize=address,undefined", os.path.join(HERE, "glsl.c"),
+            os.path.join(HERE, "glsl_test.c"), "-o", "glsl_test")
+        run("./glsl_test")
         write("thunks.S", thunks(rows))
         write("opengl32.def", def_file(rows))
         write("ntdll.def", "LIBRARY ntdll.dll\nEXPORTS\n" + "\n".join(NTDLL) + "\n")
         cflags = [f"--target={TARGET}", "-O2", "-ffreestanding", "-fno-builtin", "-c"]
         run("clang", *cflags, "thunks.S", "-o", "thunks.obj")
         run("clang", *cflags, os.path.join(HERE, "opengl32.c"), "-o", "opengl32.obj")
+        run("clang", *cflags, os.path.join(HERE, "glsl.c"), "-o", "glsl.obj")
         run("llvm-dlltool", "-m", "i386", "-k", "-d", "ntdll.def", "-l", "ntdll.lib")
         run("lld-link", "/nologo", "/dll", "/machine:x86", "/nodefaultlib", "/entry:DllMain",
             "/safeseh:no", "/Brepro", "/noimplib", "/def:opengl32.def", f"/out:{out_dll}",
-            "thunks.obj", "opengl32.obj", "ntdll.lib")
+            "thunks.obj", "opengl32.obj", "glsl.obj", "ntdll.lib")
 
 
 if __name__ == "__main__":
