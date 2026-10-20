@@ -406,7 +406,7 @@ pub fn setup_navigator(
                 .iter()
                 .map(|f| f.get_meta("platform"))
                 .filter(|p| !p.is_empty() && !p.contains(";"))
-                .collect::<BTreeSet<_>>()
+                .collect::<IndexSet<_>>()
                 .into_iter()
                 .map(String::from)
                 .collect(),

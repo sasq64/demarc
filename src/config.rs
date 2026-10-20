@@ -143,8 +143,8 @@ pub struct Args {
     pub shuffle: bool,
 
     /// How to order the list of files. Applied before limiting.
-    #[arg(long, value_enum)]
-    pub sort: Option<SortArg>,
+    #[arg(long, value_enum, default_value_t = SortArg::Rank)]
+    pub sort: SortArg,
 
     /// When to show overlay info text
     #[arg(long, value_enum, default_value_t = InfoDisplay::OnMulti)]

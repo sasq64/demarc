@@ -456,20 +456,19 @@ fn main() {
         }
 
         match args.sort {
-            Some(SortArg::Random) => {
+            SortArg::Random => {
                 use rand::seq::SliceRandom;
                 files.shuffle(&mut rand::rng());
             }
             // Ranks are positions, so the best comes first. Entries without a rank
             // sort last, keeping the order they were collected in.
-            Some(SortArg::Rank) => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
-            Some(SortArg::Date) => files.sort_by_key(|f| Reverse(f.game_info.date)),
-            Some(SortArg::Title) => files.sort_by_key(|f| f.game_info.title),
-            Some(SortArg::Author) => files.sort_by_key(|f| f.game_info.group),
-            Some(SortArg::Id) => {
+            SortArg::Rank => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
+            SortArg::Date => files.sort_by_key(|f| Reverse(f.game_info.date)),
+            SortArg::Title => files.sort_by_key(|f| f.game_info.title),
+            SortArg::Author => files.sort_by_key(|f| f.game_info.group),
+            SortArg::Id => {
                 files.sort_by_key(|f| Reverse(f.get_meta("id").parse::<u32>().unwrap_or(0)))
             }
-            None => files.sort_by_key(|f| f.game_info.rank.wrapping_sub(1)),
         }
 
         if args.limit > 0 {
