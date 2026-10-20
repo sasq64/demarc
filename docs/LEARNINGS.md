@@ -473,3 +473,7 @@
   child processes before reporting `exited`. An SVKP-protected exe shows no
   strings; a relay of a demarc run is readable by `tail -F` on
   `/tmp/demarc-wine-*.log` while it runs (it is deleted at the end).
+
+- A zip whose entry names use `\` (4k in 5k) unpacked to files with a
+  backslash in their name, which wine cannot open ("could not start"). The
+  unpacker now splits names on `\`.

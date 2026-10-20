@@ -76,3 +76,11 @@ fn keeps_every_disk() {
         "nothing to sort by, but no disk may be dropped"
     );
 }
+
+#[test]
+fn splits_entry_names_on_backslashes() {
+    assert_eq!(
+        entry_path(Path::new("/t"), "4k_in_5k\\intro.exe"),
+        Some(PathBuf::from("/t/4k_in_5k/intro.exe"))
+    );
+}

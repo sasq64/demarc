@@ -216,10 +216,11 @@ pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
 
 /// Where an archive entry called `name` goes under `target_dir`, keeping only
 /// normal path components so an absolute path or `..` can't escape it. `None`
-/// when nothing is left of the name.
+/// when nothing is left of the name. DOS-made zips separate with `\`.
 fn entry_path(target_dir: &Path, name: &str) -> Option<PathBuf> {
     use std::path::Component;
-    let rel: PathBuf = Path::new(name)
+    let name = name.replace('\\', "/");
+    let rel: PathBuf = Path::new(&name)
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
         .collect();
