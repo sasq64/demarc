@@ -25,6 +25,7 @@ use mlua::{Function, Lua, LuaOptions, StdLib};
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::{AppSettings, Args};
 use crate::emulator::Emulator;
+use crate::frontend::EmuView;
 use crate::headless::HeadlessTarget;
 use crate::ui::key_message;
 
@@ -400,6 +401,7 @@ fn run_script(
     mut cmds: MessageWriter<CmdMessage>,
     mut exit: MessageWriter<AppExit>,
     mut settings: ResMut<AppSettings>,
+    mut emus: Query<(&mut Emulator, &EmuView)>,
     windows: Query<Entity, With<PrimaryWindow>>,
     headless: Option<Res<HeadlessTarget>>,
 ) {
@@ -432,11 +434,15 @@ fn run_script(
                     .iter()
                     .position(|f| f.get_meta("id") == id);
                 match index {
-                    // Same two steps as picking a row in the file picker: point
-                    // `current_game` at the entry and let `Reload` boot it.
+                    // Stepped to like `NextFile`, not `Reload`: on the first
+                    // frame a reload raced the startup load of the db's first entry.
                     Some(index) => {
-                        settings.current_game = index as isize;
-                        cmds.write(CmdMessage(Cmd::Reload));
+                        settings.current_game = index as isize - 1;
+                        for (mut emu, view) in &mut emus {
+                            if !emu.is_crossfade && view.index == settings.current_emu {
+                                emu.run_next = true;
+                            }
+                        }
                     }
                     None => error!("Remote control: no demo with id {id}"),
                 }
