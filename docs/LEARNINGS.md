@@ -477,3 +477,13 @@
 - A zip whose entry names use `\` (4k in 5k) unpacked to files with a
   backslash in their name, which wine cannot open ("could not start"). The
   unpacker now splits names on `\`.
+
+- On NVIDIA a GL demo's shader error only shows in its own message box: a
+  `+relay` grep for `MessageBoxA` gave fr-080's `C1115 pow(vec4, float)`.
+  Its shaders are 2011 ATI-lax GLSL that neither NVIDIA nor Mesa accepts, and
+  `wine_shader_read` only works on Mesa. Its sources can be read from
+  `/proc/<pid>/mem` of a gamescope+wine run started by a Python script.
+
+- A Crinkler 4k tagged `opencl` (Shoal) needs an OpenCL ICD on the host
+  (`/etc/OpenCL/vendors`); wine's `opencl.dll` loads and unloads at once
+  without one and the intro stays black and silent.
