@@ -118,7 +118,8 @@ Only some d3dx9 versions are native; others still hit wine's stubs.
 wine export list that differs from Windows breaks silently. Existing proxies:
 `winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders, plus
 Windows-only names in `EXTRA`),
-`opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits), `dx8vb`
+`opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits, pbuffer
+`wglBindTexImageARB` on NVIDIA), `dx8vb`
 (`VB_D3DX*` math). Odd DLL casing in `+loaddll` is deliberate. See
 `docs/CRINKLER.md`. A `+relay` call to `AccessCheck` with `ret=004...` is a
 name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
@@ -189,8 +190,8 @@ autodlg works around the known case.
 **Message box before any window.** `WINEDEBUG=+relay wine demo.exe 2>&1 | grep
 'ret=004'` lists the calls up to the `MessageBoxA`; often a failed
 `SetCurrentDirectory` or file open, not a codec. A `CreateFileA("\\tNN.")` that fails is
-the old CRT's `tmpfile()` writing to the drive root (Z: = `/`); for libjpeg,
-patch `DEFAULT_MAX_MEM` up (`zoo.8196`).
+the old CRT's `tmpfile()` writing to the drive root; the sandbox maps the
+release directory to its own drive for it, plain wine does not.
 
 **Old GL demo dies right after `glGetString`/`glGetIntegerv`.** Modern
 values overflow 2000-era assumptions: `GL_EXTENSIONS` into a fixed buffer,

@@ -261,10 +261,38 @@ fn bwrap_args(
     // Absolute, because `bwrap` chdirs inside the new mount namespace, where a
     // relative path means nothing and the sandbox refuses to start at all.
     if let Some(dir) = workdir.map(|dir| dir.canonicalize().unwrap_or(dir.to_owned())) {
-        args.extend(["--chdir".into(), dir.to_string_lossy().into_owned()]);
+        let dir = dir.to_string_lossy().into_owned();
+        // The old MSVC `tmpfile()` writes to the root of the current drive, so
+        // the release gets a drive of its own, overlaid so the files go away.
+        args.extend([
+            "--overlay-src".into(),
+            dir.clone(),
+            "--tmp-overlay".into(),
+            dir.clone(),
+        ]);
+        if let Some(drive) = free_drive(base) {
+            args.extend([
+                "--symlink".into(),
+                dir.clone(),
+                prefix
+                    .join("dosdevices")
+                    .join(drive)
+                    .to_string_lossy()
+                    .into_owned(),
+            ]);
+        }
+        args.extend(["--chdir".into(), dir]);
     }
     args.push("--".into());
     args
+}
+
+/// The first drive letter from `d:` up that the prefix does not map.
+fn free_drive(base: &Path) -> Option<String> {
+    let dosdevices = base.join("dosdevices");
+    ('d'..='y')
+        .map(|letter| format!("{letter}:"))
+        .find(|drive| dosdevices.join(drive).symlink_metadata().is_err())
 }
 
 /// Can this machine actually run the sandbox? Asked once, and answered by

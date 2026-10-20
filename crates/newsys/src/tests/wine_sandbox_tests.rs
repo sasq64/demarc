@@ -211,3 +211,15 @@ fn mode(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     fs::metadata(path).expect("a dir").permissions().mode() & 0o777
 }
+
+/// The old MSVC `tmpfile()` creates `\tNN.` in the drive root, which is `/`
+/// unless the release directory is a drive of its own.
+#[test]
+fn maps_the_release_directory_to_a_writable_drive() {
+    let args = args("/nonexistent", "/session", Some("/demos/thing"));
+    assert!(follows(&args, "--overlay-src", "/demos/thing"));
+    assert!(follows(&args, "--tmp-overlay", "/demos/thing"));
+    let at = args.iter().position(|a| a == "--symlink").expect("a drive");
+    assert_eq!(args[at + 1], "/demos/thing");
+    assert_eq!(args[at + 2], "/session/dosdevices/d:");
+}

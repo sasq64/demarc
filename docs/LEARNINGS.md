@@ -396,9 +396,7 @@
   cwd on Z: = `/` that fails with access denied. Found with `+relay` (grep
   `ret=00[4-6]`) between the `CreateFileA` and the `MessageBoxA`. Fixed by an
   override patch raising libjpeg's `DEFAULT_MAX_MEM` (`mov eax,1000000` in
-  `jpeg_mem_init`). A generic fix (a writable drive, since wine names the cwd
-  after the deepest drive above it) was tried and dropped: no other cached
-  release with libjpeg and progressive JPEGs hit it. The d3d
+  `jpeg_mem_init`). The d3d
   `state_linepattern_w` fixme was a red herring.
 
 - Run `cargo test --workspace`, not `-p demarc`: a crate whose tests don't
@@ -455,3 +453,15 @@
 - A db line's `download` must be an http(s) URL: a bare path is "unparseable",
   `file://` fails in the fetcher. Serve a local file with
   `python3 -m http.server` to test a db entry.
+
+- Plastic's "Your Fingers So Gently On My Skin" (`zoo.8644`) faulted in the
+  CRT's `fread` on a NULL `FILE*`: its own loader, not libjpeg, uses
+  `tmpfile()`, so the libjpeg patch does nothing there. The sandbox now
+  overlays the release directory and maps it to a free drive letter, so the
+  drive root is writable and the files are thrown away. Killing wine skips
+  delete-on-close, so a run in the real directory leaves `t6o.*` behind.
+  After that it died on NVIDIA with a GLX `BadMatch` in `MakeContextCurrent`:
+  wine's `wglBindTexImageARB` copies the pbuffer with its internal context,
+  which has a different pixel format; the opengl32 proxy copies with a
+  context made on the pbuffer's DC instead. Plain wine opens the demo on the
+  user's screen; use demarc headless.
