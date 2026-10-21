@@ -557,7 +557,7 @@ fn update_navigator(
     input: Res<ButtonInput<KeyCode>>,
     mut navigator: ResMut<Navigator>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
-    mut hud: ResMut<HudState>,
+    hud: ResMut<HudState>,
 ) {
     navigator.remember_state(&hud);
     let id = navigator.stack[navigator.pos as usize].id;

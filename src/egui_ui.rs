@@ -162,6 +162,7 @@ impl HudState {
         };
     }
 
+    #[allow(dead_code)]
     pub fn close_list(&mut self) {
         self.picker.show_list = false;
     }
