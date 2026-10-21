@@ -550,3 +550,8 @@
   hide/show and resizes after mapping do not help, `_XWAYLAND_ALLOW_COMMITS` is
   not set, no child windows. Root cause not found yet. The demo itself renders
   fine: the DIB dumped from `/proc/<pid>/mem` holds the finished image.
+
+- `err:module:import_dll Library d3dcsx_43.dll ... not found` (The Ink Test,
+  `zoo.103547`): wine has no d3dcsx builtin and winetricks no verb, so the
+  prefix build takes it from the DirectX June 2010 redist that `d3dx9` already
+  downloaded. The import comes from a DLL named `fwdfx.fx`, not the exe.

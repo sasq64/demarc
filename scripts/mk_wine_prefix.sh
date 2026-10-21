@@ -25,6 +25,12 @@ curl -fsSL https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz |
 mv "$PREFIX/v2/x32/d3dcompiler_47.dll" "$PREFIX/drive_c/windows/syswow64/"
 mv "$PREFIX/v2/x64/d3dcompiler_47.dll" "$PREFIX/drive_c/windows/system32/"
 rm -r "$PREFIX/v2"
+# d3dcsx_43 has no winetricks verb and no wine builtin (The Ink Test); take it from d3dx9's download
+DXREDIST="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks/directx9/directx_Jun2010_redist.exe"
+cabextract -q -d "$PREFIX" -F 'Jun2010_d3dcsx_43_x*.cab' "$DXREDIST"
+cabextract -q -d "$PREFIX/drive_c/windows/syswow64" -F d3dcsx_43.dll "$PREFIX/Jun2010_d3dcsx_43_x86.cab"
+cabextract -q -d "$PREFIX/drive_c/windows/system32" -F d3dcsx_43.dll "$PREFIX/Jun2010_d3dcsx_43_x64.cab"
+rm "$PREFIX"/Jun2010_d3dcsx_43_x*.cab
 ./winetricks -q corefonts
 # MFC42 (Codename Chinadoll)
 ./winetricks -q mfc42
