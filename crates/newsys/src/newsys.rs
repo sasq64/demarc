@@ -532,6 +532,8 @@ pub struct LoadResult {
 impl NewSys {
     fn get_systems(args: &SysOpts) -> Vec<Box<dyn System>> {
         vec![
+            // Lynx releases often bundle a Windows emulator; the magic check is strict.
+            Box::new(LynxSystem {}),
             Box::new(DosSystem {}),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             Box::new(WindowsSystem {}),
@@ -543,7 +545,6 @@ impl NewSys {
             // Before the C64, which would otherwise claim the same disks and
             // programs; it stands aside unless --cbm-variant asked for it.
             Box::new(Plus4System::new(args)),
-            Box::new(LynxSystem {}),
             Box::new(C64System::new(args)),
             Box::new(GameboySystem {}),
             Box::new(GBASystem::new(args)),
