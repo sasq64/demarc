@@ -952,3 +952,6 @@ meta = { wine_res = "1280x720" }
 
 [zoo.37585]
 events = [{ frame = 240, click = [0.32, 0.9] }]
+
+[zoo.31640]
+known_issue = "Needs OpenCL"
