@@ -837,9 +837,14 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
     // box is clicked. A mode chosen before that is silently thrown away.
     for (wanted, labels) in [(true, &args.check), (false, &args.uncheck)] {
         for want in labels.iter().map(|l| norm(l)) {
-            for c in kids {
-                if c.kind == Kind::Check && norm(&c.text).contains(&want) && c.checked() != wanted {
-                    println!("{} {:?}", if wanted { "check" } else { "uncheck" }, c.text);
+            for (i, c) in kids.iter().enumerate() {
+                // Axxelerate's box has no text; its label is the static before it.
+                let label = match (c.text.is_empty(), i.checked_sub(1).map(|p| &kids[p])) {
+                    (true, Some(p)) if p.class.eq_ignore_ascii_case("Static") => &p.text,
+                    _ => &c.text,
+                };
+                if c.kind == Kind::Check && norm(label).contains(&want) && c.checked() != wanted {
+                    println!("{} {:?}", if wanted { "check" } else { "uncheck" }, label);
                     c.click();
                 }
             }
