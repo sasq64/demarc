@@ -1,0 +1,11 @@
+/*.txt.gz
+/*.txt
+demozoo-export.sql
+.csdb_cache/
+.pouet_cache/
+.pouetcache/
+pages/
+demozoo.sqlite
+pouetdatadump-prods-*.json
+__pycache__/
+.*.checked
