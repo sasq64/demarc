@@ -25,5 +25,11 @@ fn claims_pages_and_nothing_around_them() {
 fn asks_the_core_for_chrome() {
     let meta = WebSystem {}.default_meta();
     assert_eq!(meta.get("gamescope_command"), Some(&"chrome"));
-    assert_eq!(meta.get("gamescope_resolution"), Some(&"800x600"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_page_takes_the_screens_shape() {
+    assert_eq!(page_resolution(true), "1280x720");
+    assert_eq!(page_resolution(false), "800x600");
 }

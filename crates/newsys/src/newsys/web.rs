@@ -10,6 +10,11 @@ use crate::libloader;
 use crate::retro_emu;
 #[cfg(target_os = "linux")]
 use crate::system_dir;
+#[cfg(target_os = "linux")]
+use crate::{
+    newsys::META_WIDESCREEN,
+    wine::{DEFAULT_WIDESCREEN, is_yes},
+};
 use crate::workfile::WorkFile;
 #[cfg(target_os = "linux")]
 use anyhow::Context;
@@ -38,6 +43,11 @@ const CAN_RUN_WEB: bool = cfg!(target_os = "linux");
 #[cfg(target_os = "linux")]
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
 
+#[cfg(target_os = "linux")]
+fn page_resolution(widescreen: bool) -> &'static str {
+    if widescreen { "1280x720" } else { "800x600" }
+}
+
 impl System for WebSystem {
     fn extensions(&self) -> &'static [&'static str] {
         &["html", "htm"]
@@ -47,13 +57,9 @@ impl System for WebSystem {
         CAN_RUN_WEB && self.handles_ext(path)
     }
 
-    /// A page is 800x600 by default like everything else here, but unlike a
-    /// demo it has no opinion of its own: nothing in an `.html` announces the
-    /// size it wants, so the entry has to say.
     fn default_meta(&self) -> HashMap<&str, &str> {
         let mut meta: HashMap<&str, &str> = HashMap::new();
         meta.insert("gamescope_command", "chrome");
-        meta.insert("gamescope_resolution", "800x600");
         meta
     }
 
@@ -68,6 +74,12 @@ impl System for WebSystem {
                 .context("Could not load the gamescope core")?;
             let mut meta = path.get_all_meta();
             meta.insert("absolute_pointer".into(), "true".into());
+            // A page fills whatever window it gets, so give it the screen's shape.
+            let wide = meta
+                .get(META_WIDESCREEN)
+                .map_or(DEFAULT_WIDESCREEN, |v| is_yes(v));
+            meta.entry("gamescope_resolution".into())
+                .or_insert_with(|| page_resolution(wide).into());
             retro_emu::create_core(&core, system_dir(), Some(path), meta, false)
         }
         // `can_load` said no everywhere else, so this is only reachable by

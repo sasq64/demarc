@@ -425,6 +425,7 @@ PLATFORM_WHITELIST = [
     "Windows",
     "Pico*",
     "PSP",
+    "Browser",
 ]
 
 # Demozoo only really insists on a platform for executable prods; for graphics

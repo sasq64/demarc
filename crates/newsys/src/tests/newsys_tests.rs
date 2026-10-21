@@ -238,6 +238,15 @@ fn a_bsdiff_patch_rewrites_the_file_it_names() {
 }
 
 #[test]
+fn a_browser_release_tries_web_first() {
+    let sys = NewSys::new(&SysOpts::default());
+    let mut wf = WorkFile::new(Path::new("demo"));
+    assert_ne!(sys.systems_for(&wf)[0].name(), "Web");
+    wf.set_meta("platform", "Windows;Browser");
+    assert_eq!(sys.systems_for(&wf)[0].name(), "Web");
+}
+
+#[test]
 fn test_c64() {
     let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("c64");

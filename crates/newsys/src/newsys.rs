@@ -612,6 +612,22 @@ impl NewSys {
         self.meta_mut().contains_key(key)
     }
 
+    /// The systems to try, in order. A browser release often ships screenshots
+    /// and music beside its page, which the systems ahead of Web would claim.
+    fn systems_for(&self, wf: &WorkFile) -> Vec<&dyn System> {
+        let web_first = wf
+            .get_meta_or("platform", "")
+            .split(';')
+            .any(|p| p.trim().eq_ignore_ascii_case("browser"));
+        let (mut order, rest): (Vec<&dyn System>, Vec<&dyn System>) = self
+            .systems
+            .iter()
+            .map(|sys| sys.as_ref())
+            .partition(|sys| web_first && sys.name() == "Web");
+        order.extend(rest);
+        order
+    }
+
     /// Load a release, with `over` carrying whatever `overrides.toml` had to
     /// say about it (see [`crate::overrides`]) and `None` when it had nothing.
     ///
@@ -680,7 +696,7 @@ impl NewSys {
                 wf.path = cue;
             }
         }
-        for sys in &self.systems {
+        for sys in self.systems_for(&wf) {
             trace!("Trying to load with {}", sys.name());
             if sys.load(&mut wf)? {
                 debug!("System {} can load {:?}", sys.name(), wf.path);
