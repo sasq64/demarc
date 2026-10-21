@@ -555,3 +555,9 @@
   `zoo.103547`): wine has no d3dcsx builtin and winetricks no verb, so the
   prefix build takes it from the DirectX June 2010 redist that `d3dx9` already
   downloaded. The import comes from a DLL named `fwdfx.fx`, not the exe.
+
+- A GL 4k that shows its image for an instant and then goes black (Fizzer's
+  "The Real Party Is In Your Pocket", `zoo.277164`): no GLX config on
+  NVIDIA's Xwayland has an accumulation buffer (`glxinfo -v | grep accum`), so
+  every `glAccum` fails silently and only the first swap shows a raw sample.
+  The opengl32 proxy now emulates the accumulation buffer with an FBO.

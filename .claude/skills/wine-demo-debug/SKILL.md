@@ -119,7 +119,7 @@ wine export list that differs from Windows breaks silently. Existing proxies:
 `winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders, plus
 Windows-only names in `EXTRA`),
 `opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits, pbuffer
-`wglBindTexImageARB` on NVIDIA), `dx8vb`
+`wglBindTexImageARB` on NVIDIA, accumulation buffer), `dx8vb`
 (`VB_D3DX*` math). Odd DLL casing in `+loaddll` is deliberate. See
 `docs/CRINKLER.md`. A `+relay` call to `AccessCheck` with `ret=004...` is a
 name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
@@ -190,6 +190,12 @@ refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
 640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
 in a corner, needs `wine_res` set to its own resolution. `wine_desktop=true`
 is for demos that do not survive a mode switch.
+
+**D3D9 `CreateDevice` fails, then a NULL fault.** Check the present
+parameters for `D3DMULTISAMPLE_NONMASKABLE`: DXVK makes quality q into `1 << q`
+samples. wined3d with `wine_d3d_config = "SampleCount=0"` (Spilled,
+`zoo.51354`). A draw-once D3D11 intro black under DXVK: try
+`wine_dll_overrides=d3d11=b;dxgi=b` (Night Time, `zoo.155141`).
 
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more

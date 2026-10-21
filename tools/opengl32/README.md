@@ -48,3 +48,9 @@ GLSL is fixed this way.
 
 `just opengl32` rebuilds `files/opengl32.dll`. `scripts/mk_wine_prefix.sh`
 installs it, demarc sets `opengl32=n,b`.
+
+`glAccum`, `glClearAccum` and `glClear`'s `GL_ACCUM_BUFFER_BIT` are emulated
+when the context has no accumulation buffer, which no GLX config on NVIDIA's
+Xwayland has: an RGBA32F texture behind an FBO, sized to the viewport at first
+use, and each operation one full-screen pass. Fizzer's "The Real Party Is In
+Your Pocket" accumulates 256 samples in it.
