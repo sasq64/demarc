@@ -101,6 +101,7 @@ impl Launch {
 }
 
 const PLAYLIST_MENU: usize = 1;
+const PLAYLIST_ROOT_MENU: usize = 2;
 
 type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> Option<ListSource> + Send + Sync>;
 
@@ -288,6 +289,28 @@ impl Navigator {
                 list.source = Arc::new(PickerSource::new(files, None, IconMode::All));
             }
         }
+    }
+
+    pub fn remove_playlist(&mut self, name: &str) {
+        self.playlists.remove(name);
+        self.files.shift_remove(name);
+        let root_source = self.root_source();
+        if let Some(root) = self.stack.first_mut() {
+            root.source = root_source;
+        }
+    }
+
+    /// Shift+Enter on playlist `name` in the root list.
+    fn open_playlist_root_menu(&mut self, name: &str) -> &mut Self {
+        self.push(NavList {
+            id: PLAYLIST_ROOT_MENU,
+            source: Arc::new(AllWordsSource::new(vec![
+                "\u{f0156} Delete Playlist".into(),
+            ])),
+            path: name.into(),
+            prompt: String::new(),
+            selected: None,
+        })
     }
 
     /// Shift+Enter on entry `id` of a playlist: remove it, or go on to its
@@ -590,7 +613,14 @@ fn handle_selection(
     let prompt = current.prompt.clone();
     let path = current.path.clone();
     for msg in reader.read() {
-        if msg.id == id && id == PLAYLIST_MENU {
+        if msg.id == id && id == PLAYLIST_ROOT_MENU {
+            if let Some(index) = playlists.find(&path)
+                && playlists.delete(index)
+            {
+                navigator.remove_playlist(&path);
+            }
+            navigator.pop().show(&mut list_writer);
+        } else if msg.id == id && id == PLAYLIST_MENU {
             let Some((list, file_id)) = path.rsplit_once('/') else {
                 continue;
             };
@@ -636,6 +666,14 @@ fn handle_selection(
                     emu_file,
                     target_emulator: None,
                 });
+            } else if msg.alt
+                && path.is_empty()
+                && msg.text != FAVORITES
+                && navigator.playlists.contains(&msg.text)
+            {
+                navigator
+                    .open_playlist_root_menu(&msg.text)
+                    .show(&mut list_writer);
             } else {
                 navigator.enter(&msg.text).show(&mut list_writer);
             }
@@ -792,5 +830,19 @@ mod test {
         navigator.add_playlist("New", &[]);
         navigator.back();
         assert_eq!(navigator.get_showing(), vec!["Broken", "New"]);
+    }
+
+    #[test]
+    fn playlist_root_menu_deletes() {
+        let mut navigator = Navigator::new();
+        navigator.add_playlist("Old", &[]);
+        navigator.add_playlist("Keep", &[]);
+        setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+        navigator.go_root();
+        navigator.open_playlist_root_menu("Old");
+        assert_eq!(navigator.current_path(), "Old");
+        navigator.remove_playlist("Old");
+        navigator.pop();
+        assert_eq!(navigator.get_showing(), vec!["Keep"]);
     }
 }

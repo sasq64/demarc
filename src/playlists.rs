@@ -210,6 +210,20 @@ impl Playlists {
             .position(|l| l.name.to_lowercase() == name)
     }
 
+    /// Remove the list at `index` and its file. Favorites can't be deleted.
+    pub fn delete(&mut self, index: usize) -> bool {
+        if index == 0 || index >= self.lists.len() {
+            return false;
+        }
+        let list = self.lists.remove(index);
+        if let Err(err) = fs::remove_file(&list.path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            error!("Can't delete {}: {err:#}", list.path.display());
+        }
+        true
+    }
+
     /// Index of the list called `name`, created empty if there is none yet.
     /// `None` if `name` can't be a file name.
     pub fn create(&mut self, name: &str) -> Option<usize> {
