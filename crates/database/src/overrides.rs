@@ -53,6 +53,9 @@
 //! [zoo.108]
 //! events = [{ frame = 50, key = "Enter" }]   # keys to press, frames after start
 //! events = [{ frame = 400, click = [0.57, 0.94] }]  # left click, 0..1 over the frame
+//!
+//! [zoo.51295]
+//! known_issue = "black: ..."         # notes on an unsolved problem, not used
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -170,6 +173,10 @@ struct RawOverride {
     cache_writeback: bool,
     /// Regex edits to the GLSL a Windows demo compiles, one table or an array.
     glsl: Option<GlslPatches>,
+    /// What is known about a release that still does not work, for whoever
+    /// picks it up next. Not used by demarc.
+    #[allow(dead_code)]
+    known_issue: Option<String>,
 }
 
 #[derive(Deserialize)]

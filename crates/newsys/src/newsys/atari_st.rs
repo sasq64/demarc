@@ -85,7 +85,7 @@ fn falcon_system_dir() -> Result<PathBuf> {
         };
         if stale {
             fs::create_dir_all(to.parent().unwrap())?;
-            fs::copy(&from, &to)?;
+            fs::copy(&from, &to).with_context(|| format!("Falcon needs {from:?}"))?;
         }
     }
     Ok(dir)

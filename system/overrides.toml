@@ -82,6 +82,15 @@ patch = {
   contents = "kJA=",
 }
 
+# Patter by Doom. Its aspect fit scales by the screen width instead of the
+# height when the screen is wider than 16:10, and centres with an unsigned
+# shift; wine draws the resulting 0x7ffffdc0 offscreen.
+[zoo.1697]
+patch = [
+  { info = "fit to height", target = "patter4k_windows7.exe", offset = 5023, contents = "xg==" },
+  { info = "fit to height", target = "patter4k_windows7.exe", offset = 5042, contents = "xg==" },
+]
+
 [zoo.3298]
 file = "fr-025-final.zip"
 
@@ -750,6 +759,25 @@ patch = {
 
 [zoo.50646]
 meta = { wine_res = "640x480" }
+
+# Organix by rgba
+[zoo.51295]
+known_issue = """
+Black. The intro renders fine (the DIB dumped from memory holds the image) and
+blits it in a loop, but its window never reaches the session. It is created at
+0x0 with WS_MAXIMIZE (CreateWindowEx "static", 0x97000000, 0,0,0,0); Xwayland
+then makes one buffer-less commit on its surface and none after, so gamescope
+shows a stale square surface ("client covers 1024x1024"). A test exe that does
+the same reproduces it; the same window created at full size works. Hide/show,
+resizing after map and answering the buffer-less commit's frame callback in
+gamescope did not help. Also wants a 1280x1024 mode (letterboxed1024 exe), so
+wine_res = 1280x1024 is needed once the above is solved. See docs/LEARNINGS.md.
+"""
+
+# Slisesix by rgba: quits when its 1280x1024 mode switch fails in the 1280x720
+# session its file name gives
+[zoo.54123]
+meta = { wine_res = "1280x1024" }
 
 [zoo.156337]
 meta = { dos4gw = "true" }

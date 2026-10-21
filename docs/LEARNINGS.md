@@ -515,3 +515,38 @@
   The release is ATI-only and takes a missing NV program path when
   `GL_NV_fragment_program` is present; list the archive before chasing heap
   corruption.
+
+- A path-less `No such file or directory` from `demarc::loading` looks like a
+  vanished temp dir but was a missing system file (`hatari/tos/tos404.img`,
+  never committed) behind a bare `fs::copy(..)?`. Add the path as context first.
+
+- An override `patch` offset names the first byte written, not the
+  instruction: Patter's `mov eax,ecx` (8b c1) → `mov eax,esi` changes the
+  *second* byte. Writing `c6` over the opcode at the instruction's offset
+  decoded as `mov cl,imm8` and crashed later inside the next `imul`
+  (`write access to BD0004B4`), which looked like a demo bug for an hour.
+  `cmp -l` the patched file against a hand-made copy that is known to work.
+
+- `pkill -f <pattern>` inside a Bash tool call matches the tool's own shell
+  (its command line contains the pattern) and kills it: exit 144, no output.
+  Kill by PID.
+
+- demarc's wine-log forwarder logs each distinct line once and stops after
+  4096 of them, so a `+relay` (or any chatty channel) under demarc shows
+  wine's startup and nothing of the demo. Run plain `gamescope --backend
+  headless -- wine autodlg.exe --launch demo.exe ...` and log to a file.
+
+- A headless screenshot of a draw-once GDI 4k is black until it has rendered
+  *and* the core has stopped hiding: autodlg blocks in `SetWindowPos` on a
+  window whose thread never pumps messages (Patter), so the core waits out its
+  10 s hide fallback first. Shoot at 25 s, not 10.
+
+- A wine window created at 0x0 with `WS_MAXIMIZE` (Organix, `zoo.51295`,
+  `CreateWindowEx("static", 0x97000000, 0,0,0,0)`) never reaches the
+  gamescope session: Xwayland makes one buffer-less commit on its surface and
+  then none, so the session shows a stale square surface (`client covers
+  1024x1024`). The same window created at full size works. Reproduced with a
+  test exe (`CreateWindowEx` 0x0 + `WS_MAXIMIZE`, StretchDIBits loop);
+  hide/show and resizes after mapping do not help, `_XWAYLAND_ALLOW_COMMITS` is
+  not set, no child windows. Root cause not found yet. The demo itself renders
+  fine: the DIB dumped from `/proc/<pid>/mem` holds the finished image.
