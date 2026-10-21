@@ -5,7 +5,7 @@ PREFIX="${1:-$HOME/.wine-demarc}"
 export WINEPREFIX="$PREFIX"
 export WINEARCH=win64
 
-for tool in wine cabextract bwrap; do
+for tool in wine cabextract unzip bwrap; do
     command -v "$tool" >/dev/null || {
         echo "error: $tool not found in PATH" >&2
         exit 1
@@ -32,6 +32,11 @@ cabextract -q -d "$PREFIX/drive_c/windows/syswow64" -F d3dcsx_43.dll "$PREFIX/Ju
 cabextract -q -d "$PREFIX/drive_c/windows/system32" -F d3dcsx_43.dll "$PREFIX/Jun2010_d3dcsx_43_x64.cab"
 rm "$PREFIX"/Jun2010_d3dcsx_43_x*.cab
 ./winetricks -q corefonts
+# Selawik, Microsoft's open metric-compatible Segoe UI stand-in (Epsilon by Mercury)
+curl -fsSL -o selawik.zip https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip
+unzip -o -q -j selawik.zip '*.ttf' -d "$PREFIX/drive_c/windows/Fonts"
+rm selawik.zip
+wine reg add 'HKCU\Software\Wine\Fonts\Replacements' /v 'Segoe UI' /t REG_SZ /d Selawik /f
 # MFC42 (Codename Chinadoll)
 ./winetricks -q mfc42
 # Native msvcp60 from the same download; wine's lacks exports (Come Clean)

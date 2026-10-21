@@ -579,3 +579,50 @@
   polls Esc. Under DXVK nothing reaches the session, not even `DXVK_HUD`;
   `d3d11=b;dxgi=b` works. Undecorating was not the cause:
   `-x wine_dialog_res=pick` (autodlg `--no-fill`) was still black.
+
+- On (`zoo.136151`) asserts with `int3` (`0x80000003`) when
+  `GL_COMPILE_STATUS` is false; demarc's log shows no GLSL error because the
+  driver is NVIDIA, whose log only exists in the intro's memory (`x/s $edi` in
+  winedbg at the assert). NVIDIA 610 rejects a `texture()` bias in a vertex
+  shader and implicit vec3/vec2-to-float narrowing that older drivers
+  accepted; `.x` keeps the old result. Software Mesa failed on a different
+  shader first, so its dumps were no help. The kkrunchy-unpacked sources are
+  plain strings in the image: one read of `/proc/<pid>/mem` from the parent
+  script and glslang over every string found the same faults. An override
+  `glsl` `match` is a regex too: unescaped parens silently never match.
+  `pkill -f <pattern>` inside a Bash call kills that call's own shell.
+
+- Hologram (`zoo.119170`, same group and engine as On) has the same `int3`
+  assert, but its shader sources are not plain strings in memory, so the
+  `/proc/<pid>/mem` trick found nothing. Software Mesa with
+  `MESA_SHADER_DUMP_PATH` worked instead: add one override patch per error,
+  rebuild, rerun, and glslang every dumped file, until nothing fails (the
+  intro compiles all 60 shaders at load). Besides vec-to-float narrowing it
+  uses default parameter values (`float r=1.1`), which no current compiler
+  accepts; one caller relies on the default, so that function gets an
+  overload rather than having the default stripped.
+
+- Axxelerate (`zoo.31450`, GLFW 2.7) was black with music on NVIDIA: it
+  enables `GL_DEPTH_TEST` once and clears the window's depth only on its
+  first frame, and after a swap NVIDIA's window depth no longer passes
+  `GL_LEQUAL` for a z=0 quad. The probe that found it, after hours on wrong
+  leads: a temporary hook in the opengl32 proxy that `glReadPixels` a row of
+  framebuffer 0 after `glEnd` showed frame 1 drawn and frame 2 empty (alpha
+  0, so no fragments) with identical state; clearing depth in a `glBegin`
+  hook fixed it. Dead ends worth not repeating: a glxinfo FBConfig ID from a
+  separate gamescope run does not match the demo's (it "showed" format 33
+  single-buffered; a test exe asking `wglGetPixelFormatAttribivARB` said
+  double); `ffmpeg -f x11grab` of gamescope's Xwayland sees GDI but not GL,
+  so it is no evidence of a black window; demarc's forwarded wine log drops
+  repeated lines and stops after 4096 distinct ones, so per-frame calls seem
+  absent. GLFW sets its format through gdi32 `SetPixelFormat` and presents
+  through gdi32 `SwapBuffers`; both reach wine's builtin opengl32 from a
+  win32u callback, so the proxy's `wglSetPixelFormat`/`wglSwapBuffers`
+  hooks never see them. wine's `ChoosePixelFormat` treats 0 depth bits as
+  "don't care", so a depth-0 request still gets depth 24. A GL test exe's
+  window is still black in a screenshot at frame 90; shoot after 400. A Lua
+  `screenshot()` right before `quit()` is never written.
+
+- autodlg's `--check Fullscreen` missed dialogs that put the label in a
+  `Static` before a textless checkbox (Axxelerate); a textless checkbox now
+  takes that label.

@@ -95,6 +95,12 @@ exits 0 and nothing ran.
 running demo's setup dialog. A dialog drawn in GL has no controls: try
 `press_key(Key.Enter)` or an override `events`/`click` before writing code.
 
+**Reading back frames.** A temporary hook in the opengl32 proxy (e.g. on
+`glEnd`) that `glReadPixels` a row of framebuffer 0 and prints state with
+`__wine_dbg_output` shows whether a frame was drawn. Swaps and pixel formats
+set through gdi32 bypass the proxy. `x11grab` of gamescope's Xwayland does
+not see GL content, and demarc's wine log drops repeated lines.
+
 **NVIDIA reference.** `ssh ripper` has an RTX 4070 and a demarc checkout; wine
 is not on its ssh `PATH`. For black-on-Mesa, run the same `+opengl` trace on
 both and diff call-name histograms before reading frames.
@@ -139,7 +145,12 @@ source by regex before it is compiled (fr-080 `zoo.4701`, Surveillance
 `__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1` gets Mesa's errors and
 dumps on an NVIDIA machine; `-x wine_glsl_patches=...` tries a patch without an
 override. NVIDIA's compile error only shows in the demo's own message
-box: `WINEDEBUG=fixme-all,+msgbox` prints its text.
+box: `WINEDEBUG=fixme-all,+msgbox` prints its text. An `int3` (`0x80000003`)
+right after `glGetShaderiv` is an assert: the info log is in winedbg at the
+fault, the source in the unpacked image; glslang over every string in it finds
+the rest (On, `zoo.136151`). When the sources are not plain strings, iterate
+under software Mesa with dumps, one patch per error (Hologram, `zoo.119170`).
+A `match` is a regex.
 
 **HLSL compile errors.** Use the builtin compiler to see return codes
 (`WINEDLLOVERRIDES=d3dcompiler_47=b` with `+relay`) and
@@ -169,7 +180,9 @@ single-buffered pixel format: front-buffer drawing never reaches the session
 wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos. SDL 1.2 demos (`SDL.DLL` beside the exe) are ddraw too: black and
 silent without it (Dose 2, `zoo.8540`).
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
-extensions such as `glLoadProgramNV`.
+extensions such as `glLoadProgramNV`. Black on NVIDIA only, first frame
+drawn: the window's depth is not kept across a swap, and a demo that cleared
+it once fails its depth test (Axxelerate, `zoo.31450`, patched to clear it).
 
 **D3D8/9 2D quads show one colour or a zoomed corner.** XYZRHW quads drawn
 with texgen (`TEXCOORDINDEX` camera-space) or a texture matrix left on from a
@@ -226,6 +239,11 @@ winedbg.** The demo overran an earlier heap block into wine's free-block
 header; trace `+virtual,+seh` (layout unchanged) and the relay's `new`
 sizes. Fix the unpacked exe and ship a bsdiff `source` patch (Akkordarbeit,
 `zoo.20036`).
+
+**Wrong font or missing glyphs in GDI-drawn text.** `WINEDEBUG=+font`, grep
+`HfontCreate` and `select_font Chosen`: a face missing from the prefix falls
+back to Arial. Segoe UI maps to Selawik through
+`HKCU\Software\Wine\Fonts\Replacements` (Epsilon, `zoo.23405`).
 
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
 stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth

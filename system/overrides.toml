@@ -489,6 +489,30 @@ assign = { Love = "SYS:" }
 [zoo.122582]
 libretro = { aga = "true" }
 
+# On / Mercury: a texture() bias in a vertex shader and an implicit vec3 to
+# float, which NVIDIA 610 rejects.
+[zoo.136151]
+glsl = [
+  { match = 'texture\(iv,kk,0\)', edits = [['texture\(iv,kk,0\)', "textureLod(iv,kk,0.)"]] },
+  { match = 'hm\(0,w,mod', edits = [['hm\(0,w,mod\(abs\(p\),vec3\(1\)\)\)', "hm(0,w,mod(abs(p),vec3(1)).x)"]] },
+  { match = 'float arg=vec2', edits = [['float arg=vec2\( gk\(1\),gk\(2\) \)', "float arg=gk(1)"]] },
+]
+
+# Hologram / Mercury: a vec3 and a vec2 assigned to floats and default
+# parameter values, which NVIDIA 610 rejects.
+[zoo.119170]
+glsl = [
+  { match = 'float ady=vec3\(', edits = [['float ady=vec3\(', "float ady=float("]] },
+  { match = 'float aad=vec2', edits = [['float aad=vec2\( jy\(1\),jy\(2\) \)', "float aad=jy(1)"]] },
+  { match = 'akm=\(gl_FragCoord', edits = [['akm=\(gl_FragCoord([^;]*);', "akm=((gl_FragCoord$1).x;"]] },
+  { match = 'float oa\( vec3 p,vec2 al,float r=1\.1 \)\{', edits = [['float oa\( vec3 p,vec2 al,float r=1\.1 \)\{',
+    "float oa(vec3 p,vec2 al,float r);float oa(vec3 p,vec2 al){return oa(p,al,1.1);}float oa(vec3 p,vec2 al,float r){"]] },
+  { match = '[(,] ?(?:float|int) \w+ ?= ?[-\d.]+ ?[,)]', edits = [
+    ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
+    ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
+  ] },
+]
+
 [zoo.136167]
 download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_86box.zip"
 
@@ -967,3 +991,29 @@ meta = { wine_dll_overrides = "d3d9=b", wine_d3d_config = "SampleCount=0" }
 # HUD either), right with wined3d
 [zoo.155141]
 meta = { wine_dll_overrides = "d3d11=b;dxgi=b" }
+
+[zoo.155002]
+meta = { wine_res = "640x480" }
+
+[zoo.43645]
+events = [{ frame = 86, key = "1" }]
+
+[zoo.356322]
+meta = { wine_res = "640x480" }
+
+[zoo.307923]
+meta = { wine_res = "1024x768" }
+
+# Axxelerate: enables GL_DEPTH_TEST once and clears the window's depth only on
+# the first frame. After a swap NVIDIA's is no longer 1.0, so every later
+# full-screen quad fails GL_LEQUAL: black with music. Also pow(vec3, float),
+# which NVIDIA rejects, and an int if-condition, which Mesa rejects.
+[zoo.31450]
+patch = [
+  { info = "clear depth when Framebuffer::disable binds the window", target = "axxelerate.exe", offset = 68978, contents = "oVz4TACLAGoAaECNAAD/0GgAAQAA6BCbAQCQ" },
+  { info = "clear depth before the load bar quad", target = "axxelerate.exe", offset = 41559, contents = "aAABAADoOwYCAGoH6AQGAgAxwIkEJIlEJASQkJCQkJA=" },
+]
+glsl = [
+  { match = 'pow\(blur\(\)', edits = [['pow\(blur\(\) \* 4\.7, 4\.0\)', "pow(blur() * 4.7, vec3(4.0))"]] },
+  { match = 'if\(autoBias\)', edits = [['if\(autoBias\)', "if(autoBias != 0)"]] },
+]
