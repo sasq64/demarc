@@ -81,6 +81,10 @@ pub const META_GLSL_120_SUBSET: &str = "wine_glsl_120_subset";
 #[cfg(target_os = "linux")]
 pub const META_SHADER_READ: &str = "wine_shader_read";
 
+/// Meta key holding wined3d's `WINE_D3D_CONFIG`, e.g. `SampleCount=0`.
+#[cfg(target_os = "linux")]
+pub const META_D3D_CONFIG: &str = "wine_d3d_config";
+
 /// Meta key: the override's `glsl` patches, which the opengl32 proxy applies to
 /// shader sources (`tools/opengl32`). Patches are separated by
 /// [`GLSL_PATCH_SEP`], their fields by [`GLSL_FIELD_SEP`]: `h<hash>` or

@@ -955,3 +955,15 @@ events = [{ frame = 240, click = [0.32, 0.9] }]
 
 [zoo.31640]
 known_issue = "Needs OpenCL"
+
+# Spilled by Archee: D3DMULTISAMPLE_NONMASKABLE quality 4 is 16 samples to DXVK,
+# which NVIDIA lacks, and multisampled GL points are circles that let the clear
+# colour through, so wined3d without multisampling
+[zoo.51354]
+boot = "spilled_qc_1024.exe"
+meta = { wine_dll_overrides = "d3d9=b", wine_d3d_config = "SampleCount=0" }
+
+# Night Time by Loonies: D3D11 compute, presented once. Black under DXVK (no
+# HUD either), right with wined3d
+[zoo.155141]
+meta = { wine_dll_overrides = "d3d11=b;dxgi=b" }

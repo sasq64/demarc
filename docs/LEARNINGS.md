@@ -561,3 +561,21 @@
   NVIDIA's Xwayland has an accumulation buffer (`glxinfo -v | grep accum`), so
   every `glAccum` fails silently and only the first swap shows a raw sample.
   The opengl32 proxy now emulates the accumulation buffer with an FBO.
+
+- `DXVK_CONFIG` accepts keys DXVK does not have without a word ("Found config
+  env" and "Effective configuration" list them anyway): `d3d9.forceSwapchainMSAA`
+  is not a DXVK option and cost two runs. A `grep ... | head` that cut the
+  log before the `err:` lines made the first of them look like a fix: grep for
+  the error itself before calling something fixed.
+
+- Spilled (`zoo.51354`) asks for `D3DMULTISAMPLE_NONMASKABLE` quality 4. DXVK
+  reads that as `1 << quality` = 16 samples, which NVIDIA's Vulkan lacks, so
+  `CreateDevice` fails and the intro dereferences NULL. wined3d accepts it but
+  multisampled GL points are circles, and its one-point-per-pixel image came
+  out tinted with the clear colour. wined3d's `SampleCount=0` (env
+  `WINE_D3D_CONFIG`, now the `wine_d3d_config` meta key) turns multisampling off.
+
+- Night Time (`zoo.155141`) presents a D3D11 compute image once and then only
+  polls Esc. Under DXVK nothing reaches the session, not even `DXVK_HUD`;
+  `d3d11=b;dxgi=b` works. Undecorating was not the cause:
+  `-x wine_dialog_res=pick` (autodlg `--no-fill`) was still black.

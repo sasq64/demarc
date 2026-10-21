@@ -29,8 +29,9 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
-    META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix,
-    dll_overrides, fitting_modes, gl_compat, has_tool, wine_command, wine_prefix,
+    META_D3D_CONFIG, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
+    WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command,
+    wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
@@ -510,6 +511,12 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
                 argv.splice(
                     0..0,
                     ["env".to_string(), format!("DEMARC_GLSL_PATCHES={patches}")],
+                );
+            }
+            if let Some(config) = meta.get(META_D3D_CONFIG) {
+                argv.splice(
+                    0..0,
+                    ["env".to_string(), format!("WINE_D3D_CONFIG={config}")],
                 );
             }
             if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
