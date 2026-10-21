@@ -503,3 +503,15 @@
   found`). Pass the release directory, or a one-line `demozoo.txt`, instead.
   Dose 2 (`zoo.8540`) cost a run that way.
 
+- A GL crash in `wglBindTexImageARB` (GLX `BadMatch` on
+  `X_GLXMakeContextCurrent`) can be a symptom of an earlier failure: Lady Of
+  Dark Autumn's `wglChoosePixelFormatARB` for `WGL_TYPE_RGBA_FLOAT_ARB`
+  returned no format (Xwayland's GLX has no float fbconfigs), the pbuffer was
+  NULL, and the demo then made a NULL context current. `+opengl` traces drop
+  lines under demarc, so a `__wine_dbg_output` line in the opengl32 proxy was
+  the reliable way to see the current context. After float pbuffers were
+  emulated it crashed in its own `fread`: an archive lookup that fails returns
+  the name string as the stream ("Demo/glow_h.fp" read as {start, size}).
+  The release is ATI-only and takes a missing NV program path when
+  `GL_NV_fragment_program` is present; list the archive before chasing heap
+  corruption.

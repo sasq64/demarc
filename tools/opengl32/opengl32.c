@@ -137,8 +137,13 @@ static HGLRC copier_for(void *dc, HGLRC share)
     return context;
 }
 
+static int float_pbuffer(void *handle);
+static int bind_float_pbuffer(int i);
+
 static int __stdcall bind_tex_image(void *pbuffer, int buffer)
 {
+    if (float_pbuffer(pbuffer) >= 0)
+        return bind_float_pbuffer(float_pbuffer(pbuffer));
     HGLRC(__stdcall * current_context)(void) = lookup(wine, "wglGetCurrentContext");
     void *(__stdcall * current_dc)(void) = lookup(wine, "wglGetCurrentDC");
     int(__stdcall * make_current)(void *, HGLRC) = lookup(wine, "wglMakeCurrent");
@@ -257,6 +262,246 @@ static unsigned __stdcall create_shader_programv(unsigned type, int count, const
     return program;
 }
 
+// Xwayland's GLX has no float fbconfigs, so wine has no WGL_TYPE_RGBA_FLOAT
+// format. A float pbuffer becomes a texture drawn through an FBO by contexts
+// made on the DC it was created from (Plastic's "Lady Of Dark Autumn").
+#define WGL_PIXEL_TYPE_ARB 0x2013
+#define WGL_COLOR_BITS_ARB 0x2014
+#define WGL_ALPHA_BITS_ARB 0x201B
+#define WGL_DEPTH_BITS_ARB 0x2022
+#define WGL_PBUFFER_LOST_ARB 0x2036
+#define WGL_TYPE_RGBA_FLOAT_ARB 0x21A0
+#define WGL_TEXTURE_RECTANGLE_NV 0x20A2
+#define FLOAT_FORMAT 0x46000000
+#define FLOAT_PBUFFERS 16
+#define GL_FRAMEBUFFER 0x8D40
+
+static struct {
+    void *dc;
+    int format, width, height, texture_format, target;
+    unsigned texture, depth;
+} pbuffers[FLOAT_PBUFFERS];
+
+static struct {
+    HGLRC context;
+    unsigned pbuffer, framebuffer;
+} framebuffers[64];
+
+static int(__stdcall *wine_choose_pixel_format_arb)(void *, const int *, const float *, unsigned, int *,
+                                                    unsigned *);
+static void *(__stdcall *wine_create_pbuffer)(void *, int, int, int, const int *);
+static int(__stdcall *wine_release_pbuffer_dc)(void *, void *);
+static int(__stdcall *wine_destroy_pbuffer)(void *);
+static int(__stdcall *wine_release_tex_image)(void *, int);
+static HGLRC(__stdcall *wine_create_context)(void *dc);
+static int(__stdcall *wine_make_current)(void *dc, HGLRC context);
+
+static int float_pbuffer(void *handle)
+{
+    unsigned i = (unsigned)handle - (FLOAT_FORMAT | 0x500000);
+    return i < FLOAT_PBUFFERS && pbuffers[i].dc ? (int)i : -1;
+}
+
+static int float_dc(void *dc)
+{
+    unsigned i = (unsigned)dc - (FLOAT_FORMAT | 0xd00000);
+    return i < FLOAT_PBUFFERS && pbuffers[i].dc ? (int)i : -1;
+}
+
+static unsigned float_texture(int i)
+{
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    void(__stdcall * gen_textures)(int, unsigned *) = lookup(wine, "glGenTextures");
+    void(__stdcall * bind_texture)(unsigned, unsigned) = lookup(wine, "glBindTexture");
+    void(__stdcall * tex_parameteri)(unsigned, unsigned, int) = lookup(wine, "glTexParameteri");
+    void(__stdcall * tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) =
+        lookup(wine, "glTexImage2D");
+    if (pbuffers[i].texture)
+        return pbuffers[i].texture;
+    int bound = 0;
+    get_integerv(0x8069 /* GL_TEXTURE_BINDING_2D */, &bound);
+    gen_textures(1, &pbuffers[i].texture);
+    bind_texture(0x0DE1, pbuffers[i].texture);
+    tex_parameteri(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2600 /* GL_NEAREST */);
+    tex_image(0x0DE1, 0, pbuffers[i].format & 0xffff, pbuffers[i].width, pbuffers[i].height, 0,
+              0x1908 /* GL_RGBA */, 0x1406 /* GL_FLOAT */, 0);
+    bind_texture(0x0DE1, bound);
+    return pbuffers[i].texture;
+}
+
+static unsigned float_framebuffer(HGLRC context, int i)
+{
+    void(__stdcall * gen_framebuffers)(int, unsigned *) = wine_get_proc_address("glGenFramebuffers");
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    void(__stdcall * framebuffer_texture)(unsigned, unsigned, unsigned, unsigned, int) =
+        wine_get_proc_address("glFramebufferTexture2D");
+    void(__stdcall * gen_renderbuffers)(int, unsigned *) = wine_get_proc_address("glGenRenderbuffers");
+    void(__stdcall * bind_renderbuffer)(unsigned, unsigned) = wine_get_proc_address("glBindRenderbuffer");
+    void(__stdcall * renderbuffer_storage)(unsigned, unsigned, int, int) =
+        wine_get_proc_address("glRenderbufferStorage");
+    void(__stdcall * framebuffer_renderbuffer)(unsigned, unsigned, unsigned, unsigned) =
+        wine_get_proc_address("glFramebufferRenderbuffer");
+    unsigned n = 0;
+    for (; n < 64 && framebuffers[n].context; n++)
+        if (framebuffers[n].context == context && framebuffers[n].pbuffer == (unsigned)i)
+            return framebuffers[n].framebuffer;
+    if (n == 64 || !gen_framebuffers)
+        return 0;
+    unsigned framebuffer = 0;
+    gen_framebuffers(1, &framebuffer);
+    bind_framebuffer(GL_FRAMEBUFFER, framebuffer);
+    framebuffer_texture(GL_FRAMEBUFFER, 0x8CE0 /* GL_COLOR_ATTACHMENT0 */, 0x0DE1, float_texture(i), 0);
+    if (pbuffers[i].format & 0xff0000) {
+        if (!pbuffers[i].depth) {
+            gen_renderbuffers(1, &pbuffers[i].depth);
+            bind_renderbuffer(0x8D41 /* GL_RENDERBUFFER */, pbuffers[i].depth);
+            renderbuffer_storage(0x8D41, 0x81A6 /* GL_DEPTH_COMPONENT24 */, pbuffers[i].width,
+                                 pbuffers[i].height);
+        }
+        framebuffer_renderbuffer(GL_FRAMEBUFFER, 0x8D00 /* GL_DEPTH_ATTACHMENT */, 0x8D41, pbuffers[i].depth);
+    }
+    framebuffers[n].context = context;
+    framebuffers[n].pbuffer = i;
+    framebuffers[n].framebuffer = framebuffer;
+    return framebuffer;
+}
+
+static int __stdcall choose_pixel_format_arb(void *dc, const int *ints, const float *floats, unsigned max,
+                                             int *formats, unsigned *count)
+{
+    int is_float = 0, bits = 0, depth = 0;
+    for (const int *a = ints; a && a[0]; a += 2) {
+        if (a[0] == WGL_PIXEL_TYPE_ARB)
+            is_float = a[1] == WGL_TYPE_RGBA_FLOAT_ARB;
+        else if (a[0] == WGL_COLOR_BITS_ARB || a[0] == WGL_ALPHA_BITS_ARB)
+            bits += a[1];
+        else if (a[0] == WGL_DEPTH_BITS_ARB)
+            depth = a[1];
+    }
+    if (!is_float)
+        return wine_choose_pixel_format_arb(dc, ints, floats, max, formats, count);
+    if (max)
+        formats[0] = FLOAT_FORMAT | (depth ? 0x10000 : 0) | (bits > 64 ? 0x8814 /* GL_RGBA32F */ : 0x881A);
+    *count = max ? 1 : 0;
+    return 1;
+}
+
+static void *__stdcall create_pbuffer(void *dc, int format, int width, int height, const int *attribs)
+{
+    if ((format & 0xff000000) != FLOAT_FORMAT)
+        return wine_create_pbuffer(dc, format, width, height, attribs);
+    int i = 0;
+    while (i < FLOAT_PBUFFERS && pbuffers[i].dc)
+        i++;
+    if (i == FLOAT_PBUFFERS)
+        return 0;
+    pbuffers[i].dc = dc;
+    pbuffers[i].format = format;
+    pbuffers[i].width = width;
+    pbuffers[i].height = height;
+    pbuffers[i].texture_format = pbuffers[i].target = 0;
+    pbuffers[i].texture = pbuffers[i].depth = 0;
+    for (const int *a = attribs; a && a[0]; a += 2) {
+        if (a[0] == WGL_TEXTURE_FORMAT_ARB)
+            pbuffers[i].texture_format = a[1];
+        else if (a[0] == WGL_TEXTURE_TARGET_ARB)
+            pbuffers[i].target = a[1];
+    }
+    return (void *)(FLOAT_FORMAT | 0x500000 | i);
+}
+
+static void *__stdcall pbuffer_dc(void *pbuffer)
+{
+    int i = float_pbuffer(pbuffer);
+    return i < 0 ? get_pbuffer_dc(pbuffer) : (void *)(FLOAT_FORMAT | 0xd00000 | i);
+}
+
+static int __stdcall release_pbuffer_dc(void *pbuffer, void *dc)
+{
+    return float_pbuffer(pbuffer) < 0 ? wine_release_pbuffer_dc(pbuffer, dc) : 1;
+}
+
+static int __stdcall destroy_pbuffer(void *pbuffer)
+{
+    int i = float_pbuffer(pbuffer);
+    if (i < 0)
+        return wine_destroy_pbuffer(pbuffer);
+    pbuffers[i].dc = 0;
+    for (unsigned n = 0; n < 64; n++)
+        if (framebuffers[n].context && framebuffers[n].pbuffer == (unsigned)i)
+            framebuffers[n].pbuffer = ~0u;
+    return 1;
+}
+
+static int __stdcall query_float_pbuffer(void *pbuffer, int attribute, int *value)
+{
+    int i = float_pbuffer(pbuffer);
+    if (i < 0)
+        return query_pbuffer(pbuffer, attribute, value);
+    switch (attribute) {
+    case WGL_PBUFFER_WIDTH_ARB: *value = pbuffers[i].width; return 1;
+    case WGL_PBUFFER_HEIGHT_ARB: *value = pbuffers[i].height; return 1;
+    case WGL_PBUFFER_LOST_ARB: *value = 0; return 1;
+    case WGL_TEXTURE_FORMAT_ARB: *value = pbuffers[i].texture_format; return 1;
+    case WGL_TEXTURE_TARGET_ARB: *value = pbuffers[i].target; return 1;
+    }
+    return 0;
+}
+
+// Gives the texture bound by the caller a copy of the pbuffer's.
+static int bind_float_pbuffer(int i)
+{
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    void(__stdcall * get_level_parameteriv)(unsigned, int, unsigned, int *) =
+        lookup(wine, "glGetTexLevelParameteriv");
+    void(__stdcall * tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) =
+        lookup(wine, "glTexImage2D");
+    void(__stdcall * copy_image)(unsigned, unsigned, int, int, int, int, unsigned, unsigned, int, int, int,
+                                 int, int, int, int) = wine_get_proc_address("glCopyImageSubData");
+    int rectangle = pbuffers[i].target == WGL_TEXTURE_RECTANGLE_NV;
+    unsigned target = rectangle ? 0x84F5 /* GL_TEXTURE_RECTANGLE */ : 0x0DE1;
+    int texture = 0, width = 0, height = 0, format = 0;
+    get_integerv(rectangle ? 0x84F6 : 0x8069, &texture);
+    if (!texture || !copy_image)
+        return 0;
+    get_level_parameteriv(target, 0, 0x1000 /* GL_TEXTURE_WIDTH */, &width);
+    get_level_parameteriv(target, 0, 0x1001 /* GL_TEXTURE_HEIGHT */, &height);
+    get_level_parameteriv(target, 0, 0x1003 /* GL_TEXTURE_INTERNAL_FORMAT */, &format);
+    if (width != pbuffers[i].width || height != pbuffers[i].height || format != (pbuffers[i].format & 0xffff))
+        tex_image(target, 0, pbuffers[i].format & 0xffff, pbuffers[i].width, pbuffers[i].height, 0, 0x1908,
+                  0x1406, 0);
+    copy_image(float_texture(i), 0x0DE1, 0, 0, 0, 0, texture, target, 0, 0, 0, 0, pbuffers[i].width,
+               pbuffers[i].height, 1);
+    return 1;
+}
+
+static int __stdcall release_tex_image(void *pbuffer, int buffer)
+{
+    return float_pbuffer(pbuffer) < 0 ? wine_release_tex_image(pbuffer, buffer) : 1;
+}
+
+static HGLRC __stdcall create_context(void *dc)
+{
+    int i = float_dc(dc);
+    return wine_create_context(i < 0 ? dc : pbuffers[i].dc);
+}
+
+static int __stdcall make_current(void *dc, HGLRC context)
+{
+    int i = float_dc(dc);
+    int ret = wine_make_current(i < 0 ? dc : pbuffers[i].dc, context);
+    unsigned n = 0;
+    while (n < 64 && framebuffers[n].context && framebuffers[n].context != context)
+        n++;
+    if (ret && context && (i >= 0 || (n < 64 && framebuffers[n].context))) {
+        void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+        unsigned framebuffer = i < 0 ? 0 : float_framebuffer(context, i);
+        if (bind_framebuffer)
+            bind_framebuffer(GL_FRAMEBUFFER, framebuffer);
+    }
+    return ret;
+}
+
 // NVIDIA's driver hands out the GL 1.1 functions too, and Hexer relies on it.
 static void *__stdcall get_proc_address(const char *name)
 {
@@ -278,6 +523,34 @@ static void *__stdcall get_proc_address(const char *name)
         get_pbuffer_dc = wine_get_proc_address("wglGetPbufferDCARB");
         query_pbuffer = wine_get_proc_address("wglQueryPbufferARB");
         return bind_tex_image;
+    }
+    if (address && equal(name, "wglChoosePixelFormatARB")) {
+        wine_choose_pixel_format_arb = address;
+        return choose_pixel_format_arb;
+    }
+    if (address && equal(name, "wglCreatePbufferARB")) {
+        wine_create_pbuffer = address;
+        return create_pbuffer;
+    }
+    if (address && equal(name, "wglGetPbufferDCARB")) {
+        get_pbuffer_dc = address;
+        return pbuffer_dc;
+    }
+    if (address && equal(name, "wglReleasePbufferDCARB")) {
+        wine_release_pbuffer_dc = address;
+        return release_pbuffer_dc;
+    }
+    if (address && equal(name, "wglDestroyPbufferARB")) {
+        wine_destroy_pbuffer = address;
+        return destroy_pbuffer;
+    }
+    if (address && equal(name, "wglQueryPbufferARB")) {
+        query_pbuffer = address;
+        return query_float_pbuffer;
+    }
+    if (address && equal(name, "wglReleaseTexImageARB")) {
+        wine_release_tex_image = address;
+        return release_tex_image;
     }
     return address ? address : lookup(wine, name);
 }
@@ -351,6 +624,12 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglSetPixelFormat")) {
                 wine_set_pixel_format = address;
                 address = set_pixel_format;
+            } else if (address && equal(names[i], "wglCreateContext")) {
+                wine_create_context = address;
+                address = create_context;
+            } else if (address && equal(names[i], "wglMakeCurrent")) {
+                wine_make_current = address;
+                address = make_current;
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;

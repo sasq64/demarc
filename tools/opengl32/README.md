@@ -26,6 +26,15 @@ the pbuffer's DC and sharing with the caller's. wine's copies with an
 internal context of another pixel format, a fatal GLX `BadMatch` on NVIDIA
 (Plastic's "Your Fingers So Gently On My Skin").
 
+Float pbuffers (`WGL_TYPE_RGBA_FLOAT_ARB`) are emulated: Xwayland's GLX has
+no float fbconfigs, so wine finds no format and the pbuffer is never made.
+`wglChoosePixelFormatARB` hands out a fake format, the pbuffer and its DC
+are fake handles, a context made on that DC is made on the DC the pbuffer
+came from, and making it current binds an FBO with an RGBA16F/32F texture.
+`wglBindTexImageARB` copies that texture into the bound one with
+`glCopyImageSubData`. Plastic's "Lady Of Dark Autumn" runs its simulation
+in them.
+
 `glShaderSource`, `glShaderSourceARB` and `glCreateShaderProgramv` (taken
 through `wglGetProcAddress`) apply an override's `glsl` patches, which demarc
 passes in `DEMARC_GLSL_PATCHES`. Every shader is logged to wine's stderr as

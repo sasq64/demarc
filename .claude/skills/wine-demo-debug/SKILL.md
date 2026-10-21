@@ -148,6 +148,11 @@ one that failed. A NULL-blob fault right after `D3DCompile` with no error
 blob asked for: compile the dumped source with each DLL from a test exe and
 print the errors; the prefix needs a Windows 10 `d3dcompiler_47` (10.0.x).
 
+**Float pbuffers.** `wglChoosePixelFormatARB` with `WGL_TYPE_RGBA_FLOAT_ARB`
+finds nothing under Xwayland; the opengl32 proxy emulates them with FBOs
+(`zoo.8645`). An ATI-era demo that checks for `GL_NV_*` may take an NV path
+whose files were never shipped: hide the name with an override `patch`.
+
 **GL function pointer is NULL (page fault at 0).** wine's `wglGetProcAddress`
 refuses names whose extension is not on the context. `wine_gl_compat` asks
 Mesa for a 4.6 compatibility context. Functions above the context version are

@@ -227,6 +227,17 @@ download = "https://files.scene.org/get:fi-https/demos/groups/mfx/phn_d2-f.zip"
 meta = { wine_cnc_ddraw = "true" }
 events = [{ frame = 200, key = "Space" }]
 
+# Lady Of Dark Autumn: with GL_NV_fragment_program it loads NV programs this
+# ATI-only release does not ship; hide it to take the ARB path.
+[zoo.8645]
+file = "ladyofdarkautumn.zip"
+patch = {
+  info = "hide GL_NV_fragment_program",
+  target = "LadyOfDarkAutumn.exe",
+  offset = 236688,
+  contents = "WA==",
+}
+
 [zoo.8874]
 events = [
   { frame = 150, key = "Enter" },
