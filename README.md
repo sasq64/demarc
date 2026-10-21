@@ -1,4 +1,4 @@
-## demarc
+# demarc
 
 An command line emulator frontend for the demoscene
 
@@ -6,9 +6,7 @@ An command line emulator frontend for the demoscene
 
 [![LatestRelease](https://img.shields.io/github/v/release/sasq64/demarc?style=for-the-badge&label=Latest%20Release)](https://github.com/sasq64/demarc/releases/latest)
 
-*Main goal*
-
-Make it easy to watch demos on your PC through emulation
+*Main goal*: Make it easy to watch demos on your PC through emulation
 
 * Runs oldskool demos using emulator cores
 * Runs Windows demos through Wine (Linux only)
@@ -23,11 +21,13 @@ Make it easy to watch demos on your PC through emulation
 * Play tracker music in Protracker/Fasttracker clones
 * Playlist/Favorites support
 
-### Platforms
+## Platforms
 
-C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance, Neo Geo, PC (DOS, and Windows through wine)
+C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari
+2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance,
+Neo Geo, PC (DOS, and Windows through wine)
 
-### Graphics Format Support
+## Graphics Format Support
 
 * **Standard**: `PNG`, `JPEG`, `TIF`, `GIF`, `TGA`, `PCX`
 * **Amiga/PC**: IFF (`ILBM`, `ACBM`, `PBM`, Impulse `RGB`) including `HAM`/`HAM8` and dynamic palette (`SHAM`,`CTBL`,`BEAM`)
@@ -35,7 +35,7 @@ C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600
 * **ZX Spectrum** (`SCR`)
 * Color Cycling
 
-### Music Format Support
+## Music Format Support
 
 * **C64** (sid)
 * **Trackers** (mod, xm, s3m, ft, stm, it)
@@ -51,7 +51,8 @@ C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari 2600
 Pre-built binaries for Linux (x86_64), Windows (x86_64) and macOS (arm64) are
 attached to every [release](https://github.com/sasq64/demarc/releases/latest).
 
-Emulator cores are downloaded from the on first use, so the binary is all you need (except *Wine*, see below).
+Emulator cores are downloaded from the on first use, so the binary is all you
+need (except *Wine*, see below).
 
 ### Linux/macOS
 
@@ -71,7 +72,9 @@ Which will make fullscreen sync much better.
 
 ### Windows
 
-*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes Windows flag it as malware and silently delete it. Add an exception to your settings, or switch to a sane operating system.
+*IMPORTANT:* Demarc downloads and links DLLs at runtime, which often makes
+Windows flag it as malware and silently delete it. Add an exception to your
+settings, or switch to a sane operating system.
 
 `powershell -ExecutionPolicy Bypass -c "irm https://github.com/sasq64/demarc/releases/download/v1.4.0/demarc-installer.ps1 | iex"`
 
