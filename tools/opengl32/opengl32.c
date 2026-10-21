@@ -602,6 +602,230 @@ static int __stdcall swap_buffers(void *hdc)
     return ret;
 }
 
+// No GLX config has an accumulation buffer on NVIDIA's Xwayland, so glAccum
+// fails and Fizzer's "The Real Party Is In Your Pocket" shows one raw sample.
+// Without accum bits the buffer is an RGBA32F texture drawn into through an FBO.
+int _fltused;
+
+static void(__stdcall *wine_accum)(unsigned op, float value);
+static void(__stdcall *wine_clear)(unsigned mask);
+static void(__stdcall *wine_clear_accum)(float r, float g, float b, float a);
+
+static struct {
+    HGLRC context;
+    int width, height;
+    unsigned accum, color, framebuffer, program;
+    int scale, add;
+    float clear[4];
+} accums[8];
+
+static const char *const accum_vs = "#version 130\nvoid main(){gl_Position=gl_Vertex;}";
+static const char *const accum_fs = "#version 130\nuniform sampler2D t;uniform vec4 s,a;"
+                                    "void main(){gl_FragColor=texelFetch(t,ivec2(gl_FragCoord.xy),0)*s+a;}";
+
+static unsigned accum_texture(int width, int height, int format, unsigned type)
+{
+    void(__stdcall * gen_textures)(int, unsigned *) = lookup(wine, "glGenTextures");
+    void(__stdcall * bind_texture)(unsigned, unsigned) = lookup(wine, "glBindTexture");
+    void(__stdcall * tex_parameteri)(unsigned, unsigned, int) = lookup(wine, "glTexParameteri");
+    void(__stdcall * tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) =
+        lookup(wine, "glTexImage2D");
+    unsigned texture = 0;
+    gen_textures(1, &texture);
+    bind_texture(0x0DE1, texture);
+    tex_parameteri(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2600 /* GL_NEAREST */);
+    tex_image(0x0DE1, 0, format, width, height, 0, 0x1908 /* GL_RGBA */, type, 0);
+    return texture;
+}
+
+static unsigned accum_shader(unsigned type, const char *source)
+{
+    unsigned(__stdcall * create_shader)(unsigned) = wine_get_proc_address("glCreateShader");
+    void(__stdcall * shader_source)(unsigned, int, const char *const *, const int *) =
+        wine_get_proc_address("glShaderSource");
+    void(__stdcall * compile_shader)(unsigned) = wine_get_proc_address("glCompileShader");
+    unsigned shader = create_shader(type);
+    shader_source(shader, 1, &source, 0);
+    compile_shader(shader);
+    return shader;
+}
+
+// The emulated accumulation buffer of the current context, or -1 when it has
+// a real one. Made with the viewport's size on first use.
+static int emulated_accum(void)
+{
+    HGLRC(__stdcall * current)(void) = lookup(wine, "wglGetCurrentContext");
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    HGLRC context = current();
+    unsigned i = 0;
+    for (; i < 8 && accums[i].context; i++)
+        if (accums[i].context == context)
+            return accums[i].framebuffer ? (int)i : -1;
+    if (!context || i == 8)
+        return -1;
+    accums[i].context = context;
+    int bits = 0;
+    get_integerv(0x0D58 /* GL_ACCUM_RED_BITS */, &bits);
+    void(__stdcall * gen_framebuffers)(int, unsigned *) = wine_get_proc_address("glGenFramebuffers");
+    if (bits || !gen_framebuffers || !wine_get_proc_address("glCreateProgram"))
+        return -1;
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    void(__stdcall * framebuffer_texture)(unsigned, unsigned, unsigned, unsigned, int) =
+        wine_get_proc_address("glFramebufferTexture2D");
+    unsigned(__stdcall * create_program)(void) = wine_get_proc_address("glCreateProgram");
+    void(__stdcall * attach_shader)(unsigned, unsigned) = wine_get_proc_address("glAttachShader");
+    void(__stdcall * link_program)(unsigned) = wine_get_proc_address("glLinkProgram");
+    int(__stdcall * uniform_location)(unsigned, const char *) = wine_get_proc_address("glGetUniformLocation");
+    int viewport[4], texture = 0, framebuffer = 0;
+    get_integerv(0x0BA2 /* GL_VIEWPORT */, viewport);
+    get_integerv(0x8069 /* GL_TEXTURE_BINDING_2D */, &texture);
+    get_integerv(0x8CA6 /* GL_DRAW_FRAMEBUFFER_BINDING */, &framebuffer);
+    accums[i].width = viewport[0] + viewport[2];
+    accums[i].height = viewport[1] + viewport[3];
+    accums[i].accum = accum_texture(accums[i].width, accums[i].height, 0x8814 /* GL_RGBA32F */, 0x1406);
+    accums[i].color = accum_texture(accums[i].width, accums[i].height, 0x8058 /* GL_RGBA8 */, 0x1401);
+    ((void(__stdcall *)(unsigned, unsigned))lookup(wine, "glBindTexture"))(0x0DE1, texture);
+    gen_framebuffers(1, &accums[i].framebuffer);
+    bind_framebuffer(0x8CA9 /* GL_DRAW_FRAMEBUFFER */, accums[i].framebuffer);
+    framebuffer_texture(0x8CA9, 0x8CE0 /* GL_COLOR_ATTACHMENT0 */, 0x0DE1, accums[i].accum, 0);
+    bind_framebuffer(0x8CA9, framebuffer);
+    unsigned program = create_program();
+    attach_shader(program, accum_shader(0x8B31 /* GL_VERTEX_SHADER */, accum_vs));
+    attach_shader(program, accum_shader(0x8B30 /* GL_FRAGMENT_SHADER */, accum_fs));
+    link_program(program);
+    accums[i].program = program;
+    accums[i].scale = uniform_location(program, "s");
+    accums[i].add = uniform_location(program, "a");
+    __wine_dbg_output("opengl32: emulating the accumulation buffer\n");
+    return (int)i;
+}
+
+static void clear_emulated_accum(int i)
+{
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    void(__stdcall * get_floatv)(unsigned, float *) = lookup(wine, "glGetFloatv");
+    void(__stdcall * clear_color)(float, float, float, float) = lookup(wine, "glClearColor");
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    int framebuffer = 0;
+    float color[4];
+    get_integerv(0x8CA6 /* GL_DRAW_FRAMEBUFFER_BINDING */, &framebuffer);
+    get_floatv(0x0C22 /* GL_COLOR_CLEAR_VALUE */, color);
+    bind_framebuffer(0x8CA9, accums[i].framebuffer);
+    clear_color(accums[i].clear[0], accums[i].clear[1], accums[i].clear[2], accums[i].clear[3]);
+    wine_clear(0x4000 /* GL_COLOR_BUFFER_BIT */);
+    clear_color(color[0], color[1], color[2], color[3]);
+    bind_framebuffer(0x8CA9, framebuffer);
+}
+
+static void __stdcall clear(unsigned mask)
+{
+    int i;
+    if ((mask & 0x200 /* GL_ACCUM_BUFFER_BIT */) && (i = emulated_accum()) >= 0) {
+        clear_emulated_accum(i);
+        mask &= ~0x200u;
+        if (!mask)
+            return;
+    }
+    wine_clear(mask);
+}
+
+static void __stdcall clear_accum(float r, float g, float b, float a)
+{
+    int i = emulated_accum();
+    if (i < 0) {
+        wine_clear_accum(r, g, b, a);
+        return;
+    }
+    accums[i].clear[0] = r;
+    accums[i].clear[1] = g;
+    accums[i].clear[2] = b;
+    accums[i].clear[3] = a;
+}
+
+static void __stdcall accum(unsigned op, float value)
+{
+    int i = emulated_accum();
+    if (i < 0) {
+        wine_accum(op, value);
+        return;
+    }
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    unsigned char(__stdcall * is_enabled)(unsigned) = lookup(wine, "glIsEnabled");
+    void(__stdcall * enable)(unsigned) = lookup(wine, "glEnable");
+    void(__stdcall * disable)(unsigned) = lookup(wine, "glDisable");
+    void(__stdcall * bind_texture)(unsigned, unsigned) = lookup(wine, "glBindTexture");
+    void(__stdcall * viewport)(int, int, int, int) = lookup(wine, "glViewport");
+    void(__stdcall * blend_func)(unsigned, unsigned) = lookup(wine, "glBlendFunc");
+    void(__stdcall * copy_tex)(unsigned, int, int, int, int, int, int, int) = lookup(wine, "glCopyTexSubImage2D");
+    void(__stdcall * rect)(float, float, float, float) = lookup(wine, "glRectf");
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    void(__stdcall * use_program)(unsigned) = wine_get_proc_address("glUseProgram");
+    void(__stdcall * active_texture)(unsigned) = wine_get_proc_address("glActiveTexture");
+    void(__stdcall * uniform4f)(int, float, float, float, float) = wine_get_proc_address("glUniform4f");
+    void(__stdcall * blend_func_separate)(unsigned, unsigned, unsigned, unsigned) =
+        wine_get_proc_address("glBlendFuncSeparate");
+    void(__stdcall * blend_equation_separate)(unsigned, unsigned) =
+        wine_get_proc_address("glBlendEquationSeparate");
+
+    static const unsigned caps[] = {0x0BE2 /* GL_BLEND */, 0x0B71 /* GL_DEPTH_TEST */, 0x0B44 /* GL_CULL_FACE */,
+                                    0x0B90 /* GL_STENCIL_TEST */, 0x0BC0 /* GL_ALPHA_TEST */};
+    unsigned char enabled[5];
+    int program, active, texture, framebuffer, view[4], blend[4], equation[2];
+    for (unsigned c = 0; c < 5; c++)
+        enabled[c] = is_enabled(caps[c]);
+    get_integerv(0x8B8D /* GL_CURRENT_PROGRAM */, &program);
+    get_integerv(0x84E0 /* GL_ACTIVE_TEXTURE */, &active);
+    active_texture(0x84C0 /* GL_TEXTURE0 */);
+    get_integerv(0x8069 /* GL_TEXTURE_BINDING_2D */, &texture);
+    get_integerv(0x8CA6 /* GL_DRAW_FRAMEBUFFER_BINDING */, &framebuffer);
+    get_integerv(0x0BA2 /* GL_VIEWPORT */, view);
+    get_integerv(0x80C9 /* GL_BLEND_SRC_RGB */, &blend[0]);
+    get_integerv(0x80C8 /* GL_BLEND_DST_RGB */, &blend[1]);
+    get_integerv(0x80CB /* GL_BLEND_SRC_ALPHA */, &blend[2]);
+    get_integerv(0x80CA /* GL_BLEND_DST_ALPHA */, &blend[3]);
+    get_integerv(0x8009 /* GL_BLEND_EQUATION_RGB */, &equation[0]);
+    get_integerv(0x883D /* GL_BLEND_EQUATION_ALPHA */, &equation[1]);
+    for (unsigned c = 1; c < 5; c++)
+        disable(caps[c]);
+
+    use_program(accums[i].program);
+    viewport(0, 0, accums[i].width, accums[i].height);
+    blend_equation_separate(0x8006 /* GL_FUNC_ADD */, 0x8006);
+    float s = value, a = 0;
+    if (op == 0x0100 /* GL_ACCUM */ || op == 0x0101 /* GL_LOAD */) {
+        bind_texture(0x0DE1, accums[i].color);
+        copy_tex(0x0DE1, 0, 0, 0, 0, 0, accums[i].width, accums[i].height);
+        bind_framebuffer(0x8CA9, accums[i].framebuffer);
+        blend_func(1 /* GL_ONE */, op == 0x0100 ? 1 : 0);
+    } else if (op == 0x0102 /* GL_RETURN */) {
+        bind_texture(0x0DE1, accums[i].accum);
+        blend_func(1, 0);
+    } else {
+        bind_framebuffer(0x8CA9, accums[i].framebuffer);
+        s = 0;
+        a = value;
+        // GL_ADD: accum + value; GL_MULT: accum * value.
+        if (op == 0x0103)
+            blend_func(0x0306 /* GL_DST_COLOR */, 0);
+        else
+            blend_func(1, 1);
+    }
+    enable(0x0BE2);
+    uniform4f(accums[i].scale, s, s, s, s);
+    uniform4f(accums[i].add, a, a, a, a);
+    rect(-1, -1, 1, 1);
+
+    bind_framebuffer(0x8CA9, framebuffer);
+    bind_texture(0x0DE1, texture);
+    active_texture(active);
+    use_program(program);
+    viewport(view[0], view[1], view[2], view[3]);
+    blend_func_separate(blend[0], blend[1], blend[2], blend[3]);
+    blend_equation_separate(equation[0], equation[1]);
+    for (unsigned c = 0; c < 5; c++)
+        (enabled[c] ? enable : disable)(caps[c]);
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
@@ -633,6 +857,15 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;
+            } else if (address && equal(names[i], "glAccum")) {
+                wine_accum = address;
+                address = accum;
+            } else if (address && equal(names[i], "glClear")) {
+                wine_clear = address;
+                address = clear;
+            } else if (address && equal(names[i], "glClearAccum")) {
+                wine_clear_accum = address;
+                address = clear_accum;
             }
         } else {
             LdrGetProcedureAddress(wine, 0, ordinals[i], &address);
