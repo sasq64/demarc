@@ -5,8 +5,8 @@ const SECOND: Duration = Duration::from_secs(1);
 
 /// Two frames, because an [`egui::Area`] paints nothing on its first.
 fn shown(h: &mut Harness, hud: &Hud, now: f32, bytes: u64) {
-    h.frame(vec![], |ctx| hud.show(ctx, now, bytes));
-    h.frame(vec![], |ctx| hud.show(ctx, now, bytes));
+    h.frame(vec![], |ctx| hud.show(ctx, now, bytes, None));
+    h.frame(vec![], |ctx| hud.show(ctx, now, bytes, None));
 }
 
 /// A text is up from its delay until its duration has run out.

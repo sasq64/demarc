@@ -18,6 +18,8 @@ use ringbuf::{
 
 use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
+use crate::audio_recorder::{AudioRecorder, RecorderOptions};
+
 /// How far from `1.0` [`AudioResampler::set_adjust`] may move the ratio; the
 /// resampler is built with this much headroom.
 const MAX_RATIO_ADJUST: f64 = 0.05;
@@ -298,6 +300,7 @@ pub struct AudioSink {
     /// Survives [`AudioSink::deactivate`], so a level set while the sink is
     /// closed is still in force when it opens again.
     volume: Volume,
+    recorder: Option<AudioRecorder>,
 }
 
 impl AudioSink {
@@ -332,17 +335,43 @@ impl AudioSink {
         self.volume.get()
     }
 
+    pub fn start_recording(&mut self, path: impl Into<std::path::PathBuf>, opts: RecorderOptions) {
+        self.stop_recording();
+        self.recorder = Some(AudioRecorder::new(path, opts));
+    }
+
+    pub fn stop_recording(&mut self) {
+        if let Some(recorder) = self.recorder.take() {
+            recorder.finish();
+        }
+    }
+
+    pub fn recording_time(&self) -> Option<std::time::Duration> {
+        self.recorder.as_ref().map(AudioRecorder::elapsed)
+    }
+
     pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
+        let mut recorder = self.recorder.as_mut();
+        if let Some(rec) = &mut recorder {
+            rec.push_i16(from as u32, samples);
+        }
         if let Some(resampler) = &mut self.resampler
             && let Some(producer) = &self.producer
         {
+            let rate = self.sample_rate as u32;
             let mut p = producer.lock().unwrap();
             let res = resampler.process(from as u32, samples, |l, r| {
                 p.push_iter([l, r].into_iter());
+                if let Some(rec) = &mut recorder {
+                    rec.push_f32(rate, l, r);
+                }
             });
             if let Err(e) = res {
                 warn!("audio resample error: {e}");
             }
+        }
+        if self.recorder.as_ref().is_some_and(AudioRecorder::is_done) {
+            self.stop_recording();
         }
     }
 

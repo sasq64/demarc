@@ -88,7 +88,7 @@ newsys = { path = "crates/newsys" }
 rand = "0.10.1"
 # The libretro layer, split out so it can be built for targets the rest of
 # demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
-retro-core = { path = "crates/retro-core" }
+retro-core = { path = "crates/retro-core", features = ["mp3"] }
 # The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
 retro-ui = { path = "crates/retro-ui" }
 # The `.slangp` filter chains, and the only thing that links librashader.

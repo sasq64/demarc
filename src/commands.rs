@@ -57,6 +57,7 @@ pub enum Cmd {
     StartOther,
     AddToPlaylist,
     OpenKeyboard,
+    ToggleRecording,
 }
 
 impl Cmd {
@@ -90,6 +91,7 @@ impl Cmd {
         Cmd::StartOther,
         Cmd::AddToPlaylist,
         Cmd::OpenKeyboard,
+        Cmd::ToggleRecording,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -127,6 +129,7 @@ impl Cmd {
             Cmd::StartOther => "Fade in cross fade emulator",
             Cmd::AddToPlaylist => "Add to playlist",
             Cmd::OpenKeyboard => "Toggle on-screen keyboard",
+            Cmd::ToggleRecording => "Start/Stop audio recording",
         }
     }
 }
@@ -199,6 +202,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyI, Cmd::ToggleInfo),
     KeyMapping::new(KeyCode::KeyH, Cmd::AddToPlaylist),
     KeyMapping::new(KeyCode::KeyR, Cmd::Reset),
+    KeyMapping::shifted(KeyCode::KeyR, Cmd::ToggleRecording),
     KeyMapping::new(KeyCode::KeyT, Cmd::Screenshot),
     KeyMapping::shifted(KeyCode::KeyT, Cmd::ScreenshotAll),
     KeyMapping::new(KeyCode::KeyW, Cmd::Warp10),
@@ -514,6 +518,14 @@ fn close_keyboard_on_load() {
     steam_keyboard(false);
 }
 
+fn reload(emu: &mut Emulator, settings: &mut AppSettings, navigator: &mut Navigator) {
+    settings.current_game -= 1;
+    if let Some(launch) = navigator.current_launch.as_mut() {
+        launch.index -= 1;
+    }
+    emu.run_next = true;
+}
+
 pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut emus: Query<(&mut Emulator, &EmuView)>,
@@ -670,13 +682,7 @@ pub(crate) fn handle_cmd(
                             location: HudLocation::BottomLeft,
                         });
                     }
-                    Cmd::Reload => {
-                        settings.current_game -= 1;
-                        if let Some(launch) = navigator.current_launch.as_mut() {
-                            launch.index -= 1;
-                        }
-                        emu.run_next = true;
-                    }
+                    Cmd::Reload => reload(&mut emu, &mut settings, &mut navigator),
                     Cmd::PauseResume => {
                         emu.paused = !emu.paused;
                         if !emu.is_image {
@@ -716,8 +722,25 @@ pub(crate) fn handle_cmd(
                             ..Default::default()
                         });
                     }
-                    Cmd::Reset => {
+                    Cmd::Reset if emu.work_file.get_meta_or("system", "") == "Windows" => {
+                        reload(&mut emu, &mut settings, &mut navigator);
+                    }
+                    Cmd::Reset if emu.core.is_some() => {
                         emu.reset();
+                    }
+                    Cmd::ToggleRecording => {
+                        if emu.sink.recording_time().is_some() {
+                            emu.sink.stop_recording();
+                        } else if emu.core.is_none() {
+                            emu.record_pending = match emu.record_pending {
+                                Some(_) => None,
+                                None => Some(demo_settings.recording.options()),
+                            };
+                        } else {
+                            let title = emu.work_file.get_meta_or("title", "audio");
+                            let name = format!("{}-{}.wav", title, time.elapsed_secs() as i32);
+                            emu.sink.start_recording(name, demo_settings.recording.options());
+                        }
                     }
                     Cmd::AddToPlaylist if emu.core.is_some() => {
                         let picker = Arc::new(PlaylistPicker::new(&playlists, &emu.emu_file));

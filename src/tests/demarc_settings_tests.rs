@@ -36,8 +36,8 @@ fn demarc_settings_are_all_editable() {
 fn wine_is_its_own_section() {
     let sections = settings_sections();
     let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
-    assert_eq!(titles, vec!["", "Dos", "Wine"]);
-    let names: Vec<&str> = widgets(&sections[2].fields)
+    assert_eq!(titles, vec!["", "Dos", "Recording", "Wine"]);
+    let names: Vec<&str> = widgets(&sections[3].fields)
         .iter()
         .map(|(n, _)| *n)
         .collect();
@@ -47,7 +47,7 @@ fn wine_is_its_own_section() {
 #[test]
 fn resolutions_are_labelled_by_size() {
     let sections = settings_sections();
-    let Widget::Enum { variants } = &sections[2].fields[0].widget else {
+    let Widget::Enum { variants } = &sections[3].fields[0].widget else {
         panic!("resolution is not a combo box");
     };
     let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();

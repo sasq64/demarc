@@ -32,6 +32,9 @@ dirs.workspace = true
 cpal = "0.17.1"
 ringbuf = "0.5.0"
 rubato = "0.16"
+# Audio recording (`audio_recorder.rs`); MP3 builds LAME from C, so it is opt-in.
+hound = "3.5.1"
+mp3lame-encoder = { version = "0.2.5", optional = true }
 
 # The window, surface and input for the `minimarc` player. Optional so that a plain
 # `retro-core` — which is all demarc and an Android core host need — builds
@@ -59,6 +62,7 @@ winit = { workspace = true, features = ["android-native-activity"], optional = t
 [features]
 default = []
 player = ["dep:winit", "dep:wgpu", "dep:pollster"]
+mp3 = ["dep:mp3lame-encoder"]
 
 # `minimarc` is a development tool, not something to release.
 [package.metadata.dist]

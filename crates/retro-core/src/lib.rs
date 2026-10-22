@@ -6,6 +6,7 @@
 //! See `docs/ANDROID.md`.
 
 pub mod audio;
+pub mod audio_recorder;
 pub mod backend;
 mod find;
 #[allow(warnings)]

@@ -132,6 +132,38 @@ pub struct AmigaSettings {
     pub drive_sound: bool,
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Reflect)]
+pub enum RecordSource {
+    #[default]
+    Original,
+    Resampled,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Reflect)]
+pub struct RecordingSettings {
+    pub source: RecordSource,
+    pub start_on_audio: bool,
+    pub stop_on_silence: bool,
+    pub mp3: bool,
+}
+
+impl RecordingSettings {
+    pub fn options(&self) -> retro_core::audio_recorder::RecorderOptions {
+        use retro_core::audio_recorder::{RecordSource as Source, RecorderOptions};
+        RecorderOptions {
+            source: match self.source {
+                RecordSource::Original => Source::Original,
+                RecordSource::Resampled => Source::Resampled,
+            },
+            start_on_audio: self.start_on_audio.then_some(0.01),
+            stop_on_silence: self
+                .stop_on_silence
+                .then_some(std::time::Duration::from_secs(3)),
+            mp3: self.mp3,
+        }
+    }
+}
+
 /// The settings the dialog edits.
 ///
 /// The resource is seeded from the command line in `main` and thereafter holds
@@ -153,6 +185,8 @@ pub struct DemarcSettings {
     pub downsample_limit: f32,
 
     pub dos: DosSettings,
+
+    pub recording: RecordingSettings,
 
     #[cfg(target_os = "linux")]
     pub wine: WineSettings,

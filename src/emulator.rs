@@ -138,6 +138,8 @@ pub struct Emulator {
     /// Patch menu "Record Events": the frame recording started at, and what was
     /// pressed since.
     pub recording: Option<(u64, Vec<(u64, Recorded)>)>,
+    /// Audio recording asked for while nothing was running; starts with the next load.
+    pub record_pending: Option<retro_core::audio_recorder::RecorderOptions>,
     pub last_active_time: f32,
     pub idle_time: f32,
     pub emu_file: EmuFile,

@@ -650,3 +650,7 @@
   repeats got through. A CS:IP trace from `retro_run` found the poll loop in
   one run. The core now raises IRQ1 10 µs after the scancode, and not at all
   if the program read it.
+
+- "The recording sounds distorted" turned out to be mpv's own volume boost.
+  Before digging into the pipeline, ask what it was played with, or compare
+  levels in the file itself (RMS/clip count with numpy) against another player.

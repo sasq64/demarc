@@ -575,6 +575,7 @@ fn main() {
         c64_fast_load: args.c64_fast_load,
         zoom_launcher: args.zoom_launcher.unwrap_or_else(on_steam_deck),
         dos: Default::default(),
+        recording: Default::default(),
         #[cfg(target_os = "linux")]
         wine: Default::default(),
     };

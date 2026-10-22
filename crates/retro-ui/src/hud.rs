@@ -71,9 +71,15 @@ impl Hud {
         );
     }
 
-    /// Draws the corner texts, and `download_bytes` left to download while
-    /// there are any.
-    pub fn show(&self, ctx: &egui::Context, now: f32, download_bytes: u64) {
+    /// Draws the corner texts, `download_bytes` left to download while there
+    /// are any, and the recording time while recording.
+    pub fn show(
+        &self,
+        ctx: &egui::Context,
+        now: f32,
+        download_bytes: u64,
+        recording: Option<Duration>,
+    ) {
         let rect = ctx.content_rect().shrink2(MARGIN);
 
         egui::Area::new(egui::Id::new("overlay"))
@@ -156,6 +162,9 @@ impl Hud {
             });
 
         render_downloads(ctx, rect.min, download_bytes);
+        if let Some(time) = recording {
+            render_recording(ctx, rect.right_top(), time);
+        }
     }
 
     /// The text at `location` and how far it is faded in.
@@ -198,6 +207,23 @@ fn render_downloads(ctx: &egui::Context, pos: egui::Pos2, bytes: u64) {
                 DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
                 egui::Align::Min,
             );
+        });
+}
+
+const RECORD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x20, 0x20);
+
+fn render_recording(ctx: &egui::Context, pos: egui::Pos2, time: Duration) {
+    let secs = time.as_secs();
+    let text = format!("{:02}:{:02}", secs / 60, secs % 60);
+    egui::Area::new(egui::Id::new("recording"))
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                heading_with_shadow(ui, "\u{f044a}", DOWNLOAD_SIZE, RECORD_COLOR, egui::Align::Min);
+                heading_with_shadow(ui, &text, DOWNLOAD_SIZE, DOWNLOAD_COLOR, egui::Align::Min);
+            });
         });
 }
 
