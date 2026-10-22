@@ -495,22 +495,38 @@ libretro = { aga = "true" }
 glsl = [
   { match = 'texture\(iv,kk,0\)', edits = [['texture\(iv,kk,0\)', "textureLod(iv,kk,0.)"]] },
   { match = 'hm\(0,w,mod', edits = [['hm\(0,w,mod\(abs\(p\),vec3\(1\)\)\)', "hm(0,w,mod(abs(p),vec3(1)).x)"]] },
-  { match = 'float arg=vec2', edits = [['float arg=vec2\( gk\(1\),gk\(2\) \)', "float arg=gk(1)"]] },
+  { match = "float arg=vec2", edits = [['float arg=vec2\( gk\(1\),gk\(2\) \)', "float arg=gk(1)"]] },
 ]
+
+# 8K Reality / Fulcrum: NVIDIA-only GLSL, l (and bo in the final) are vec3
+# used as floats, and floats passed as vec2.
+[zoo.136330]
+glsl = [
+  { match = 'vec3 f,r,l=vec3\(0\);', edits = [['vec3 f,r,l=vec3\(0\);', "vec3 f,r;float l=0;"]] },
+  { match = "vec3 f,r,l=0,bo=0;", edits = [["vec3 f,r,l=0,bo=0;", "vec3 f,r;float l=0,bo=0;"]] },
+  { match = 'float t=vec3\(mod\(', edits = [['float t=vec3\(mod\(', "float t=(mod("]] },
+  { match = 'float l=floor\(f\.x/25\)', edits = [['\bs\((l(\*\d)?)\)', "s(vec2($1))"]] },
+]
+
+# Fruit Cake / Deus: "Cannot initialize sound driver" when it finds the GUS.
+[zoo.98448]
+meta = { dosbox_pure_gus = "false" }
 
 # Hologram / Mercury: a vec3 and a vec2 assigned to floats and default
 # parameter values, which NVIDIA 610 rejects.
 [zoo.119170]
 glsl = [
   { match = 'float ady=vec3\(', edits = [['float ady=vec3\(', "float ady=float("]] },
-  { match = 'float aad=vec2', edits = [['float aad=vec2\( jy\(1\),jy\(2\) \)', "float aad=jy(1)"]] },
+  { match = "float aad=vec2", edits = [['float aad=vec2\( jy\(1\),jy\(2\) \)', "float aad=jy(1)"]] },
   { match = 'akm=\(gl_FragCoord', edits = [['akm=\(gl_FragCoord([^;]*);', "akm=((gl_FragCoord$1).x;"]] },
-  { match = 'float oa\( vec3 p,vec2 al,float r=1\.1 \)\{', edits = [['float oa\( vec3 p,vec2 al,float r=1\.1 \)\{',
-    "float oa(vec3 p,vec2 al,float r);float oa(vec3 p,vec2 al){return oa(p,al,1.1);}float oa(vec3 p,vec2 al,float r){"]] },
-  { match = '[(,] ?(?:float|int) \w+ ?= ?[-\d.]+ ?[,)]', edits = [
-    ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
-    ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
-  ] },
+  { match = 'float oa\( vec3 p,vec2 al,float r=1\.1 \)\{', edits = [['float oa\( vec3 p,vec2 al,float r=1\.1 \)\{', "float oa(vec3 p,vec2 al,float r);float oa(vec3 p,vec2 al){return oa(p,al,1.1);}float oa(vec3 p,vec2 al,float r){"]] },
+  {
+    match = '[(,] ?(?:float|int) \w+ ?= ?[-\d.]+ ?[,)]',
+    edits = [
+      ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
+      ['([(,] ?(?:float|int) \w+) ?= ?[-\d.]+( ?[,)])', "$1$2"],
+    ]
+  },
 ]
 
 [zoo.136167]
@@ -751,6 +767,10 @@ events = [
 # 70s / Alcatraz: a WebGL demo; its only exe is the web server for the page
 [zoo.38834]
 boot = "index.html"
+
+# Luxe / Holon: a fixed 1920x1080 canvas
+[zoo.146642]
+meta = { gamescope_resolution = "1920x1080" }
 
 # Adelanto by Nostalgia. Logs GL_EXTENSIONS through a 0x800 heap buffer,
 # which today's extension list overruns, and allocates a texture of
@@ -1017,3 +1037,9 @@ glsl = [
   { match = 'pow\(blur\(\)', edits = [['pow\(blur\(\) \* 4\.7, 4\.0\)', "pow(blur() * 4.7, vec3(4.0))"]] },
   { match = 'if\(autoBias\)', edits = [['if\(autoBias\)', "if(autoBias != 0)"]] },
 ]
+
+[zoo.7380]
+events = [{ frame = 50, key = "3" }, { frame = 70, key = "4" }, { frame = 90, key = "3" }]
+
+[zoo.6147]
+events = [{ frame = 20, key = "4" }, { frame = 30, key = "4" }, { frame = 40, key = "3" }]

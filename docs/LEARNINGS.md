@@ -626,3 +626,27 @@
 - autodlg's `--check Fullscreen` missed dialogs that put the label in a
   `Static` before a textless checkbox (Axxelerate); a textless checkbox now
   takes that label.
+
+- 8K Reality (`zoo.136330`) crashed in `wglUseFontOutlinesA` with garbage
+  `format`/`lpgmf`/`deviation`; sanitizing those arguments came first and was
+  wrong. The call site pushes four arguments: Crinkler's range import landed
+  two exports past `wglUseFontBitmapsA` in wine's table (CRINKLER.md mode 1),
+  and the eight popped bytes later let a call overwrite the intro's start time,
+  so it exited after one frame. When a Crinkler import gets odd arguments,
+  disassemble the call site and map the IAT slots to exports before patching
+  the callee.
+
+- A plain `wine` run or a native GL harness without
+  `allow_glsl_120_subset_in_110=true` (which demarc sets) fails to compile
+  NVIDIA-lax shaders, and Mesa then segfaults linking them; that was chased as
+  a Mesa bug for several runs. Run outside demarc with demarc's environment.
+
+- zsh arrays start at 1: `${P[0]}` is empty, so a "pair" test passed an empty
+  file name and its crash was the harness's own `fopen`.
+
+- A DOS program that ignores normal key presses but takes held ones (Symbology,
+  `zoo.6147`) polls port 64h/60h with IRQ1 unmasked; DOSBox raised IRQ1 at
+  once, so the BIOS handler took every scancode first and only typematic
+  repeats got through. A CS:IP trace from `retro_run` found the poll loop in
+  one run. The core now raises IRQ1 10 µs after the scancode, and not at all
+  if the program read it.
