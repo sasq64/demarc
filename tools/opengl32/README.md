@@ -21,6 +21,12 @@ format 8, single-buffered in wine's list.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.
 
+`wglUseFontOutlinesA`/`W` with a format other than 0 or 1 goes to
+`wglUseFontBitmaps` instead. Crinkler takes `wglUseFontBitmapsA` from a range
+import by position, which lands two exports later in wine's table; Fulcrum's
+"8K Reality" pushes its four arguments, and the eight popped left its stack
+16 bytes off.
+
 `wglBindTexImageARB` copies the pbuffer with a context of its own, made on
 the pbuffer's DC and sharing with the caller's. wine's copies with an
 internal context of another pixel format, a fatal GLX `BadMatch` on NVIDIA

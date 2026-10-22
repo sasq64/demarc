@@ -602,6 +602,24 @@ static int __stdcall swap_buffers(void *hdc)
     return ret;
 }
 
+// Crinkler finds wglUseFontBitmapsA by its position in Windows' export table,
+// which is wglUseFontOutlinesA in wine's: Fulcrum's 8K Reality pushes four
+// arguments, eight are popped, and its stack is off from then on. A format
+// that is neither 0 nor 1 gives such a call away; it goes to wglUseFontBitmaps.
+void *use_font_bitmaps[2], *use_font_outlines[2];
+void use_font_outlines_a(void), use_font_outlines_w(void);
+__asm__(".text\n"
+        "_use_font_outlines_a:\n"
+        "    cmpl $1, 28(%esp)\n"
+        "    ja 1f\n"
+        "    jmp *_use_font_outlines\n"
+        "1:  jmp *_use_font_bitmaps\n"
+        "_use_font_outlines_w:\n"
+        "    cmpl $1, 28(%esp)\n"
+        "    ja 2f\n"
+        "    jmp *_use_font_outlines+4\n"
+        "2:  jmp *_use_font_bitmaps+4\n");
+
 // No GLX config has an accumulation buffer on NVIDIA's Xwayland, so glAccum
 // fails and Fizzer's "The Real Party Is In Your Pocket" shows one raw sample.
 // Without accum bits the buffer is an RGBA32F texture drawn into through an FBO.
@@ -857,6 +875,16 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;
+            } else if (address && equal(names[i], "wglUseFontBitmapsA")) {
+                use_font_bitmaps[0] = address;
+            } else if (address && equal(names[i], "wglUseFontBitmapsW")) {
+                use_font_bitmaps[1] = address;
+            } else if (address && equal(names[i], "wglUseFontOutlinesA")) {
+                use_font_outlines[0] = address;
+                address = use_font_outlines_a;
+            } else if (address && equal(names[i], "wglUseFontOutlinesW")) {
+                use_font_outlines[1] = address;
+                address = use_font_outlines_w;
             } else if (address && equal(names[i], "glAccum")) {
                 wine_accum = address;
                 address = accum;
