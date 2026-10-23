@@ -1043,3 +1043,6 @@ events = [{ frame = 50, key = "3" }, { frame = 70, key = "4" }, { frame = 90, ke
 
 [zoo.6147]
 events = [{ frame = 20, key = "4" }, { frame = 30, key = "4" }, { frame = 40, key = "3" }]
+
+[zoo.6704]
+events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame = 70, key = "Enter" }]
