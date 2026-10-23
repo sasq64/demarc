@@ -76,7 +76,7 @@ const fn align8(n: usize) -> usize {
 
 const HEADER_SIZE: usize = align8(size_of::<ShmHeader>());
 const SLOT_HEADER_SIZE: usize = align8(size_of::<SlotHeader>());
-const SLOT_SIZE: usize = align8(SLOT_HEADER_SIZE + MAX_PIXELS * 4 + MAX_AUDIO * 2);
+const SLOT_SIZE: usize = align8(SLOT_HEADER_SIZE + MAX_PIXELS * 4 + MAX_AUDIO * 4);
 
 /// The shared mapping, header first and then `slots` slots.
 struct Shm {
@@ -125,7 +125,7 @@ impl Shm {
         unsafe { self.slot(slot).cast::<u8>().add(SLOT_HEADER_SIZE).cast() }
     }
 
-    fn audio(&self, slot: usize) -> *mut i16 {
+    fn audio(&self, slot: usize) -> *mut f32 {
         unsafe { self.pixels(slot).cast::<u8>().add(MAX_PIXELS * 4).cast() }
     }
 
@@ -335,12 +335,12 @@ pub struct RetroCoreProcess {
     /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
     frame_diff: f32,
     aggregated_diff: f32,
-    audio_sum: i32,
+    audio_sum: f32,
     frame_width: usize,
     frame_height: usize,
     used_width: usize,
     used_height: usize,
-    audio: Vec<i16>,
+    audio: Vec<f32>,
     aspect_ratio: f32,
     sample_rate: f64,
     fps: f64,
@@ -422,7 +422,7 @@ impl RetroCoreProcess {
             dead: false,
             frame_diff: 0.0,
             aggregated_diff: 0.0,
-            audio_sum: 0,
+            audio_sum: 0.0,
             audio: Vec::new(),
             aspect_ratio: 0.0,
             sample_rate: 0.0,
@@ -496,7 +496,7 @@ impl Backend for RetroCoreProcess {
         self.used_height = h.used_height as usize;
         let audio_len = (h.audio_len as usize).min(MAX_AUDIO);
         let audio = unsafe { std::slice::from_raw_parts(self.shm.audio(slot), audio_len) };
-        self.audio_sum = audio.iter().map(|a| (*a as i32).abs()).sum();
+        self.audio_sum = audio.iter().map(|a| a.abs()).sum();
         self.audio.extend_from_slice(audio);
         self.aspect_ratio = h.aspect_ratio;
         self.sample_rate = h.sample_rate;
@@ -533,7 +533,7 @@ impl Backend for RetroCoreProcess {
     }
 
     fn is_silent(&self) -> bool {
-        self.audio_sum.abs() < 1000
+        self.audio_sum < 1000.0 / 32768.0
     }
 
     fn screen_changed(&self) -> bool {
@@ -589,7 +589,7 @@ impl Backend for RetroCoreProcess {
         };
         f(self.frame_width, self.frame_height, frame);
     }
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         f(&self.audio);
         self.audio.clear();
     }

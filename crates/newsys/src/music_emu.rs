@@ -29,7 +29,7 @@ use anyhow::{Result, anyhow};
 use musix::MusixPlayer;
 use tracing::{debug, error, info, warn};
 
-use crate::backend::{Backend, ViewFocus};
+use crate::backend::{Backend, ViewFocus, i16_to_f32};
 use crate::music_vis::Visualizer;
 
 /// Rate the frontend paces [`run`](Backend::run) at. Nothing in the music
@@ -213,7 +213,7 @@ pub struct MusicEmu {
     channels: u32,
     /// Interleaved stereo samples rendered but not yet collected by
     /// [`with_audio`](Backend::with_audio).
-    audio: Vec<i16>,
+    audio: Vec<f32>,
     /// Fractional sample carried between frames, so a rate that is not a whole
     /// multiple of [`FRAME_RATE`] (44100/60 = 735 exactly, but 48000/50 is not)
     /// neither drifts ahead of nor falls behind real time.
@@ -567,7 +567,8 @@ impl Backend for MusicEmu {
             // is told about the end through `is_idle`.
             return true;
         }
-        self.audio.extend_from_slice(&self.frame_samples);
+        self.audio
+            .extend(self.frame_samples.iter().map(|&s| i16_to_f32(s)));
         self.push_scope_history();
         // Nothing normally accumulates here — the frontend collects after every
         // `run` — but `--speed-test` steps the core as fast as it can and never
@@ -580,7 +581,7 @@ impl Backend for MusicEmu {
         true
     }
 
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         f(&self.audio);
         self.audio.clear();
     }

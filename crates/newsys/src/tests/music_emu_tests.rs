@@ -130,7 +130,7 @@ fn mono_output_is_doubled_into_stereo() {
     assert_eq!(samples.len(), 44100 / FRAME_RATE as usize * 2);
     for (i, pair) in samples.chunks(2).enumerate() {
         assert_eq!(pair[0], pair[1], "pair {i} is not duplicated: {pair:?}");
-        assert_eq!(pair[0], i as i16, "pair {i} is out of order: {pair:?}");
+        assert_eq!(pair[0], i16_to_f32(i as i16), "pair {i} is out of order: {pair:?}");
     }
 
     // And the doubling holds across the chunk boundary, where the in-place
@@ -222,7 +222,7 @@ fn stereo_output_is_not_doubled() {
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
     assert_eq!(samples.len(), 44100 / FRAME_RATE as usize * 2);
-    assert!(samples.iter().all(|&s| s == 1000));
+    assert!(samples.iter().all(|&s| s == i16_to_f32(1000)));
 }
 
 /// Every read must be a whole [`CHUNK`], never the frame-sized sliver that
@@ -328,7 +328,7 @@ fn a_directory_plays_its_first_song() {
     assert!(emu.run());
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
-    assert!(samples.iter().any(|&s| s != 0), "directory load is silent");
+    assert!(samples.iter().any(|&s| s != 0.0), "directory load is silent");
 }
 
 /// Nothing playable at the top level: the subdirectories are searched too,
@@ -379,7 +379,7 @@ fn a_second_sndh_loads_while_the_first_is_playing() {
             emu.run();
             emu.with_audio(&mut |s| samples.extend_from_slice(s));
         }
-        samples.iter().any(|&s| s != 0)
+        samples.iter().any(|&s| s != 0.0)
     };
     assert!(plays(&mut first), "the first SNDH is silent");
     drop(first);
@@ -401,7 +401,7 @@ fn renders_audio_and_a_scope() {
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
     let expected = (emu.sample_rate() / FRAME_RATE) as usize * 2;
     assert_eq!(samples.len(), expected, "wrong frame length");
-    assert!(samples.iter().any(|&s| s != 0), "rendered frame is silent");
+    assert!(samples.iter().any(|&s| s != 0.0), "rendered frame is silent");
     assert!(!emu.is_idle());
 
     // The buffer is drained by the collection above, not re-delivered.
@@ -435,7 +435,7 @@ fn a_song_without_a_script_still_plays() {
     assert!(emu.run());
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
-    assert!(samples.iter().any(|&s| s != 0), "no audio without a script");
+    assert!(samples.iter().any(|&s| s != 0.0), "no audio without a script");
 
     emu.with_frame(&mut |_, _, frame| {
         assert!(
@@ -460,7 +460,7 @@ fn a_broken_script_does_not_stop_the_song() {
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
     assert!(
-        samples.iter().any(|&s| s != 0),
+        samples.iter().any(|&s| s != 0.0),
         "a bad script muted the song"
     );
 }

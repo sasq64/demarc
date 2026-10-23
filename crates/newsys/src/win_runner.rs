@@ -110,7 +110,7 @@ impl Backend for WinRunner {
         }
     }
 
-    fn with_audio(&mut self, _f: &mut dyn FnMut(&[i16])) {}
+    fn with_audio(&mut self, _f: &mut dyn FnMut(&[f32])) {}
 
     fn get_frame_size(&self) -> (usize, usize) {
         (FRAME_W, FRAME_H)

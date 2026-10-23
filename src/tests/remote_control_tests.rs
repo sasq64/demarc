@@ -160,7 +160,7 @@ fn a_script_hears_the_cores() {
     );
     let mut r = runner("audio", &source).unwrap();
     r.update();
-    r.tap.lock().unwrap().push(48000, &[16384, -16384]);
+    r.tap.lock().unwrap().push(48000, &[0.5, -0.5]);
     r.update();
     let globals = r._lua.globals();
     assert_eq!(globals.get::<f64>("Loud").unwrap(), 0.5);

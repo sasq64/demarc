@@ -19,7 +19,7 @@ pub struct FakeState {
 
     pub frame: VideoFrame,
     pub used: Option<(usize, usize)>,
-    pub audio: Vec<i16>,
+    pub audio: Vec<f32>,
     pub fps: f64,
     pub aspect: f32,
     pub idle: bool,
@@ -131,7 +131,7 @@ impl Backend for FakeBackend {
         self.lock().frame.clone()
     }
 
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         f(&self.lock().audio);
     }
 

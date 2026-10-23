@@ -298,7 +298,7 @@ impl Backend for ImageEmu {
     }
 
     // No audio; the frontend pushes nothing when the callback stays empty.
-    fn with_audio(&mut self, _f: &mut dyn FnMut(&[i16])) {}
+    fn with_audio(&mut self, _f: &mut dyn FnMut(&[f32])) {}
 
     fn get_frame_size(&self) -> (usize, usize) {
         (self.width, self.height)

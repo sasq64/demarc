@@ -46,6 +46,10 @@ pub const STATE_SKIPPING: u64 = 1 << 0;
 /// The most finished frames a backend may hold for the frontend.
 pub const MAX_LATENCY: usize = 10;
 
+pub fn i16_to_f32(sample: i16) -> f32 {
+    sample as f32 / 32768.0
+}
+
 /// Abstract interface over a libretro emulator core.
 pub trait Backend {
     fn set_disk(&mut self, no: u32);
@@ -77,7 +81,8 @@ pub trait Backend {
         });
         frame
     }
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16]));
+    /// Interleaved stereo, nominally -1..1 but free to go past it.
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32]));
     fn get_frame_size(&self) -> (usize, usize);
 
     fn get_used_frame_size(&self) -> (usize, usize) {

@@ -20,16 +20,16 @@ use crate::workfile::WorkFile;
 mod load;
 pub(crate) use load::{LoadStatus, PendingLoad};
 
-type AudioTap = Box<dyn Fn(u32, &[i16]) + Send>;
+type AudioTap = Box<dyn Fn(u32, &[f32]) + Send>;
 
 /// Sees every emulator's audio, for the remote control script.
 static AUDIO_TAP: Mutex<Option<AudioTap>> = Mutex::new(None);
 
-pub(crate) fn set_audio_tap(tap: impl Fn(u32, &[i16]) + Send + 'static) {
+pub(crate) fn set_audio_tap(tap: impl Fn(u32, &[f32]) + Send + 'static) {
     *AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(tap));
 }
 
-fn tap_audio(rate: u32, samples: &[i16]) {
+fn tap_audio(rate: u32, samples: &[f32]) {
     if let Some(tap) = AUDIO_TAP.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         tap(rate, samples);
     }

@@ -594,15 +594,15 @@ impl Audio {
         })
     }
 
-    /// Feed one frame's worth of interleaved `i16` captured at `from` Hz,
+    /// Feed one frame's worth of interleaved samples captured at `from` Hz,
     /// linearly interpolated to the device rate.
-    fn push(&mut self, from: f64, samples: &[i16]) {
+    fn push(&mut self, from: f64, samples: &[f32]) {
         if from <= 0.0 {
             return;
         }
         let step = from / self.rate;
         for frame in samples.chunks_exact(2) {
-            let cur = (frame[0] as f32 / 32768.0, frame[1] as f32 / 32768.0);
+            let cur = (frame[0], frame[1]);
             while self.pos < 1.0 {
                 let t = self.pos as f32;
                 // A full ring drops whole frames: half of one would swap the

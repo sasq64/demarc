@@ -93,7 +93,7 @@ impl AudioResampler {
     pub fn process(
         &mut self,
         from: u32,
-        samples: &[i16],
+        samples: &[f32],
         mut sink: impl FnMut(f32, f32),
     ) -> Result<()> {
         // `from == 0` means the core hasn't reported a rate yet; keep the
@@ -135,8 +135,8 @@ impl AudioResampler {
         }
 
         for frame in samples.chunks_exact(2) {
-            self.in_buf[0].push(frame[0] as f32 / 32767.0);
-            self.in_buf[1].push(frame[1] as f32 / 32767.0);
+            self.in_buf[0].push(frame[0]);
+            self.in_buf[1].push(frame[1]);
         }
 
         let mut consumed = 0;
@@ -350,10 +350,10 @@ impl AudioSink {
         self.recorder.as_ref().map(AudioRecorder::elapsed)
     }
 
-    pub fn push_audio(&mut self, from: f32, samples: &[i16]) {
+    pub fn push_audio(&mut self, from: f32, samples: &[f32]) {
         let mut recorder = self.recorder.as_mut();
         if let Some(rec) = &mut recorder {
-            rec.push_i16(from as u32, samples);
+            rec.push(from as u32, samples);
         }
         if let Some(resampler) = &mut self.resampler
             && let Some(producer) = &self.producer
@@ -363,7 +363,7 @@ impl AudioSink {
             let res = resampler.process(from as u32, samples, |l, r| {
                 p.push_iter([l, r].into_iter());
                 if let Some(rec) = &mut recorder {
-                    rec.push_f32(rate, l, r);
+                    rec.push_resampled(rate, l, r);
                 }
             });
             if let Err(e) = res {

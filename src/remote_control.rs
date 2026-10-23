@@ -60,7 +60,7 @@ pub struct AudioTap {
 }
 
 impl AudioTap {
-    pub fn push(&mut self, rate: u32, samples: &[i16]) {
+    pub fn push(&mut self, rate: u32, samples: &[f32]) {
         self.sum_sq += samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>();
         self.count += samples.len();
         if let Some(path) = self.record.take() {
@@ -70,7 +70,10 @@ impl AudioTap {
             }
         }
         if let Some((file, len)) = &mut self.wav {
-            let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            let bytes: Vec<u8> = samples
+                .iter()
+                .flat_map(|s| ((s * 32768.0).clamp(-32768.0, 32767.0) as i16).to_le_bytes())
+                .collect();
             *len += bytes.len() as u32;
             // The header is rewritten every time, so the file is whole
             // whenever the app goes away.
@@ -91,7 +94,7 @@ impl AudioTap {
         let rms = if self.count == 0 {
             0.0
         } else {
-            (self.sum_sq / self.count as f64).sqrt() / 32768.0
+            (self.sum_sq / self.count as f64).sqrt()
         };
         self.sum_sq = 0.0;
         self.count = 0;

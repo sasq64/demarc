@@ -43,7 +43,7 @@ use ruffle_render_wgpu::wgpu;
 
 use std::sync::Arc;
 
-use retro_core::backend::Backend;
+use retro_core::backend::{Backend, i16_to_f32};
 
 /// Audio output rate handed to the frontend. Matches the other cores so the
 /// existing [`retro_core::audio::AudioResampler`] converts to the device rate.
@@ -129,7 +129,7 @@ pub struct FlashEmu {
     height: usize,
     frame: Vec<u32>,
     /// Accumulates across `run` calls; drained by `with_audio`.
-    audio: Vec<i16>,
+    audio: Vec<f32>,
     fps: f64,
 }
 
@@ -188,7 +188,8 @@ impl Backend for FlashEmu {
             self.width = update.width;
             self.height = update.height;
             self.frame = update.frame;
-            self.audio.extend_from_slice(&update.audio);
+            self.audio
+                .extend(update.audio.iter().map(|&s| i16_to_f32(s)));
             self.fps = update.fps;
         }
         true
@@ -198,7 +199,7 @@ impl Backend for FlashEmu {
         f(self.width, self.height, &self.frame);
     }
 
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         f(&self.audio);
         self.audio.clear();
     }

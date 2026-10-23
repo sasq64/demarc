@@ -327,7 +327,7 @@ fn update_reports_whether_audio_arrived() {
     assert!(!emu.update());
     assert!(!emu.audio_seen, "an empty batch is not audio");
 
-    core.lock().audio = vec![1, 2, 3, 4];
+    core.lock().audio = vec![0.1, 0.2, 0.3, 0.4];
     assert!(emu.update());
     assert!(emu.audio_seen);
 
@@ -573,7 +573,7 @@ fn a_skip_ends_when_audio_comes_back() {
     assert!(emu.skipping, "no audio yet, so the skip is still running");
     assert_eq!(core.lock().runs, 1, "no catch-up frame during a skip");
 
-    core.lock().audio = vec![0; 64];
+    core.lock().audio = vec![0.0; 64];
     emu.run(&Time::default());
     assert!(!emu.skipping);
     assert_eq!(

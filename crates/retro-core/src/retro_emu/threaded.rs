@@ -117,7 +117,7 @@ struct RetroUpdate {
     used_width: usize,
     used_height: usize,
     frame: Arc<Vec<u32>>,
-    audio: Vec<i16>,
+    audio: Vec<f32>,
     aspect_ratio: f32,
     sample_rate: f64,
     fps: f64,
@@ -142,13 +142,13 @@ pub struct RetroCoreThreaded {
     frame_diff: f32,
     aggregated_diff: f32,
     cpu: f32,
-    audio_sum: i32,
-    last_sum: i32,
+    audio_sum: f32,
+    last_sum: f32,
     frame_width: usize,
     frame_height: usize,
     used_width: usize,
     used_height: usize,
-    audio: Vec<i16>,
+    audio: Vec<f32>,
     aspect_ratio: f32,
     aspect_tweak: f32,
     sample_rate: f64,
@@ -258,8 +258,8 @@ impl RetroCoreThreaded {
                 frame_diff: 0.0,
                 aggregated_diff: 0.0,
                 cpu: 0.0,
-                audio_sum: 0,
-                last_sum: 0,
+                audio_sum: 0.0,
+                last_sum: 0.0,
                 frame_width: width,
                 frame_height: height,
                 used_width: used.0,
@@ -539,7 +539,7 @@ impl Backend for RetroCoreThreaded {
             self.used_width = update.used_width;
             self.used_height = update.used_height;
             self.last_sum = self.audio_sum;
-            self.audio_sum = update.audio.iter().map(|a| (*a as i32).abs()).sum();
+            self.audio_sum = update.audio.iter().map(|a| a.abs()).sum();
             self.audio.extend_from_slice(&update.audio);
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
@@ -572,7 +572,7 @@ impl Backend for RetroCoreThreaded {
     }
 
     fn is_silent(&self) -> bool {
-        self.audio_sum.abs() < 1000
+        self.audio_sum < 1000.0 / 32768.0
     }
 
     fn screen_activity(&self) -> f32 {
@@ -621,7 +621,7 @@ impl Backend for RetroCoreThreaded {
             pixels: Arc::clone(&self.frame),
         }
     }
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         f(&self.audio);
         self.audio.clear();
     }

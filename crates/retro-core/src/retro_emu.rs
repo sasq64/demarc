@@ -8,7 +8,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use libloading::Library;
 
-use crate::backend::{Backend, ViewFocus};
+use crate::backend::{Backend, ViewFocus, i16_to_f32};
 
 unsafe extern "C" {
     fn demarc_retro_log_shim(level: retro_log_level, fmt: *const c_char, ...);
@@ -43,7 +43,7 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER,
     RETRO_ENVIRONMENT_GET_FASTFORWARDING, RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,
     RETRO_ENVIRONMENT_GET_LANGUAGE, RETRO_ENVIRONMENT_GET_LIBRETRO_PATH,
-    RETRO_ENVIRONMENT_GET_LOG_INTERFACE, RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION,
+    RETRO_ENVIRONMENT_GET_LOG_INTERFACE, RETRO_ENVIRONMENT_PRIVATE, RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
     RETRO_ENVIRONMENT_GET_THROTTLE_STATE, RETRO_ENVIRONMENT_GET_VARIABLE,
     RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, RETRO_ENVIRONMENT_GET_VFS_INTERFACE,
@@ -151,7 +151,8 @@ pub struct RetroCoreDirect {
     /// scheduled click alone.
     last_live: (i16, i16, bool),
     vars: HashMap<String, CString>,
-    audio_buf: Vec<i16>,
+    /// Interleaved stereo; may go past ±1 when the core sends float.
+    audio_buf: Vec<f32>,
     core_path: CString,
     system_path: CString,
     /// From the `save_dir` meta key, the system dir when unset.
@@ -184,6 +185,12 @@ impl Drop for RetroCoreDirect {
         }
     }
 }
+
+/// demarc's own: the core asks for an [`AudioSampleBatchFloat`] to send float
+/// samples through, and keeps to `retro_audio_sample_batch_t` if refused.
+pub const RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT: u32 = RETRO_ENVIRONMENT_PRIVATE | 1;
+
+pub type AudioSampleBatchFloat = unsafe extern "C" fn(data: *const f32, frames: usize) -> usize;
 
 thread_local! {
     static CURRENT_EMU: Cell<*mut RetroCoreDirect> = const { Cell::new(std::ptr::null_mut()) }
@@ -277,7 +284,7 @@ impl RetroCoreDirect {
             &self.state.frame,
         );
     }
-    pub fn with_audio(&mut self, f: impl FnOnce(&[i16])) {
+    pub fn with_audio(&mut self, f: impl FnOnce(&[f32])) {
         f(&self.audio_buf);
         self.audio_buf.clear();
     }
@@ -353,8 +360,8 @@ impl RetroCoreDirect {
             let ptr = p.get();
             if !ptr.is_null() {
                 let ctx = unsafe { &mut *ptr };
-                ctx.audio_buf.push(left);
-                ctx.audio_buf.push(right);
+                ctx.audio_buf.push(i16_to_f32(left));
+                ctx.audio_buf.push(i16_to_f32(right));
             }
         });
     }
@@ -365,7 +372,20 @@ impl RetroCoreDirect {
                 let ptr = p.get();
                 if !ptr.is_null() {
                     let ctx = unsafe { &mut *ptr };
-                    ctx.audio_buf.extend(samples);
+                    ctx.audio_buf.extend(samples.iter().map(|&s| i16_to_f32(s)));
+                }
+            });
+        }
+        frames
+    }
+    unsafe extern "C" fn audio_sample_batch_float_cb(data: *const f32, frames: usize) -> usize {
+        if !data.is_null() && frames > 0 {
+            let samples = unsafe { std::slice::from_raw_parts(data, frames * 2) };
+            CURRENT_EMU.with(|p| {
+                let ptr = p.get();
+                if !ptr.is_null() {
+                    let ctx = unsafe { &mut *ptr };
+                    ctx.audio_buf.extend_from_slice(samples);
                 }
             });
         }
@@ -497,6 +517,10 @@ impl RetroCoreDirect {
                         replace_image_index,
                         add_image_index,
                     };
+                }
+                RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT => {
+                    info!("Core sends float audio");
+                    *(data as *mut AudioSampleBatchFloat) = Self::audio_sample_batch_float_cb;
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
@@ -981,7 +1005,7 @@ impl Backend for RetroCoreDirect {
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
         RetroCoreDirect::with_frame(self, |w, h, fr| f(w, h, fr))
     }
-    fn with_audio(&mut self, f: &mut dyn FnMut(&[i16])) {
+    fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {
         RetroCoreDirect::with_audio(self, |s| f(s))
     }
     fn get_frame_size(&self) -> (usize, usize) {

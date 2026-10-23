@@ -38,8 +38,8 @@ pub struct AudioRecorder {
     opts: RecorderOptions,
     path: PathBuf,
     rate: u32,
-    /// Interleaved stereo.
-    samples: Vec<i16>,
+    /// Interleaved stereo, kept past ±1 when the source goes there.
+    samples: Vec<f32>,
     state: State,
     /// Consecutive frames below the level: zero frames while waiting, quiet
     /// frames while recording.
@@ -63,7 +63,7 @@ impl AudioRecorder {
         }
     }
 
-    pub fn push_i16(&mut self, rate: u32, samples: &[i16]) {
+    pub fn push(&mut self, rate: u32, samples: &[f32]) {
         if self.opts.source != RecordSource::Original {
             return;
         }
@@ -73,13 +73,12 @@ impl AudioRecorder {
         }
     }
 
-    pub fn push_f32(&mut self, rate: u32, l: f32, r: f32) {
+    pub fn push_resampled(&mut self, rate: u32, l: f32, r: f32) {
         if self.opts.source != RecordSource::Resampled {
             return;
         }
         self.set_rate(rate);
-        let to_i16 = |x: f32| (x.clamp(-1.0, 1.0) * 32767.0) as i16;
-        self.push_frame(to_i16(l), to_i16(r));
+        self.push_frame(l, r);
     }
 
     fn set_rate(&mut self, rate: u32) {
@@ -93,15 +92,15 @@ impl AudioRecorder {
         }
     }
 
-    fn level(&self) -> i32 {
-        (self.opts.start_on_audio.unwrap_or(SILENCE_LEVEL) * 32767.0) as i32
+    fn level(&self) -> f32 {
+        self.opts.start_on_audio.unwrap_or(SILENCE_LEVEL)
     }
 
-    fn push_frame(&mut self, l: i16, r: i16) {
-        let peak = (l as i32).abs().max((r as i32).abs());
+    fn push_frame(&mut self, l: f32, r: f32) {
+        let peak = l.abs().max(r.abs());
         match self.state {
             State::Waiting => {
-                if peak == 0 {
+                if peak == 0.0 {
                     self.quiet_frames += 1;
                     // A gap of digital silence restarts the pre-roll.
                     if self.quiet_frames > self.rate.max(44100) as usize / 100 {
@@ -175,25 +174,23 @@ impl AudioRecorder {
     }
 }
 
-fn write_wav(path: &Path, rate: u32, samples: &[i16]) -> Result<()> {
+fn write_wav(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
     };
     let mut writer = hound::WavWriter::create(path, spec)?;
-    let mut w = writer.get_i16_writer(samples.len() as u32);
     for &s in samples {
-        w.write_sample(s);
+        writer.write_sample(s)?;
     }
-    w.flush()?;
     writer.finalize()?;
     Ok(())
 }
 
 #[cfg(feature = "mp3")]
-fn write_mp3(path: &Path, rate: u32, samples: &[i16]) -> Result<()> {
+fn write_mp3(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
     use mp3lame_encoder::{Bitrate, Builder, FlushNoGap, InterleavedPcm, Quality};
 
     let err = |e: mp3lame_encoder::BuildError| anyhow::anyhow!("{e}");
@@ -218,7 +215,7 @@ fn write_mp3(path: &Path, rate: u32, samples: &[i16]) -> Result<()> {
 }
 
 #[cfg(not(feature = "mp3"))]
-fn write_mp3(_path: &Path, _rate: u32, _samples: &[i16]) -> Result<()> {
+fn write_mp3(_path: &Path, _rate: u32, _samples: &[f32]) -> Result<()> {
     anyhow::bail!("built without mp3 support")
 }
 

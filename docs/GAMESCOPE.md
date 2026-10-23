@@ -162,8 +162,10 @@ side this works against pipewire-pulse and PulseAudio alike, and survives the tr
 libpipewire is `dlopen`'d rather than linked — the core still needs nothing but libc and
 libstdc++, `nm -u` still finds no `pw_` symbol, and a machine without PipeWire loses the
 sound rather than the session. What it costs is a thread waking about fifty times a second
-to copy a couple of kilobytes: 48 kHz stereo `s16` is 192 KB/s against the 115 MB/s the
-dmabuf ring already carries.
+to copy a few kilobytes: 48 kHz stereo `f32` is 384 KB/s against the 115 MB/s the
+dmabuf ring already carries. The sink takes float, and so does demarc: the core asks for
+`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT` (private to the two) and sends peaks past
+full scale on unclipped. A frontend without it gets `int16` through a peak limiter.
 
 The count of samples matters more than the content. demarc runs on an audio clock
 (`audio_seen` in `src/emulator.rs`), so handing it less than a video frame's worth makes it
