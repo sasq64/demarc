@@ -335,7 +335,7 @@ pub struct RetroCoreProcess {
     /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
     frame_diff: f32,
     aggregated_diff: f32,
-    audio_sum: f32,
+    silent: bool,
     frame_width: usize,
     frame_height: usize,
     used_width: usize,
@@ -422,7 +422,7 @@ impl RetroCoreProcess {
             dead: false,
             frame_diff: 0.0,
             aggregated_diff: 0.0,
-            audio_sum: 0.0,
+            silent: true,
             audio: Vec::new(),
             aspect_ratio: 0.0,
             sample_rate: 0.0,
@@ -496,7 +496,7 @@ impl Backend for RetroCoreProcess {
         self.used_height = h.used_height as usize;
         let audio_len = (h.audio_len as usize).min(MAX_AUDIO);
         let audio = unsafe { std::slice::from_raw_parts(self.shm.audio(slot), audio_len) };
-        self.audio_sum = audio.iter().map(|a| a.abs()).sum();
+        self.silent = crate::audio::is_silent(audio);
         self.audio.extend_from_slice(audio);
         self.aspect_ratio = h.aspect_ratio;
         self.sample_rate = h.sample_rate;
@@ -533,7 +533,7 @@ impl Backend for RetroCoreProcess {
     }
 
     fn is_silent(&self) -> bool {
-        self.audio_sum < 1000.0 / 32768.0
+        self.silent
     }
 
     fn screen_changed(&self) -> bool {

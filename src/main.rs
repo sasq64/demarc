@@ -555,6 +555,7 @@ fn main() {
         speed_test: args.speed_test,
         latency: args.latency,
         tv_mode: args.tv_mode,
+        record: args.record,
         idle_timeout: args.idle_timeout,
         info_delay: args.info_delay,
         info_duration: args.info_duration,

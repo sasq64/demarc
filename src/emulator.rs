@@ -10,6 +10,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
+use retro_core::audio_recorder::RecorderOptions;
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
@@ -19,6 +20,23 @@ use crate::workfile::WorkFile;
 
 mod load;
 pub(crate) use load::{LoadStatus, PendingLoad};
+
+/// The frame scaled to 300 high and cropped to the middle 300x300, as a JPEG.
+fn cover_art(shot: &image::RgbaImage) -> Result<Vec<u8>> {
+    use image::imageops::{self, FilterType};
+    const SIZE: u32 = 300;
+    let width = (shot.width() * SIZE / shot.height().max(1)).max(1);
+    let scaled = imageops::resize(shot, width, SIZE, FilterType::Lanczos3);
+    let crop = width.min(SIZE);
+    let cropped = imageops::crop_imm(&scaled, (width - crop) / 2, 0, crop, SIZE).to_image();
+    let rgb = image::DynamicImage::ImageRgba8(cropped).into_rgb8();
+    let mut jpeg = Vec::new();
+    rgb.write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)?;
+    Ok(jpeg)
+}
+
+/// A recording stops once the core has sent no audio for this long.
+const AUDIO_STOPPED_SECS: f64 = 2.0;
 
 type AudioTap = Box<dyn Fn(u32, &[f32]) + Send>;
 
@@ -115,6 +133,8 @@ pub struct Emulator {
     /// Smoothed fill of the audio sink, in samples; `0` until first measured.
     pub audio_fill: f64,
     pub audio_seen: bool,
+    /// Seconds of running without any samples from the core.
+    pub audio_gap: f64,
     pub disk_no: u32,
     /// RGBA render target this emulator's frames are copied into; the matching
     /// `PostProcess` camera samples it (`PostProcess::source == image`).
@@ -138,8 +158,6 @@ pub struct Emulator {
     /// Patch menu "Record Events": the frame recording started at, and what was
     /// pressed since.
     pub recording: Option<(u64, Vec<(u64, Recorded)>)>,
-    /// Audio recording asked for while nothing was running; starts with the next load.
-    pub record_pending: Option<retro_core::audio_recorder::RecorderOptions>,
     pub last_active_time: f32,
     pub idle_time: f32,
     pub emu_file: EmuFile,
@@ -312,17 +330,23 @@ impl Emulator {
         ])
     }
 
-    pub fn save_png(&self, path: impl AsRef<Path>) -> Result<()> {
+    pub fn save_png(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let mut shot = None;
         if let Some(core) = self.core.as_ref() {
             core.with_frame(&mut |width, height, pixels| {
                 let expected = width * height;
-                // if width == 0 || height == 0 || emu.state.frame.len() < expected {
-                //     return Err("no frame available".into());
-                // }
                 let bytes = frame_bytes(&pixels[..expected]).to_vec();
-                let buf = image::RgbaImage::from_raw(width as u32, height as u32, bytes).unwrap();
-                _ = buf.save(&path);
+                shot = image::RgbaImage::from_raw(width as u32, height as u32, bytes);
             });
+        }
+        if let Some(shot) = shot {
+            _ = shot.save(&path);
+            if self.sink.recording_time().is_some() {
+                match cover_art(&shot) {
+                    Ok(jpeg) => self.sink.set_cover(jpeg),
+                    Err(e) => warn!("cover art: {e}"),
+                }
+            }
         }
         Ok(())
     }
@@ -376,6 +400,23 @@ impl Emulator {
         if let Some(core) = self.core.as_mut() {
             core.focus(focus);
         }
+    }
+
+    pub fn start_recording(&mut self, time: &Time, mut opts: RecorderOptions) {
+        let meta = |key| {
+            let value = self.work_file.get_meta_or(key, "");
+            (!value.is_empty()).then_some(value)
+        };
+        opts.tags = retro_core::audio_recorder::Tags {
+            title: meta("title"),
+            artist: meta("author"),
+            album: meta("party").and_then(|p| p.split(';').next().map(str::to_owned)),
+            year: meta("year").and_then(|y| y.parse().ok()),
+            cover: None,
+        };
+        let title = self.work_file.get_meta_or("title", "audio");
+        let name = format!("{}-{}.wav", title, time.elapsed_secs() as i32);
+        self.sink.start_recording(name, opts);
     }
 
     /// Set this emulator's output level, `0` (silent) to `1`. The cross fade
@@ -778,6 +819,17 @@ impl Emulator {
             trace!("Duplicating frame");
         }
         let got_audio = self.update();
+        self.audio_gap = if got_audio || self.skipping {
+            0.0
+        } else {
+            self.audio_gap + delta
+        };
+        if self.audio_gap > AUDIO_STOPPED_SECS
+            && self.sink.recording_time().is_some_and(|t| !t.is_zero())
+        {
+            info!("recording: no audio from the core, stopping");
+            self.sink.stop_on_silence();
+        }
 
         // A skip delivers no audio at all while it runs — the worker discards
         // it and sends no updates — so the first samples to arrive afterwards

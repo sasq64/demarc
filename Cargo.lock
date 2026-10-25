@@ -4733,9 +4733,9 @@ checksum = "e4a2c462a4d927d512f5f882a033ddd62f33a05bb9f230d98f736ac3dc85938f"
 
 [[package]]
 name = "id3"
-version = "1.17.0"
+version = "1.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70d6d9f23a28c6feab60d7b4a339e004809019ec9d5fd964b3f4c655ff9bc141"
+checksum = "ef8be496a46468ba3d43690775aa3a79102ce4daf7d99e8072589aae1a3cd955"
 dependencies = [
  "bitflags 2.13.1",
  "byteorder",
@@ -7197,6 +7197,7 @@ dependencies = [
  "cpal",
  "dirs",
  "hound",
+ "id3",
  "image",
  "libc",
  "libloading 0.9.0",

@@ -6,6 +6,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::config::{AppSettings, GlobalSettings};
+use crate::demarc_settings::DemarcSettings;
 use crate::cross_fade::{CrossFade, Views, redirect_load};
 use crate::emu_file::EmuFile;
 use crate::emulator::{EmuState, Emulator, LoadStatus};
@@ -59,6 +60,7 @@ pub(crate) fn handle_loading(
     mut loaded: MessageWriter<LoadFinished>,
     mut navigator: ResMut<Navigator>,
     playlists: Res<Playlists>,
+    demo_settings: Res<DemarcSettings>,
     time: Res<Time>,
 ) {
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
@@ -138,6 +140,9 @@ pub(crate) fn handle_loading(
             }
             LoadStatus::Done { result: Ok(()), .. } => {
                 emu.favorite = playlists.is_favorite(&emu.emu_file);
+                if settings.record {
+                    emu.start_recording(&time, demo_settings.recording.options());
+                }
                 emu.run_next = false;
                 emu.run_prev = false;
                 loaded.write(LoadFinished(entity));

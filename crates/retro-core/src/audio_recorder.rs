@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::Result;
 use tracing::{error, info, warn};
 
-/// Level that counts as silence when no start level is set.
-const SILENCE_LEVEL: f32 = 0.001;
+use crate::audio::SILENCE_LEVEL;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecordSource {
@@ -25,6 +25,18 @@ pub struct RecorderOptions {
     /// Stop once the audio has stayed below the level this long.
     pub stop_on_silence: Option<Duration>,
     pub mp3: bool,
+    pub tags: Tags,
+}
+
+/// ID3 tags for the MP3.
+#[derive(Debug, Clone, Default)]
+pub struct Tags {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<i32>,
+    /// JPEG front cover.
+    pub cover: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,10 +104,6 @@ impl AudioRecorder {
         }
     }
 
-    fn level(&self) -> f32 {
-        self.opts.start_on_audio.unwrap_or(SILENCE_LEVEL)
-    }
-
     fn push_frame(&mut self, l: f32, r: f32) {
         let peak = l.abs().max(r.abs());
         match self.state {
@@ -113,13 +121,13 @@ impl AudioRecorder {
                     self.quiet_frames = 0;
                 }
                 self.samples.extend([l, r]);
-                if peak > self.level() {
+                if peak > self.opts.start_on_audio.unwrap_or(SILENCE_LEVEL) {
                     self.state = State::Recording;
                 }
             }
             State::Recording => {
                 self.samples.extend([l, r]);
-                if peak > self.level() {
+                if peak > SILENCE_LEVEL {
                     self.quiet_frames = 0;
                     return;
                 }
@@ -151,6 +159,15 @@ impl AudioRecorder {
         self.state == State::Done
     }
 
+    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
+        self.opts.tags.cover = Some(jpeg);
+    }
+
+    /// Recording, and set to stop by itself when the audio goes quiet.
+    pub fn stops_on_silence(&self) -> bool {
+        self.state == State::Recording && self.opts.stop_on_silence.is_some()
+    }
+
     /// Writes the recording in a thread of its own.
     pub fn finish(self) -> Option<JoinHandle<()>> {
         if self.state == State::Waiting || self.samples.is_empty() {
@@ -165,7 +182,7 @@ impl AudioRecorder {
             info!("recording: saved {}", self.path.display());
             if self.opts.mp3 {
                 let mp3 = self.path.with_extension("mp3");
-                match write_mp3(&mp3, self.rate(), &self.samples) {
+                match write_mp3(&mp3, self.rate(), &self.samples, &self.opts.tags) {
                     Ok(()) => info!("recording: saved {}", mp3.display()),
                     Err(e) => error!("recording: writing {}: {e}", mp3.display()),
                 }
@@ -190,7 +207,7 @@ fn write_wav(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
 }
 
 #[cfg(feature = "mp3")]
-fn write_mp3(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
+fn write_mp3(path: &Path, rate: u32, samples: &[f32], tags: &Tags) -> Result<()> {
     use mp3lame_encoder::{Bitrate, Builder, FlushNoGap, InterleavedPcm, Quality};
 
     let err = |e: mp3lame_encoder::BuildError| anyhow::anyhow!("{e}");
@@ -211,11 +228,42 @@ fn write_mp3(path: &Path, rate: u32, samples: &[f32]) -> Result<()> {
         .flush_to_vec::<FlushNoGap>(&mut out)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     std::fs::write(path, out)?;
+    write_tags(path, tags)
+}
+
+#[cfg(feature = "mp3")]
+fn write_tags(path: &Path, tags: &Tags) -> Result<()> {
+    use id3::TagLike;
+
+    let mut tag = id3::Tag::new();
+    if let Some(title) = &tags.title {
+        tag.set_title(title);
+    }
+    if let Some(artist) = &tags.artist {
+        tag.set_artist(artist);
+    }
+    if let Some(album) = &tags.album {
+        tag.set_album(album);
+    }
+    if let Some(year) = tags.year {
+        tag.set_year(year);
+    }
+    if let Some(cover) = &tags.cover {
+        tag.add_frame(id3::frame::Picture {
+            mime_type: "image/jpeg".into(),
+            picture_type: id3::frame::PictureType::CoverFront,
+            description: String::new(),
+            data: cover.clone(),
+        });
+    }
+    if tag.frames().next().is_some() {
+        tag.write_to_path(path, id3::Version::Id3v24)?;
+    }
     Ok(())
 }
 
 #[cfg(not(feature = "mp3"))]
-fn write_mp3(_path: &Path, _rate: u32, _samples: &[f32]) -> Result<()> {
+fn write_mp3(_path: &Path, _rate: u32, _samples: &[f32], _tags: &Tags) -> Result<()> {
     anyhow::bail!("built without mp3 support")
 }
 

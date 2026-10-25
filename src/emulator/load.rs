@@ -376,14 +376,10 @@ impl Emulator {
         self.frame_queue.clear();
         self.shown_frame = None;
         self.work_file = res.work_file;
-        if let Some(opts) = self.record_pending.take() {
-            let title = self.work_file.get_meta_or("title", "audio");
-            let name = format!("{}-{}.wav", title, time.elapsed_secs() as i32);
-            self.sink.start_recording(name, opts);
-        }
 
         self.run_next = false;
         self.audio_seen = false;
+        self.audio_gap = 0.0;
         self.next_frame = time.elapsed_secs_f64();
         self.start_time = time.elapsed_secs_f64();
         self.last_active_time = time.elapsed_secs();

@@ -139,12 +139,23 @@ pub enum RecordSource {
     Resampled,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Reflect)]
+#[derive(Debug, Clone, PartialEq, Reflect)]
 pub struct RecordingSettings {
     pub source: RecordSource,
     pub start_on_audio: bool,
     pub stop_on_silence: bool,
     pub mp3: bool,
+}
+
+impl Default for RecordingSettings {
+    fn default() -> Self {
+        Self {
+            source: RecordSource::default(),
+            start_on_audio: true,
+            stop_on_silence: true,
+            mp3: true,
+        }
+    }
 }
 
 impl RecordingSettings {
@@ -160,6 +171,7 @@ impl RecordingSettings {
                 .stop_on_silence
                 .then_some(std::time::Duration::from_secs(3)),
             mp3: self.mp3,
+            tags: Default::default(),
         }
     }
 }

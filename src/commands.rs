@@ -643,6 +643,7 @@ pub(crate) fn handle_cmd(
             Cmd::OpenKeyboard => {
                 steam_keyboard(true);
             }
+            Cmd::ToggleRecording => settings.record = !settings.record,
             _ => {}
         }
         // While the DJ window has the keyboard the per-emulator commands belong
@@ -664,6 +665,9 @@ pub(crate) fn handle_cmd(
             }
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;
+            }
+            if cmd.0 == Cmd::ToggleRecording && !settings.record {
+                emu.sink.stop_recording();
             }
             if cue || settings.all_emus || i == settings.current_emu {
                 match cmd.0 {
@@ -728,19 +732,8 @@ pub(crate) fn handle_cmd(
                     Cmd::Reset if emu.core.is_some() => {
                         emu.reset();
                     }
-                    Cmd::ToggleRecording => {
-                        if emu.sink.recording_time().is_some() {
-                            emu.sink.stop_recording();
-                        } else if emu.core.is_none() {
-                            emu.record_pending = match emu.record_pending {
-                                Some(_) => None,
-                                None => Some(demo_settings.recording.options()),
-                            };
-                        } else {
-                            let title = emu.work_file.get_meta_or("title", "audio");
-                            let name = format!("{}-{}.wav", title, time.elapsed_secs() as i32);
-                            emu.sink.start_recording(name, demo_settings.recording.options());
-                        }
+                    Cmd::ToggleRecording if settings.record && emu.core.is_some() => {
+                        emu.start_recording(&time, demo_settings.recording.options());
                     }
                     Cmd::AddToPlaylist if emu.core.is_some() => {
                         let picker = Arc::new(PlaylistPicker::new(&playlists, &emu.emu_file));

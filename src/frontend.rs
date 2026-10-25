@@ -526,10 +526,17 @@ pub(crate) fn run_frontend(
             if max_idle == 0 && settings.tv_mode {
                 max_idle = 20;
             }
+            if settings.tv_mode && emu.sink.stops_on_silence() {
+                max_idle = 0;
+            }
             if max_idle > 0 && emu.idle_time > max_idle as f32 {
                 debug!("Idle for {max_idle}, running next");
                 emu.run_next = true;
                 emu.reset_idle(&time);
+            }
+            if emu.sink.take_silence_stop() && settings.tv_mode {
+                debug!("Recording stopped on silence, running next");
+                emu.run_next = true;
             }
         }
 

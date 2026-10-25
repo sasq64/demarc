@@ -142,8 +142,7 @@ pub struct RetroCoreThreaded {
     frame_diff: f32,
     aggregated_diff: f32,
     cpu: f32,
-    audio_sum: f32,
-    last_sum: f32,
+    silent: bool,
     frame_width: usize,
     frame_height: usize,
     used_width: usize,
@@ -258,8 +257,7 @@ impl RetroCoreThreaded {
                 frame_diff: 0.0,
                 aggregated_diff: 0.0,
                 cpu: 0.0,
-                audio_sum: 0.0,
-                last_sum: 0.0,
+                silent: true,
                 frame_width: width,
                 frame_height: height,
                 used_width: used.0,
@@ -538,8 +536,7 @@ impl Backend for RetroCoreThreaded {
             self.frame_height = update.height;
             self.used_width = update.used_width;
             self.used_height = update.used_height;
-            self.last_sum = self.audio_sum;
-            self.audio_sum = update.audio.iter().map(|a| a.abs()).sum();
+            self.silent = crate::audio::is_silent(&update.audio);
             self.audio.extend_from_slice(&update.audio);
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
@@ -572,7 +569,7 @@ impl Backend for RetroCoreThreaded {
     }
 
     fn is_silent(&self) -> bool {
-        self.audio_sum < 1000.0 / 32768.0
+        self.silent
     }
 
     fn screen_activity(&self) -> f32 {

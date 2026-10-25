@@ -20,6 +20,13 @@ use rubato::{FastFixedIn, PolynomialDegree, Resampler};
 
 use crate::audio_recorder::{AudioRecorder, RecorderOptions};
 
+/// Peak level at or below which audio counts as silence.
+pub const SILENCE_LEVEL: f32 = 0.001;
+
+pub fn is_silent(samples: &[f32]) -> bool {
+    samples.iter().all(|s| s.abs() <= SILENCE_LEVEL)
+}
+
 /// How far from `1.0` [`AudioResampler::set_adjust`] may move the ratio; the
 /// resampler is built with this much headroom.
 const MAX_RATIO_ADJUST: f64 = 0.05;
@@ -301,6 +308,7 @@ pub struct AudioSink {
     /// closed is still in force when it opens again.
     volume: Volume,
     recorder: Option<AudioRecorder>,
+    silence_stop: bool,
 }
 
 impl AudioSink {
@@ -338,12 +346,36 @@ impl AudioSink {
     pub fn start_recording(&mut self, path: impl Into<std::path::PathBuf>, opts: RecorderOptions) {
         self.stop_recording();
         self.recorder = Some(AudioRecorder::new(path, opts));
+        self.silence_stop = false;
     }
 
     pub fn stop_recording(&mut self) {
         if let Some(recorder) = self.recorder.take() {
             recorder.finish();
         }
+    }
+
+    /// Ends the recording because the audio went quiet.
+    pub fn stop_on_silence(&mut self) {
+        if self.recorder.is_some() {
+            self.stop_recording();
+            self.silence_stop = true;
+        }
+    }
+
+    /// Whether a recording ended on silence since the last call.
+    pub fn take_silence_stop(&mut self) -> bool {
+        std::mem::take(&mut self.silence_stop)
+    }
+
+    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
+        if let Some(recorder) = &mut self.recorder {
+            recorder.set_cover(jpeg);
+        }
+    }
+
+    pub fn stops_on_silence(&self) -> bool {
+        self.recorder.as_ref().is_some_and(AudioRecorder::stops_on_silence)
     }
 
     pub fn recording_time(&self) -> Option<std::time::Duration> {
@@ -371,7 +403,7 @@ impl AudioSink {
             }
         }
         if self.recorder.as_ref().is_some_and(AudioRecorder::is_done) {
-            self.stop_recording();
+            self.stop_on_silence();
         }
     }
 

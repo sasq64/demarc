@@ -223,6 +223,7 @@ pub(crate) fn update_ui(
     settings: Res<crate::demarc_settings::DemarcSettings>,
     dialog: Option<Res<SettingsState<crate::demarc_settings::DemarcSettings>>>,
     emus: Query<&crate::emulator::Emulator>,
+    app: Res<crate::config::AppSettings>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     if let (Some(size), Some(factor)) =
@@ -245,7 +246,12 @@ pub(crate) fn update_ui(
         ctx,
         time.elapsed_secs(),
         crate::emu_file::bytes_in_progress(),
-        emus.iter().filter_map(|e| e.sink.recording_time()).max(),
+        app.record.then(|| {
+            emus.iter()
+                .filter_map(|e| e.sink.recording_time())
+                .max()
+                .unwrap_or_default()
+        }),
     );
     if let Some(picked) = draw_picker(ctx, &mut state.picker) {
         selected.write(FuzzyListSelect {

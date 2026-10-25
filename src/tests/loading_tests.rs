@@ -14,6 +14,7 @@ fn world(db: &[&'static str]) -> (World, tempfile::TempDir) {
     world.init_resource::<AppSettings>();
     world.init_resource::<GlobalSettings>();
     world.init_resource::<CrossFade>();
+    world.init_resource::<DemarcSettings>();
     world.init_resource::<Time>();
     world.init_resource::<Messages<SetHudText>>();
     world.init_resource::<Messages<LoadFile>>();

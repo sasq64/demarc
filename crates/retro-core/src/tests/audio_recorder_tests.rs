@@ -39,9 +39,9 @@ fn zero_gap_restarts_pre_roll() {
 #[test]
 fn stop_on_silence_trims_the_tail() {
     let mut rec = AudioRecorder::new("x.wav", opts(Some(0.5), Some(Duration::from_millis(3))));
-    rec.push(1000, &[0.9, 0.0, 0.01, 0.01, 0.01, 0.01]);
+    rec.push(1000, &[0.9, 0.0, 0.001, 0.001, 0.001, 0.001]);
     assert!(!rec.is_done());
-    rec.push(1000, &[0.01, 0.01, 0.9, 0.9]);
+    rec.push(1000, &[0.001, 0.001, 0.9, 0.9]);
     assert!(rec.is_done());
     assert_eq!(rec.samples, [0.9, 0.0]);
 }
@@ -85,6 +85,12 @@ fn finish_also_writes_an_mp3() {
         &path,
         RecorderOptions {
             mp3: true,
+            tags: Tags {
+                title: Some("Atrium".into()),
+                year: Some(2008),
+                cover: Some(vec![0xff, 0xd8, 0xff]),
+                ..Default::default()
+            },
             ..Default::default()
         },
     );
@@ -93,4 +99,9 @@ fn finish_also_writes_an_mp3() {
     rec.finish().unwrap().join().unwrap();
     let mp3 = std::fs::read(path.with_extension("mp3")).unwrap();
     assert!(mp3.len() > 1000);
+    let tag = id3::Tag::read_from_path(path.with_extension("mp3")).unwrap();
+    use id3::TagLike;
+    assert_eq!(tag.title(), Some("Atrium"));
+    assert_eq!(tag.year(), Some(2008));
+    assert_eq!(tag.pictures().next().unwrap().data, [0xff, 0xd8, 0xff]);
 }

@@ -119,6 +119,7 @@ fn swap_roles(
     s_emu.state = EmuState::InfoDelay;
     // Off the main thread: tearing a core down joins its worker thread, which
     // landed as a stutter on the frame the fade ended.
+    o_emu.sink.stop_recording();
     o_emu.drop_core_async();
 
     debug!("Cross fade emulator took over view {}", s_view.index);

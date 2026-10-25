@@ -280,6 +280,10 @@ pub struct Args {
     #[arg(long)]
     pub tv_mode: bool,
 
+    /// Start with audio recording on
+    #[arg(long)]
+    pub record: bool,
+
     /// Skip demo after still screen and no audio
     #[arg(long, default_value_t = 0)]
     pub idle_timeout: i32,
@@ -681,6 +685,8 @@ pub struct AppSettings {
     pub speed_test: bool,
     pub latency: Latency,
     pub tv_mode: bool,
+    /// Record the audio of every demo started.
+    pub record: bool,
     pub idle_timeout: i32,
     pub info_delay: u64,
     pub info_duration: u64,
