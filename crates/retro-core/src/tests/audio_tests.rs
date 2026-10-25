@@ -68,3 +68,22 @@ fn clears_what_an_underrun_left_behind() {
     finish_buffer(&mut output, 4, 0.5);
     assert_eq!(output, [0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]);
 }
+
+#[test]
+fn audio_out_pushes_into_the_sinks_ring() {
+    let sink = AudioSink::default();
+    {
+        let mut state = sink.state();
+        state.sample_rate = 44100.0;
+        state.resampler = Some(AudioResampler::new(44100, 44100).unwrap());
+    }
+    let (producer, _consumer) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
+    sink.set_producer(producer);
+
+    let out = sink.out();
+    std::thread::spawn(move || out.push(44100.0, &[0.5; 4096]))
+        .join()
+        .unwrap();
+
+    assert!(sink.occupied_len() > 0);
+}

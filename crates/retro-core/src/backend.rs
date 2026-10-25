@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use crate::audio::AudioOut;
+
 /// A finished frame of packed RGBA pixels, cheap to clone and hold on to.
 #[derive(Clone, Default)]
 pub struct VideoFrame {
@@ -160,6 +162,16 @@ pub trait Backend {
     /// How many finished frames the backend may run ahead of the frontend, up
     /// to [`MAX_LATENCY`].
     fn set_latency(&mut self, _frames: usize) {}
+
+    /// Have the backend push its audio into `out` from its own thread instead
+    /// of through [`Backend::with_audio`]. Returns whether it will.
+    fn set_audio_out(&mut self, _out: AudioOut) -> bool {
+        false
+    }
+
+    /// Called every frontend tick, so the backend can tell the frontend has
+    /// stopped running.
+    fn keep_alive(&self) {}
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture

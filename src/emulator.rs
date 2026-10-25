@@ -38,6 +38,9 @@ fn cover_art(shot: &image::RgbaImage) -> Result<Vec<u8>> {
 /// A recording stops once the core has sent no audio for this long.
 const AUDIO_STOPPED_SECS: f64 = 2.0;
 
+/// Furthest behind its frame clock an emulator catches up instead of resyncing.
+const MAX_CATCH_UP: f64 = 0.25;
+
 type AudioTap = Box<dyn Fn(u32, &[f32]) + Send>;
 
 /// Sees every emulator's audio, for the remote control script.
@@ -127,6 +130,8 @@ pub struct Emulator {
     pub show_info: bool,
     pub match_frames: usize,
     pub sink: AudioSink,
+    /// The core pushes its audio into [`Self::sink`] from its own thread.
+    pub self_audio: bool,
     pub key_map: HashMap<KeyCode, libretro::retro_key>,
     /// Multiplier on the resample ratio; `1.0` is no correction.
     pub audio_rate_adjust: f64,
@@ -448,6 +453,7 @@ impl Emulator {
             sink,
             audio_rate_adjust,
             audio_seen,
+            self_audio,
             ..
         } = self;
         let Some(core) = core else {
@@ -464,7 +470,9 @@ impl Emulator {
             *audio_seen = true;
             got_audio = true;
             tap_audio(from as u32, samples);
-            sink.push_audio(from as f32, samples);
+            if !*self_audio {
+                sink.push_audio(from as f32, samples);
+            }
         });
         got_audio
     }
@@ -697,6 +705,7 @@ impl Emulator {
     }
 
     pub fn set_latency(&mut self, latency: LatencySetting) {
+        self.sink.set_low_water(latency.audio_buf_min);
         if self.latency != latency {
             self.latency = latency;
             if let Some(core) = self.core.as_mut() {
@@ -722,6 +731,7 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return true;
         };
+        core.keep_alive();
         let idle = core.is_idle();
         let t = time.elapsed_secs();
         // A paused core stands still because it was asked to, so the timer is
@@ -805,6 +815,10 @@ impl Emulator {
             result = core.run();
         } else {
             let t = time.elapsed_secs_f64();
+            // Back from a stall: catching up would flood the audio ring.
+            if t - self.next_frame > MAX_CATCH_UP {
+                self.next_frame = t;
+            }
             while t >= self.next_frame {
                 result = core.run();
                 self.next_frame += frame_time;

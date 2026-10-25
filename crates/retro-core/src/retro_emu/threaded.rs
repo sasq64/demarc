@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
+use crate::audio::AudioOut;
 use crate::backend::{Backend, InputEvent, MAX_LATENCY, STATE_SKIPPING, VideoFrame, ViewFocus};
 use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
 
@@ -39,11 +40,40 @@ pub(super) fn clamp_latency(frames: usize) -> usize {
 }
 
 /// The frames in the update channel, and how many the worker may put there.
-#[derive(Default)]
 struct Fill {
     queued: AtomicUsize,
     limit: AtomicUsize,
+    epoch: Instant,
+    /// Milliseconds since `epoch` the frontend last ticked.
+    last_tick: AtomicU64,
 }
+
+impl Default for Fill {
+    fn default() -> Self {
+        Self {
+            queued: AtomicUsize::new(0),
+            limit: AtomicUsize::new(0),
+            epoch: Instant::now(),
+            last_tick: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Fill {
+    fn tick(&self) {
+        let ms = self.epoch.elapsed().as_millis() as u64;
+        self.last_tick.store(ms, Ordering::Relaxed);
+    }
+
+    fn stalled(&self) -> bool {
+        let ms = self.epoch.elapsed().as_millis() as u64;
+        ms.saturating_sub(self.last_tick.load(Ordering::Relaxed)) > STALL_TIME.as_millis() as u64
+    }
+}
+
+/// How long the frontend may go without ticking before the worker paces
+/// itself on the audio ring instead.
+const STALL_TIME: Duration = Duration::from_millis(100);
 
 /// Commands the main thread sends to the worker that owns the `RetroCore`.
 pub(super) enum RetroCmd {
@@ -86,6 +116,7 @@ pub(super) enum RetroCmd {
     SendEvents {
         events: Vec<(u32, InputEvent)>,
     },
+    SetAudioOut(AudioOut),
 }
 
 /// One step of a scheduled event, due on an absolute frame.
@@ -325,12 +356,14 @@ fn worker_loop(
     let mut window_start = Instant::now();
     let mut idle = Duration::ZERO;
     let mut cpu = 0.0f32;
+    let mut out: Option<AudioOut> = None;
     loop {
         let frame = frames.load(Ordering::Relaxed);
 
         // Drain all pending commands without blocking.
         loop {
             match cmd_rx.try_recv() {
+                Ok(RetroCmd::SetAudioOut(o)) => out = Some(o),
                 Ok(cmd) => {
                     if apply_cmd(core, cmd, &mut key_queue, frame, state) {
                         return; // Unload
@@ -341,8 +374,9 @@ fn worker_loop(
             }
         }
 
-        if !speed_test && fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed)
-        {
+        let full = fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed);
+        let free_run = full && out.as_ref().is_some_and(|o| o.is_low(fill.stalled()));
+        if !speed_test && full && !free_run {
             let t = Instant::now();
             thread::park_timeout(THROTTLE_POLL);
             idle += t.elapsed();
@@ -409,6 +443,9 @@ fn worker_loop(
 
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
+            if let Some(out) = &out {
+                out.push(core.sample_rate() as f32, &audio);
+            }
 
             let window = window_start.elapsed();
             if window >= CPU_WINDOW {
@@ -439,6 +476,8 @@ fn worker_loop(
                     Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
                     Err(mpsc::TrySendError::Disconnected(_)) => return,
                 }
+            } else if free_run {
+                // Nobody is taking frames; drop this one rather than block.
             } else {
                 fill.queued.fetch_add(1, Ordering::AcqRel);
                 let t = Instant::now();
@@ -483,6 +522,7 @@ pub(super) fn apply_cmd(
             core.unload();
             return true;
         }
+        RetroCmd::SetAudioOut(_) => {}
         RetroCmd::Skip { frames } => {
             core.skip_frames = frames;
             // A zero-frame skip is a no-op, so make sure it doesn't leave the
@@ -523,6 +563,7 @@ pub(super) fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
 
 impl Backend for RetroCoreThreaded {
     fn run(&mut self) -> bool {
+        self.fill.tick();
         if let Ok(update) = self.update_rx.get_mut().unwrap().try_recv() {
             if !self.speed_test {
                 self.fill.queued.fetch_sub(1, Ordering::AcqRel);
@@ -560,6 +601,15 @@ impl Backend for RetroCoreThreaded {
 
     fn focus(&mut self, focus: ViewFocus) {
         let _ = self.cmd_tx.send(RetroCmd::SetFocus { focus });
+    }
+
+    fn set_audio_out(&mut self, out: AudioOut) -> bool {
+        self.fill.tick();
+        self.cmd_tx.send(RetroCmd::SetAudioOut(out)).is_ok()
+    }
+
+    fn keep_alive(&self) {
+        self.fill.tick();
     }
 
     fn send_events(&mut self, events: &[(u32, InputEvent)]) {

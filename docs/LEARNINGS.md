@@ -654,3 +654,10 @@
 - "The recording sounds distorted" turned out to be mpv's own volume boost.
   Before digging into the pipeline, ask what it was played with, or compare
   levels in the file itself (RMS/clip count with numpy) against another player.
+
+- The audio ring runs near `audio_buf_min` (2000-5400 samples, 20-55 ms at
+  48 kHz stereo), so any "frontend has stalled" timeout longer than that
+  underruns before it fires. The worker steps on its own below
+  `audio_buf_min` instead. And a frontend coming back from a stall must not
+  catch up on every missed frame: each pull lets the worker push more audio and
+  the ring overflows.

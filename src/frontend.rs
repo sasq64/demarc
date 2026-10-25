@@ -577,7 +577,13 @@ pub(crate) fn run_frontend(
 
         let frame = emu.core.as_ref().unwrap().frame();
         emu.frame_queue.push_back(frame);
-        while emu.frame_queue.len() > emu.latency.video_delay + 1 {
+        // Audio of a self-pushing core is ahead by the frames it runs ahead.
+        let video_delay = if emu.self_audio {
+            emu.latency.video_delay.saturating_sub(emu.latency.latency)
+        } else {
+            emu.latency.video_delay
+        };
+        while emu.frame_queue.len() > video_delay + 1 {
             emu.frame_queue.pop_front();
         }
         let frame = emu.frame_queue.front().unwrap().clone();

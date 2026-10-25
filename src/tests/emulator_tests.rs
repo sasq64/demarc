@@ -1,4 +1,3 @@
-use std::sync::Mutex;
 use std::time::Duration;
 
 use ringbuf::traits::{Producer, Split};
@@ -554,7 +553,7 @@ fn a_full_audio_buffer_drops_the_frame() {
     let max = emu.latency.audio_buf_max;
     let (mut producer, _consumer) = ringbuf::HeapRb::<f32>::new(max * 2).split();
     producer.push_iter(std::iter::repeat_n(0.0, max + 1));
-    emu.sink.producer = Some(Mutex::new(producer));
+    emu.sink.set_producer(producer);
 
     assert!(emu.run(&Time::default()));
 

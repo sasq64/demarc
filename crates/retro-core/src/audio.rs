@@ -298,100 +298,30 @@ pub fn init_audio_stream(
 /// Samples the ring between an emulator and its audio callback holds.
 pub const RING_SIZE: usize = 4096 * 8;
 
+/// Ring fill a worker keeps up on its own while the frontend is not ticking.
+pub const STALL_FILL: usize = RING_SIZE / 4;
+
 #[derive(Default)]
-pub struct AudioSink {
-    pub producer: Option<Mutex<HeapProd<f32>>>,
-    pub sample_rate: f32,
-    pub stream: Option<SendStream>,
-    pub resampler: Option<AudioResampler>,
-    /// Survives [`AudioSink::deactivate`], so a level set while the sink is
-    /// closed is still in force when it opens again.
-    volume: Volume,
+struct SinkState {
+    producer: Option<HeapProd<f32>>,
+    sample_rate: f32,
+    resampler: Option<AudioResampler>,
     recorder: Option<AudioRecorder>,
     silence_stop: bool,
+    /// Fill under which a worker steps on its own rather than let the ring run dry.
+    low_water: usize,
 }
 
-impl AudioSink {
-    pub fn activate(&mut self) {
-        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
-        let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.volume.clone()) else {
-            error!("Could not init audio");
-            return;
-        };
-
-        let resampler = AudioResampler::new(44100, sample_rate as u32)
-            .expect("Failed to create audio resampler");
-
-        self.stream = Some(SendStream(stream));
-        self.sample_rate = sample_rate;
-        self.producer = Some(Mutex::new(producer));
-        self.resampler = Some(resampler);
-    }
-
-    pub fn deactivate(&mut self) {
-        self.stream = None;
-        self.producer = None;
-        self.resampler = None;
-    }
-
-    /// Set this sink's output level, `0` (silent) to `1`.
-    pub fn set_volume(&self, level: f32) {
-        self.volume.set(level);
-    }
-
-    pub fn volume(&self) -> f32 {
-        self.volume.get()
-    }
-
-    pub fn start_recording(&mut self, path: impl Into<std::path::PathBuf>, opts: RecorderOptions) {
-        self.stop_recording();
-        self.recorder = Some(AudioRecorder::new(path, opts));
-        self.silence_stop = false;
-    }
-
-    pub fn stop_recording(&mut self) {
-        if let Some(recorder) = self.recorder.take() {
-            recorder.finish();
-        }
-    }
-
-    /// Ends the recording because the audio went quiet.
-    pub fn stop_on_silence(&mut self) {
-        if self.recorder.is_some() {
-            self.stop_recording();
-            self.silence_stop = true;
-        }
-    }
-
-    /// Whether a recording ended on silence since the last call.
-    pub fn take_silence_stop(&mut self) -> bool {
-        std::mem::take(&mut self.silence_stop)
-    }
-
-    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
-        if let Some(recorder) = &mut self.recorder {
-            recorder.set_cover(jpeg);
-        }
-    }
-
-    pub fn stops_on_silence(&self) -> bool {
-        self.recorder.as_ref().is_some_and(AudioRecorder::stops_on_silence)
-    }
-
-    pub fn recording_time(&self) -> Option<std::time::Duration> {
-        self.recorder.as_ref().map(AudioRecorder::elapsed)
-    }
-
-    pub fn push_audio(&mut self, from: f32, samples: &[f32]) {
+impl SinkState {
+    fn push_audio(&mut self, from: f32, samples: &[f32]) {
         let mut recorder = self.recorder.as_mut();
         if let Some(rec) = &mut recorder {
             rec.push(from as u32, samples);
         }
         if let Some(resampler) = &mut self.resampler
-            && let Some(producer) = &self.producer
+            && let Some(p) = &mut self.producer
         {
             let rate = self.sample_rate as u32;
-            let mut p = producer.lock().unwrap();
             let res = resampler.process(from as u32, samples, |l, r| {
                 p.push_iter([l, r].into_iter());
                 if let Some(rec) = &mut recorder {
@@ -407,18 +337,152 @@ impl AudioSink {
         }
     }
 
+    fn stop_recording(&mut self) {
+        if let Some(recorder) = self.recorder.take() {
+            recorder.finish();
+        }
+    }
+
+    fn stop_on_silence(&mut self) {
+        if self.recorder.is_some() {
+            self.stop_recording();
+            self.silence_stop = true;
+        }
+    }
+
+    fn occupied_len(&self) -> usize {
+        self.producer.as_ref().map_or(6000, |p| p.occupied_len())
+    }
+}
+
+/// A handle another thread pushes audio into an [`AudioSink`] through.
+#[derive(Clone)]
+pub struct AudioOut(Arc<Mutex<SinkState>>);
+
+impl AudioOut {
+    pub fn push(&self, from: f32, samples: &[f32]) {
+        self.0.lock().unwrap().push_audio(from, samples);
+    }
+
+    /// Whether the ring is running low; `stalled` raises the bar to [`STALL_FILL`].
+    /// Never true while the sink plays nowhere.
+    pub fn is_low(&self, stalled: bool) -> bool {
+        let state = self.0.lock().unwrap();
+        let target = if stalled {
+            STALL_FILL.max(state.low_water)
+        } else {
+            state.low_water
+        };
+        state.producer.as_ref().is_some_and(|p| p.occupied_len() < target)
+    }
+}
+
+#[derive(Default)]
+pub struct AudioSink {
+    pub stream: Option<SendStream>,
+    /// Survives [`AudioSink::deactivate`], so a level set while the sink is
+    /// closed is still in force when it opens again.
+    volume: Volume,
+    state: Arc<Mutex<SinkState>>,
+}
+
+impl AudioSink {
+    fn state(&self) -> std::sync::MutexGuard<'_, SinkState> {
+        self.state.lock().unwrap()
+    }
+
+    pub fn out(&self) -> AudioOut {
+        AudioOut(Arc::clone(&self.state))
+    }
+
+    pub fn activate(&mut self) {
+        let (producer, consumer) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
+        let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.volume.clone()) else {
+            error!("Could not init audio");
+            return;
+        };
+
+        let resampler = AudioResampler::new(44100, sample_rate as u32)
+            .expect("Failed to create audio resampler");
+
+        self.stream = Some(SendStream(stream));
+        let mut state = self.state();
+        state.sample_rate = sample_rate;
+        state.producer = Some(producer);
+        state.resampler = Some(resampler);
+    }
+
+    pub fn deactivate(&mut self) {
+        self.stream = None;
+        let mut state = self.state();
+        state.producer = None;
+        state.resampler = None;
+    }
+
+    pub fn set_low_water(&self, samples: usize) {
+        self.state().low_water = samples;
+    }
+
+    pub fn set_producer(&self, producer: HeapProd<f32>) {
+        self.state().producer = Some(producer);
+    }
+
+    /// Set this sink's output level, `0` (silent) to `1`.
+    pub fn set_volume(&self, level: f32) {
+        self.volume.set(level);
+    }
+
+    pub fn volume(&self) -> f32 {
+        self.volume.get()
+    }
+
+    pub fn start_recording(&mut self, path: impl Into<std::path::PathBuf>, opts: RecorderOptions) {
+        let mut state = self.state();
+        state.stop_recording();
+        state.recorder = Some(AudioRecorder::new(path, opts));
+        state.silence_stop = false;
+    }
+
+    pub fn stop_recording(&mut self) {
+        self.state().stop_recording();
+    }
+
+    /// Ends the recording because the audio went quiet.
+    pub fn stop_on_silence(&mut self) {
+        self.state().stop_on_silence();
+    }
+
+    /// Whether a recording ended on silence since the last call.
+    pub fn take_silence_stop(&mut self) -> bool {
+        std::mem::take(&mut self.state().silence_stop)
+    }
+
+    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
+        if let Some(recorder) = &mut self.state().recorder {
+            recorder.set_cover(jpeg);
+        }
+    }
+
+    pub fn stops_on_silence(&self) -> bool {
+        self.state().recorder.as_ref().is_some_and(AudioRecorder::stops_on_silence)
+    }
+
+    pub fn recording_time(&self) -> Option<std::time::Duration> {
+        self.state().recorder.as_ref().map(AudioRecorder::elapsed)
+    }
+
+    pub fn push_audio(&mut self, from: f32, samples: &[f32]) {
+        self.state().push_audio(from, samples);
+    }
+
     pub fn set_adjust(&mut self, audio_rate_adjust: f64) {
-        if let Some(resampler) = &mut self.resampler {
+        if let Some(resampler) = &mut self.state().resampler {
             resampler.set_adjust(audio_rate_adjust);
         }
     }
 
     pub fn occupied_len(&self) -> usize {
-        if let Some(producer) = &self.producer {
-            producer.lock().unwrap().occupied_len()
-        } else {
-            6000
-        }
+        self.state().occupied_len()
     }
 }
 
