@@ -37,6 +37,7 @@ use plus4::Plus4System;
 use psp::PspSystem;
 use sinclair::SinclairSystem;
 use snes::SNESSystem;
+use spectrum_next::SpectrumNextSystem;
 use std::collections::{HashMap, HashSet};
 use tic80::Tic80System;
 use web::WebSystem;
@@ -66,6 +67,7 @@ mod plus4;
 mod psp;
 mod sinclair;
 mod snes;
+mod spectrum_next;
 mod tic80;
 mod web;
 // Windows runs them itself and Linux runs them under wine; everywhere else a
@@ -553,6 +555,7 @@ impl NewSys {
             Box::new(PSXSystem {}),
             Box::new(PspSystem {}),
             Box::new(AmstradSystem {}),
+            Box::new(SpectrumNextSystem {}),
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),

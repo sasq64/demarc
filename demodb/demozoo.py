@@ -145,6 +145,7 @@ PLATFORM_NAMES = {
     "Sony Playstation Portable (PSP)": "PSP",
     "TIC-80": "Tic-80",
     "PICO-8": "Pico8",
+    "ZX Spectrum Enhanced": "ZX Next",
 }
 
 POUET_IDS = {
@@ -426,6 +427,7 @@ PLATFORM_WHITELIST = [
     "Pico*",
     "PSP",
     "Browser",
+    "ZX Next",
 ]
 
 # Demozoo only really insists on a platform for executable prods; for graphics

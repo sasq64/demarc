@@ -75,6 +75,17 @@ x86box-core:
     ninja -C external/86box/build-lr
     @echo "core at external/86box/build-lr/src/86box_libretro.so"
 
+# Build the ZEsarUX (ZX Spectrum Next) libretro core out of external/zesarux,
+# on its libretro branch. See docs/ZESARUX.md.
+zesarux-core:
+    make -C external/zesarux/src -f Makefile.libretro -j
+    @echo "core at external/zesarux/src/zesarux_libretro.so"
+
+# Run a Next release through the locally built core.
+next file:
+    DEMARC_CORE_DIR={{justfile_directory()}}/external/zesarux/src \
+        cargo run --profile release-fast -- {{file}}
+
 # Run an 86Box machine config through the locally built core.
 pc file:
     DEMARC_CORE_DIR={{justfile_directory()}}/external/86box/build-lr/src \
