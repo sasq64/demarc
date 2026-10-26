@@ -165,6 +165,9 @@ boot = "dEEP"
 file = "CNCD_PRX-Deep.lha"
 fast = true
 
+[zoo.160452]
+boot = "hoffman-everyway-a500"
+
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
 events = [{ frame = 300, key = "Enter" }]
@@ -529,13 +532,13 @@ glsl = [
   },
 ]
 
-[zoo.136167]
-download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_86box.zip"
-
 # Ziphead / CNCD & Fairlight: with ntsync the render thread queues on ntdll's
 # fd_cache_mutex for seconds at a time; the picture stalls, the music plays on.
 [zoo.136314]
 meta = { wine_ntsync = "false" }
+
+[zoo.136167]
+download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_86box.zip"
 
 # Surveillance / Alcatraz. Its shader is NVIDIA-only GLSL (vec4 - vec2, a float
 # assigned to a vec4).
@@ -1051,3 +1054,6 @@ events = [{ frame = 20, key = "4" }, { frame = 30, key = "4" }, { frame = 40, ke
 
 [zoo.6704]
 events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame = 70, key = "Enter" }]
+
+[zoo.130035]
+meta = { dos4gw = "true" }
