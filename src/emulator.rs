@@ -21,18 +21,14 @@ use crate::workfile::WorkFile;
 mod load;
 pub(crate) use load::{LoadStatus, PendingLoad};
 
-/// The frame scaled to 300 high and cropped to the middle 300x300, as a JPEG.
+/// The middle square of the frame, at full height, as a PNG.
 fn cover_art(shot: &image::RgbaImage) -> Result<Vec<u8>> {
-    use image::imageops::{self, FilterType};
-    const SIZE: u32 = 300;
-    let width = (shot.width() * SIZE / shot.height().max(1)).max(1);
-    let scaled = imageops::resize(shot, width, SIZE, FilterType::Lanczos3);
-    let crop = width.min(SIZE);
-    let cropped = imageops::crop_imm(&scaled, (width - crop) / 2, 0, crop, SIZE).to_image();
+    let size = shot.width().min(shot.height());
+    let cropped = image::imageops::crop_imm(shot, (shot.width() - size) / 2, 0, size, size).to_image();
     let rgb = image::DynamicImage::ImageRgba8(cropped).into_rgb8();
-    let mut jpeg = Vec::new();
-    rgb.write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)?;
-    Ok(jpeg)
+    let mut png = Vec::new();
+    rgb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    Ok(png)
 }
 
 /// A recording stops once the core has sent no audio for this long.
@@ -348,7 +344,7 @@ impl Emulator {
             _ = shot.save(&path);
             if self.sink.recording_time().is_some() {
                 match cover_art(&shot) {
-                    Ok(jpeg) => self.sink.set_cover(jpeg),
+                    Ok(png) => self.sink.set_cover(png),
                     Err(e) => warn!("cover art: {e}"),
                 }
             }

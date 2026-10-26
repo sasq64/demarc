@@ -614,16 +614,16 @@ fn override_key_names_resolve_like_remote_scripts() {
 }
 
 #[test]
-fn cover_art_scales_to_300_high_and_crops_the_middle() {
+fn cover_art_crops_the_middle_square_at_full_height() {
     let mut shot = image::RgbaImage::from_pixel(400, 200, image::Rgba([0, 0, 255, 255]));
     for y in 0..200 {
         for x in 100..300 {
             shot.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
         }
     }
-    let jpeg = cover_art(&shot).unwrap();
-    let cover = image::load_from_memory(&jpeg).unwrap().into_rgb8();
-    assert_eq!(cover.dimensions(), (300, 300));
-    assert!(cover.get_pixel(150, 150)[0] > 200);
-    assert!(cover.get_pixel(5, 150)[2] < 100);
+    let png = cover_art(&shot).unwrap();
+    let cover = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap().into_rgb8();
+    assert_eq!(cover.dimensions(), (200, 200));
+    assert!(cover.get_pixel(100, 100)[0] > 200);
+    assert!(cover.get_pixel(5, 100)[2] < 100);
 }

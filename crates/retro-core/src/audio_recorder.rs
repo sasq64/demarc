@@ -35,7 +35,7 @@ pub struct Tags {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub year: Option<i32>,
-    /// JPEG front cover.
+    /// PNG front cover.
     pub cover: Option<Vec<u8>>,
 }
 
@@ -159,8 +159,8 @@ impl AudioRecorder {
         self.state == State::Done
     }
 
-    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
-        self.opts.tags.cover = Some(jpeg);
+    pub fn set_cover(&mut self, png: Vec<u8>) {
+        self.opts.tags.cover = Some(png);
     }
 
     /// Recording, and set to stop by itself when the audio goes quiet.
@@ -250,7 +250,7 @@ fn write_tags(path: &Path, tags: &Tags) -> Result<()> {
     }
     if let Some(cover) = &tags.cover {
         tag.add_frame(id3::frame::Picture {
-            mime_type: "image/jpeg".into(),
+            mime_type: "image/png".into(),
             picture_type: id3::frame::PictureType::CoverFront,
             description: String::new(),
             data: cover.clone(),

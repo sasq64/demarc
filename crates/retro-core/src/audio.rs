@@ -457,9 +457,9 @@ impl AudioSink {
         std::mem::take(&mut self.state().silence_stop)
     }
 
-    pub fn set_cover(&mut self, jpeg: Vec<u8>) {
+    pub fn set_cover(&mut self, png: Vec<u8>) {
         if let Some(recorder) = &mut self.state().recorder {
-            recorder.set_cover(jpeg);
+            recorder.set_cover(png);
         }
     }
 
