@@ -7,6 +7,7 @@ fn args(base: &str, prefix: &str, workdir: Option<&str>) -> Vec<String> {
         Path::new(prefix),
         workdir.map(Path::new),
         None,
+        None,
     )
 }
 
@@ -133,6 +134,7 @@ fn binds_the_cpu_count_over_sysfs() {
         Path::new("/session"),
         None,
         Some(Path::new("/run/x/0.cpus")),
+        None,
     );
     for file in CPU_FILES {
         let at = args.iter().position(|a| a == file).expect("the file bound");
@@ -144,6 +146,23 @@ fn binds_the_cpu_count_over_sysfs() {
             .iter()
             .any(|a| a == "--ro-bind")
     );
+}
+
+#[test]
+fn binds_a_file_over_ntsync() {
+    let args = bwrap_args(
+        Path::new("/base"),
+        Path::new("/session"),
+        None,
+        None,
+        Some(Path::new("/run/x/0.nontsync")),
+    );
+    let at = args.iter().position(|a| a == NTSYNC_DEVICE).expect("the device bound");
+    assert_eq!(args[at - 2], "--ro-bind");
+    assert_eq!(args[at - 1], "/run/x/0.nontsync");
+    let off = HashMap::from([(META_NTSYNC.to_string(), "false".to_string())]);
+    assert!(!ntsync(&off));
+    assert!(ntsync(&HashMap::new()));
 }
 
 #[test]
@@ -161,7 +180,7 @@ fn parses_the_cpu_count() {
 #[test]
 fn refuses_a_prefix_that_is_not_there() {
     let missing = std::env::temp_dir().join("demarc-no-such-prefix");
-    assert!(prepare(&missing, None, None).is_err());
+    assert!(prepare(&missing, None, None, true).is_err());
 }
 
 /// A crash leaves mount points behind. They are empty directories rather than

@@ -465,7 +465,12 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
     // directory to start anything in. Left out, the sandbox keeps demarc's own
     // working directory, which is the one that name was relative to anyway.
     let workdir = file.path.parent().filter(|dir| !dir.as_os_str().is_empty());
-    match wine_sandbox::prepare(&wine_prefix().ok()?, workdir, wine_sandbox::cpus(&meta)) {
+    match wine_sandbox::prepare(
+        &wine_prefix().ok()?,
+        workdir,
+        wine_sandbox::cpus(&meta),
+        wine_sandbox::ntsync(&meta),
+    ) {
         Ok(sandbox) => Some(sandbox),
         Err(err) => {
             info!("Running in the shared wine prefix: {err}");

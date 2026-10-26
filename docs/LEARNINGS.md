@@ -661,3 +661,32 @@
   `audio_buf_min` instead. And a frontend coming back from a stall must not
   catch up on every missed frame: each pull lets the worker push more audio and
   the ring overflows.
+
+- `--headless` opens no audio output, so `AudioOut::is_low` is never true and a
+  threaded worker never free-runs: a stalled frontend parks it outright. A stall
+  test there leaves gaps between `retro_run`s that a windowed run never has,
+  so only a fault that reproduces both ways is real. A busy-wait in the remote
+  script (`while os.clock() - t < 0.4 do end`) stalls the main loop.
+
+- A new directory directly under `system/` (here `system/zesarux/`) is not
+  packed into the embedded `system.zip` until the build script reruns, so the
+  first headless run logged `Unable to open rom file`. `touch
+  crates/newsys/build.rs` before building, and check with `unzip -l` on
+  `target/<profile>/build/newsys-*/out/system.zip`.
+
+- A wine process is not named after its exe on the host: `pgrep -f name.exe`
+  matches the calling shell (its own command line contains the pattern) and
+  `pkill -f` on it kills the tool call. Find the demo with
+  `ps -eo pid,comm | awk '$2 ~ /^name/'`. VSZ is useless under wow64; sum
+  `/proc/<pid>/maps` below 0x7fff0000 for what a 32-bit exe has left.
+- "Picture freezes, music plays on" in Ziphead (`zoo.136314`) was not memory:
+  I set LAA and `cache_writeback` first, on a guess, and neither helped. What
+  found it: a temporary per-second new-frame counter in the gamescope core's
+  `retro_run` (stalls of 0-2 fps for seconds), then the render thread's
+  voluntary context switches (150/s smooth, 20-40k/s stalled) and the futex
+  address in `/proc/<pid>/task/<tid>/syscall`, mapped through `/proc/<pid>/maps`
+  and `nm ntdll.so` to `fd_cache_mutex`. ntsync misses take it around a
+  wineserver call. `wine_ntsync=false` (hides `/dev/ntsync` in the sandbox)
+  removed every stall. Measure before patching.
+- winedbg `attach` to a running wow64 demo kills it (page fault in the break
+  thread), so a single `bt all` is all one run gives.

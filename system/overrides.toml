@@ -532,6 +532,11 @@ glsl = [
 [zoo.136167]
 download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_86box.zip"
 
+# Ziphead / CNCD & Fairlight: with ntsync the render thread queues on ntdll's
+# fd_cache_mutex for seconds at a time; the picture stalls, the music plays on.
+[zoo.136314]
+meta = { wine_ntsync = "false" }
+
 # Surveillance / Alcatraz. Its shader is NVIDIA-only GLSL (vec4 - vec2, a float
 # assigned to a vec4).
 [zoo.155010]

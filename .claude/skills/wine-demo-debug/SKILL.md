@@ -231,6 +231,14 @@ exe (Adelanto, `zoo.46032`); env vars do not shorten wine's extension string.
 A "no OpenGL 1.x driver" error can be a `strstr(GL_VERSION, "1.")` that
 hits Mesa's `arch1.1` (Arise, `zoo.31637`).
 
+**Picture stalls for seconds, music plays on.** Count new frames per second
+(a temporary log in the gamescope core's `retro_run`; demarc's own calls stay
+at 60). Stalls with the GPU idle and the render thread at thousands of
+voluntary context switches a second are lock contention: the futex address
+from `/proc/<pid>/task/<tid>/syscall`, looked up in `maps` and `nm ntdll.so`,
+names the lock. `fd_cache_mutex` is ntsync's handle cache: `wine_ntsync=false`
+(Ziphead, `zoo.136314`). Find the pid with `ps -eo pid,comm`, never `pgrep -f`.
+
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
 

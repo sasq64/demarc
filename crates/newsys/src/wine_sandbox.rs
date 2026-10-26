@@ -85,6 +85,12 @@ pub const DEFAULT_SANDBOX: bool = true;
 /// Entry key: how many CPUs the demo sees. Only works inside the sandbox.
 pub const META_CPUS: &str = "wine_cpus";
 
+/// Entry key: `false` hides `/dev/ntsync`, so wine waits through wineserver.
+/// Only works inside the sandbox.
+pub const META_NTSYNC: &str = "wine_ntsync";
+
+const NTSYNC_DEVICE: &str = "/dev/ntsync";
+
 /// The sysfs files wine reads the CPU count from.
 const CPU_FILES: [&str; 2] = [
     "/sys/devices/system/cpu/online",
@@ -209,6 +215,7 @@ fn bwrap_args(
     prefix: &Path,
     workdir: Option<&Path>,
     cpus: Option<&Path>,
+    hide_ntsync: Option<&Path>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         BWRAP.into(),
@@ -245,6 +252,13 @@ fn bwrap_args(
         "WINEPREFIX".into(),
         prefix.to_string_lossy().into_owned(),
     ];
+    if let Some(file) = hide_ntsync {
+        args.extend([
+            "--ro-bind".into(),
+            file.to_string_lossy().into_owned(),
+            NTSYNC_DEVICE.into(),
+        ]);
+    }
     if let Some(cpus) = cpus {
         for file in CPU_FILES {
             args.extend([
@@ -314,7 +328,7 @@ fn usable(base: &Path) -> bool {
         // Overlaid onto itself: the probe wants a real overlay of a real
         // prefix, and inside the sandbox that is all this is. Nothing is
         // written, and the mount is gone with the process.
-        let args = bwrap_args(base, base, None, None);
+        let args = bwrap_args(base, base, None, None, None);
         let ok = Command::new(&args[0])
             .args(&args[1..])
             .arg("true")
@@ -353,11 +367,21 @@ pub fn cpus(meta: &HashMap<String, String>) -> Option<u32> {
     }
 }
 
+/// Does this entry let wine use ntsync? See [`META_NTSYNC`].
+pub fn ntsync(meta: &HashMap<String, String>) -> bool {
+    meta.get(META_NTSYNC).map(|v| is_yes(v)).unwrap_or(true)
+}
+
 /// Prepare a sandbox around `base`, with `workdir` as the working directory.
 ///
 /// Fails rather than falling back, so the caller decides what running without
 /// one means for it — which is not the same answer in both backends.
-pub fn prepare(base: &Path, workdir: Option<&Path>, cpus: Option<u32>) -> Result<Sandbox> {
+pub fn prepare(
+    base: &Path,
+    workdir: Option<&Path>,
+    cpus: Option<u32>,
+    ntsync: bool,
+) -> Result<Sandbox> {
     if !base.is_dir() {
         // Nothing to overlay: a first run, before wine has built the prefix.
         // Sandboxing it would build a prefix inside a tmpfs and throw it away
@@ -393,13 +417,29 @@ pub fn prepare(base: &Path, workdir: Option<&Path>, cpus: Option<u32>) -> Result
         None => None,
     };
 
+    // Unreadable, so wineserver's open fails and it falls back to its own waits.
+    let ntsync_file = if !ntsync && Path::new(NTSYNC_DEVICE).exists() {
+        let file = run.join(format!("{seq}.nontsync"));
+        fs::write(&file, "").with_context(|| format!("Could not write {}", file.display()))?;
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000))?;
+        Some(file)
+    } else {
+        None
+    };
+
     debug!(
         "Sandboxing the wine prefix {} as {}",
         base.display(),
         prefix.display()
     );
     Ok(Sandbox {
-        argv: bwrap_args(base, &prefix, workdir, cpus_file.as_deref()),
+        argv: bwrap_args(
+            base,
+            &prefix,
+            workdir,
+            cpus_file.as_deref(),
+            ntsync_file.as_deref(),
+        ),
         prefix,
     })
 }
