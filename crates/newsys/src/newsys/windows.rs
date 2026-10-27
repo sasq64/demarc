@@ -30,13 +30,13 @@ use crate::win_runner::WinRunner;
 use crate::wine::{
     DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
     META_D3D_CONFIG, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
-    WINMM_OVERRIDE, close_prefix, dll_overrides, fitting_modes, gl_compat, has_tool, wine_command,
+    WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
     wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
     META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
-    default_dialog_res, is_yes, on_steam_deck,
+    default_dialog_res, fitting_modes, is_yes, on_steam_deck,
 };
 #[cfg(target_os = "linux")]
 use crate::wine_sandbox::{self, Sandbox};
