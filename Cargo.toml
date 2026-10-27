@@ -104,7 +104,7 @@ newsys = { path = "crates/newsys" }
 rand = "0.10.1"
 # The libretro layer, split out so it can be built for targets the rest of
 # demarc cannot reach (see docs/ANDROID.md). Default features: no `player`.
-retro-core = { path = "crates/retro-core", features = ["mp3"] }
+retro-core = { path = "crates/retro-core" }
 # The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
 retro-ui = { path = "crates/retro-ui" }
 # The `.slangp` filter chains, and the only thing that links librashader.
@@ -167,7 +167,9 @@ zbus = { version = "5", features = ["tokio"] }
 libc.workspace = true
 
 [features]
-default = []
+default = ["mp3"]
+# MP3 recording; off in `just win`, since mp3lame-sys can't cross-compile to MSVC.
+mp3 = ["retro-core/mp3"]
 # Enables the Flash (SWF) backend (crates/flash-emu) and its Ruffle dependencies.
 flash = ["dep:flash-emu"]
 hotpath = ["hotpath/hotpath"]

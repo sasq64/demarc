@@ -207,7 +207,7 @@ compshim:
 # scripts/prepare-xwin.sh patches the SDK cache -- see the comments there.
 win:
     ./scripts/prepare-xwin.sh
-    CXXFLAGS="-mssse3 -maes" cargo xwin build --release --target x86_64-pc-windows-msvc
+    CXXFLAGS="-mssse3 -maes" cargo xwin build --release --no-default-features --target x86_64-pc-windows-msvc
     cp target/x86_64-pc-windows-msvc/release/demarc.exe {{ZOLA}}/static/dl/
 
 site:
