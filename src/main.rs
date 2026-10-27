@@ -17,7 +17,6 @@ pub use retro_core::{audio, backend, libretro, pixels, retro_emu};
 // re-export blocks keep the rest of demarc's `crate::<module>` paths working.
 #[cfg(target_os = "windows")]
 pub use ::newsys::win_runner;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub use ::newsys::wine;
 #[cfg(target_os = "linux")]
 pub use ::newsys::wine_sandbox;

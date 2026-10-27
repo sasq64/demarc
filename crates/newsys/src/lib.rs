@@ -27,7 +27,6 @@ pub mod tiff_pal;
 pub mod utils;
 #[cfg(target_os = "windows")]
 pub mod win_runner;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod wine;
 #[cfg(target_os = "linux")]
 pub mod wine_log;

@@ -200,10 +200,12 @@ struct RawGlsl {
     edits: Vec<[String; 2]>,
 }
 
+pub const GLSL_PATCH_SEP: char = '\u{1d}';
+pub const GLSL_FIELD_SEP: char = '\u{1e}';
+
 impl RawGlsl {
     /// The patch in the form `META_GLSL_PATCHES` holds.
     fn build(self) -> Result<String> {
-        use newsys::wine::{GLSL_FIELD_SEP, GLSL_PATCH_SEP};
         let selector = match (self.hash, self.pattern) {
             (Some(hash), None) => {
                 if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {

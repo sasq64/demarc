@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
