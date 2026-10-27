@@ -104,7 +104,7 @@ pub fn is_disk_image(path: &Path) -> bool {
     if let Some(ext) = path.extension().and_then(|p| p.to_str()) {
         let ext = ext.to_lowercase();
         return [
-            "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
+            "d64", "d81", "adf", "dms", "msa", "st", "stx", "dim", "atr", "xex", "cue", "chd",
         ]
         .contains(&ext.as_str());
     }

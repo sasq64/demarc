@@ -321,7 +321,7 @@ impl System for AtariStSystem {
         }
 
         walk_dir(&file.path.clone(), 4, |path, ext, header| {
-            if ["msa", "st"].contains(&ext) {
+            if ["msa", "st", "stx", "dim"].contains(&ext) {
                 images.push(path.to_owned());
             } else if header[0..2] == GEMDOS_MAGIC {
                 exes.push(path.to_owned());

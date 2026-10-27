@@ -189,8 +189,8 @@ fn url_ends_with(url: &str, name: &str) -> bool {
 }
 
 fn is_disk_image_url(url: &str) -> bool {
-    const DISK_IMAGE_EXTENSIONS: [&str; 10] = [
-        "d64", "d81", "adf", "dms", "msa", "st", "atr", "xex", "cue", "chd",
+    const DISK_IMAGE_EXTENSIONS: [&str; 12] = [
+        "d64", "d81", "adf", "dms", "msa", "st", "stx", "dim", "atr", "xex", "cue", "chd",
     ];
     url_extension(url).is_some_and(|e| DISK_IMAGE_EXTENSIONS.contains(&e.as_str()))
 }
