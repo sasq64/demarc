@@ -219,6 +219,11 @@ pub struct Args {
     #[arg(long)]
     pub check_wine: bool,
 
+    /// Install wine if needed and set up the ~/.wine-demarc prefix for Windows
+    /// releases (Linux only), then exit.
+    #[arg(long)]
+    pub setup_wine: bool,
+
     /// Run libretro cores in a separate process instead of a thread
     #[arg(long)]
     pub proc: bool,

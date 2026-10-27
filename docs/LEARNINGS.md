@@ -679,6 +679,7 @@
   `pkill -f` on it kills the tool call. Find the demo with
   `ps -eo pid,comm | awk '$2 ~ /^name/'`. VSZ is useless under wow64; sum
   `/proc/<pid>/maps` below 0x7fff0000 for what a 32-bit exe has left.
+
 - "Picture freezes, music plays on" in Ziphead (`zoo.136314`) was not memory:
   I set LAA and `cache_writeback` first, on a guess, and neither helped. What
   found it: a temporary per-second new-frame counter in the gamescope core's
@@ -688,5 +689,23 @@
   and `nm ntdll.so` to `fd_cache_mutex`. ntsync misses take it around a
   wineserver call. `wine_ntsync=false` (hides `/dev/ntsync` in the sandbox)
   removed every stall. Measure before patching.
+
 - winedbg `attach` to a running wow64 demo kills it (page fault in the break
   thread), so a single `bt all` is all one run gives.
+
+- The tree is not rustfmt-clean, so a bare `cargo fmt` rewrites some twenty
+  files nobody touched. Format only the files changed (`rustfmt <file>`), or
+  skip it.
+
+- Pointing `WINEPREFIX` at a scratch directory does not sandbox a test of
+  `setup-wine.sh`: wine itself goes to `~/.local/share/demarc/wine`, and an
+  unpack there without a `.version` stamp gets replaced. Set `XDG_DATA_HOME`
+  too when the real one should stay untouched.
+
+- wine's mountmgr owns any drive letter with a device link (`e:: -> /dev/mmcblk0`
+  on a Deck with an SD card) and deletes that letter's `e:` as wine starts, so
+  the sandbox drive must skip those too. Demos then failed at random with
+  `!demarc failed`, depending on whether autodlg's CreateProcess beat mountmgr.
+  `could not open working directory E:\` was in the good runs as well, which
+  made it look harmless. The Deck has bwrap 0.12 now and *is* sandboxed.
+

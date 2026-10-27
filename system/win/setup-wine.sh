@@ -1,29 +1,44 @@
 #!/usr/bin/env bash
 # Sets up what demarc needs to run Windows demos: wine, bubblewrap, cabextract
-# and the ~/.wine-demarc prefix with demarc's own DLLs. Run it again to refresh
-# the DLLs; a prefix that is already there is not rebuilt.
+# and the ~/.wine-demarc prefix with demarc's own DLLs (prefix/ next to this
+# script). Every step runs every time, so running it again repairs whatever an
+# earlier run left half done; downloads are kept and not fetched again.
+# `demarc --setup-wine` runs the copy demarc carries.
 #
-#   WINEPREFIX     the prefix to make (default ~/.wine-demarc)
-#   DEMARC_BRANCH  branch to download files/ from when not run from a checkout
+#   WINEPREFIX  the prefix to set up (default ~/.wine-demarc)
 set -Eeuo pipefail
 
 WINE_VERSION=11.17
 WINE_URL="https://github.com/Kron4ek/Wine-Builds/releases/download/$WINE_VERSION/wine-$WINE_VERSION-amd64-wow64.tar.xz"
-FILES_URL="https://raw.githubusercontent.com/sasq64/demarc/${DEMARC_BRANCH:-main}/files"
-FILES=(gm.dls tssoft32.acm tsd32.dll dcomp.dll winmm.dll kernelbase.dll dx8vb.dll opengl32.dll)
 
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine-demarc}"
 export WINEARCH=win64
 # demarc puts this ahead of PATH itself, so a wine unpacked here needs no setup
 WINE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/demarc/wine"
 export PATH="$WINE_DIR/bin:$PATH"
+WINETRICKS_CACHE="${W_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/winetricks}"
+DOWNLOADS="${XDG_CACHE_HOME:-$HOME/.cache}/demarc/setup-wine"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+files="$here/prefix"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+trap 'warn "Failed: $BASH_COMMAND (line $LINENO). Fix that and run again (a bad download: remove it from $DOWNLOADS)."' ERR
 
 warn() { echo "** $*" >&2; }
+die() {
+    warn "$*"
+    exit 1
+}
 has() { command -v "$1" >/dev/null; }
+
+# fetch <url> <name>: download to $DOWNLOADS/<name> unless it is already there
+fetch() {
+    [ -s "$DOWNLOADS/$2" ] && return 0
+    mkdir -p "$DOWNLOADS"
+    curl -fL -o "$DOWNLOADS/$2.part" "$1"
+    mv "$DOWNLOADS/$2.part" "$DOWNLOADS/$2"
+}
 
 detect_system() {
     local id="" like=""
@@ -53,30 +68,49 @@ install_packages() {
 
 # need_tool <command> <package>
 need_tool() {
-    has "$1" && return
+    has "$1" && return 0
     echo "Installing $2"
-    install_packages "$2" || warn "Could not install $2, install it yourself"
+    install_packages "$2" || die "Could not install $2, install it yourself"
+    has "$1" || die "$1 still not found after installing $2"
 }
 
+# A system wine is used as is; one this script unpacked is replaced unless it
+# is complete and the right version.
 install_wine() {
-    has wine && return
-    [ "$(uname -m)" = x86_64 ] || { warn "No wine found, and only x86_64 builds are downloaded"; exit 1; }
-    echo "Downloading wine $WINE_VERSION to $WINE_DIR"
-    mkdir -p "$WINE_DIR"
-    curl -fL "$WINE_URL" | tar -C "$WINE_DIR" -xJ --strip-components=1
+    if [ -x "$WINE_DIR/bin/wine" ] && [ "$(cat "$WINE_DIR/.version" 2>/dev/null)" = "$WINE_VERSION" ]; then
+        return 0
+    fi
+    if [ ! -e "$WINE_DIR" ] && has wine; then
+        return 0
+    fi
+    [ "$(uname -m)" = x86_64 ] || die "No wine found, and only x86_64 builds are downloaded"
+    echo "Installing wine $WINE_VERSION to $WINE_DIR"
+    fetch "$WINE_URL" "wine-$WINE_VERSION-amd64-wow64.tar.xz"
+    mkdir -p "$tmp/wine"
+    tar -C "$tmp/wine" -xJf "$DOWNLOADS/wine-$WINE_VERSION-amd64-wow64.tar.xz" --strip-components=1
+    echo "$WINE_VERSION" >"$tmp/wine/.version"
+    rm -rf "$WINE_DIR"
+    mkdir -p "$(dirname "$WINE_DIR")"
+    mv "$tmp/wine" "$WINE_DIR"
 }
 
 # SteamOS's gstreamer has neither the ASF demuxer nor libav, which WMA soundtracks need
 install_steamdeck_gstreamer() {
     local gst="${XDG_DATA_HOME:-$HOME/.local/share}/demarc/gst" v pkg
-    [ -f "$gst/libgstlibav.so" ] && return
-    echo "Downloading gstreamer plugins"
-    mkdir -p "$gst"
     v=$(pacman -Q gstreamer | cut -d' ' -f2)
+    if [ -f "$gst/libgstasf.so" ] && [ -f "$gst/libgstlibav.so" ] && [ "$(cat "$gst/.version" 2>/dev/null)" = "$v" ]; then
+        return 0
+    fi
+    echo "Installing gstreamer plugins"
+    mkdir -p "$tmp/gst"
     for pkg in gst-plugins-ugly:libgstasf.so gst-libav:libgstlibav.so; do
-        curl -fL "https://archive.archlinux.org/packages/g/${pkg%:*}/${pkg%:*}-$v-x86_64.pkg.tar.zst" |
-            tar -C "$gst" --zstd -x --strip-components=3 "usr/lib/gstreamer-1.0/${pkg#*:}"
+        local name="${pkg%:*}-$v-x86_64.pkg.tar.zst"
+        fetch "https://archive.archlinux.org/packages/g/${pkg%:*}/$name" "$name"
+        tar -C "$tmp/gst" --zstd -xf "$DOWNLOADS/$name" --strip-components=3 "usr/lib/gstreamer-1.0/${pkg#*:}"
     done
+    echo "$v" >"$tmp/gst/.version"
+    rm -rf "$gst"
+    mv "$tmp/gst" "$gst"
 }
 
 check_gstreamer() {
@@ -84,7 +118,7 @@ check_gstreamer() {
     for plugin in asfdemux avdec_wmav2; do
         gst-inspect-1.0 --exists "$plugin" 2>/dev/null || missing+=("$plugin")
     done
-    [ ${#missing[@]} -eq 0 ] && return
+    [ ${#missing[@]} -eq 0 ] && return 0
     warn "gstreamer plugins not installed: ${missing[*]} (demos with WMA music will be silent)"
     case $SYSTEM in
         arch) warn "Try: sudo pacman -S gst-plugins-ugly gst-libav" ;;
@@ -92,41 +126,42 @@ check_gstreamer() {
     esac
 }
 
-# Prints the directory holding demarc's files/: a checkout's, or a downloaded copy
-find_files() {
-    local dir f
-    for dir in "$here/../files" "$here/files"; do
-        [ -f "$dir/winmm.dll" ] && { echo "$dir"; return; }
-    done
-    mkdir -p "$tmp/files"
-    for f in "${FILES[@]}"; do
-        curl -fsSL -o "$tmp/files/$f" "$FILES_URL/$f" || rm -f "$tmp/files/$f"
-    done
-    echo "$tmp/files"
-}
+setup_prefix() {
+    fetch https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks winetricks
+    winetricks() { bash "$DOWNLOADS/winetricks" -q "$@"; }
+    # winetricks skips the verbs this log lists; without it every verb is
+    # installed again, from winetricks' own download cache
+    rm -f "$WINEPREFIX/winetricks.log"
+    local sys32="$WINEPREFIX/drive_c/windows/system32"
+    local wow64="$WINEPREFIX/drive_c/windows/syswow64"
 
-make_prefix() {
-    curl -fsSL -o "$tmp/winetricks" https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-    chmod +x "$tmp/winetricks"
-    local winetricks="$tmp/winetricks"
+    wineboot -u
 
     # All native D3D
-    wineboot -i
-    "$winetricks" -q dxvk d3dx9 d3dx10 vkd3d
-    "$winetricks" -q d3dx11_42 d3dx11_43 d3dcompiler_42 d3dcompiler_43 d3dcompiler_46 d3dcompiler_47
+    winetricks dxvk d3dx9 d3dx10 vkd3d
+    winetricks d3dx11_42 d3dx11_43 d3dcompiler_42 d3dcompiler_43 d3dcompiler_46 d3dcompiler_47
     # winetricks' d3dcompiler_47 is 8.1 (6.3.9600); 10.0.15063 compiles typed UAV loads (One Of Those Days)
-    curl -fsSL https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz |
-        tar -xJ -C "$tmp" v2/x32/d3dcompiler_47.dll v2/x64/d3dcompiler_47.dll
-    cp "$tmp/v2/x32/d3dcompiler_47.dll" "$WINEPREFIX/drive_c/windows/syswow64/"
-    cp "$tmp/v2/x64/d3dcompiler_47.dll" "$WINEPREFIX/drive_c/windows/system32/"
-    "$winetricks" -q corefonts
+    fetch https://github.com/lutris/d3d_extras/releases/download/v2/v2.tar.xz d3d_extras-v2.tar.xz
+    tar -xJf "$DOWNLOADS/d3d_extras-v2.tar.xz" -C "$tmp" v2/x32/d3dcompiler_47.dll v2/x64/d3dcompiler_47.dll
+    cp "$tmp/v2/x32/d3dcompiler_47.dll" "$wow64/"
+    cp "$tmp/v2/x64/d3dcompiler_47.dll" "$sys32/"
+    # d3dcsx_43 has no winetricks verb and no wine builtin (The Ink Test); take it from d3dx9's download
+    cabextract -q -d "$tmp" -F 'Jun2010_d3dcsx_43_x*.cab' "$WINETRICKS_CACHE/directx9/directx_Jun2010_redist.exe"
+    cabextract -q -d "$wow64" -F d3dcsx_43.dll "$tmp/Jun2010_d3dcsx_43_x86.cab"
+    cabextract -q -d "$sys32" -F d3dcsx_43.dll "$tmp/Jun2010_d3dcsx_43_x64.cab"
+
+    winetricks corefonts
+    # Selawik, Microsoft's open metric-compatible Segoe UI stand-in (Epsilon by Mercury)
+    fetch https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip Selawik-1.01.zip
+    unzip -o -q -j "$DOWNLOADS/Selawik-1.01.zip" '*.ttf' -d "$WINEPREFIX/drive_c/windows/Fonts"
+    wine reg add 'HKCU\Software\Wine\Fonts\Replacements' /v 'Segoe UI' /t REG_SZ /d Selawik /f
+
     # MFC42 (Codename Chinadoll)
-    "$winetricks" -q mfc42
+    winetricks mfc42
     # Native msvcp60 from the same download; wine's lacks exports (Come Clean)
-    cabextract -q -d "$WINEPREFIX/drive_c/windows/syswow64" -F msvcp60.dll \
-        "${XDG_CACHE_HOME:-$HOME/.cache}/winetricks/vcrun6/vcredist.exe"
+    cabextract -q -d "$wow64" -F msvcp60.dll "$WINETRICKS_CACHE/vcrun6/vcredist.exe"
     # Speech (for Zoom 3)
-    "$winetricks" --force -q speechsdk
+    winetricks --force speechsdk
 
     # Don't use EGL (For 1995 / Kwelers)
     wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f
@@ -143,16 +178,11 @@ make_prefix() {
 
 # put <file> <dir under drive_c/windows>
 put() {
-    if [ -f "$files/$1" ]; then
-        install -Dm644 "$files/$1" "$WINEPREFIX/drive_c/windows/$2/$1"
-    else
-        warn "Missing $1: some demos will not work"
-    fi
+    install -Dm644 "$files/$1" "$WINEPREFIX/drive_c/windows/$2/$1"
 }
 
 install_prefix_files() {
-    local files
-    files=$(find_files)
+    [ -d "$files" ] || die "$files is missing: run demarc --setup-wine, or this script from demarc's system/win"
 
     # For Panic Room / FLT (and probably others)
     put tssoft32.acm syswow64
@@ -183,28 +213,27 @@ echo "System: $SYSTEM"
 
 install_wine
 if [ "$SYSTEM" = steamdeck ]; then
-    # The root filesystem is read-only: cabextract comes in the Deck bundle
-    [ -f "$here/cabextract" ] && install -D "$here/cabextract" "$WINE_DIR/bin/cabextract"
+    # The root filesystem is read-only: the Deck bundle puts a cabextract on PATH
+    if has cabextract && [ ! -x "$WINE_DIR/bin/cabextract" ]; then
+        install -D "$(command -v cabextract)" "$WINE_DIR/bin/cabextract"
+    fi
     install_steamdeck_gstreamer
     # Run over ssh: wine's windows go to the Deck's screen, and no mono/gecko prompts
     export DISPLAY="${DISPLAY:-:0}"
     export WINEDLLOVERRIDES="mscoree=d;mshtml=d;wineusb.sys=d"
+    echo "Reboot the Deck afterwards if its buttons stop responding."
 fi
+need_tool wine wine
 need_tool cabextract cabextract
+need_tool unzip unzip
 need_tool bwrap bubblewrap
 
-if [ ! -d "$WINEPREFIX" ]; then
-    echo "Making the wine prefix $WINEPREFIX"
-    [ "$SYSTEM" = steamdeck ] && echo "Reboot the Deck afterwards if its buttons stop responding."
-    trap 'warn "Making $WINEPREFIX failed; remove it and run again"' ERR
-    make_prefix
-    trap - ERR
-else
-    echo "Updating the wine prefix $WINEPREFIX"
-fi
+echo "Setting up the wine prefix $WINEPREFIX with $(command -v wine) ($(wine --version))"
+setup_prefix
 install_prefix_files
-[ "$SYSTEM" = steamdeck ] || check_gstreamer
-
-if has demarc; then
-    demarc --check-wine || true
+# The registry only reaches disk when the wineserver exits
+wineserver -w
+if [ "$SYSTEM" != steamdeck ]; then
+    check_gstreamer
 fi
+echo "Done."

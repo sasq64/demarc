@@ -14,5 +14,5 @@ Each `VB_D3DXFoo` has the arguments of `D3DXFoo` and jumps into d3dx9_43's
 (`VB_D3DXMatrixfDeterminant` is `D3DXMatrixDeterminant`). d3dx9 has the
 simple ones (`Add`, `Dot`, `Lerp`, ...) only as inlines, so `dx8vb.c` has those.
 
-`just dx8vb` rebuilds `files/dx8vb.dll`. `scripts/mk_wine_prefix.sh` installs
+`just dx8vb` rebuilds `system/win/prefix/dx8vb.dll`. `system/win/setup-wine.sh` installs
 it, demarc sets `dx8vb=n,b`.

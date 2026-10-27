@@ -49,7 +49,7 @@ Open:
   demozoo.txt.gz csdb.txt.gz
   natrium.prg rebels.adf                     test files
   one.lua multi.lua hold.lua mon.sh gput.sh  test scripts, see "Testing"
-  prefix-setup/        mk_wine_prefix.sh, wine_prefix_files.sh, files/, winetricks, setup.log
+  prefix-setup/        setup-wine.sh, prefix/, cabextract, setup.log
 ~/.local/share/demarc/wine/    Kron4ek wine 11.17 amd64-wow64, + cabextract in bin/
 ~/.wine-demarc/                the prefix
 ~/Demos/{1995,Lifeforce,Masagin}   Windows demos that were already there
@@ -178,7 +178,7 @@ the Arch archive, at the Deck's gstreamer version (1.22.10), sit in
 link against the Deck's own ffmpeg 6.1.
 
 Texas / Keyboarders needed that and an (empty) `C:\users\Public\Music\Sample
-Music`, which `mk_wine_prefix.sh` now makes.
+Music`, which `system/win/setup-wine.sh` now makes.
 
 ### Rupture
 
@@ -207,7 +207,7 @@ that interface had no kernel driver, Steam's `logs/controller.txt` said
 `Controller device closed after hid_read failure`, and every button was dead —
 Steam and `...` included, in and out of demarc — until a reboot.
 
-In the prefix now, and in `scripts/mk_wine_prefix.sh`:
+In the prefix now, and in `system/win/setup-wine.sh`:
 
 ```
 HKCU\Software\Wine\DllOverrides   wineusb.sys = ""
@@ -284,7 +284,7 @@ the inherited environment, all covered above.
   `fitting_modes` keeps modes larger than `wine_res` out of `wine_dialog_res`.
 - `crates/newsys/src/wine.rs`, `src/main.rs` — `add_wine_to_path` puts
   `~/.local/share/demarc/wine/bin` first on `PATH` at startup when it exists.
-- `scripts/mk_wine_prefix.sh` — makes the downloaded `winetricks` executable,
+- `system/win/setup-wine.sh` (then `scripts/mk_wine_prefix.sh`) — makes the downloaded `winetricks` executable,
   fixes `wcho`, and adds the wineusb and winebus registry lines.
 - `docs/LEARNINGS.md` — two entries.
 
@@ -308,7 +308,7 @@ had been run; the wine download and the prefix step have not, and neither has
 1. Unpack a wow64 wine build into `~/.local/share/demarc/wine` (Kron4ek
    `wine-11.17-amd64-wow64`; 11.16 has a wineserver double free). Copy the
    workstation's `/usr/bin/cabextract` into its `bin/` — SteamOS has none.
-2. Copy `scripts/mk_wine_prefix.sh` and `files/` into one directory and run it
+2. Copy `system/win/setup-wine.sh` and `system/win/prefix/` into one directory and run it
    with that `bin` on `PATH`, `WINEDLLOVERRIDES="mscoree=d;mshtml=d"` (or
    `wineboot` waits on a Mono/Gecko prompt) and a `DISPLAY`. **Do it with nothing
    running on the Deck**, and expect to reboot afterwards: the script's first

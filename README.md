@@ -114,9 +114,12 @@ adds *Run in Demarc (AGA)*, which runs with those options.
 
 ## USING WINE (LINUX ONLY)
 
-* Install wine (latest version)
-* Install bubblewrap and cabextract (for winetricks)
-* Run wine-prefix setup script [scripts/mk_wine_prefix.sh](scripts/mk_wine_prefix.sh)
+```bash
+demarc --setup-wine
+```
+
+installs wine (if there is none), bubblewrap and cabextract, and sets up the
+`~/.wine-demarc` prefix. Run it again to repair or update the prefix.
 
 Use `demarc --check-wine` to see if requirements are met.
 

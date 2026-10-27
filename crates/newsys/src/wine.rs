@@ -121,7 +121,11 @@ const PREFIX_DIR: &str = ".wine-demarc";
 /// The dialog driver, relative to [`system_dir`].
 const AUTODLG: &str = "win/demarc-autodlg.exe";
 
-/// The `WINEDLLOVERRIDES` entry for the winmm.dll `scripts/setup-wine.sh` puts
+/// The script that installs wine and sets up the prefix, relative to [`system_dir`].
+#[cfg(target_os = "linux")]
+const SETUP_SCRIPT: &str = "win/setup-wine.sh";
+
+/// The `WINEDLLOVERRIDES` entry for the winmm.dll [`SETUP_SCRIPT`] puts
 /// in the prefix. See `tools/winmm`.
 #[cfg(target_os = "linux")]
 pub const WINMM_OVERRIDE: &str = "winmm=n,b";
@@ -308,6 +312,19 @@ impl WineCheck {
     }
 }
 
+/// Run [`SETUP_SCRIPT`] on the terminal and give back its exit code.
+#[cfg(target_os = "linux")]
+pub fn setup_wine() -> i32 {
+    let script = system_dir().join(SETUP_SCRIPT);
+    match Command::new("bash").arg(&script).status() {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(err) => {
+            eprintln!("Could not run {}: {err}", script.display());
+            1
+        }
+    }
+}
+
 /// Can a Windows release be run on this machine?
 #[cfg(target_os = "linux")]
 pub fn check_wine() -> WineCheck {
@@ -318,7 +335,7 @@ pub fn check_wine() -> WineCheck {
     let prefix = match wine_prefix() {
         Ok(prefix) if prefix.is_dir() => Ok(prefix),
         Ok(prefix) => Err(format!(
-            "{} is not there - create it with `just wine-prefix`",
+            "{} is not there - create it with `demarc --setup-wine`",
             prefix.display()
         )),
         Err(err) => Err(err.to_string()),

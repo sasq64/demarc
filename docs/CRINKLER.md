@@ -22,7 +22,7 @@ Alcatraz' "Prism break" calls `waveOutWrite` and ends up in winmm's export *name
 because wine's winmm has no `tid32Message` and the other `*32Message` exports.
 
 Fixed by `tools/winmm`: a 32-bit `winmm.dll` whose ordinals match the Windows one, each
-export jumping into wine's builtin winmm. `just winmm` builds it, `scripts/setup-wine.sh`
+export jumping into wine's builtin winmm. `just winmm` builds it, `system/win/setup-wine.sh`
 installs it, demarc sets `winmm=n,b`. See `tools/winmm/README.md`.
 
 ---

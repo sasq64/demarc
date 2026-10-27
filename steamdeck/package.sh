@@ -12,7 +12,7 @@ out=target/steamdeck
 rm -rf "$out"
 stage=$out/payload
 dist=$out/demarc-steamdeck
-mkdir -p "$stage/glibc" "$stage/prefix-setup/files" "$dist"
+mkdir -p "$stage/glibc" "$stage/bin" "$dist"
 strip -o "$stage/demarc-dev" target/release-fast/demarc
 cp steamdeck/demarc.sh steamdeck/setup.sh "$stage/"
 for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 \
@@ -20,10 +20,8 @@ for lib in ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 \
     cp -L "/usr/lib/$lib" "$stage/glibc/"
 done
 cp demodb/demozoo.txt.gz demodb/csdb.txt.gz "$stage/"
-cp scripts/mk_wine_prefix.sh scripts/wine_prefix_files.sh "$stage/prefix-setup/"
-cp files/*.dll files/*.acm files/gm.dls "$stage/prefix-setup/files/"
 # SteamOS has no cabextract, which winetricks needs.
-cp -L "$(command -v cabextract)" "$stage/prefix-setup/"
+cp -L "$(command -v cabextract)" "$stage/bin/"
 
 tar -C "$stage" -czf "$dist/demarc.tar.gz" .
 cp steamdeck/install.sh "$dist/"

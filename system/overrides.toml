@@ -413,7 +413,7 @@ events = [
 file = "puls.zip"
 libretro = { dosbox_pure_cycles = "max" }
 
-# Codename Chinadoll: needs MFC42 (scripts/mk_wine_prefix.sh), the .ccs the bat passes,
+# Codename Chinadoll: needs MFC42 (system/win/setup-wine.sh), the .ccs the bat passes,
 # and "apply selection and go!" picked in its own setup menu
 [zoo.22636]
 boot = "demo-d3d.bat"

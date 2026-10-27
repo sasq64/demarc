@@ -52,7 +52,7 @@ regex match, then applies regex search/replace pairs. The regex engine in
 `glsl_test.c` tests it natively and runs on every build. fr-080's ATI-era
 GLSL is fixed this way.
 
-`just opengl32` rebuilds `files/opengl32.dll`. `scripts/mk_wine_prefix.sh`
+`just opengl32` rebuilds `system/win/prefix/opengl32.dll`. `system/win/setup-wine.sh`
 installs it, demarc sets `opengl32=n,b`.
 
 `glAccum`, `glClearAccum` and `glClear`'s `GL_ACCUM_BUFFER_BIT` are emulated

@@ -27,5 +27,5 @@ host's ALSA sequencer, which nothing in the session hears, so Gopher & LJ's
 - `winmm.c` — loads wine's winmm and fills in the jump slots.
 - `build.py` — generates the thunks and `.def`, builds with clang/lld-link.
 
-`just winmm` rebuilds `system/win/winmm.dll`. `scripts/setup-wine.sh` copies it into
+`just winmm` rebuilds `system/win/prefix/winmm.dll`. `system/win/setup-wine.sh` copies it into
 the prefix's `syswow64`, and demarc sets `winmm=n,b`.

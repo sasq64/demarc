@@ -175,6 +175,18 @@ fn check_wine_and_report() -> i32 {
     1
 }
 
+#[cfg(target_os = "linux")]
+fn setup_wine_and_report() -> i32 {
+    let code = wine::setup_wine();
+    if code == 0 { check_wine_and_report() } else { code }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn setup_wine_and_report() -> i32 {
+    println("Wine setup is Linux only.");
+    1
+}
+
 /// Can Windows releases be run here at all?
 #[cfg(target_os = "linux")]
 fn wine_enabled() -> bool {
@@ -349,6 +361,11 @@ fn main() {
     // The cue window shows the cross fade emulator, so there has to be one.
     if args.dj_mode {
         args.cross_fade = true;
+    }
+
+    // Before the silencing below: the script talks to the terminal.
+    if args.setup_wine {
+        std::process::exit(setup_wine_and_report());
     }
 
     // On Unix, silence the cores by redirecting stdout/stderr to /dev/null

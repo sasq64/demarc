@@ -11,7 +11,7 @@ findings to `docs/LEARNINGS.md` and, if they are general, here.
 ## Setup
 
 **Prefix.** Always `WINEPREFIX=~/.wine-demarc`, never `~/.wine` (192 DPI crops
-demos to a quarter). Built by `just wine-prefix` (`scripts/mk_wine_prefix.sh`):
+demos to a quarter). Built by `demarc --setup-wine` / `just wine-prefix` (`system/win/setup-wine.sh`):
 DXVK, native d3dx9/10/11 and d3dcompiler, corefonts, mfc42, plus demarc's own
 proxy DLLs in `syswow64`. `demarc --check-wine` reports wine, bwrap and prefix.
 

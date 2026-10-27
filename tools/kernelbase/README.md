@@ -18,6 +18,6 @@ for a name it cannot find; Kindercrasher's `OpenFile` of `drivers/gm.dls` did.
 kernel32 imports kernelbase, so this imports only ntdll. kernelbase is a
 KnownDLL, so it has to be in `syswow64`; an app-dir copy is ignored.
 
-`just kernelbase` rebuilds `files/kernelbase.dll` from the export table of the
+`just kernelbase` rebuilds `system/win/prefix/kernelbase.dll` from the export table of the
 installed wine. Rebuild when wine's kernelbase gains exports kernel32 imports.
-`scripts/mk_wine_prefix.sh` installs it, demarc sets `kernelbase=n,b`.
+`system/win/setup-wine.sh` installs it, demarc sets `kernelbase=n,b`.

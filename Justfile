@@ -178,26 +178,26 @@ autodlg:
 # winmm.dll with the Windows export layout (source in tools/winmm). Checked in
 # like the dialog driver; needs clang, lld-link and llvm-dlltool.
 winmm:
-    python3 tools/winmm/build.py files/winmm.dll
+    python3 tools/winmm/build.py system/win/prefix/winmm.dll
 
 # kernelbase.dll with wine's exports but no forwarders (source in tools/kernelbase).
 # Checked in; rebuild when wine's kernelbase gains exports.
 kernelbase:
-    python3 tools/kernelbase/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/kernelbase.dll" files/kernelbase.dll
+    python3 tools/kernelbase/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/kernelbase.dll" system/win/prefix/kernelbase.dll
 
 # dx8vb.dll with the VB_D3DX* math functions wine lacks (source in tools/dx8vb).
 dx8vb:
-    python3 tools/dx8vb/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/dx8vb.dll" files/dx8vb.dll
+    python3 tools/dx8vb/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/dx8vb.dll" system/win/prefix/dx8vb.dll
 
 # opengl32.dll whose wglGetProcAddress also finds GL 1.1 functions (source in tools/opengl32).
 opengl32:
-    python3 tools/opengl32/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/opengl32.dll" files/opengl32.dll
+    python3 tools/opengl32/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/opengl32.dll" system/win/prefix/opengl32.dll
 
 # dcomp.dll that gives DirectComposition demos a swapchain (source in
-# tools/compshim). Checked in, and installed in the prefix by scripts/setup-wine.sh.
+# tools/compshim). Checked in, and installed in the prefix by system/win/setup-wine.sh.
 compshim:
     cd tools/compshim && cargo xwin build --release --target x86_64-pc-windows-msvc
-    cp tools/compshim/target/x86_64-pc-windows-msvc/release/dcomp.dll files/
+    cp tools/compshim/target/x86_64-pc-windows-msvc/release/dcomp.dll system/win/prefix/
 
 # `-mssse3 -maes`: the vendored unrar C++ sources (unarc-rs -> unrar -> unrar_sys)
 # tag their SSE/AES-NI routines with `__attribute__((target(...)))` only under
@@ -229,33 +229,11 @@ native:
     hyprctl eval 'hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2 })'
 
 
-PRE := HOME / ".wine-demarc"
-
 wma-audio:
     sudo pacman -S gst-plugins-ugly
 
-wine-prefix: wma-audio
-    #curl -fsSL -o winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
-    #chmod +x winetricks
-    rm -rf {{PRE}}
-    WINEPREFIX={{PRE}} wineboot -i
-    WINEPREFIX={{PRE}} ./winetricks dxvk d3dx9 d3dx10
-    # For Zoom3
-    WINEPREFIX={{PRE}} ./winetricks --force -q speechsdk
-    # For Texas / Keyboarders (Safe version)
-    mkdir -p "{{PRE}}/drive_c/users/Public/Music/Sample Music"
-    # For 1995 / Kewlers
-    WINEPREFIX={{PRE}} wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f
-    # Make sure we have 1:1 logical/physical pixel mapping
-    WINEPREFIX={{PRE}} wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 96 /f
-    # For Panic Room / FLT
-    install -Dm644 files/tssoft32.acm {{PRE}}/drive_c/windows/syswow64/tssoft32.acm
-    install -Dm644 files/tsd32.dll    {{PRE}}/drive_c/windows/syswow64/tsd32.dll
-    WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
-    WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
-    install -Dm644 files/gm.dls {{PRE}}/drive_c/windows/syswow64/drivers/gm.dls
-    install -Dm644 files/gm.dls {{PRE}}/drive_c/windows/system32/drivers/gm.dls
-    WINEPREFIX={{PRE}} wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f
+wine-prefix:
+    bash system/win/setup-wine.sh
 
 wine32-fix:
     # Needed for fullscreen switch with 32bit wine
