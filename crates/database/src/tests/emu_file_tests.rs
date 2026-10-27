@@ -261,3 +261,10 @@ fn pouet_rank_comes_from_the_third_item() {
     assert_eq!(parse_pouet_rank("0,1"), None);
     assert_eq!(parse_pouet_rank(""), None);
 }
+
+#[test]
+fn compact_date_parses_partial_dates() {
+    assert_eq!(CompactDate::parse("1995").unwrap().year(), 1995);
+    assert_eq!(CompactDate::parse("2011-12").unwrap().year(), 2011);
+    assert_eq!(CompactDate::parse("2011-12-31").unwrap().year(), 2011);
+}

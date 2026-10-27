@@ -527,7 +527,7 @@ impl FileSource {
 pub struct CompactDate(u32);
 impl CompactDate {
     pub fn new(year: u32, month: u32, day: u32) -> Result<Self> {
-        if year > 3000 || month > 11 || day > 30 {
+        if year > 3000 || month > 12 || day > 31 {
             bail!("Data can't be represented");
         }
         Ok(Self((year << 9) | (month << 5) | day))
