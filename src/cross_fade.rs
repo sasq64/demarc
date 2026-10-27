@@ -15,7 +15,7 @@ pub(crate) const CROSSFADE_INDEX: usize = usize::MAX;
 const DELAY_TIME: f32 = 5.0;
 
 /// Seconds the fade itself takes.
-const FADE_TIME: f32 = 2.0;
+const FADE_TIME: f32 = 4.0;
 
 #[derive(Resource, Default)]
 pub(crate) struct CrossFade {
