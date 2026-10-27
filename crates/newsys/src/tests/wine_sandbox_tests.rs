@@ -242,3 +242,13 @@ fn maps_the_release_directory_to_a_writable_drive() {
     assert_eq!(args[at + 1], "/demos/thing");
     assert_eq!(args[at + 2], "/session/dosdevices/d:");
 }
+
+#[test]
+fn skips_drive_letters_mountmgr_owns() {
+    let tmp = tempfile::tempdir().expect("a temp dir");
+    let dosdevices = tmp.path().join("dosdevices");
+    fs::create_dir(&dosdevices).expect("a dir");
+    std::os::unix::fs::symlink("/media/sd", dosdevices.join("d:")).expect("d:");
+    std::os::unix::fs::symlink("/dev/mmcblk0", dosdevices.join("e::")).expect("e::");
+    assert_eq!(free_drive(tmp.path()).as_deref(), Some("f:"));
+}

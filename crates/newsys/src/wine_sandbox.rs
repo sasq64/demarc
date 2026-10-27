@@ -302,11 +302,16 @@ fn bwrap_args(
 }
 
 /// The first drive letter from `d:` up that the prefix does not map.
+///
+/// A letter with only a device (`e::`) is taken too: mountmgr owns it, and
+/// deletes our `e:` as wine starts (Steam Deck SD card).
 fn free_drive(base: &Path) -> Option<String> {
     let dosdevices = base.join("dosdevices");
-    ('d'..='y')
-        .map(|letter| format!("{letter}:"))
-        .find(|drive| dosdevices.join(drive).symlink_metadata().is_err())
+    ('d'..='y').map(|letter| format!("{letter}:")).find(|drive| {
+        [drive.clone(), format!("{drive}:")]
+            .iter()
+            .all(|name| dosdevices.join(name).symlink_metadata().is_err())
+    })
 }
 
 /// Can this machine actually run the sandbox? Asked once, and answered by
