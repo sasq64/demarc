@@ -23,7 +23,7 @@ members = ["crates/database", "crates/flash-emu", "crates/newsys", "crates/retro
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
-version = "1.8.1"
+version = "1.8.2"
 edition = "2024"
 repository = "https://github.com/sasq64/demarc"
 
@@ -70,26 +70,26 @@ bevy = {
   version = "0.19.0",
   default-features = false,
   features = [
-    "std",
     "async_executor",
-    "multi_threaded",
     "bevy_asset",
-    "bevy_log",
-    "bevy_state",
-    "bevy_winit",
-    "x11",
-    "wayland",
-    "bevy_gilrs",
-    "bevy_render",
-    "bevy_core_pipeline",
-    "bevy_post_process",
     "bevy_camera",
     "bevy_color",
-    "bevy_image",
-    "bevy_window",
+    "bevy_core_pipeline",
+    "bevy_gilrs",
     "bevy_gizmos",
     "bevy_gizmos_render",
+    "bevy_image",
+    "bevy_log",
+    "bevy_post_process",
+    "bevy_render",
+    "bevy_state",
+    "bevy_window",
+    "bevy_winit",
     "file_watcher",
+    "multi_threaded",
+    "std",
+    "wayland",
+    "x11",
   ]
 }
 clap = { version = "4.6.1", features = ["color", "derive"] }
