@@ -19,17 +19,6 @@ use resvg::usvg::{self, Tree};
 
 pub struct EguiUiPlugin;
 
-/// Keeps `font.ttf` alive for [`setup_egui`]. Loading through the asset server
-/// rather than reading [`crate::system_dir`] directly means egui picks
-/// up the very same face -- and the same hot-reloaded bytes -- as the Bevy UI in
-/// [`crate::hud`] and [`crate::text_input`].
-#[derive(Resource)]
-struct AppFont(Handle<Font>);
-
-fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.insert_resource(AppFont(asset_server.load("font.ttf")));
-}
-
 const GOLD_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x60, 0x10);
 const SILVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0x60, 0x60, 0x80);
 
@@ -98,19 +87,13 @@ fn load_icon_texture(
 
 fn setup_egui(
     mut contexts: EguiContexts,
-    app_font: Res<AppFont>,
-    fonts: Res<Assets<Font>>,
     mut done: Local<bool>,
 ) -> Result {
     if *done {
         return Ok(());
     }
-    let Some(font) = fonts.get(&app_font.0) else {
-        return Ok(());
-    };
-    // egui owns its font bytes (it re-parses them for its own atlas), so this
-    // copies out of the Bevy asset instead of sharing the `Blob`.
-    retro_ui::apply_style(contexts.ctx_mut()?, font.data.data().to_vec());
+    let font = std::fs::read(newsys::system_dir().join("font.ttf"))?;
+    retro_ui::apply_style(contexts.ctx_mut()?, font);
     *done = true;
     Ok(())
 }
@@ -398,8 +381,7 @@ impl Plugin for EguiUiPlugin {
         app.world_mut()
             .resource_mut::<EguiGlobalSettings>()
             .auto_create_primary_context = false;
-        app.add_systems(Startup, load_font)
-            .add_systems(
+        app.add_systems(
                 EguiPrimaryContextPass,
                 (
                     setup_egui,

@@ -70,10 +70,26 @@ bevy = {
   version = "0.19.0",
   default-features = false,
   features = [
-    "2d",
-    "audio",
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "bevy_winit",
+    "x11",
+    "wayland",
+    "bevy_gilrs",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_post_process",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_window",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
     "file_watcher",
-    "ui",
   ]
 }
 clap = { version = "4.6.1", features = ["color", "derive"] }
@@ -113,7 +129,6 @@ bevy_egui = {
   default-features = false,
   features = [
     "default_fonts",
-    "bevy_ui",
     "manage_clipboard",
     "render",
   ]

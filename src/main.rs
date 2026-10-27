@@ -610,9 +610,6 @@ fn main() {
     let mut default_plugins = DefaultPlugins.build().disable::<bevy::log::LogPlugin>();
     if headless {
         default_plugins = default_plugins
-            // Nothing here uses Bevy's own audio, but its plugin opens the
-            // output device on startup.
-            .disable::<bevy::audio::AudioPlugin>()
             // No window, so no event loop either -- which also means demarc
             // runs where there is no display at all. `ScheduleRunnerPlugin`
             // below takes over driving the app.

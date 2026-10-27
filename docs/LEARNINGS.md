@@ -709,3 +709,13 @@
   `could not open working directory E:\` was in the good runs as well, which
   made it look harmless. The Deck has bwrap 0.12 now and *is* sandboxed.
 
+
+- Trimming Bevy features: without `bevy_post_process` the frame renders black
+  with no error in the log, even though demarc's `PostProcess` is its own code.
+  Check a headless screenshot after every feature change, and put a few
+  `wait_frames` after `screenshot()` -- one right before `quit()` is never
+  written ("sending on a closed channel").
+
+- `panic = "abort"` would save ~9 MB but breaks Luau: its errors are C++
+  exceptions thrown through mlua's Rust frames, so any Lua error -- even inside
+  `pcall` -- terminates the process.
