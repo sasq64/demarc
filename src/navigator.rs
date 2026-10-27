@@ -9,7 +9,7 @@ use regex::Regex;
 use crate::AppState;
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
-use crate::emu_file::EmuFile;
+use crate::emu_file::{Award, EmuFile};
 use crate::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 use crate::loading::LoadFile;
 use crate::picker_sources::{DownloadSource, IconMode, PickerSource};
@@ -400,6 +400,28 @@ static CATS: [&str; 10] = [
     "Tracked Music",
 ];
 
+/// Awards an entry won or was nominated for, each with the event it was given
+/// at. Awards are handed out the year after the release.
+fn awards(f: &EmuFile) -> impl Iterator<Item = (String, Award, bool)> {
+    let year = match f.game_info.year() {
+        0 => f
+            .get_party()
+            .rsplit(' ')
+            .next()
+            .and_then(|y| y.parse::<u32>().ok()),
+        y => Some(y),
+    };
+    let wins = f.get_wins().into_iter().map(|a| (a, true));
+    let nominees = f.get_nominees().into_iter().map(|a| (a, false));
+    wins.chain(nominees).map(move |(award, win)| {
+        let event = match (award.series(), year) {
+            ((series, true), Some(year)) => format!("{series} {}", year + 1),
+            ((series, _), _) => series.to_string(),
+        };
+        (event, award, win)
+    })
+}
+
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,
@@ -540,17 +562,66 @@ pub fn setup_navigator(
         },
     )?;
 
+    navigator.register("Awards", |_path: &[&str], files: &'static [EmuFile]| {
+        Some(AllWordsSource::new(
+            files
+                .iter()
+                .flat_map(awards)
+                .map(|(event, _, _)| event)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+        ))
+    })?;
+    navigator.register(
+        "Awards/{event}",
+        |path: &[&str], files: &'static [EmuFile]| {
+            Some(AllWordsSource::new(
+                files
+                    .iter()
+                    .flat_map(awards)
+                    .filter(|(event, _, _)| event == path[1])
+                    .map(|(_, award, _)| award)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .map(|a| a.to_string())
+                    .collect(),
+            ))
+        },
+    )?;
+    navigator.register(
+        "Awards/{event}/{award}",
+        |path: &[&str], files: &'static [EmuFile]| {
+            let mut subset: Vec<(u32, bool)> = files
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| {
+                    awards(f)
+                        .find(|(event, award, _)| event == path[1] && award.to_string() == path[2])
+                        .map(|(_, _, win)| (i as u32, win))
+                })
+                .collect();
+            subset.sort_by_key(|(_, win)| !win);
+            Some(PickerSource::new(
+                files,
+                Some(subset.into_iter().map(|(i, _)| i).collect()),
+                IconMode::Platforms,
+            ))
+        },
+    )?;
+
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
-        return Some(WordsIconSource::new(
+        Some(WordsIconSource::new(
             [
                 ("All".into(), ListIcon::Glyph('', 0xffff00)),
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Platforms".into(), ListIcon::Glyph('󰍹', 0xc0f0c0)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
                 ("Authors".into(), ListIcon::Glyph('', 0x20a0a0)),
+                ("Awards".into(), ListIcon::Glyph('\u{f091}', 0xffd700)),
             ]
             .into(),
-        ));
+        ))
     })?;
 
     navigator.register("*/{id}/dls", |path: &[&str], files: &'static [EmuFile]| {
@@ -844,5 +915,32 @@ mod test {
         navigator.remove_playlist("Old");
         navigator.pop();
         assert_eq!(navigator.get_showing(), vec!["Keep"]);
+    }
+
+    #[test]
+    fn awards_by_event_and_category() {
+        let dbs: IndexMap<String, &'static [EmuFile]> = [(
+            "Demozoo".to_string(),
+            db("id:1\ttitle:A\tauthor:G\tdate:2007-05\tpouet:0,0,0,8,9\tdownload:http://x/a.zip\n\
+                id:2\ttitle:B\tauthor:H\tdate:2024-01\tpouet:0,0,0,,19\tdownload:http://x/b.zip\n\
+                id:3\ttitle:C\tauthor:I\tdate:2024-02\tpouet:0,0,0,19,\tdownload:http://x/c.zip\n\
+                id:4\ttitle:D\tauthor:J\tparty:Revision 2024;Demo;1\tpouet:0,0,0,19,\tdownload:http://x/d.zip\n"),
+        )]
+        .into();
+        let mut navigator = Navigator::new();
+        setup_navigator(&dbs, &mut navigator).unwrap();
+
+        navigator.goto("Demozoo/Awards");
+        assert_eq!(
+            navigator.get_showing(),
+            vec!["Scene.org 2008", "The Meteoriks 2025"]
+        );
+        navigator.goto("Demozoo/Awards/Scene.org 2008");
+        assert_eq!(
+            navigator.get_showing(),
+            vec!["Best direction", "Most original concept"]
+        );
+        navigator.goto("Demozoo/Awards/The Meteoriks 2025/Best High-end demo");
+        assert_eq!(navigator.get_showing(), vec!["C / I", "D / J", "B / H"]);
     }
 }

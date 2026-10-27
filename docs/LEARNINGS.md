@@ -719,3 +719,7 @@
 - `panic = "abort"` would save ~9 MB but breaks Luau: its errors are C++
   exceptions thrown through mlua's Rust frames, so any Lua error -- even inside
   `pcall` -- terminates the process.
+
+- Not every db entry has a `date:`; `game_info.year()` is 0 then. Anything
+  derived from the release year needs a fallback (the year at the end of the
+  party name) or the result shows up as year 0 / 1.

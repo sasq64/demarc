@@ -681,6 +681,16 @@ impl Award {
             _ => return None,
         })
     }
+
+    /// The competition handing out this award, and whether it is held yearly.
+    pub fn series(&self) -> (&'static str, bool) {
+        match *self as u32 {
+            1..=15 => ("Scene.org", true),
+            46 | 47 | 56 => ("The Nano Awards", true),
+            52..=55 => ("30 Years Of Assembly", false),
+            _ => ("The Meteoriks", true),
+        }
+    }
 }
 
 impl std::fmt::Display for Award {
