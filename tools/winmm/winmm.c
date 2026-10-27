@@ -409,6 +409,87 @@ static DWORD __stdcall midi_close(void *hmo)
     return 0;
 }
 
+// Wine lets only the thread that opened an MCI device use it, Windows 95 any
+// thread: Lasse Reinbong '96 polls MCI_STATUS from its render thread. Every MCI
+// call runs on one thread of ours instead.
+typedef DWORD(__stdcall *MciFn)(DWORD, DWORD, DWORD, DWORD);
+typedef struct {
+    MciFn fn;
+    DWORD a, b, c, d, ret;
+} MciCall;
+
+__declspec(dllimport) DWORD __stdcall GetCurrentThreadId(void);
+__declspec(dllimport) DWORD __stdcall MsgWaitForMultipleObjects(DWORD, void *const *, int, DWORD, DWORD);
+__declspec(dllimport) int __stdcall PeekMessageW(void *, void *, UINT, UINT, UINT);
+__declspec(dllimport) int __stdcall TranslateMessage(const void *);
+__declspec(dllimport) long __stdcall DispatchMessageW(const void *);
+
+#define QS_ALLINPUT 0x4FF
+#define PM_REMOVE 1
+
+static MciFn real_mci_command_a, real_mci_command_w, real_mci_string_a, real_mci_string_w;
+static MciCall *mci_call;
+static void *mci_lock, *mci_request, *mci_reply;
+static void *volatile mci_ready;
+static volatile DWORD mci_tid;
+
+static DWORD __stdcall mci_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        if (MsgWaitForMultipleObjects(1, &mci_request, 0, 0xFFFFFFFF, QS_ALLINPUT) == 0) {
+            mci_call->ret = mci_call->fn(mci_call->a, mci_call->b, mci_call->c, mci_call->d);
+            SetEvent(mci_reply);
+        }
+        DWORD msg[8];
+        while (PeekMessageW(msg, 0, 0, 0, PM_REMOVE)) {
+            TranslateMessage(msg);
+            DispatchMessageW(msg);
+        }
+    }
+}
+
+static DWORD mci_run(MciFn fn, DWORD a, DWORD b, DWORD c, DWORD d)
+{
+    if (__sync_bool_compare_and_swap(&mci_ready, 0, (void *)1)) {
+        mci_request = CreateEventW(0, 0, 0, 0);
+        mci_reply = CreateEventW(0, 0, 0, 0);
+        mci_lock = CreateEventW(0, 0, 1, 0);
+        CreateThread(0, 0, mci_thread, 0, 0, (DWORD *)&mci_tid);
+    }
+    while (!mci_tid)
+        ;
+    if (GetCurrentThreadId() == mci_tid)
+        return fn(a, b, c, d);
+    MciCall call = {fn, a, b, c, d, 0};
+    WaitForSingleObject(mci_lock, 0xFFFFFFFF);
+    mci_call = &call;
+    SetEvent(mci_request);
+    WaitForSingleObject(mci_reply, 0xFFFFFFFF);
+    SetEvent(mci_lock);
+    return call.ret;
+}
+
+static DWORD __stdcall mci_command_a(DWORD a, DWORD b, DWORD c, DWORD d)
+{
+    return mci_run(real_mci_command_a, a, b, c, d);
+}
+
+static DWORD __stdcall mci_command_w(DWORD a, DWORD b, DWORD c, DWORD d)
+{
+    return mci_run(real_mci_command_w, a, b, c, d);
+}
+
+static DWORD __stdcall mci_string_a(DWORD a, DWORD b, DWORD c, DWORD d)
+{
+    return mci_run(real_mci_string_a, a, b, c, d);
+}
+
+static DWORD __stdcall mci_string_w(DWORD a, DWORD b, DWORD c, DWORD d)
+{
+    return mci_run(real_mci_string_w, a, b, c, d);
+}
+
 static int same(const char *a, const char *b)
 {
     while (*a && *a == *b)
@@ -455,5 +536,9 @@ int __stdcall DllMain(HMODULE self, unsigned long reason, void *reserved)
     real_midi_unprepare = hook("midiOutUnprepareHeader", midi_unprepare);
     real_midi_reset = hook("midiOutReset", midi_reset);
     real_midi_close = hook("midiOutClose", midi_close);
+    real_mci_command_a = hook("mciSendCommandA", mci_command_a);
+    real_mci_command_w = hook("mciSendCommandW", mci_command_w);
+    real_mci_string_a = hook("mciSendStringA", mci_string_a);
+    real_mci_string_w = hook("mciSendStringW", mci_string_w);
     return 1;
 }

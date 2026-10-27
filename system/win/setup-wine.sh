@@ -162,6 +162,8 @@ setup_prefix() {
     cabextract -q -d "$wow64" -F msvcp60.dll "$WINETRICKS_CACHE/vcrun6/vcredist.exe"
     # Speech (for Zoom 3)
     winetricks --force speechsdk
+    # speechsdk leaves the prefix at winxp; UE4 then forces OpenGL (Dying Stars)
+    wine reg add 'HKCU\Software\Wine\AppDefaults\ED3-Win64-Shipping.exe' /v Version /d win10 /f
 
     # Don't use EGL (For 1995 / Kwelers)
     wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f

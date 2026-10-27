@@ -14,7 +14,8 @@ TARGET = "i686-pc-windows-msvc"
 
 KERNEL32 = ["LoadLibraryW@4", "GetProcAddress@8", "GetEnvironmentVariableW@12",
             "DisableThreadLibraryCalls@4", "CreateThread@24", "CreateEventW@16", "SetEvent@4",
-            "WaitForSingleObject@8"]
+            "WaitForSingleObject@8", "GetCurrentThreadId@0"]
+USER32 = ["MsgWaitForMultipleObjects@20", "PeekMessageW@20", "TranslateMessage@4", "DispatchMessageW@4"]
 
 
 def read_exports():
@@ -70,10 +71,12 @@ def main():
         cflags = [f"--target={TARGET}", "-O2", "-ffreestanding", "-fno-builtin", "-c"]
         run("clang", *cflags, "thunks.S", "-o", "thunks.obj")
         run("clang", *cflags, os.path.join(HERE, "winmm.c"), "-o", "winmm.obj")
+        write("user32.def", "LIBRARY user32.dll\nEXPORTS\n" + "\n".join(USER32) + "\n")
         run("llvm-dlltool", "-m", "i386", "-k", "-d", "kernel32.def", "-l", "kernel32.lib")
+        run("llvm-dlltool", "-m", "i386", "-k", "-d", "user32.def", "-l", "user32.lib")
         run("lld-link", "/nologo", "/dll", "/machine:x86", "/nodefaultlib", "/entry:DllMain",
             "/safeseh:no", "/Brepro", "/noimplib", "/def:winmm.def", f"/out:{out_dll}", "thunks.obj", "winmm.obj",
-            "kernel32.lib")
+            "kernel32.lib", "user32.lib")
 
 
 if __name__ == "__main__":

@@ -723,3 +723,18 @@
 - Not every db entry has a `date:`; `game_info.year()` is 0 then. Anything
   derived from the release year needs a fallback (the year at the end of the
   party name) or the result shows up as year 0 / 1.
+
+- The wine prefix reports Windows XP: winetricks' `speechsdk` verb ends with
+  `w_set_winver winxp`. UE4 checks `VerifyWindowsVersion(6, 0)` and silently
+  picks OpenGL, so a D3D-only cook fails with "GlobalShaderCache-GLSL_150.bin
+  is missing" (Dying Stars). Shipping UE4 builds log nothing; the launcher's
+  `ED3 ` argument and `+process` ruled out `-opengl` before the version.
+
+- A ddraw demo frozen on its first frame with the music playing need not be a
+  presentation bug: Lasse Reinbong '96 (`zoo.198069`) polls `MCI_STATUS` from
+  its render thread, and wine's MCI refuses every thread but the opener's with
+  `MCIERR_INVALID_DEVICE_NAME` (0x107). `+relay` grepped for `ret=004` showed
+  150k failing `mciSendCommandA` calls; three cnc-ddraw ini variants were tried
+  first. Also: a db override in the built binary wins over an edit in
+  `system/` until rebuilt, so check `~/.cache/demarc/system/overrides.toml`
+  before believing a run was without cnc-ddraw.

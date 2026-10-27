@@ -224,6 +224,10 @@ autodlg works around the known case.
 the old CRT's `tmpfile()` writing to the drive root; the sandbox maps the
 release directory to its own drive for it, plain wine does not.
 
+**Unreal Engine 4 asks for `GlobalShaderCache-GLSL_150.bin`.** It fell back to
+OpenGL because the prefix says Windows XP (left by winetricks' `speechsdk`);
+an `AppDefaults\<exe>` `Version=win10` key in `setup-wine.sh` fixes it.
+
 **Old GL demo dies right after `glGetString`/`glGetIntegerv`.** Modern
 values overflow 2000-era assumptions: `GL_EXTENSIONS` into a fixed buffer,
 a texture of `GL_MAX_TEXTURE_SIZE` squared. Patch the call in the unpacked
@@ -252,6 +256,11 @@ sizes. Fix the unpacked exe and ship a bsdiff `source` patch (Akkordarbeit,
 `HfontCreate` and `select_font Chosen`: a face missing from the prefix falls
 back to Arial. Segoe UI maps to Selawik through
 `HKCU\Software\Wine\Fonts\Replacements` (Epsilon, `zoo.23405`).
+
+**Picture frozen on frame one, music plays.** Count the exe's calls with
+`+relay` and `grep 'ret=004'`: a flood of failing `mciSendCommandA` is a
+position poll from a thread that did not open the device. The winmm proxy runs
+all MCI on one thread for it (Lasse Reinbong '96, `zoo.198069`).
 
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
 stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth
