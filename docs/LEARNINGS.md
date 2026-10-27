@@ -738,3 +738,10 @@
   first. Also: a db override in the built binary wins over an edit in
   `system/` until rebuilt, so check `~/.cache/demarc/system/overrides.toml`
   before believing a run was without cnc-ddraw.
+
+- A DOS demo that quits at once on "any key" (Fukwit Daddy) may be polling
+  port 60h with no keypress yet: dosbox-pure left it at 00, a make code. Log
+  `read_p60` before reasoning about frontend input; picking the exe from the
+  start menu left 9C (Enter up) there, which is why that worked. Test db
+  entries with `--db demodb/demozoo.txt.gz` and `load_demo(id)`: the bare
+  zip lacks the db's `dos4gw` tag and fails differently.

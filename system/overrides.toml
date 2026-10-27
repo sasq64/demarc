@@ -32,6 +32,16 @@ patch = {
   contents = "kJA=",
 }
 
+# Melrose Space by Three State: asks for 512x384, which the session does not list
+[zoo.74]
+fix_info = '''
+The demo stayed in a small window in the top left corner and did not start.
+WINEDEBUG=+system showed it asking for 512x384 at 32, 24 and 16 bpp, each
+returning -2 because the session has no such mode. wine_res makes the session
+512x384.
+'''
+meta = { wine_res = "512x384" }
+
 [zoo.76]
 # meta = { wine_dll_overrides = "d3dx9_31=n" }
 
@@ -427,6 +437,15 @@ events = [
     key = "Enter",
   }
 ]
+
+[zoo.21494]
+fix_info = '''
+The DOS version wants VESA 512x256x16, which none of DOSBox's SVGA cards
+offer, so the Win32 build of the release is run instead. It draws through
+tinyptc (DirectDraw) and is black without cnc-ddraw.
+'''
+file = "fdg_asc_win32.zip"
+meta = { wine_cnc_ddraw = "true" }
 
 # Kasparov: wined3d's D3D7 caps fail its card check; space goes past the warning.
 # cnc-ddraw has no Direct3D, and the demo then refuses to start at all.
@@ -1450,3 +1469,13 @@ error blob. winetricks' d3dcompiler_47 is the Windows 8.1 SDK build
 (X3676). wine's builtin compiler compiled it but DXVK read past the end of its
 DXBC. The prefix now takes d3dcompiler_47 10.0.15063 from lutris' d3d_extras.
 '''
+
+[zoo.45277]
+boot = "BK.EXE"
+
+[zoo.22599]
+boot = "CATCH22.EXE"
+events = [{ frame = 18, key = "1" }]
+
+[zoo.222]
+meta = { dos4gw = "true" }
