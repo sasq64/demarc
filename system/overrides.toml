@@ -18,6 +18,13 @@ meta = { wine_res = "1024x768" }
 # Rupture by ASD. Picks ARB vertex programs only when GL_VENDOR contains "ATI",
 # and NV_vertex_program (vp30) otherwise, which Mesa does not have: black screen.
 [zoo.60]
+fix_info = '''
+The intro picks ARB vertex programs only when GL_VENDOR contains "ATI" and
+NV_vertex_program (vp30) otherwise, which Mesa does not have, so it was black.
+Found by diffing +opengl call histograms between NVIDIA and Mesa
+(glLoadProgramNV on one, nothing on the other). A byte patch in ASD-
+Rapture.exe makes the vendor check always take the ARB path.
+'''
 patch = {
   info = "always use ARB vertex programs",
   target = "ASD-Rapture.exe",
@@ -48,6 +55,14 @@ file = "variform_by_kewlers.zip"
 # Picks Sound Blaster Pro, 44 kHz. Its player starts the next block once the
 # DSP stops reporting busy, which an SB16 never does.
 [zoo.174]
+fix_info = '''
+The Sound Blaster detection is a timing loop that runs out at dosbox-pure's
+default 200000 cycles ("Could not find output device!"), so cycles are lowered
+to 10000. Sound then stopped after 1.4 s: the player starts the next DMA block
+only when polling port 22C reads the DSP as idle, which the SB16 never
+reports, so the card is set to SB Pro 2. Keys pick Sound Blaster Pro at 44 kHz
+in its setup.
+'''
 events = [{ frame = 100, key = "5" }, { frame = 150, key = "8" }]
 meta = { dosbox_pure_cycles = 10000, dosbox_pure_sblaster_type = "sbpro2" }
 
@@ -74,6 +89,12 @@ meta = { dosbox_pure_cycles = 100000 }
 # started yet, but they start themselves after 5 ms; fewer cores only makes
 # that rarer.
 [zoo.829]
+fix_info = '''
+The task scheduler asserts Threads[i]->Running==0 after creating its workers,
+but each worker sets Running itself 5 ms after it starts, so the assert fires
+at random. Lowering wine_cpus (to 4, then 8) only made the race rarer. The exe
+is unpacked, so a byte patch NOPs out the assert's branch.
+'''
 file = "fr-063_v1.02.zip"
 patch = {
   info = "skip the Threads[i]->Running==0 assert",
@@ -86,6 +107,14 @@ patch = {
 # height when the screen is wider than 16:10, and centres with an unsigned
 # shift; wine draws the resulting 0x7ffffdc0 offscreen.
 [zoo.1697]
+fix_info = '''
+The aspect fit scales by screen width instead of height when the screen is
+wider than 16:10 and centres with an unsigned shift; wine then draws at a
+0x7ffffdc0 offset, off screen. Two one-byte patches change `mov eax,ecx` to
+`mov eax,esi` so it fits to height. The patch offset is the second byte of the
+instruction (the one that changes); writing over the opcode turned it into
+`mov cl,imm8` and crashed later.
+'''
 patch = [
   { info = "fit to height", target = "patter4k_windows7.exe", offset = 5023, contents = "xg==" },
   { info = "fit to height", target = "patter4k_windows7.exe", offset = 5042, contents = "xg==" },
@@ -97,6 +126,12 @@ file = "fr-025-final.zip"
 # Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
 # bytes of ECX are zero; wine leaves them set and the copy runs off .data.
 [zoo.3780]
+fix_info = '''
+After GetSystemDirectoryA the intro does `mov cl,15; rep movsb`, assuming the
+upper bytes of ECX are zero as on Windows. Wine leaves them set, so the copy
+runs off the end of .data. The patch rewrites the sequence to set all of ECX
+before the rep movsb.
+'''
 boot = "parsec_compatible.exe"
 patch = {
   info = "set all of ECX before rep movsb",
@@ -118,12 +153,27 @@ patch = {
 
 # Monstra Kosa: "1" picks fullscreen on its mode screen; ddraw draws black
 [zoo.4364]
+fix_info = '''
+The demo exited silently right after its own mode screen. +relay showed its
+launcher re-running itself with ShellExecuteA, with a path built from argv[0],
+which autodlg had passed as a Unix path. autodlg now launches with wine's DOS
+path and waits for the demo's child processes before reporting exited. cnc-
+ddraw is needed since wined3d's ddraw draws black, and a key press of 1 picks
+fullscreen on the mode screen.
+'''
 meta = { wine_cnc_ddraw = "true" }
 events = [{ frame = 400, key = "1" }]
 
 # fr-080: ATI-era GLSL that NVIDIA and Mesa reject (pow(vec4, float), 1-vec4,
 # writing a varying)
 [zoo.4701]
+fix_info = '''
+The shaders are 2011 ATI-lax GLSL that neither NVIDIA nor Mesa accepts:
+pow(vec4, float), 1-vec4, and writes to a varying. The error only showed in
+the demo's own message box (WINEDEBUG=+msgbox prints it). The override's glsl
+regex edits, applied by the opengl32 proxy at compile time, add the vec4()
+casts, use 1. and remove the varying writes.
+'''
 glsl = {
   match = "gl_FragColor",
   edits = [
@@ -141,17 +191,33 @@ glsl = {
 
 # Grayscale by Keyboarders: wined3d's ddraw draws to the GL front buffer, black
 [zoo.5252]
+fix_info = '''
+wined3d's ddraw draws through the GL front buffer (glDrawBuffer(GL_FRONT) +
+glFlush), and front-buffer GL never reaches the wine/gamescope session, so it
+stayed black while the music played. wine_cnc_ddraw replaces ddraw with cnc-
+ddraw, which presents normally.
+'''
 meta = { wine_cnc_ddraw = "true" }
 
 # #scene.no adtro: black for the same reason
 [zoo.175836]
 meta = { wine_cnc_ddraw = "true" }
 
+# Clone Meets Clone: TinyPTC, black at its own 320x200 under wined3d's ddraw
+[zoo.41197]
+meta = { wine_cnc_ddraw = "true", wine_res = "320x200" }
+
 # Antimoney: 8 bit flip chain, wined3d makes no P8 primary and it crashes
 [zoo.49452]
 meta = { wine_cnc_ddraw = "true" }
 
 [zoo.6123]
+fix_info = '''
+Override clicks used to drive only the libretro pointer, from which dosbox-
+pure takes no buttons; they now also press the core's left mouse button. In
+the end the setup screen also starts on Enter, so the override just presses
+Enter at frame 300.
+'''
 events = [{ frame = 300, key = "Enter" }]
 
 [zoo.6425]
@@ -217,6 +283,13 @@ meta = { dosbox_pure_cycles = 100000 }
 
 # Tokyo
 [zoo.8057]
+fix_info = '''
+The launcher's resolution and start buttons are clicked by override events.
+Manual mouse used to reach gamescope as relative motion only, so the session
+cursor drifted from demarc's and recorded clicks hit the wrong button (Die).
+Windows sessions now set absolute_pointer so the two agree. wine_res 1024x576
+matches the mode it wants.
+'''
 events = [
   { frame = 300, click = [0.335, 0.984] },
   { frame = 350, click = [0.311, 0.689] },
@@ -242,6 +315,15 @@ events = [{ frame = 200, key = "Space" }]
 # Lady Of Dark Autumn: with GL_NV_fragment_program it loads NV programs this
 # ATI-only release does not ship; hide it to take the ARB path.
 [zoo.8645]
+fix_info = '''
+It crashed in wglBindTexImageARB with a GLX BadMatch, a symptom of an earlier
+failure: wglChoosePixelFormatARB for WGL_TYPE_RGBA_FLOAT_ARB found nothing
+(Xwayland's GLX has no float fbconfigs), so the pbuffer was NULL. The opengl32
+proxy now emulates float pbuffers. After that it read NV fragment programs
+this ATI-only release does not ship, which it does whenever
+GL_NV_fragment_program is present; a one-byte patch spoils that name in the
+exe's extension check so it takes the ARB path.
+'''
 file = "ladyofdarkautumn.zip"
 patch = {
   info = "hide GL_NV_fragment_program",
@@ -281,6 +363,12 @@ events = [
 
 [zoo.18963]
 meta = { dos4gw = "true" }
+
+# Tribes / Melon Dezign & Pulse. The first download is an SDL wrapper with
+# no data or SDL.dll.
+[zoo.19311]
+file = "tribesfi.zip"
+events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame = 70, key = "Enter" }]
 
 # Killer / CNCD
 [zoo.19401]
@@ -382,6 +470,13 @@ boot = "texas_safe_1280x720.exe"
 # intro calls without checking. NULL, during FBO setup, every time.
 # Its launcher is drawn in GL: click High texture quality, then Run.
 [zoo.31427]
+fix_info = '''
+It asks for a GL 3.3 context without naming a profile, gets a core one, and
+calls glActiveTextureARB during FBO setup without checking; wine's
+wglGetProcAddress does not resolve ARB names on a core context, so it called
+NULL. wine_gl_compat gives it a compatibility context. Its GL-drawn launcher
+is answered with two clicks: High texture quality, then Run.
+'''
 meta = { wine_gl_compat = true }
 file = "gaiamachinafinal.zip"
 events = [{ frame = 450, click = [0.594, 0.814] }, { frame = 500, click = [0.573, 0.939] }]
@@ -389,6 +484,12 @@ events = [{ frame = 450, click = [0.594, 0.814] }, { frame = 500, click = [0.573
 # Arise by Stravaganza. Finds the GL minor version with strstr(GL_VERSION, "1."),
 # which hits "arch1.1" in Mesa's string: "No OpenGL 1.2 compatible driver found".
 [zoo.31637]
+fix_info = '''
+"No OpenGL 1.2 compatible driver found" on a 4.6 context. It reads the minor
+version as the digit after strstr(GL_VERSION, "1."), which lands on "arch1.1"
+in Mesa's version string. Two patches in sgz_arise.exe assume GL 1.4 and skip
+the version digit checks.
+'''
 file = "sgz_arise.zip"
 patch = [
   { info = "assume GL 1.4", target = "sgz_arise.exe", offset = 718923, contents = "6wY=" },
@@ -441,6 +542,14 @@ patch = {
 
 # Remnants / Alcatraz: written against a VM BIOS that leaves the DAC index at 0
 [zoo.342211]
+fix_info = '''
+A 256b intro written against a VM BIOS. It uses FCOMI/FCMOV, which dosbox-pure
+lacked; they were added to fpu.cpp and to the dynamic core's own FPU decoders
+(dyn_fpu.h, dyn_fpu_dh.h), which run real-mode code when cycles are auto-
+adjusted. It also assumes the DAC index is 0 at start, so a new core option
+dosbox_pure_dac_index_reset resets it. qemu with a hand-made boot sector gave
+the reference picture.
+'''
 libretro = { dosbox_pure_cycles = "max", dosbox_pure_dac_index_reset = "true" }
 
 [zoo.375937]
@@ -477,6 +586,14 @@ meta = { dosbox_pure_cycles = 4000 }
 # Into the Shadows / Triton: its blit runs off the end of the video segment and
 # switches VESA bank in the #GP handler, a fault only the normal core raises.
 [zoo.118585]
+fix_info = '''
+Black right after setting a banked VESA mode. Its blit runs off the end of the
+video segment and expects the resulting #GP at the segment limit, switching
+VESA bank in the fault handler. Only dosbox-pure's normal core raises that
+fault, so dosbox_pure_cpu_core = normal. Found by logging int 10h 4Fxx calls
+and dumping guest memory at the crash (RUST_LOG=retro=debug showed Crash:
+INT:Gate Selector).
+'''
 events = [{ frame = 300, key = "Enter" }]
 libretro = { dosbox_pure_cpu_core = "normal" }
 
@@ -495,6 +612,14 @@ libretro = { aga = "true" }
 # On / Mercury: a texture() bias in a vertex shader and an implicit vec3 to
 # float, which NVIDIA 610 rejects.
 [zoo.136151]
+fix_info = '''
+It asserts with int3 when GL_COMPILE_STATUS is false; the NVIDIA error was
+only in the intro's memory. The kkrunchy-unpacked sources are plain strings in
+the image, read from /proc/<pid>/mem and checked with glslang. glsl edits
+replace a texture() bias in a vertex shader with textureLod and add .x to
+implicit vec3/vec2-to-float narrowing, which NVIDIA 610 rejects and older
+drivers accepted.
+'''
 glsl = [
   { match = 'texture\(iv,kk,0\)', edits = [['texture\(iv,kk,0\)', "textureLod(iv,kk,0.)"]] },
   { match = 'hm\(0,w,mod', edits = [['hm\(0,w,mod\(abs\(p\),vec3\(1\)\)\)', "hm(0,w,mod(abs(p),vec3(1)).x)"]] },
@@ -504,6 +629,14 @@ glsl = [
 # 8K Reality / Fulcrum: NVIDIA-only GLSL, l (and bo in the final) are vec3
 # used as floats, and floats passed as vec2.
 [zoo.136330]
+fix_info = '''
+It crashed in wglUseFontOutlinesA with garbage arguments: Crinkler's range
+import landed two exports past wglUseFontBitmapsA in wine's table
+(docs/CRINKLER.md mode 1), and the extra popped bytes later overwrote the
+start time so it quit after one frame. Its GLSL is NVIDIA-only: l (and bo in
+the final) are vec3 used as floats, and floats passed as vec2; glsl edits
+declare them float and wrap the arguments in vec2().
+'''
 glsl = [
   { match = 'vec3 f,r,l=vec3\(0\);', edits = [['vec3 f,r,l=vec3\(0\);', "vec3 f,r;float l=0;"]] },
   { match = "vec3 f,r,l=0,bo=0;", edits = [["vec3 f,r,l=0,bo=0;", "vec3 f,r;float l=0,bo=0;"]] },
@@ -518,6 +651,15 @@ meta = { dosbox_pure_gus = "false" }
 # Hologram / Mercury: a vec3 and a vec2 assigned to floats and default
 # parameter values, which NVIDIA 610 rejects.
 [zoo.119170]
+fix_info = '''
+It asserts with int3 when GL_COMPILE_STATUS is false (NVIDIA 610). Its shader
+sources were found by running on software Mesa with MESA_SHADER_DUMP_PATH and
+checking every dump with glslang, adding glsl edits until none failed (all 60
+compile at load). The edits fix vec3/vec2 assigned to floats, and default
+parameter values (float r=1.1), which no current compiler accepts: those are
+stripped, and one function that a caller relies on the default for gets an
+overload instead.
+'''
 glsl = [
   { match = 'float ady=vec3\(', edits = [['float ady=vec3\(', "float ady=float("]] },
   { match = "float aad=vec2", edits = [['float aad=vec2\( jy\(1\),jy\(2\) \)', "float aad=jy(1)"]] },
@@ -535,6 +677,14 @@ glsl = [
 # Ziphead / CNCD & Fairlight: with ntsync the render thread queues on ntdll's
 # fd_cache_mutex for seconds at a time; the picture stalls, the music plays on.
 [zoo.136314]
+fix_info = '''
+Picture froze for seconds while the music played on. A frame counter in the
+gamescope core, then the render thread's context switches and its futex
+address mapped through nm ntdll.so, showed it queueing on ntdll's
+fd_cache_mutex, which ntsync misses take around a wineserver call. wine_ntsync
+= false hides /dev/ntsync in the sandbox and removed every stall. LAA and
+cache_writeback were tried first and did nothing.
+'''
 meta = { wine_ntsync = "false" }
 
 [zoo.136167]
@@ -543,6 +693,13 @@ download = "https://github.com/sasq64/demodb/releases/download/demo-arc/8088mph_
 # Surveillance / Alcatraz. Its shader is NVIDIA-only GLSL (vec4 - vec2, a float
 # assigned to a vec4).
 [zoo.155010]
+fix_info = '''
+White screen. Its shader is NVIDIA-only GLSL (vec4 - vec2, a float assigned to
+a vec4), so wine_glsl_version did nothing; RUST_LOG=retro=warn shows Mesa's
+errors. glsl regex edits fix it in every build; a MESA_SHADER_READ_PATH
+replacement only matched one of its four exes, since the hash covers baked-in
+constants.
+'''
 glsl = {
   match = "gl_FragCoord-s",
   edits = [
@@ -574,6 +731,13 @@ glsl = {
 # Umbra, same engine as Tempus and the same gl_FragColor problem
 # (scripts/patch_gl_shaders.py).
 [zoo.292557]
+fix_info = '''
+Same engine as Tempus: NVIDIA rejects gl_FragColor at #version 450. demo.dat
+is an x86-64 exe, and the opengl32 proxy is i386 only, so glsl edits do not
+apply. Instead a bsdiff (made with scripts/patch_gl_shaders.py) renames
+gl_FragColor to a named out vec4 in the shaders packed in demo.dat. A click
+presses Launch in BbLauncher.
+'''
 events = [{ frame = 300, click = [0.71, 0.918] }]  # Launch in BbLauncher
 patch = {
   info = "gl_FragColor renamed in shaders",
@@ -635,6 +799,12 @@ nChISiTBbAA=
 # demo.dat are patched to write a named `out vec4` instead
 # (scripts/patch_gl_shaders.py).
 [zoo.301363]
+fix_info = '''
+NVIDIA rejects gl_FragColor at #version 450. demo.dat is an x86-64 exe, and
+the opengl32 proxy is i386 only, so glsl edits do not apply. Instead a bsdiff
+(made with scripts/patch_gl_shaders.py) renames gl_FragColor to a named out
+vec4 in the shaders packed in demo.dat. A click presses Launch in BbLauncher.
+'''
 events = [{ frame = 300, click = [0.695, 0.925] }]  # Launch in BbLauncher
 patch = {
   info = "gl_FragColor renamed in shaders",
@@ -740,6 +910,12 @@ meta = { wine_res = "1024x768" }
 
 # Tentura: fullscreen buttons draw at their own size in a corner
 [zoo.53348]
+fix_info = '''
+Reported as "does not start": its dialog is resolution push buttons with no
+start button (autodlg --list showed it), and the fullscreen buttons draw at
+their own size in a corner of a larger session. wine_res 1024x768 matches what
+it draws.
+'''
 meta = { wine_res = "1024x768" }
 
 [zoo.46023]
@@ -750,10 +926,21 @@ meta = { wine_res = "640x480" }
 
 # Inflorescence: unversioned shaders initialize uniforms (1.20); forcing 120 kills glamor
 [zoo.98649]
+fix_info = '''
+"GLSL 1.20 required": its unversioned shaders use uniform initializers.
+wine_glsl_version 130 makes them compile. 120 must not be used: the forced
+version also applies to Xwayland's glamor shaders, and 120 kills Xwayland (X11
+I/O error). wine_glsl_120_subset does not cover uniform initializers.
+'''
 meta = { wine_glsl_version = "130" }
 
 # Spot: a small buttonless window comes up before the setup dialog
 [zoo.9828]
+fix_info = '''
+A small buttonless window comes up before the real setup dialog, and autodlg
+answered the wrong one. gamescope_dialog_wait_ms = 3000 waits for the setup
+dialog, and wine_res 512x384 gives it the mode it asks for.
+'''
 meta = { wine_res = "512x384", gamescope_dialog_wait_ms = 3000 }
 
 [zoo.24439]
@@ -785,6 +972,15 @@ meta = { gamescope_resolution = "1920x1080" }
 # GL_MAX_TEXTURE_SIZE squared (768 MB at 16384). Its mode switch also asks
 # for exactly 60 Hz, which a session at the screen's refresh does not offer.
 [zoo.46032]
+fix_info = '''
+autodlg never answered the setup dialog because it belongs to a child process
+(e3d_setup.exe) the demo waits for; autodlg now searches child processes too,
+and reads modes spelled 640*480 in combos. Three patches in adelanto.exe: skip
+logging GL_EXTENSIONS into a 0x800 heap buffer that today's extension list
+overruns; cap the texture it allocates at GL_MAX_TEXTURE_SIZE squared (768 MB
+at 16384) to 2048; and switch modes without DM_DISPLAYFREQUENCY, since it asks
+for exactly 60 Hz, which the session may not have.
+'''
 boot = "adelanto.exe"
 patch = [
   {
@@ -803,6 +999,13 @@ patch = [
 
 # We Ain't Real by Solar: asks for 640x480 at 85 Hz, which no session has
 [zoo.46672]
+fix_info = '''
+NtUserChangeDisplaySettings returned -2: the config asks for 640x480 at 85 Hz
+and the session has only 59 Hz, so neither wine_res nor wine_emulate_modeset
+helped (WINEDEBUG=+system shows dmDisplayFrequency). The patch replaces
+energy3d.cfg with one whose refresh rate is 0, meaning default, which works at
+any session size or refresh.
+'''
 patch = {
   info = "default refresh rate",
   target = "energy3d.cfg",
@@ -867,6 +1070,14 @@ events = [
 # decoder writes the padding byte too, running 264 bytes past its buffer into
 # wine's heap metadata. Unpacked, its allocation raised to 0x11ca0, repacked.
 [zoo.20036]
+fix_info = '''
+A crash in msvcrt memset on a fresh new() block, which went away under +heap
+or winedbg. One PCX is 275 wide with 276 bytes per line and the decoder writes
+the padding byte too, running 264 bytes past its buffer into wine's heap
+metadata. The exe was unpacked with upx -d, its allocation raised to 0x11ca0,
+repacked with upx --best and shipped as win/patches/akkordarbeit.bsdiff. cnc-
+ddraw for the display.
+'''
 meta = { wine_cnc_ddraw = true }
 patch = {
   info = "PCX buffer overrun",
@@ -886,6 +1097,15 @@ file = "ign_desp.zip"
 # SetVertexShader(0x144) goes through a stub that zeroes TEXCOORDINDEX and
 # TEXTURETRANSFORMFLAGS first, repacked.
 [zoo.8340]
+fix_info = '''
+The render-target copy showed one flat colour or a zoomed-in corner under DXVK
+and wined3d. The 3D scenes leave camera-space texgen and an env-map texture
+matrix on stage 0, and the pre-transformed (XYZRHW) 2D quads never clear them;
+Windows ignores both for XYZRHW vertices, DXVK and wined3d do not. The exe was
+unpacked, each SetVertexShader(0x144) routed through a stub that zeroes
+TEXCOORDINDEX and TEXTURETRANSFORMFLAGS first, repacked, and shipped as
+win/patches/nature2.bsdiff.
+'''
 patch = {
   info = "Reset texgen for 2D quads",
   target = "Nature v2.0.exe",
@@ -897,6 +1117,14 @@ patch = {
 # calls glBlendEquationi (4.0); NVIDIA's Linux driver reports exactly 3.3, so
 # LWJGL never loads it and the JVM aborts. The jar asks for 4.3 instead.
 [zoo.202844]
+fix_info = '''
+An OPENRNDR (LWJGL) demo asking GLFW for a 3.3 core context and then calling
+glBlendEquationi (4.0). NVIDIA gives exactly the version asked for and LWJGL
+loads nothing above it, so the JVM aborted; Mesa gives the highest version and
+was fine. The jar is patched to ask for 4.3, a recompressed class put in place
+of the original (its central directory lists entries twice), shipped as
+win/patches/transformer3.bsdiff.
+'''
 patch = {
   info = "GL 4.3 context",
   target = "demo-evoke-1.0-SNAPSHOT.jar",
@@ -909,6 +1137,13 @@ patch = {
 # under wine): "Failed to load wise_guy.jpg". Raise jpeg_mem_init's 1 MB
 # DEFAULT_MAX_MEM to 256 MB so it never does.
 [zoo.8196]
+fix_info = '''
+"Failed to load wise_guy.jpg" for a file that exists. The statically linked
+libjpeg spills progressive JPEGs to tmpfile(), which the old MSVC CRT creates
+in the root of the current drive, and with the cwd on Z: (= /) that is access
+denied. The patch raises jpeg_mem_init's DEFAULT_MAX_MEM (mov eax,1000000)
+from 1 MB to 256 MB, so libjpeg never spills.
+'''
 patch = {
   info = "libjpeg max memory 256 MB",
   target = "lobstarrs-attack.exe",
@@ -918,6 +1153,13 @@ patch = {
 
 # Yama by Gopher & LJ: draws and copies a fixed 1920x1080 whatever the window.
 [zoo.398638]
+fix_info = '''
+Frames slowed to seconds and glUniform got -nan(ind): an x87 stack leak. It
+pushes its time twice per frame and pops once, so after 8 frames fild
+overflows to the indefinite NaN; Windows clears the x87 stack somewhere per
+frame. The opengl32 proxy now runs emms after wglSwapBuffers. wine_res
+1920x1080 since it draws and copies a fixed 1920x1080.
+'''
 meta = { wine_res = "1920x1080" }
 
 [zoo.154143]
@@ -988,6 +1230,14 @@ events = [{ frame = 18, key = "4" }]
 # 800x600 PE taken out of it, with `mov cl,0Fh` before the gm.dls path's
 # `rep movsb` made a full `mov ecx`: wine leaves ECX's upper bytes set.
 [zoo.3286]
+fix_info = '''
+Each .com is a DOS dropper (aPACK stub) that writes t.exe and execs it through
+int 21h/4B00, which only NTVDM could do; DOSBox runs it to a black screen. The
+800x600 PE was depacked by hand (aPLib-style, translating the stub's loop) and
+cut out at its MZ, and is shipped as win/patches/mojodreams.exe with boot
+pointing at it. In it `mov cl,0Fh` before the gm.dls path's `rep movsb` is
+made a full `mov ecx`, since wine leaves ECX's upper bytes set.
+'''
 file = "mojodreams4k_final.zip"
 boot = "MojoDreams_final800x600.exe"
 patch = {
@@ -1000,6 +1250,13 @@ patch = {
 meta = { wine_res = "1024x768" }
 
 [zoo.185230]
+fix_info = '''
+The intro hard-codes a pixel format index (8), which in wine's list
+(alternating DB,DB,SB,SB) is single-buffered, and single-buffered GL never
+reaches the session, so it was black. The opengl32 proxy now remaps a single-
+buffered format to a double-buffered one. wine_res 1280x720 for its hardcoded
+720p.
+'''
 meta = { wine_res = "1280x720" }
 
 [zoo.37585]
@@ -1012,12 +1269,25 @@ known_issue = "Needs OpenCL"
 # which NVIDIA lacks, and multisampled GL points are circles that let the clear
 # colour through, so wined3d without multisampling
 [zoo.51354]
+fix_info = '''
+It asks for D3DMULTISAMPLE_NONMASKABLE quality 4, which DXVK reads as 1 << 4 =
+16 samples; NVIDIA's Vulkan lacks that, CreateDevice fails and the intro
+dereferences NULL. wined3d accepts it, but multisampled GL points are circles
+and the clear colour shows through. So d3d9=b (wined3d) with wine_d3d_config
+SampleCount=0 (WINE_D3D_CONFIG), a meta key added for this, which turns
+multisampling off.
+'''
 boot = "spilled_qc_1024.exe"
 meta = { wine_dll_overrides = "d3d9=b", wine_d3d_config = "SampleCount=0" }
 
 # Night Time by Loonies: D3D11 compute, presented once. Black under DXVK (no
 # HUD either), right with wined3d
 [zoo.155141]
+fix_info = '''
+It presents a D3D11 compute image once and then only polls Esc. Under DXVK
+nothing reaches the session, not even DXVK_HUD. wine_dll_overrides
+d3d11=b;dxgi=b uses wined3d instead, which works.
+'''
 meta = { wine_dll_overrides = "d3d11=b;dxgi=b" }
 
 [zoo.155002]
@@ -1037,6 +1307,16 @@ meta = { wine_res = "1024x768" }
 # full-screen quad fails GL_LEQUAL: black with music. Also pow(vec3, float),
 # which NVIDIA rejects, and an int if-condition, which Mesa rejects.
 [zoo.31450]
+fix_info = '''
+Black with music on NVIDIA. It enables GL_DEPTH_TEST once and clears the
+window's depth only on the first frame; after a swap NVIDIA's window depth no
+longer passes GL_LEQUAL for a z=0 quad, so every later full-screen quad is
+discarded. Two exe patches clear depth when Framebuffer::disable binds the
+window and before the load-bar quad. glsl edits fix pow(vec3, float), rejected
+by NVIDIA, and an int if-condition, rejected by Mesa. autodlg's --check
+Fullscreen now takes a textless checkbox's label from the Static before it,
+which this dialog uses.
+'''
 patch = [
   { info = "clear depth when Framebuffer::disable binds the window", target = "axxelerate.exe", offset = 68978, contents = "oVz4TACLAGoAaECNAAD/0GgAAQAA6BCbAQCQ" },
   { info = "clear depth before the load bar quad", target = "axxelerate.exe", offset = 41559, contents = "aAABAADoOwYCAGoH6AQGAgAxwIkEJIlEJASQkJCQkJA=" },
@@ -1050,6 +1330,13 @@ glsl = [
 events = [{ frame = 50, key = "3" }, { frame = 70, key = "4" }, { frame = 90, key = "3" }]
 
 [zoo.6147]
+fix_info = '''
+Normal key presses were ignored, held keys worked. The program polls port
+64h/60h with IRQ1 unmasked, and DOSBox raised IRQ1 at once, so the BIOS
+handler consumed every scancode first and only typematic repeats got through.
+The dosbox-pure core now raises IRQ1 10 us after the scancode, and not at all
+if the program has already read it. Found with a CS:IP trace from retro_run.
+'''
 events = [{ frame = 20, key = "4" }, { frame = 30, key = "4" }, { frame = 40, key = "3" }]
 
 [zoo.6704]
@@ -1057,3 +1344,109 @@ events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame 
 
 [zoo.130035]
 meta = { dos4gw = "true" }
+
+[zoo.18162]
+events = [{ frame = 23, key = "1" }, { frame = 117, key = "4" }, { frame = 221, key = "2" }]
+
+[zoo.8038]
+events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "Enter" }, { frame = 70, key = "Enter" }]
+
+# Dying Stars by Orange
+[zoo.191184]
+fix_info = '''
+UE4 checks VerifyWindowsVersion(6, 0) and silently falls back to OpenGL when
+it fails; the prefix reported Windows XP because winetricks' speechsdk verb
+ends with w_set_winver winxp. The D3D-only cook then failed with
+"GlobalShaderCache-GLSL_150.bin is missing". Fixed in the prefix setup, which
+must not leave it on XP. boot picks DYINGSTARS.exe.
+'''
+boot = "DYINGSTARS.exe"
+
+# Lasse Reinbong '96: polls MCI_STATUS from another thread (winmm proxy);
+# windowed 8 bit has the wrong palette
+[zoo.198069]
+fix_info = '''
+Frozen on the first frame with music playing. It polls MCI_STATUS from its
+render thread, and wine's MCI refuses every thread but the one that opened the
+device (MCIERR_INVALID_DEVICE_NAME); +relay showed 150k failing
+mciSendCommandA calls. The winmm proxy now allows that. cnc-ddraw, 640x480 and
+a fullscreen dialog answer, since windowed 8 bit gets the wrong palette.
+'''
+meta = { wine_cnc_ddraw = "true", wine_res = "640x480", wine_dialog_res = "Fullscreen" }
+
+# Glutamat
+[zoo.25511]
+fix_info = '''
+A 1k whose header overlaps code with the import descriptor, so
+OriginalFirstThunk is garbage. Windows falls back to the IAT when it points
+outside the image; wine reads it and faults in ntdll's import walk. The bytes
+are code, so no patch can zero them; autodlg maps a copy of the IAT at that
+address in the suspended child before it runs.
+'''
+
+# Aesterozoa
+[zoo.8542]
+fix_info = '''
+Its own "can't init" box after a successful wglMakeCurrent: it asks for 24
+colour bits and no alpha, then quits when glGetIntegerv(GL_ALPHA_BITS) returns
+0. Wine ranks colour bits before alpha, so asking for 8 alpha alone still gave
+the 24-bit format; the opengl32 proxy asks for 32 colour + 8 alpha bits
+instead.
+'''
+
+# 4k in 5k
+[zoo.4702]
+fix_info = '''
+The zip's entry names use backslashes, which unpacked to files with a
+backslash in their name that wine cannot open ("could not start"). demarc's
+unpacker now splits entry names on backslash.
+'''
+
+# Kindercrasher
+[zoo.86129]
+fix_info = '''
+Stuck on its first frame. Crinkler mode 2 (docs/CRINKLER.md): OpenFile is
+missing from wine's kernelbase, so its import resolved to AccessCheck and
+silently corrupted the stack. demarc's kernelbase proxy supplies OpenFile. A
+radeonsi glthread segfault seen in a bare-wine run was a red herring.
+'''
+
+# Your Fingers So Gently On My Skin
+[zoo.8644]
+fix_info = '''
+It faulted in the CRT's fread on a NULL FILE*: its own loader uses tmpfile(),
+which the old CRT creates in the drive root (Z: = / under wine, not writable).
+The sandbox now overlays the release directory and maps it to a free drive
+letter, so the root is writable and the files are thrown away. It then died on
+NVIDIA with a GLX BadMatch in MakeContextCurrent: wine's wglBindTexImageARB
+copies the pbuffer with its internal context, of a different pixel format; the
+opengl32 proxy copies with a context made on the pbuffer's DC.
+'''
+
+# The Real Party Is In Your Pocket
+[zoo.277164]
+fix_info = '''
+Showed its image for an instant, then black. No GLX config on NVIDIA's
+Xwayland has an accumulation buffer, so every glAccum failed silently and only
+the first swap showed a raw sample. The opengl32 proxy now emulates the
+accumulation buffer with an FBO.
+'''
+
+# The Ink Test
+[zoo.103547]
+fix_info = '''
+err:module:import_dll d3dcsx_43.dll not found, imported by its fwdfx.fx DLL.
+Wine has no d3dcsx builtin and winetricks no verb, so the prefix build takes
+d3dcsx_43.dll from the DirectX June 2010 redist that the d3dx9 verb already
+downloads.
+'''
+
+# One Of Those Days
+[zoo.185601]
+fix_info = '''
+It faulted on a NULL code blob right after D3DCompile, passing NULL for the
+error blob. winetricks' d3dcompiler_47 is the Windows 8.1 SDK build
+(6.3.9600), which rejects Windows 10 HLSL such as typed UAV loads of float4
+(X3676). wine's builtin compiler compiled it but DXVK read past the end of its
+DXBC. The prefix now takes d3dcompiler_47 10.0.15063 from lutris' d3d_extras.
+'''

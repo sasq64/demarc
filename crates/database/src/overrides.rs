@@ -56,6 +56,7 @@
 //!
 //! [zoo.51295]
 //! known_issue = "black: ..."         # notes on an unsolved problem, not used
+//! fix_info = "..."                   # what was done to make it work, not used
 //! ```
 //!
 //! Every key is optional, and an entry may carry several patches by writing
@@ -177,6 +178,9 @@ struct RawOverride {
     /// picks it up next. Not used by demarc.
     #[allow(dead_code)]
     known_issue: Option<String>,
+    /// What was done to make the release work. Not used by demarc.
+    #[allow(dead_code)]
+    fix_info: Option<String>,
 }
 
 #[derive(Deserialize)]
