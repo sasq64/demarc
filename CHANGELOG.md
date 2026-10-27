@@ -4,6 +4,79 @@ All notable changes to demarc will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## [1.8.2] - 2026-10-27
+
+### Added
+
+- **Atari Lynx**: Lynx releases run on the Holani core, with a boot image (`19fbec4`, `6768dbc`).
+- **Atari Falcon**: Falcon releases run through the ST system, and `.stx`/`.dim` are recognized as ST disk images (`94d4b7b`, `28bd462`, `7b8126d`).
+- **ZX Spectrum Next**: Added through a ZEsarUX libretro core (`f2c5b6b`).
+- **Audio Recording**: Record to WAV or MP3; `--record` records every demo, tagged and with cover art, advancing automatically. MP3 is a default feature, off for the Windows build (`ce238ac`, `5166a86`, `a8af5a8`, `6bf055b`).
+- **Awards Browser**: Browse awards from the navigator (`90ead03`).
+- **Wine Setup**: `--setup-wine` and `setup-wine.sh` provision wine and the demarc prefix, now kept under `system/win` (`50802bf`, `8d95717`, `346bf42`).
+- **Playlists**: Delete a playlist from the root list menu (`3a421c9`).
+- **Gamepad**: East closes dialogs, and F11 pops the navigator (`7260637`).
+- **Override Enhancements**: Regex GLSL source patching (replacing bsdiff shader patches), `known_issue` and `fix_info` fields, a `WINE_D3D_CONFIG` meta key, `wine_ntsync=false`, and many new per-release fixups (`00e371d`, `b683be0`, `28bd462`, `a0c3592`, `602c51d`, `33479f1`).
+- **opengl32 Proxy**: Emulates the accumulation buffer and float pbuffers, remaps single-buffered pixel formats to double-buffered and redirects bogus `wglUseFontOutlines` calls (`5308762`, `592e7cf`, `b11c3de`, `90b8e61`).
+- **Frame Log Plot**: Script to plot `--frame-log` CSV output (`36abdfb`).
+
+### Changed
+
+- **Audio Pipeline**: Audio is carried as f32 through the backend, and threaded cores push audio from the worker thread (`2f1b4d7`, `0512eb9`).
+- **Web Releases**: The Web system is tried first for browser releases, with pages sized to the screen (`0c8d699`).
+- **Lynx Detection**: Lynx is detected before DOS/Windows so bundled emulators don't claim the release (`5730e85`).
+- **Cross Fade**: Lengthened to 4 seconds (`5e833a1`).
+- **winmm Proxy**: MCI calls run on one thread, and UE4 releases get Windows 10 (`a1ce2fb`).
+- **Install**: Installs to `~/.local/bin` (`80b5920`).
+- **Bevy Features**: Trimmed to what demarc uses (`9cf0b9b`).
+
+### Fixed
+
+- **Remote Control**: Play-by-id no longer races the startup load (`4f5f3f8`).
+- **Zip Entries**: Split entry names on backslash when unpacking (`a37b7cd`).
+- **Dates**: `CompactDate` accepts month 12 and day 31 (`dca5330`).
+- **Wine Drives**: Drive letters with a device-only link are treated as taken (`3b29e0d`).
+- **autodlg**: `--check`/`--uncheck` work on textless checkboxes, and it survives self-relaunching releases (`0df4825`, `dae840c`).
+- **Wine**: Fixed `tmpfile()` drive and GLX BadMatch faults (`e842b9a`).
+- **macOS**: Miscellaneous fixes (`69f2673`).
+
+## [1.8.1] - 2026-10-17
+
+### Added
+
+- **Steam Deck**: Gamepad controls, bundled wine, an on-screen keyboard, a pad command list, right-stick cursor, a larger picker and zoomed settings, a controller template, per-demo CRT opt-out, and packaging/install scripts (`8e59ecf`, `5239a74`, `f7b739f`, `6edbf70`, `cc8b8ea`, `3cb318f`, `4dd70ae`, `ed85e07`, `673f2d4`).
+- **Patch Menu**: Write `overrides.toml` fixes from the running app, including recorded events and the download to apply (`fb869e2`, `e9d80ef`, `ad0192b`).
+- **Modland Database**: The Modland index can be used as a database source (`568b993`).
+- **URL Arguments**: http(s) URLs are accepted as file arguments (`88f10f8`).
+- **Sorting and Browsing**: Title/author sorting and an Authors browser (`5a03ec6`).
+- **Downloaded Marker**: Already-downloaded releases are marked in the picker (`d3bab84`, `37bbc0a`).
+- **Override Enhancements**: Click and key event sequences, `cache_writeback`, booting a program with arguments, `wine_res`, `wine_shader_read`, cnc-ddraw for DirectDraw demos, and many new per-release fixups (`3856f28`, `8caf181`, `5da8a48`, `3f82051`, `d24eb84`, `ecf7149`, `480b7cf`).
+- **DOS Settings**: Cycles and CPU type settings (`91ba3b2`).
+- **Remote Control**: `audio_level()` and `record_audio()` (`e0a92b8`).
+- **Frame Log**: `--frame-log` writes a CSV of audio fill and frame timing (`da8ba90`).
+- **Misc**: A gamepad hotkey for AddToPlaylist, the entry id in the info panel, and optional hotpath profiling (`ed0d7a1`, `6f771b7`, `340476a`).
+
+### Changed
+
+- **C64 Fast Load**: `--fast-load` is replaced by the default-on `--c64-fast-load` (`5ce597a`).
+- **Latency**: A Low/Medium/High level applied at runtime, with retuned presets, and the audio ring fill is steered by a smoothed resample ratio (`b113de8`, `da8ba90`, `bbde1ac`).
+- **More Crates**: Database code, the flash emulator and audio moved into the `database`, `flash-emu` and `retro-core` crates (`753c618`, `e3a0598`, `1481755`, `2a8a47e`, `8f27f05`).
+- **Picker**: Title shown as a breadcrumb, search cursor kept at the end, and a proportional font (`f6d13e4`, `691c345`, `5188a60`, `52ca7e8`, `d63fb7f`).
+- **DOS**: Long-named programs are renamed to 8.3, ranked by archive name, and MIDI is disabled (`1097f6a`).
+- **Wine Logging**: Wine and Mesa stderr is captured into the retro log (`e0f418a`).
+- **autodlg**: Recognises Delphi VCL controls, maps out-of-image IATs, clicks preferred push buttons and has a configurable no-dialog wait (`cd6a786`, `5e80ab8`, `7871c64`).
+
+### Fixed
+
+- **libretro Environment**: Bool results are written as single bytes (`8529392`).
+- **Audio Latency**: Fixed the `Latency::High` buffer minimum typo (`7c38614`).
+- **OpenGL Under Wine**: Pixel format selection for 24-bit RGB requests and an opengl32 override for NVIDIA's `wglGetProcAddress` (`b943989`, `80e2456`).
+- **Wine Proxies**: dx8vb exports under Windows ordinals and kernelbase exports Windows-only names (`e81d8be`, `9018b51`).
+- **Empty Database**: Navigation no longer breaks on an empty database (`5096c4f`).
+- **PCX**: Fixed a buffer overrun (`9774384`).
+- **Dates**: `CompactDate` parsing is fallible (`44ef11f`).
+- **Release Fixes**: Adelanto, Nature v2.0, We Ain't Real, Yama, Transformer 3, Atlas, Butterfly Thoughts, Lobstarrs Attack and Mojo Dreams (`0a1ab52`, `9f819bf`, `8005ea9`, `edf459e`, `4fc1bb5`, `4f1cb80`, `86cdb07`, `e953b9f`, `7709917`).
+
 ## [1.8.0] - 2026-10-07
 
 ### Added
