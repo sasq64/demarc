@@ -62,7 +62,7 @@ use commands::CommandPlugin;
 use cross_fade::CrossFadePlugin;
 use dj::DjPlugin;
 use egui_settings::AppSettingsExt;
-use files::{DbFilter, collect_db, collect_db_stdin, collect_file, collect_files};
+use files::{DbFilter, collect_db, collect_db_stdin, collect_db_unless, collect_file, collect_files};
 use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
 use navigator::NavigatorPlugin;
@@ -146,6 +146,35 @@ pub(crate) fn println(text: impl std::fmt::Display) {
     }
     use std::io::Write;
     let _ = std::io::stdout().write_all(line.as_bytes());
+}
+
+/// `*.txt` / `*.txt.gz` databases next to the binary, in `../../demodb` from
+/// it, and in `~/.config/demarc/demodb`.
+fn default_dbs() -> Vec<std::path::PathBuf> {
+    let mut roots = vec![];
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        roots.push(exe_dir.to_path_buf());
+        roots.push(exe_dir.join("../../demodb"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".config/demarc/demodb"));
+    }
+    let mut found = vec![];
+    for dir in roots {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let mut dbs: Vec<_> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                let name = p.to_string_lossy().to_lowercase();
+                p.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz"))
+            })
+            .collect();
+        dbs.sort();
+        found.append(&mut dbs);
+    }
+    found
 }
 
 /// Print what `--check-wine` found and give back the exit code for it: 0 when
@@ -448,12 +477,25 @@ fn main() {
         dbs.entry(name).or_default().append(&mut files);
     }
 
+    if dbs.values().all(Vec::is_empty) && args.files.is_empty() {
+        args.files = default_dbs();
+        if args.files.is_empty() {
+            println("** Error: No files given and no default databases found");
+            return;
+        }
+        args.select = true;
+    }
+
     // Expand any directory in `games` into the `.m3u` files found within it.
     for file in std::mem::take(&mut args.files) {
         let name = file.to_string_lossy().to_lowercase();
         let mut files = vec![];
         let db_name = if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
-            collect_db(&file, &filter, &mut files).unwrap()
+            let db = collect_db_unless(&file, &filter, &mut files, |name| dbs.contains_key(name));
+            let Some(db_name) = db.unwrap() else {
+                continue;
+            };
+            db_name
         } else {
             if file.is_dir() && args.collect {
                 collect_files(&file, &mut files, args.many).unwrap();

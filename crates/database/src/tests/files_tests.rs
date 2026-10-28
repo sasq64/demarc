@@ -426,3 +426,20 @@ fn collect_file_takes_a_url() {
     let file = collect_file(Path::new("demos/a.zip")).unwrap();
     assert!(matches!(file.path, FileSource::Path(_)));
 }
+
+/// A db whose name is skipped collects nothing.
+#[test]
+fn collect_db_unless_skips_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("other.txt");
+    fs::write(&db, "# CSDb database\ntitle:A\tdownload:http://example.com/a.zip\n").unwrap();
+
+    let mut out = vec![];
+    let name = collect_db_unless(&db, &DbFilter::default(), &mut out, |n| n == "CSDb").unwrap();
+    assert_eq!(name, None);
+    assert!(out.is_empty());
+
+    let name = collect_db_unless(&db, &DbFilter::default(), &mut out, |_| false).unwrap();
+    assert_eq!(name.as_deref(), Some("CSDb"));
+    assert_eq!(out.len(), 1);
+}

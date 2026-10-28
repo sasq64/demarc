@@ -101,6 +101,17 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 ///
 /// Returns the name the db goes by — see [`db_name`].
 pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<String> {
+    Ok(collect_db_unless(path, filter, out, |_| false)?.expect("never skipped"))
+}
+
+/// [`collect_db`], but nothing is collected and `None` returned when `skip`
+/// is true for the db's name.
+pub fn collect_db_unless(
+    path: &Path,
+    filter: &DbFilter,
+    out: &mut Vec<EmuFile>,
+    skip: impl Fn(&str) -> bool,
+) -> Result<Option<String>> {
     let data =
         fs::read(path).with_context(|| format!("Failed to read db file {}", path.display()))?;
     let text = db_text(data, &format!("db file {}", path.display()))?;
@@ -108,16 +119,23 @@ pub fn collect_db(path: &Path, filter: &DbFilter, out: &mut Vec<EmuFile>) -> Res
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "db".into());
-    let start = out.len();
-    let name = if modland::is_index(text) {
-        modland::collect(text, filter, out);
+    let modland = modland::is_index(text);
+    let name = if modland {
         "Modland".into()
     } else {
-        collect_db_text(text, filter, out);
         db_name(text, fallback)
     };
+    if skip(&name) {
+        return Ok(None);
+    }
+    let start = out.len();
+    if modland {
+        modland::collect(text, filter, out);
+    } else {
+        collect_db_text(text, filter, out);
+    }
     tag_db(&mut out[start..], &name);
-    Ok(name)
+    Ok(Some(name))
 }
 
 /// Record which db the entries came from, since ids are only unique within one.
