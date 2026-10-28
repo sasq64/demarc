@@ -354,6 +354,16 @@ events = [
 [zoo.8960]
 file = "petroleo_boah.zip"
 
+# Planet Loop by Madwizards & Nah-Kolor: the party version needs EXT_vertex_weighting
+[zoo.9072]
+fix_info = '''
+The party version stopped with "abnormal program termination". +relay showed
+wglGetProcAddress("glVertexWeightfEXT") returning NULL (EXT_vertex_weighting
+is GeForce-only) and a C++ throw right after. The group's later Radeon patch
+does not need it, so the patched release is picked.
+'''
+file = "ploop_patched.zip"
+
 [zoo.9245]
 cache_writeback = true
 
