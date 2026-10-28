@@ -1480,8 +1480,36 @@ error blob. winetricks' d3dcompiler_47 is the Windows 8.1 SDK build
 DXBC. The prefix now takes d3dcompiler_47 10.0.15063 from lutris' d3d_extras.
 '''
 
+# Bakkslide 7: TinyPTC, drawn small in the corner of the session
 [zoo.45277]
+fix_info = '''
+It drew 640x480 in the top left corner of the 1920x1080 session.
+WINEDEBUG=+system showed it asking for 640x480. With wine_res alone wined3d's
+ddraw drew black; TinyPTC needs cnc-ddraw, as for Clone Meets Clone.
+'''
 boot = "BK.EXE"
+meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
+
+# incyber, The Day The Earth Was Born, Some Bookprint And A Broken Heart:
+# small in the corner, like Bakkslide 7
+[zoo.94012]
+fix_info = '''
+WINEDEBUG=+system showed it asking for 640x480. Same fix as Bakkslide 7.
+'''
+meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
+
+[zoo.50409]
+fix_info = '''
+WINEDEBUG=+system showed it asking for 640x480. Same fix as Bakkslide 7. The
+first ~800 frames are black.
+'''
+meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
+
+[zoo.19]
+fix_info = '''
+WINEDEBUG=+system showed it asking for 640x400. Same fix as Bakkslide 7.
+'''
+meta = { wine_cnc_ddraw = "true", wine_res = "640x400" }
 
 [zoo.22599]
 boot = "CATCH22.EXE"
@@ -1489,3 +1517,15 @@ events = [{ frame = 18, key = "1" }]
 
 [zoo.222]
 meta = { dos4gw = "true" }
+
+[zoo.23694]
+file = "hjb_stwo.zip"
+
+[zoo.25838]
+boot = "lapsuus.exe"
+
+[zoo.9842]
+meta = { wine_res = "640x480" }
+
+[zoo.25090]
+meta = { wine_res = "640x480" }

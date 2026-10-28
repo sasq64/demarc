@@ -745,3 +745,13 @@
   start menu left 9C (Enter up) there, which is why that worked. Test db
   entries with `--db demodb/demozoo.txt.gz` and `load_demo(id)`: the bare
   zip lacks the db's `dos4gw` tag and fails differently.
+
+- A running demarc can't be attached to here: `ptrace_scope=1` blocks gdb and
+  `perf_event_paranoid=2` blocks perf, even on `cpu-clock:u`. Per-thread CPU
+  and voluntary context switches from `/proc/<pid>/task/*/{stat,status}`
+  were enough to find the stuck thread; check those first.
+
+- Before emulating a missing vendor GL extension, check the db line for later
+  downloads (`dlname` "fix", `_patch`, `_patched`): Planet Loop (`zoo.9072`)
+  needs NVIDIA's EXT_vertex_weighting, while the group's own Radeon patch
+  does not, and `file = "ploop_patched.zip"` was the whole fix.
