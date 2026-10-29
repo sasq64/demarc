@@ -149,6 +149,14 @@ patch = {
   contents = "jbgoEAAHag9ZvtSwDAo=",
 }
 
+[zoo.3620]
+fix_info = '''
+It showed "DDraw created surface with wrong size": it sets 640x480x32, which
+the 1920x1080 session does not list, and its primary surface came out at the
+desktop size. wine_res gives the session that mode.
+'''
+meta = { wine_res = "640x480" }
+
 # Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
 # bytes of ECX are zero; wine leaves them set and the copy runs off .data.
 [zoo.3780]
@@ -443,6 +451,38 @@ events = [
 [zoo.55180]
 file = "breakpoint05/misc/mfxkwl_bp05invitation.zip"
 
+# Tannhäuser Gate by Cubicle
+[zoo.80364]
+fix_info = '''
+Most effects were black. They render to pbuffers through Mark Harris'
+RenderTexture, with the mode "rgb double depth aux=1 tex2D rtt". No Xwayland
+GLX config has aux buffers, so wglChoosePixelFormatARB found no format and no
+pbuffer was made. The patch asks for aux=0, and the effects render without it.
+wine_res fits the picture to the screen.
+'''
+meta = { wine_res = "640x480" }
+patch = {
+  info = "pbuffer mode aux=0",
+  target = "Cubicle.dll",
+  offset = 461613,
+  contents = "MA==",
+}
+
+[zoo.55184]
+fix_info = '''
+Crashed writing to 0xFEEDFACE right after the setup dialog. demotractor.dll
+calls QueryPerformanceFrequency with the value of its frequency field instead
+of its address. Windows fails the call and the engine falls back to
+timeGetTime; wine writes through the pointer. The patch makes the call return
+FALSE.
+'''
+patch = {
+  info = "QueryPerformanceFrequency returns FALSE",
+  target = "demotractor.dll",
+  offset = 152405,
+  contents = "McCQkJCQkA==",
+}
+
 # Ninja II by Melon Dezign
 [zoo.18032]
 file = "ninja2.zip"
@@ -525,6 +565,19 @@ is answered with two clicks: High texture quality, then Run.
 meta = { wine_gl_compat = true }
 file = "gaiamachinafinal.zip"
 events = [{ frame = 450, click = [0.594, 0.814] }, { frame = 500, click = [0.573, 0.939] }]
+
+[zoo.31631]
+fix_info = '''
+Same demotractor.dll bug as Traction (zoo.55184): QueryPerformanceFrequency
+gets 0xFEEDFACE as its pointer, which Windows fails and wine writes through.
+The patch makes the call return FALSE.
+'''
+patch = {
+  info = "QueryPerformanceFrequency returns FALSE",
+  target = "demotractor.dll",
+  offset = 153173,
+  contents = "McCQkJCQkA==",
+}
 
 # Arise by Stravaganza. Finds the GL minor version with strstr(GL_VERSION, "1."),
 # which hits "arch1.1" in Mesa's string: "No OpenGL 1.2 compatible driver found".
@@ -1348,6 +1401,14 @@ returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program
 and NV_register_combiners, none of which Mesa has.
 """
 
+# Relais by Kolor: same engine as Interceptor, also wants EXT_paletted_texture
+[zoo.3299]
+known_issue = """
+GeForce3 only. Quits with "Critical Warning" when any wglGetProcAddress
+returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program,
+NV_register_combiners and EXT_paletted_texture, none of which Mesa has.
+"""
+
 # Spilled by Archee: D3DMULTISAMPLE_NONMASKABLE quality 4 is 16 samples to DXVK,
 # which NVIDIA lacks, and multisampled GL points are circles that let the clear
 # colour through, so wined3d without multisampling
@@ -1630,3 +1691,18 @@ meta = { wine_res = "1024x768" }
 
 [zoo.9673]
 events = [{ frame = 194, click = [0.5979999899864197, 0.8939999938011169] }]
+
+[zoo.10171]
+file = "yellow_rose_win.zip"
+
+[zoo.63976]
+meta = { wine_res = "640x480" }
+
+[zoo.67994]
+file = "dieanderung_win32.zip"
+
+[zoo.8302]
+meta = { wine_res = "800x600" }
+
+#[zoo.3985]
+#meta = { wine_res = "1024x768" }
