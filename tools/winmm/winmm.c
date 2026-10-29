@@ -9,6 +9,10 @@ __declspec(dllimport) void *__stdcall GetProcAddress(HMODULE module, const char 
 __declspec(dllimport) unsigned long __stdcall GetEnvironmentVariableW(const WCHAR *name, WCHAR *buf,
                                                                      unsigned long size);
 __declspec(dllimport) int __stdcall DisableThreadLibraryCalls(HMODULE module);
+__declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+__declspec(dllimport) void __stdcall EnterCriticalSection(void *section);
+__declspec(dllimport) void __stdcall LeaveCriticalSection(void *section);
+unsigned long __readfsdword(unsigned long offset);
 
 typedef unsigned long DWORD;
 typedef unsigned int UINT;
@@ -110,10 +114,37 @@ static void __stdcall wave_callback(void *hwo, UINT msg, Device *dev, DWORD p1, 
     driver_callback(dev->callback, dev->flags >> 16, hwo, msg, dev->instance, p1, p2);
 }
 
+// Wine's first wave open starts a thread and waits for it, and that thread needs
+// the loader lock. Vovoid's "Remembrance" opens waveIn from a DLL's constructor,
+// so the first open lets go of the lock until it returns.
+static OpenFn real_in_open;
+static volatile int wave_opened;
+
+static DWORD open_device(OpenFn fn, void **h, UINT id, void *fmt, DWORD callback, DWORD instance, DWORD flags)
+{
+    char *peb = (char *)__readfsdword(0x30);
+    void *lock = *(void **)(peb + 0xa0);
+    int depth = 0;
+    if (!wave_opened && lock && *(DWORD *)((char *)lock + 0xc) == GetCurrentThreadId())
+        depth = *(int *)((char *)lock + 8);
+    for (int i = 0; i < depth; i++)
+        LeaveCriticalSection(lock);
+    DWORD ret = fn(h, id, fmt, callback, instance, flags);
+    for (int i = 0; i < depth; i++)
+        EnterCriticalSection(lock);
+    wave_opened = 1;
+    return ret;
+}
+
+static DWORD __stdcall wave_in_open(void **hwi, UINT id, void *fmt, DWORD callback, DWORD instance, DWORD flags)
+{
+    return open_device(real_in_open, hwi, id, fmt, callback, instance, flags);
+}
+
 static DWORD __stdcall wave_open(void **hwo, UINT id, void *fmt, DWORD callback, DWORD instance, DWORD flags)
 {
     if (flags & WAVE_FORMAT_QUERY)
-        return real_open(hwo, id, fmt, callback, instance, flags);
+        return open_device(real_open, hwo, id, fmt, callback, instance, flags);
     Device *dev = 0;
     for (unsigned i = 0; i < sizeof(devices) / sizeof(*devices) && !dev; i++)
         if (__sync_bool_compare_and_swap(&devices[i].used, 0, 1))
@@ -123,8 +154,8 @@ static DWORD __stdcall wave_open(void **hwo, UINT id, void *fmt, DWORD callback,
     dev->callback = callback;
     dev->instance = instance;
     dev->flags = flags & CALLBACK_TYPEMASK;
-    DWORD ret = real_open(hwo, id, fmt, (DWORD)wave_callback, (DWORD)dev,
-                          (flags & ~CALLBACK_TYPEMASK) | CALLBACK_FUNCTION);
+    DWORD ret = open_device(real_open, hwo, id, fmt, (DWORD)wave_callback, (DWORD)dev,
+                            (flags & ~CALLBACK_TYPEMASK) | CALLBACK_FUNCTION);
     if (ret)
         dev->used = 0;
     else
@@ -807,6 +838,7 @@ int __stdcall DllMain(HMODULE self, unsigned long reason, void *reserved)
     }
     driver_callback = hook("DriverCallback", 0);
     real_open = hook("waveOutOpen", wave_open);
+    real_in_open = hook("waveInOpen", wave_in_open);
     real_close = hook("waveOutClose", wave_close);
     real_prepare = hook("waveOutPrepareHeader", wave_prepare);
     real_unprepare = hook("waveOutUnprepareHeader", wave_unprepare);

@@ -15,7 +15,7 @@ TARGET = "i686-pc-windows-msvc"
 KERNEL32 = ["LoadLibraryW@4", "GetProcAddress@8", "GetEnvironmentVariableW@12",
             "DisableThreadLibraryCalls@4", "CreateThread@24", "CreateEventW@16", "SetEvent@4",
             "WaitForSingleObject@8", "GetCurrentThreadId@0", "QueryPerformanceCounter@4",
-            "QueryPerformanceFrequency@4"]
+            "QueryPerformanceFrequency@4", "EnterCriticalSection@4", "LeaveCriticalSection@4"]
 USER32 = ["MsgWaitForMultipleObjects@20", "PeekMessageW@20", "TranslateMessage@4", "DispatchMessageW@4"]
 
 

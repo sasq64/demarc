@@ -27,6 +27,13 @@ Anorgatronikum queues one from a stack it then reuses.
 Wine only lets the thread that opened an MCI device use it, and Lasse Reinbong
 '96 polls the sequencer's position from its render thread.
 
+The first `waveOutOpen`/`waveInOpen` lets go of the loader lock while wine's
+runs, when the caller holds it. Wine starts a devices thread there and waits
+for it, and the thread cannot start until the loader lock is free. Vovoid's
+"Remembrance" opens waveIn from a plugin DLL's constructor and froze with
+`loader_section ... wait timed out`. Failing the open is no way out: the
+plugin then loops on "The specified device handle is invalid".
+
 - `exports.txt` — `ordinal name stdcall-arg-bytes`, ordinals 2–194 taken from
   Windows 10 (10240 and 28000 are identical), then the names only wine has.
   Exports wine does not implement return 0.
