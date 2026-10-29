@@ -163,6 +163,14 @@ print the errors; the prefix needs a Windows 10 `d3dcompiler_47` (10.0.x).
 finds nothing under Xwayland; the opengl32 proxy emulates them with FBOs
 (`zoo.8645`). An ATI-era demo that checks for `GL_NV_*` may take an NV path
 whose files were never shipped: hide the name with an override `patch`.
+No Xwayland config has aux buffers either: RenderTexture mode strings
+(`"rgb ... aux=1 ... rtt"`) find no format, and the effects are black.
+Patch the string to `aux=0` (Tannhäuser Gate, `zoo.80364`).
+
+**"Critical Warning" box after the setup dialog.** Black Maiden's GeForce3
+engine (Interceptor `zoo.6279`, Relais `zoo.3299`): `+opengl` shows
+`Extensions required for gl*NV not supported`. NV_vertex_program, NV_fence,
+NV_register_combiners are not in Mesa; mark it `known_issue`.
 
 **GL function pointer is NULL (page fault at 0).** wine's `wglGetProcAddress`
 refuses names whose extension is not on the context. `wine_gl_compat` asks
@@ -201,7 +209,8 @@ for `Setting display mode` / `Failed to change display mode`: a mode larger
 than the session cannot be set. A `returned -2` with a mode that fits is the
 refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
 640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
-in a corner, needs `wine_res` set to its own resolution. TinyPTC demos also need
+in a corner, needs `wine_res` set to its own resolution, and so does a
+demo's own "surface with wrong size" box (Panjabmoore, `zoo.3620`). TinyPTC demos also need
 `wine_cnc_ddraw=true`, or `wine_res` turns them black (Bakkslide 7, `zoo.45277`). `wine_desktop=true`
 is for demos that do not survive a mode switch. A letterbox that is too wide
 was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
@@ -257,6 +266,12 @@ wine leaves it set. Parsec's 14-byte patch fits them (Ex Fabric, `zoo.3578`).
 
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
+
+**Write fault at a magic address (`0xFEEDFACE`) inside ntdll.** A bad
+pointer passed to an API that Windows probes and fails, and wine writes
+through. `+relay` shows the call; patch it to return FALSE (Traction,
+`zoo.55184`, `QueryPerformanceFrequency`). Other Traction releases with
+`demotractor.dll` may have it at another offset (I Am, `zoo.31631`).
 
 **Fault in msvcrt `memset`/`memcpy` that vanishes under `+heap` or
 winedbg.** The demo overran an earlier heap block into wine's free-block
