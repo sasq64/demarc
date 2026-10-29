@@ -55,6 +55,18 @@ static int equal(const char *a, const char *b)
     return *a == *b;
 }
 
+static int contains(const char *s, const char *word)
+{
+    for (; *s; s++) {
+        unsigned n = 0;
+        while (word[n] && s[n] == word[n])
+            n++;
+        if (!word[n])
+            return 1;
+    }
+    return 0;
+}
+
 static void *lookup(HMODULE module, const char *name)
 {
     void *address = 0;
@@ -486,6 +498,8 @@ static HGLRC __stdcall create_context(void *dc)
     return wine_create_context(i < 0 ? dc : pbuffers[i].dc);
 }
 
+static int drop_edge_flags;
+
 static int __stdcall make_current(void *dc, HGLRC context)
 {
     int i = float_dc(dc);
@@ -498,6 +512,11 @@ static int __stdcall make_current(void *dc, HGLRC context)
         unsigned framebuffer = i < 0 ? 0 : float_framebuffer(context, i);
         if (bind_framebuffer)
             bind_framebuffer(GL_FRAMEBUFFER, framebuffer);
+    }
+    if (ret && context) {
+        const char *(__stdcall * get_string)(unsigned) = lookup(wine, "glGetString");
+        const char *renderer = get_string(0x1F01 /* GL_RENDERER */);
+        drop_edge_flags = renderer && contains(renderer, "radeonsi");
     }
     return ret;
 }
@@ -844,6 +863,22 @@ static void __stdcall accum(unsigned op, float value)
         (enabled[c] ? enable : disable)(caps[c]);
 }
 
+// radeonsi hangs the GPU on edge flags in polygon mode GL_LINE (This Way).
+static void(__stdcall *wine_edge_flag)(unsigned char flag);
+static void(__stdcall *wine_edge_flagv)(const unsigned char *flag);
+
+static void __stdcall edge_flag(unsigned char flag)
+{
+    if (!drop_edge_flags)
+        wine_edge_flag(flag);
+}
+
+static void __stdcall edge_flagv(const unsigned char *flag)
+{
+    if (!drop_edge_flags)
+        wine_edge_flagv(flag);
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
@@ -894,6 +929,12 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "glClearAccum")) {
                 wine_clear_accum = address;
                 address = clear_accum;
+            } else if (address && equal(names[i], "glEdgeFlag")) {
+                wine_edge_flag = address;
+                address = edge_flag;
+            } else if (address && equal(names[i], "glEdgeFlagv")) {
+                wine_edge_flagv = address;
+                address = edge_flagv;
             }
         } else {
             LdrGetProcedureAddress(wine, 0, ordinals[i], &address);

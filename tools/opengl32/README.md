@@ -60,3 +60,8 @@ when the context has no accumulation buffer, which no GLX config on NVIDIA's
 Xwayland has: an RGBA32F texture behind an FBO, sized to the viewport at first
 use, and each operation one full-screen pass. Fizzer's "The Real Party Is In
 Your Pocket" accumulates 256 samples in it.
+
+`glEdgeFlag` and `glEdgeFlagv` do nothing when `GL_RENDERER` names radeonsi
+(checked in `wglMakeCurrent`). radeonsi (Mesa 26.2.5) faults and hangs the GPU
+drawing display lists with edge flags in polygon mode `GL_LINE` (Stravaganza's
+"This Way"). Its wireframes then show every triangle edge.
