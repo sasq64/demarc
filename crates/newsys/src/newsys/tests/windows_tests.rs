@@ -92,6 +92,55 @@ fn claims_a_windows_release_for_wine() {
     assert_eq!(sys.default_meta().get(META_RES), Some(&DEFAULT_RES));
 }
 
+/// A Windows release with no Windows program in it is started from its `.bat`.
+#[test]
+fn starts_a_windows_release_from_its_bat() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+
+    let release = dir.path().join("chinadoll");
+    fs::create_dir_all(&release).unwrap();
+    write_bytes(&release, "install.bat", b"echo\r\n");
+    write_bytes(&release, "run.bat", b"demo.dat\r\n");
+
+    let mut wf = WorkFile::new(release.clone());
+    assert!(!sys.load(&mut wf).unwrap());
+
+    wf.set_meta("platform", "Windows");
+    assert!(sys.load(&mut wf).unwrap());
+    assert!(wf.path.ends_with("run.bat"), "picked {:?}", wf.path);
+}
+
+/// A `.bat` that is a cabinet is started as the program inside it.
+#[test]
+fn unpacks_a_batch_file_that_is_a_cabinet() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("panoptriptikum");
+    fs::create_dir_all(&release).unwrap();
+
+    let mut builder = cab::CabinetBuilder::new();
+    builder
+        .add_folder(cab::CompressionType::MsZip)
+        .add_file("\r\n\nset t=%temp%\\x.exe\nextrac32 %0 %t%\n%t%\n");
+    let mut writer = builder
+        .build(fs::File::create(release.join("panoptriptikum.bat")).unwrap())
+        .unwrap();
+    let mut pe = vec![0u8; 0x100];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    while let Some(mut file) = writer.next_file().unwrap() {
+        std::io::Write::write_all(&mut file, &pe).unwrap();
+    }
+    writer.finish().unwrap();
+
+    let mut wf = WorkFile::new(release);
+    wf.set_meta("platform", "Windows");
+    assert!(WindowsSystem {}.load(&mut wf).unwrap());
+    assert!(wf.path.ends_with("panoptriptikum.exe"), "picked {:?}", wf.path);
+    assert_eq!(fs::read(&wf.path).unwrap(), pe);
+}
+
 /// The modes the setup dialog is asked for follow the shape of the screen the
 /// frontend found, unless an entry names its own list.
 #[test]

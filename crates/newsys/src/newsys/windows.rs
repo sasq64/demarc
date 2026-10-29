@@ -63,9 +63,34 @@ fn is_windows_program(path: &Path) -> bool {
     get_ext(path) == "exe" && exe_kind(path) == ExeKind::Windows
 }
 
+fn is_windows_platform(file: &WorkFile) -> bool {
+    file.get_meta_or("platform", "") == "Windows"
+}
+
 /// A `.bat` an override boots in a Windows release, run by wine rather than DOS.
 pub(super) fn is_windows_bat(file: &WorkFile) -> bool {
-    get_ext(file) == "bat" && file.is_file() && file.get_meta_or("platform", "") == "Windows"
+    get_ext(file) == "bat" && file.is_file() && is_windows_platform(file)
+}
+
+/// The best `.bat` in a Windows release that has no Windows program to start.
+fn pick_bat(dir: &Path) -> Result<Option<PathBuf>> {
+    let release = dir
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    let mut best: Option<(i32, PathBuf)> = None;
+    walk_dir(dir, 0, |path, ext, _| {
+        if ext != "bat" || std::fs::metadata(path).is_ok_and(|m| m.len() == 0) {
+            return Ok(());
+        }
+        let rank = launch_rank(path, &release);
+        if best.as_ref().is_none_or(|(top, _)| rank > *top) {
+            best = Some((rank, path.to_owned()));
+        }
+        Ok(())
+    })?;
+    Ok(best.map(|b| b.1))
 }
 
 /// How much we want to start a given program, biggest first.
@@ -214,6 +239,30 @@ fn writable_target(file: &mut WorkFile, target: PathBuf) -> Result<PathBuf> {
     })
 }
 
+/// A `.bat` that is really a cabinet holding the program, which the batch text
+/// stored as the cab's file name unpacks with `expand` or `extrac32` and runs
+/// (Calodox' 4Ks). Wine's `extrac32` takes the second argument as a file to
+/// pick rather than where to write, so the program is unpacked here instead.
+/// Returns where the program to start is now.
+fn unpack_cab_bat(file: &mut WorkFile, bat: PathBuf) -> Result<PathBuf> {
+    if read_at(&bat, 0, 4).ok().as_deref() != Some(b"MSCF") {
+        return Ok(bat);
+    }
+    let mut cab = cab::Cabinet::new(std::fs::File::open(&bat)?)?;
+    let Some(name) = cab
+        .folder_entries()
+        .flat_map(|folder| folder.file_entries())
+        .map(|entry| entry.name().to_owned())
+        .next()
+    else {
+        return Ok(bat);
+    };
+    let exe = writable_target(file, bat)?.with_extension("exe");
+    std::io::copy(&mut cab.read_file(&name)?, &mut std::fs::File::create(&exe)?)?;
+    info!("Unpacked {exe:?} from its batch file");
+    Ok(exe)
+}
+
 /// The cnc-ddraw files, relative to [`system_dir`].
 #[cfg(target_os = "linux")]
 const CNC_DDRAW_DIR: &str = "win/cnc-ddraw";
@@ -291,11 +340,15 @@ impl System for WindowsSystem {
         let target = if is_windows_bat(file) {
             Some(file.path.clone())
         } else {
-            self.pick_target(file, &dialog_res)?
+            match self.pick_target(file, &dialog_res)? {
+                None if is_windows_platform(file) && file.is_dir() => pick_bat(file)?,
+                target => target,
+            }
         };
         let Some(target) = target else {
             return Ok(false);
         };
+        let target = unpack_cab_bat(file, target)?;
 
         for tag in [
             "512x384", "320x200", "320x240", "640x480", "800x600", "1024x768", "1280x720",

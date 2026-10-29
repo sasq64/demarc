@@ -22,6 +22,8 @@ zip.workspace = true
 sevenz-rust2 = "0.20.2"
 unarc-rs = "0.6.1"
 walkdir = "2.5.0"
+# 4K intros shipped as a cabinet that also runs as a batch file.
+cab = "0.6.0"
 # Disk-image file systems: FAT for the DOS/Windows builders, and the C64
 # containers cbmconvert speaks.
 fatfs = "0.3.6"
