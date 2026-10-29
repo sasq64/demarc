@@ -439,7 +439,10 @@
   through `int 21h/4B00`, which only NTVDM did. DOSBox runs it to a black
   screen. Depack it (aPLib-style; the stub's own loop is short enough to
   translate), cut the PE out at its `MZ`, and ship that as an override `patch`
-  with `boot`.
+  with `boot`. Check the zip for a PE first: Gracchus (`zoo.9252`) ships a
+  party `.exe` beside the compo `.com`, so `boot` alone fixes it.
+  A UPX-packed `.com` (AcidIce `zoo.67463`) is the same dropper once
+  unpacked; `tools/unupxcom.py` ports UPX's COM stub, no `upx` needed.
 
 - Holani (Lynx) is described as needing no BIOS, but without `lynxboot.img` in
   the system dir it runs at full speed with a black screen and no audio. A
@@ -755,3 +758,54 @@
   downloads (`dlname` "fix", `_patch`, `_patched`): Planet Loop (`zoo.9072`)
   needs NVIDIA's EXT_vertex_weighting, while the group's own Radeon patch
   does not, and `file = "ploop_patched.zip"` was the whole fix.
+
+- `WINEDEBUG=+relay` through demarc is cut short (demarc's wine log stops
+  after a few thousand lines), so a relay of the demo's own calls came back
+  empty. Run `gamescope --backend headless -- wine demo.exe` into a file for
+  relay traces. The remote-control Luau has no `os.getenv`; write one script
+  per run instead of passing a path in the environment.
+- A `.bat` in a Windows release can be a cabinet (`MSCF`) whose stored file
+  name is the batch text (Calodox 4Ks). Wine's `extrac32 cab dest` treats
+  `dest` as a filter and extracts nothing, so demarc unpacks the cab itself.
+
+- A packed DLL (te-2rb's `bass.dll`, `zoo.270858`) can still take a plain
+  offset `patch`: point the unpacker's final jump into the zero tail of its
+  stub section (mapped when the raw size covers it) and write the fix bytes to
+  the decompressed code there. Dump the live code from `/proc/<pid>/mem` to
+  find the bytes; `perf record -t <tid> --user-regs=...` gives the registers
+  of a spinning loop without ptrace.
+
+- The Lua key names follow winit: `Key.ArrowDown`, not `Key.Down`. An unknown
+  name is nil, and the script dies without a word, so no screenshots appear.
+
+- Scripted clicks in a Windows session landed at (0,0) once wine clipped the
+  cursor to a fullscreen window: in that mode wine moves its cursor by XInput2
+  raw motion only, and a gamescope warp makes none (`+cursor` says "X/Y axis
+  valuators not found"). `+msg` shows it as `WM_LBUTTONDOWN ... lp 0`. The
+  libretro backend's warp now sends relative motion first (`wlserver_mousewarp_raw`):
+  it pins the cursor to the corner once and then moves it by differences.
+  Pinning on every warp queued moves to (0,0) ahead of each press, and a demo
+  reading the last message's position saw the click there (te-2rb).
+
+- Mesa GL errors in a wine demo's log are not always the problem: Chimera's
+  `glOrtho` with left == right and a mipmap mag filter fail on Windows too.
+  What was wrong was the shape: it letterboxes to a fixed share of the height,
+  made for 4:3, so at 1920x1080 it was stretched sideways. Compare against the
+  Pouet screenshot (`api.pouet.net/v1/prod/?id=`) early; Demozoo's API returns 403.
+
+- "Crashes after a few seconds" can be a GPU hang, not a wine crash: wine's
+  log ends with `amdgpu: The CS has cancelled because the context is lost`,
+  and `journalctl -k` shows `[gfxhub] page fault ... TCP` and a gfx ring reset.
+  This Way (`zoo.59612`) draws display lists built with `glEdgeFlag` in
+  `glPolygonMode(GL_LINE)`; radeonsi hangs, llvmpipe and zink do not. The
+  opengl32 proxy drops edge flags on radeonsi. Trace with
+  `LIBGL_ALWAYS_SOFTWARE=1` to avoid more resets, then one `+opengl` run on the
+  GPU for the last calls.
+
+- "Does not start" can be a demo waiting on its own screen: Point Blank
+  (`zoo.68129`) is black for 15 s of loading, then shows a calibration page
+  that waits for Space. Shoot at 10 s intervals for a minute before tracing.
+  Its zip has an NVDA and an ATi exe; the NVDA one quits on missing NV
+  extensions, so `boot` the ATi one. `load_demo(id)` in a remote script takes
+  the first db entry with that id, which can be csdb's: test an override with a
+  one-line `demozoo.txt` instead.

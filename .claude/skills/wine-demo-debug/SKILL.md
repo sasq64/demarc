@@ -203,7 +203,8 @@ refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
 640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
 in a corner, needs `wine_res` set to its own resolution. TinyPTC demos also need
 `wine_cnc_ddraw=true`, or `wine_res` turns them black (Bakkslide 7, `zoo.45277`). `wine_desktop=true`
-is for demos that do not survive a mode switch.
+is for demos that do not survive a mode switch. A letterbox that is too wide
+was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
 
 **D3D9 `CreateDevice` fails, then a NULL fault.** Check the present
 parameters for `D3DMULTISAMPLE_NONMASKABLE`: DXVK makes quality q into `1 << q`
@@ -236,6 +237,12 @@ exe (Adelanto, `zoo.46032`); env vars do not shorten wine's extension string.
 A "no OpenGL 1.x driver" error can be a `strstr(GL_VERSION, "1.")` that
 hits Mesa's `arch1.1` (Arise, `zoo.31637`).
 
+**Dies after seconds, log ends `amdgpu: ... context is lost`.** A GPU hang:
+`journalctl -k` shows a gfxhub page fault and ring reset. Find the trigger
+under llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`) and zink first, then one `+opengl`
+run on radeonsi for the last calls. Edge flags in `GL_LINE` mode are dropped
+by the opengl32 proxy on radeonsi (This Way, `zoo.59612`).
+
 **Picture stalls for seconds, music plays on.** Count new frames per second
 (a temporary log in the gamescope core's `retro_run`; demarc's own calls stay
 at 60). Stalls with the GPU idle and the render thread at thousands of
@@ -243,6 +250,10 @@ voluntary context switches a second are lock contention: the futex address
 from `/proc/<pid>/task/<tid>/syscall`, looked up in `maps` and `nm ntdll.so`,
 names the lock. `fd_cache_mutex` is ntsync's handle cache: `wine_ntsync=false`
 (Ziphead, `zoo.136314`). Find the pid with `ps -eo pid,comm`, never `pgrep -f`.
+
+**`rep movsb` fault right after `GetSystemDirectoryA`.** kb & Frenetic
+intros (`*_compatible.exe`) do `mov cl,15` and assume the rest of ECX is zero;
+wine leaves it set. Parsec's 14-byte patch fits them (Ex Fabric, `zoo.3578`).
 
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
@@ -263,9 +274,16 @@ back to Arial. Segoe UI maps to Selawik through
 position poll from a thread that did not open the device. The winmm proxy runs
 all MCI on one thread for it (Lasse Reinbong '96, `zoo.198069`).
 
+**Override click does nothing.** `WINEDEBUG=+msg,+cursor`: a
+`WM_LBUTTONDOWN` that wine places wrong means its cursor did not follow the warp
+(it moves by XInput2 raw motion only while clipping a fullscreen window; the
+gamescope core's `wlserver_mousewarp_raw` covers it). Clicks are 0..1 over the
+frame, which is the window's client area: a 640x480 window with a frame is
+637x451, so aim inside it (te-2rb, `zoo.270858`).
+
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
 stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth
-(`gm.dls`); `midiStream*` is still silent. Odd ACM
+(`gm.dls`), and so does `midiStream*` (Anorgatronikum, `zoo.32482`). Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).
 
 ## Further reading

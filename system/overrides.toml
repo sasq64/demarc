@@ -133,6 +133,22 @@ patch = [
 [zoo.3298]
 file = "fr-025-final.zip"
 
+# Ex Fabric by kb & Frenetic: same ECX bug as Parsec, plus a 512x384 mode
+[zoo.3578]
+fix_info = '''
+It asks for a 512x384 fullscreen mode the session does not list (-2), so
+CreateDevice fails and it faults at 0. With wine_res it then hits Parsec's bug:
+`mov cl,15; rep movsb` after GetSystemDirectoryA. Same patch as Parsec.
+'''
+boot = "ex_fabric_compatible.exe"
+meta = { wine_res = "512x384" }
+patch = {
+  info = "set all of ECX before rep movsb",
+  target = "ex_fabric_compatible.exe",
+  offset = 7971,
+  contents = "jbgoEAAHag9ZvtSwDAo=",
+}
+
 # Parsec: `mov cl,15; rep movsb` after GetSystemDirectoryA assumes the high
 # bytes of ECX are zero; wine leaves them set and the copy runs off .data.
 [zoo.3780]
@@ -538,6 +554,16 @@ events = [
   { frame = 40, key = "Enter" },
   { frame = 50, key = "Enter" },
 ]
+
+# Point Blank by Stockholm Syndrome
+[zoo.68129]
+fix_info = '''
+The NVDA build quits at once without NV_register_combiners and
+NV_vertex_array_range. The ATi build loads for about 15 seconds, then waits on a
+screen calibration page for Space.
+'''
+boot = "point_blank__ATi.exe"
+events = [{ frame = 1800, key = "Space" }]
 
 [zoo.68604]
 file = "puls.zip"
@@ -1275,6 +1301,26 @@ patch = {
   source = "win/patches/mojodreams.exe",
 }
 
+[zoo.67463]
+fix_info = '''
+Both .coms are UPX-packed DOS droppers that write C:acidice.exe and exec it
+through int 21h/4B00 (NTVDM only). The PE from acidice4k_by_and.com, unpacked
+by porting UPX's COM stub and cut out at its MZ, is shipped as
+win/patches/acidice.exe.
+'''
+boot = "acidice.exe"
+patch = {
+  info = "PE from the COM dropper",
+  target = "acidice.exe",
+  source = "win/patches/acidice.exe",
+}
+
+[zoo.3288]
+fix_info = '''
+The .com is a DOS dropper (aPACK); the zip also has the PE, which plays.
+'''
+boot = "sponge_party.exe"
+
 [zoo.10280]
 meta = { wine_res = "1024x768" }
 
@@ -1293,6 +1339,14 @@ events = [{ frame = 240, click = [0.32, 0.9] }]
 
 [zoo.31640]
 known_issue = "Needs OpenCL"
+
+# Interceptor by Black Maiden
+[zoo.6279]
+known_issue = """
+GeForce3 only. Quits with "Critical Warning" when any wglGetProcAddress
+returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program
+and NV_register_combiners, none of which Mesa has.
+"""
 
 # Spilled by Archee: D3DMULTISAMPLE_NONMASKABLE quality 4 is 16 samples to DXVK,
 # which NVIDIA lacks, and multisampled GL points are circles that let the clear
@@ -1511,6 +1565,14 @@ WINEDEBUG=+system showed it asking for 640x400. Same fix as Bakkslide 7.
 '''
 meta = { wine_cnc_ddraw = "true", wine_res = "640x400" }
 
+# +1-1: TinyPTC, small in the corner
+[zoo.26234]
+fix_info = '''
+WINEDEBUG=+system showed it asking for 320x240. Same fix as Bakkslide 7. The
+first ~17 seconds are grey bars and silence while its network fetch times out.
+'''
+meta = { wine_cnc_ddraw = "true", wine_res = "320x240" }
+
 [zoo.22599]
 boot = "CATCH22.EXE"
 events = [{ frame = 18, key = "1" }]
@@ -1529,3 +1591,42 @@ meta = { wine_res = "640x480" }
 
 [zoo.25090]
 meta = { wine_res = "640x480" }
+
+# te-2rb 7002 by TPOLM
+[zoo.270858]
+fix_info = '''
+Froze with the music playing: under wine the first BASS position query can see
+the play cursor equal to the write offset, which BASS 0.x takes as a full wrap,
+and its search for a negative position never ends. bass.dll is packed, so the
+unpacker's last jump goes through a cave that makes the search unsigned.
+The click picks "watch fullscreen"; the menu ignores keys. It sits low because
+the window is 637x451, not the 640x480 the click is scaled over.
+'''
+meta = { wine_res = "640x480" }
+events = [{ frame = 300, click = [0.477, 0.955] }]
+patch = [
+  { info = "unpacker exit jumps to the cave", target = "bass.dll", offset = 602, contents = "0gsAAA==" },
+  { info = "jle/jg to jbe/ja in the position search", target = "bass.dll", offset = 3632, contents = "xgXsiwEQdsYFBIwBEHfpoXz+/w==" },
+]
+
+[zoo.61983]
+meta = { wine_res = "640x480" }
+
+# Chimera: letterboxes to 0.5625 of the height, which is 2.37:1 only on 4:3
+[zoo.72965]
+meta = { wine_res = "1024x768" }
+
+# Gracchus by Freestyle & Kolor
+[zoo.9252]
+fix_info = '''
+The compo .com is a DOS dropper (runs to a DOS screen); the zip also has the
+party PE, which plays. It asks for 640x480 at 60 Hz, which the session lacks.
+'''
+boot = "gracchus-party.exe"
+meta = { wine_res = "640x480" }
+
+[zoo.56945]
+meta = { wine_res = "1024x768" }
+
+[zoo.9673]
+events = [{ frame = 194, click = [0.5979999899864197, 0.8939999938011169] }]
