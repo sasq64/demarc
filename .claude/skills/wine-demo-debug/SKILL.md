@@ -301,6 +301,11 @@ stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synt
 (`gm.dls`), and so does `midiStream*` (Anorgatronikum, `zoo.32482`). Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).
 
+**OpenCV error box, music plays.** An AVI that VfW cannot decode:
+`+msvideo` shows `ICLocate Could not find a driver for codec`. Put the codec
+in `system/win/prefix` with a `vidc.<fourcc>` `Drivers32` key, like Indeo 3's
+`ir32_32.dll` (The Evolution of Vision, `zoo.47783`).
+
 ## Further reading
 
 `docs/WINE.md` (prefix tweaks, known failures), `docs/GAMESCOPE.md` (core

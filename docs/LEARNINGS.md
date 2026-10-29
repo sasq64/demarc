@@ -809,3 +809,18 @@
   extensions, so `boot` the ATi one. `load_demo(id)` in a remote script takes
   the first db entry with that id, which can be csdb's: test an override with a
   one-line `demozoo.txt` instead.
+
+- `load_demo(id)` without `--db` silently does nothing (the default playlist
+  has no such id); pass a one-line db. Headless counts as widescreen (its
+  target is 1280x720), so a wine aspect bug seen on the 3:2 laptop does not
+  reproduce until `-x widescreen=false`. `Cmd.Screenshot` saves the core's raw
+  frame to the cwd, which shows what gamescope delivered before demarc scales it.
+
+- An OpenCV message box ("Null pointer ... cvGetMat", "Incorrect size of
+  input array") with music playing is an AVI that VfW cannot decode:
+  `WINEDEBUG=+msvideo` shows `ICLocate Could not find a driver`. The Evolution
+  of Vision (`zoo.47783`) is Indeo 3 (`iv32`). winetricks' `icodecs` is broken
+  on wow64, and its `codinstl.exe` has only Indeo 4/5; `ir32_32.dll` is in
+  `iv5setup.exe`, which `unshield x data1.cab` unpacks without running it. Now
+  in the prefix (`system/win/prefix`). `pkill -f <path>` from a Bash call kills
+  that call's own shell when the path is in its command line.

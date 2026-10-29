@@ -191,6 +191,11 @@ install_prefix_files() {
     put tsd32.dll syswow64
     wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
     wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32' /v msacm.tssoft32 /t REG_SZ /d tssoft32.acm /f
+    # Indeo 3.2 VfW decoder (from Ligos' iv5setup.exe); wine has none (The Evolution of Vision)
+    put ir32_32.dll syswow64
+    for fcc in iv31 iv32; do
+        wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v vidc.$fcc /t REG_SZ /d ir32_32.dll /f
+    done
     put gm.dls syswow64/drivers
     put gm.dls system32/drivers
     wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f
