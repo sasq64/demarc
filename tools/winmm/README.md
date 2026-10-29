@@ -19,7 +19,9 @@ flags go back to the app's header, and callbacks get the app's pointer.
 default GM collection (the prefix's `gm.dls`) downloaded, and the
 `midiOut*` calls on that handle go to it. Wine's own midiOut plays to the
 host's ALSA sequencer, which nothing in the session hears, so Gopher & LJ's
-"Yama" was silent. `midiStream*` still goes to wine.
+"Yama" was silent. `midiStream*` plays through the same synth, from headers
+latched at `midiStreamOut`: wine re-reads them per event, and Calodox'
+Anorgatronikum queues one from a stack it then reuses.
 
 `mciSendCommand*` and `mciSendString*` all run on one thread of the proxy's.
 Wine only lets the thread that opened an MCI device use it, and Lasse Reinbong

@@ -409,6 +409,288 @@ static DWORD __stdcall midi_close(void *hmo)
     return 0;
 }
 
+// Wine's midiStream reads the MIDIHDR again for every event it plays (and plays
+// to the same silent sequencer as midiOut); Windows latches it at midiStreamOut.
+// Calodox' Anorgatronikum queues one from the stack and then reuses the stack,
+// so streams are played here, through the synth.
+#define MEVT_F_LONG 0x80000000
+#define MEVT_F_CALLBACK 0x40000000
+#define MEVT_SHORTMSG 0
+#define MEVT_TEMPO 1
+#define MEVT_LONGMSG 0x80
+#define MHDR_INQUEUE 4
+#define MOM_POSITIONCB 0x3CA
+#define TIME_MS 1
+#define TIME_TICKS 0x20
+#define MIDIPROP_GET 0x40000000
+#define MIDIPROP_TIMEDIV 1
+#define MIDIPROP_TEMPO 2
+#define MIDIERR_UNPREPARED 64
+#define STREAM_QUEUE 64
+
+typedef struct {
+    MIDIHDR *orig;
+    const unsigned char *data;
+    DWORD len, offset;
+} Queued;
+
+typedef struct {
+    UINT wType;
+    DWORD u;
+    DWORD pad;
+} MMTIME;
+
+typedef struct {
+    volatile long lock;
+    int running;
+    void *wake;
+    Queued queue[STREAM_QUEUE];
+    unsigned head, count;
+    DWORD timediv, tempo, event_tick;
+    // Play time (paused time left out) is base_us at base_clock, when base_tick
+    // was the position.
+    double base_us, base_clock, base_tick;
+} Stream;
+
+static Stream stream;
+static void *real_stream_open, *real_stream_out, *real_stream_restart, *real_stream_pause, *real_stream_stop,
+    *real_stream_position, *real_stream_property, *real_stream_close;
+static double clock_freq;
+int _fltused;
+
+__declspec(dllimport) int __stdcall QueryPerformanceCounter(long long *);
+__declspec(dllimport) int __stdcall QueryPerformanceFrequency(long long *);
+
+static double clock_us(void)
+{
+    long long now;
+    QueryPerformanceCounter(&now);
+    return (double)now * 1e6 / clock_freq;
+}
+
+static void stream_lock(void)
+{
+    while (!__sync_bool_compare_and_swap(&stream.lock, 0, 1))
+        ;
+}
+
+static void stream_unlock(void)
+{
+    stream.lock = 0;
+}
+
+static double play_us(void)
+{
+    return stream.running ? stream.base_us + clock_us() - stream.base_clock : stream.base_us;
+}
+
+static double tick_at(double us)
+{
+    return stream.base_tick + (us - stream.base_us) * stream.timediv / stream.tempo;
+}
+
+static double us_at(double tick)
+{
+    return stream.base_us + (tick - stream.base_tick) * stream.tempo / stream.timediv;
+}
+
+static void rebase(double us)
+{
+    stream.base_tick = tick_at(us);
+    stream.base_clock += us - stream.base_us;
+    stream.base_us = us;
+}
+
+static DWORD __stdcall stream_thread(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        DWORD wait = 0xFFFFFFFF;
+        UINT msg = 0;
+        MIDIHDR *hdr = 0;
+        stream_lock();
+        if (stream.running && stream.count) {
+            Queued *q = &stream.queue[stream.head % STREAM_QUEUE];
+            if (q->offset + 12 > q->len) {
+                hdr = q->orig;
+                hdr->dwFlags = (hdr->dwFlags & ~MHDR_INQUEUE) | MHDR_DONE;
+                msg = MOM_DONE;
+                stream.head++;
+                stream.count--;
+                wait = 0;
+            } else {
+                const DWORD *ev = (const DWORD *)(q->data + q->offset);
+                double due = us_at(stream.event_tick + ev[0]);
+                double now = play_us();
+                if (due > now + 1000) {
+                    wait = (DWORD)(long)((due - now) / 1000);
+                } else {
+                    DWORD e = ev[2];
+                    DWORD type = (e >> 24) & ~0x40;
+                    DWORD len = e & 0xFFFFFF;
+                    stream.event_tick += ev[0];
+                    if (type == MEVT_SHORTMSG)
+                        midi_short(&synth, len);
+                    else if (type == MEVT_TEMPO && len) {
+                        rebase(due);
+                        stream.tempo = len;
+                    } else if (type == MEVT_LONGMSG && q->offset + 12 + len <= q->len)
+                        synth_send(0, (const unsigned char *)(ev + 3), len);
+                    if (e & MEVT_F_CALLBACK) {
+                        hdr = q->orig;
+                        hdr->dwOffset = q->offset;
+                        msg = MOM_POSITIONCB;
+                    }
+                    q->offset += 12 + ((e & MEVT_F_LONG) ? (len + 3) & ~3 : 0);
+                    wait = 0;
+                }
+            }
+        }
+        stream_unlock();
+        if (msg)
+            midi_callback(msg, (DWORD)hdr);
+        if (wait)
+            WaitForSingleObject(stream.wake, wait);
+    }
+}
+
+static DWORD __stdcall stream_open(void **hms, UINT *id, DWORD cmidi, DWORD callback, DWORD instance, DWORD flags)
+{
+    if (cmidi != 1 || synth.opened || !synth_start())
+        return ((DWORD(__stdcall *)(void **, UINT *, DWORD, DWORD, DWORD, DWORD))real_stream_open)(
+            hms, id, cmidi, callback, instance, flags);
+    if (!stream.wake) {
+        long long freq;
+        QueryPerformanceFrequency(&freq);
+        clock_freq = (double)freq;
+        stream.wake = CreateEventW(0, 0, 0, 0);
+        CreateThread(0, 0, stream_thread, 0, 0, 0);
+    }
+    stream_lock();
+    stream.running = 0;
+    stream.head = stream.count = 0;
+    stream.timediv = 24;
+    stream.tempo = 500000;
+    stream.event_tick = 0;
+    stream.base_us = stream.base_clock = stream.base_tick = 0;
+    stream_unlock();
+    return midi_open(hms, id ? *id : 0, (void *)callback, instance, flags);
+}
+
+static DWORD __stdcall stream_out(void *hms, MIDIHDR *hdr, UINT size)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *, MIDIHDR *, UINT))real_stream_out)(hms, hdr, size);
+    if (!(hdr->dwFlags & MHDR_PREPARED))
+        return MIDIERR_UNPREPARED;
+    stream_lock();
+    if (stream.count == STREAM_QUEUE) {
+        stream_unlock();
+        return MMSYSERR_NOMEM;
+    }
+    Queued *q = &stream.queue[(stream.head + stream.count++) % STREAM_QUEUE];
+    q->orig = hdr;
+    q->data = (const unsigned char *)hdr->lpData;
+    q->len = hdr->dwBytesRecorded;
+    q->offset = 0;
+    hdr->dwFlags = (hdr->dwFlags & ~MHDR_DONE) | MHDR_INQUEUE;
+    stream_unlock();
+    SetEvent(stream.wake);
+    return 0;
+}
+
+static DWORD __stdcall stream_restart(void *hms)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *))real_stream_restart)(hms);
+    stream_lock();
+    if (!stream.running) {
+        stream.base_clock = clock_us();
+        stream.running = 1;
+    }
+    stream_unlock();
+    SetEvent(stream.wake);
+    return 0;
+}
+
+static DWORD __stdcall stream_pause(void *hms)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *))real_stream_pause)(hms);
+    stream_lock();
+    if (stream.running) {
+        rebase(play_us());
+        stream.running = 0;
+    }
+    stream_unlock();
+    return 0;
+}
+
+static DWORD __stdcall stream_stop(void *hms)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *))real_stream_stop)(hms);
+    MIDIHDR *done[STREAM_QUEUE];
+    unsigned n = 0;
+    stream_lock();
+    stream.running = 0;
+    for (; stream.count; stream.count--, stream.head++) {
+        MIDIHDR *hdr = stream.queue[stream.head % STREAM_QUEUE].orig;
+        hdr->dwFlags = (hdr->dwFlags & ~MHDR_INQUEUE) | MHDR_DONE;
+        done[n++] = hdr;
+    }
+    stream.event_tick = 0;
+    stream.base_us = stream.base_clock = stream.base_tick = 0;
+    stream_unlock();
+    midi_reset(hms);
+    for (unsigned i = 0; i < n; i++)
+        midi_callback(MOM_DONE, (DWORD)done[i]);
+    return 0;
+}
+
+static DWORD __stdcall stream_position(void *hms, MMTIME *time, UINT size)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *, MMTIME *, UINT))real_stream_position)(hms, time, size);
+    stream_lock();
+    double us = play_us();
+    if (time->wType == TIME_MS)
+        time->u = (DWORD)(long)(us / 1000);
+    else {
+        time->wType = TIME_TICKS;
+        time->u = (DWORD)(long)tick_at(us);
+    }
+    stream_unlock();
+    return 0;
+}
+
+static DWORD __stdcall stream_property(void *hms, unsigned char *data, DWORD prop)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *, unsigned char *, DWORD))real_stream_property)(hms, data, prop);
+    DWORD *value = (DWORD *)data + 1;
+    stream_lock();
+    if (prop & MIDIPROP_GET)
+        *value = (prop & MIDIPROP_TEMPO) ? stream.tempo : stream.timediv;
+    else if (*value) {
+        rebase(play_us());
+        if (prop & MIDIPROP_TEMPO)
+            stream.tempo = *value;
+        else if (prop & MIDIPROP_TIMEDIV)
+            stream.timediv = *value & 0x7FFF;
+    }
+    stream_unlock();
+    return 0;
+}
+
+static DWORD __stdcall stream_close(void *hms)
+{
+    if (hms != &synth)
+        return ((DWORD(__stdcall *)(void *))real_stream_close)(hms);
+    stream_stop(hms);
+    return midi_close(hms);
+}
+
 // Wine lets only the thread that opened an MCI device use it, Windows 95 any
 // thread: Lasse Reinbong '96 polls MCI_STATUS from its render thread. Every MCI
 // call runs on one thread of ours instead.
@@ -536,6 +818,14 @@ int __stdcall DllMain(HMODULE self, unsigned long reason, void *reserved)
     real_midi_unprepare = hook("midiOutUnprepareHeader", midi_unprepare);
     real_midi_reset = hook("midiOutReset", midi_reset);
     real_midi_close = hook("midiOutClose", midi_close);
+    real_stream_open = hook("midiStreamOpen", stream_open);
+    real_stream_out = hook("midiStreamOut", stream_out);
+    real_stream_restart = hook("midiStreamRestart", stream_restart);
+    real_stream_pause = hook("midiStreamPause", stream_pause);
+    real_stream_stop = hook("midiStreamStop", stream_stop);
+    real_stream_position = hook("midiStreamPosition", stream_position);
+    real_stream_property = hook("midiStreamProperty", stream_property);
+    real_stream_close = hook("midiStreamClose", stream_close);
     real_mci_command_a = hook("mciSendCommandA", mci_command_a);
     real_mci_command_w = hook("mciSendCommandW", mci_command_w);
     real_mci_string_a = hook("mciSendStringA", mci_string_a);
