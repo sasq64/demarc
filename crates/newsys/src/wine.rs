@@ -21,6 +21,10 @@ pub const META_RES: &str = "wine_res";
 
 pub const DEFAULT_RES: &str = "1920x1080";
 
+/// The session on a screen that is not a widescreen, 4:3 like the modes its
+/// dialog is asked for: a 4:3 mode in a 16:9 session ends up stretched.
+pub const NARROW_RES: &str = "1600x1200";
+
 /// Meta key holding the resolutions to ask the setup dialog for, best first,
 /// comma separated. Unset means "whatever [`META_RES`] says".
 pub const META_DIALOG_RES: &str = "wine_dialog_res";
@@ -35,7 +39,7 @@ pub const DEFAULT_WIDESCREEN: bool = true;
 /// The 16:9 modes, and the 4:3 ones worth trying whatever the screen is: plenty
 /// of demos offer nothing else.
 const WIDE_DIALOG_RES: &str = "1920x1080,1280x720,1024x576";
-const NARROW_DIALOG_RES: &str = "1280x1024,1024x768,800x600";
+const NARROW_DIALOG_RES: &str = "1024x768,800x600";
 
 /// What [`META_DIALOG_RES`] is when nothing says otherwise: the widescreen modes
 /// first, and only on a screen shaped for them.

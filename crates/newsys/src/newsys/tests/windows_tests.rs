@@ -154,32 +154,47 @@ fn the_dialog_list_follows_the_shape_of_the_screen() {
     let load = |meta: HashMap<String, String>| {
         let mut wf = WorkFile::new_with_meta(release.clone(), meta);
         assert!(sys.load(&mut wf).unwrap());
-        wf.get_meta_or(META_DIALOG_RES, "")
+        (
+            wf.get_meta_or(META_DIALOG_RES, ""),
+            wf.get_meta_or(META_RES, ""),
+        )
     };
 
-    let wide = load(HashMap::from([(
+    let (wide, wide_res) = load(HashMap::from([(
         META_WIDESCREEN.to_string(),
         "true".to_string(),
     )]));
     assert!(wide.starts_with("1920x1080"), "{wide}");
     assert!(wide.contains("1024x768"), "{wide}");
+    assert!(!wide.contains("1280x1024"), "{wide}");
+    assert_eq!(wide_res, "");
 
-    let narrow = load(HashMap::from([(
+    // A 4:3 session too, so a 4:3 mode is not stretched to fill a 16:9 one.
+    let (narrow, narrow_res) = load(HashMap::from([(
         META_WIDESCREEN.to_string(),
         "false".to_string(),
     )]));
     assert!(!narrow.contains("1920x1080"), "{narrow}");
     assert!(narrow.contains("1024x768"), "{narrow}");
+    assert_eq!(narrow_res, NARROW_RES);
+
+    // An entry's own size is kept.
+    let (_, res) = load(HashMap::from([
+        (META_WIDESCREEN.to_string(), "false".to_string()),
+        (META_RES.to_string(), "640x480".to_string()),
+    ]));
+    assert_eq!(res, "640x480");
 
     // Nothing said: a widescreen, which is what most screens are.
-    assert_eq!(load(HashMap::new()), wide);
+    assert_eq!(load(HashMap::new()).0, wide);
 
     // An entry's own list is not touched.
     assert_eq!(
         load(HashMap::from([(
             META_DIALOG_RES.to_string(),
             "640x480".to_string()
-        )])),
+        )]))
+        .0,
         "640x480"
     );
 }

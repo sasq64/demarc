@@ -231,7 +231,9 @@ only ever the size of the session; what the dialog is asked for is `wine_dialog_
 comma-separated list tried best first. Unset, `WindowsSystem` fills it in with a list built
 for the shape of the screen: the 16:9 modes in front of the 4:3 ones on a widescreen, and
 only the 4:3 ones otherwise — the frontend reads the window and says which in the
-`widescreen` meta. `wine_dialog_res=pick` presses nothing at all, leaving the dialog to
+`widescreen` meta. On a screen that is not a widescreen the session defaults to 1600x1200,
+since a 4:3 mode in a 16:9 session is stretched to fill it. There is no 1280x1024 in either
+list: demos of its era draw 4:3 into it. `wine_dialog_res=pick` presses nothing at all, leaving the dialog to
 whoever is watching.
 
 The dialog itself is never shown. The driver writes `!demarc hiding` before it starts the
