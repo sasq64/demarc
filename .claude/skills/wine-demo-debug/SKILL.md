@@ -221,6 +221,12 @@ samples. wined3d with `wine_d3d_config = "SampleCount=0"` (Spilled,
 `zoo.51354`). A draw-once D3D11 intro black under DXVK: try
 `wine_dll_overrides=d3d11=b;dxgi=b` (Night Time, `zoo.155141`).
 
+**D3D9 scene with far too few objects, same on DXVK and wined3d.** A timer
+that multiplies QPC by 1/freq on the x87 loses it under the single-precision
+FPU that CreateDevice sets: wine's QPC counts from boot, so days of uptime
+leave 1/16 s steps. Patch the CreateDevice flags to add
+`D3DCREATE_FPU_PRESERVE` (Iterate, `zoo.25005`).
+
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
 invalid API use.
@@ -259,6 +265,16 @@ voluntary context switches a second are lock contention: the futex address
 from `/proc/<pid>/task/<tid>/syscall`, looked up in `maps` and `nm ntdll.so`,
 names the lock. `fd_cache_mutex` is ntsync's handle cache: `wine_ntsync=false`
 (Ziphead, `zoo.136314`). Find the pid with `ps -eo pid,comm`, never `pgrep -f`.
+
+**Slow from the start, one core at 100%.** `perf record -p` shows i386
+`ntdll.dll` (SRW lock) and `opengl32.dll` thunks, with Mesa only a few
+percent: hundreds of thousands of immediate-mode calls a frame, and wine
+pays ~1 µs for each (Balance, `zoo.84239`). No override fixes that yet.
+
+**Freeze with `loader_section ... wait timed out`.** A DLL's init (under
+the loader lock) waits for a thread it started. `+loaddll,+relay` shows the
+holder's last calls before its `WaitFor*`. The winmm proxy covers the first
+wave open (Remembrance, `zoo.4030`).
 
 **`rep movsb` fault right after `GetSystemDirectoryA`.** kb & Frenetic
 intros (`*_compatible.exe`) do `mov cl,15` and assume the rest of ECX is zero;

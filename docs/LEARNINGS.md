@@ -824,3 +824,33 @@
   `iv5setup.exe`, which `unshield x data1.cab` unpacks without running it. Now
   in the prefix (`system/win/prefix`). `pkill -f <path>` from a Bash call kills
   that call's own shell when the path is in its command line.
+
+- A D3D9 demo that draws far too little (one cube for hundreds, Iterate
+  `zoo.25005`), the same on DXVK and wined3d, can be its timer: `fildll` of
+  QueryPerformanceCounter times 1/freq on the x87, after CreateDevice without
+  `D3DCREATE_FPU_PRESERVE` has set single precision. wine's QPC is 100 ns
+  ticks since boot, so with days of uptime the time moves in 1/16 s steps.
+  It depends on the host's uptime, so it may not reproduce elsewhere. Patch
+  the behaviour flags to add 0x2. Its setup button is "Watch!", now in
+  autodlg's default `--go` list.
+
+- Slow immediate-mode GL is wine's per-call cost, not Mesa's. Adapt's
+  "Balance" (`zoo.84239`) opens at 5-7 fps: about 220k `glVertex`/`glNormal`/
+  `glTexCoord` calls a frame (shadow volumes), ~900 ns each under wow64. perf
+  puts Mesa at ~4%. The rest is wine: each i386 opengl32 thunk makes a unix
+  call and then `set_context_attribute(-1)`, a shared SRW lock taken and
+  released (with an `RtlWakeAddressSingle`) on every call. The multiarch 11.17
+  build reaches ~8 fps (36 vs 26 later on). To count frames, use a registry
+  `RelayInclude` of `gdi32.SwapBuffers`, give each function by name (a bare
+  `opengl32` matches nothing), and run under headless gamescope with
+  `+timestamp,+relay`. Delete the key afterwards.
+
+- Remembrance (`zoo.4030`) froze with `loader_section ... wait timed out`:
+  `outputs.fmod.dll`'s mingw constructor calls `waveInOpen` inside its
+  `LoadLibraryA`, wine's winmm starts its devices thread and waits on it, and
+  the thread blocks on the loader lock for its thread attach. Returning
+  `MMSYSERR_NODRIVER` from the proxy was not enough: the plugin keeps the
+  handle and loops on an error box. Releasing the loader lock around the first
+  open (the proxy's `open_device`) works. winmm is loaded at process start
+  here, so pre-starting wine's thread from the proxy would also have worked,
+  but it would bring up mmdevapi in every demo.
