@@ -519,6 +519,19 @@ meta = { wine_cnc_ddraw = "true" }
 meta = { wine_res = "640x480" }
 events = [{ frame = 900, key = "Space" }]
 
+[zoo.25005]
+fix_info = '''
+Showed one cube where there should be hundreds. Its timer is QPC * (1/freq)
+on the x87, which CreateDevice drops to single precision; wine's QPC counts
+from boot, so after a few days of uptime time moves in 1/16 s steps. The patch
+adds D3DCREATE_FPU_PRESERVE to the three CreateDevice flag values.
+'''
+patch = [
+  { info = "FPU_PRESERVE (hardware VP)", target = "engine.dll", offset = 238595, contents = "Qg==" },
+  { info = "FPU_PRESERVE (software VP)", target = "engine.dll", offset = 238658, contents = "Ig==" },
+  { info = "FPU_PRESERVE (software VP)", target = "engine.dll", offset = 238751, contents = "Ig==" },
+]
+
 [zoo.25839]
 meta = { wine_res = "640x480" }
 file = "gerbera_final_by_moppi_productions.zip"
@@ -1701,8 +1714,8 @@ meta = { wine_res = "640x480" }
 [zoo.67994]
 file = "dieanderung_win32.zip"
 
-[zoo.8302]
-meta = { wine_res = "800x600" }
+#[zoo.8302]
+#meta = { wine_res = "800x600" }
 
 #[zoo.3985]
 #meta = { wine_res = "1024x768" }
