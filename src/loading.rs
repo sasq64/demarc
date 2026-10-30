@@ -122,6 +122,7 @@ pub(crate) fn handle_loading(
                     crate::load_error::classify(&e).reason()
                 );
                 emu.state = EmuState::Stopped;
+                emu.load_error = Some(format!("{e:#}"));
 
                 if !settings.tv_mode {
                     emu.run_next = false;

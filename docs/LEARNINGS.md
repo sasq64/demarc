@@ -854,3 +854,19 @@
   open (the proxy's `open_device`) works. winmm is loaded at process start
   here, so pre-starting wine's thread from the proxy would also have worked,
   but it would bring up mmdevapi in every demo.
+
+- A picture cropped to the top left with a black bar on one side: compare the
+  mode with the session (`wine_res`) before touching the demo's own options.
+  Struct (`zoo.4473`) sets its viewport from the window, so 1024x768 in a
+  1600x1200 session clips at its buffers; the bar's height gave it away, and
+  the Aspect setting I changed first had nothing to do with it. Only narrow
+  screens (3:2 counts) get that mode, so reproduce with `-x widescreen=false`.
+
+- An unknown key in `system/overrides.toml` fails the whole file, not just the
+  entry: every override silently stops applying. Grep the log for `** Error`.
+
+- A demo test that counts any lit pixel as video calls a dead demo working:
+  Lunaquatic (`zoo.25508`) plays its music over one solid blue frame, with no
+  `!demarc visible` in the log. Tell frames apart too (`video_level()`'s hash).
+  `load_demo` now takes `demozoo.1234`/`csdb.5678` and needs no `--db` if the
+  default dbs load, which they do when no files are given.

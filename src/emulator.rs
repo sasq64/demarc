@@ -171,6 +171,8 @@ pub struct Emulator {
     /// [`Emulator::update_load`].
     pub(crate) pending_load: Option<PendingLoad>,
     pub state: EmuState,
+    /// Why the last load failed, until the next one starts.
+    pub load_error: Option<String>,
     /// Frames waiting to be shown, oldest first.
     pub frame_queue: VecDeque<VideoFrame>,
     /// Pixels last copied into [`Self::image`], so an unchanged frame is not

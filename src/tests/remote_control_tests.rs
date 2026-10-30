@@ -22,6 +22,11 @@ fn names(actions: &[Action]) -> Vec<String> {
             Action::Cmd(c) => format!("cmd {c:?}"),
             Action::Screenshot(p) => format!("shot {}", p.display()),
             Action::LoadDemo(id) => format!("load {id}"),
+            Action::AskNavigator(path) => format!("navigator {path}"),
+            Action::AskPlaylist(name) => format!("playlist {name}"),
+            Action::AskVideo => "video".into(),
+            Action::AskStatus => "status".into(),
+            Action::Playlist { name, id, add } => format!("list {name} {id} {add}"),
             Action::Quit => "quit".into(),
         })
         .collect()
@@ -133,6 +138,55 @@ fn load_demo_takes_a_number_or_a_string() {
     )
     .unwrap();
     assert_eq!(names(&r.update()), ["load 1234", "load 5678"]);
+}
+
+/// An ask takes a frame: the script resumes with what the app replied.
+#[test]
+fn an_ask_returns_the_reply_a_frame_later() {
+    let mut r = runner(
+        "ask",
+        r#"function Main()
+            Status, Why = load_status()
+            Lit, Hash = video_level()
+            Files = get_navigator("Demozoo/All")
+            Missing = get_playlist("Nope")
+        end"#,
+    )
+    .unwrap();
+    assert_eq!(names(&r.update()), ["status"]);
+    r.reply(Reply::Status("failed", Some("404".into())));
+    assert_eq!(names(&r.update()), ["video"]);
+    r.reply(Reply::Video(0.25, 7));
+    assert_eq!(names(&r.update()), ["navigator Demozoo/All"]);
+    let mut files = vec![];
+    crate::files::collect_db_text(
+        "id:7\tdb:Demozoo\ttitle:A\tdownload:http://x/a.zip\n",
+        &Default::default(),
+        &mut files,
+    );
+    r.reply(Reply::Files(Some(files)));
+    assert_eq!(names(&r.update()), ["playlist Nope"]);
+    r.reply(Reply::Files(None));
+    r.update();
+    assert!(r.finished());
+
+    let globals = r._lua.globals();
+    assert_eq!(globals.get::<String>("Status").unwrap(), "failed");
+    assert_eq!(globals.get::<String>("Why").unwrap(), "404");
+    assert_eq!(globals.get::<f64>("Lit").unwrap(), 0.25);
+    assert_eq!(globals.get::<u32>("Hash").unwrap(), 7);
+    let files: mlua::Table = globals.get("Files").unwrap();
+    let first: mlua::Table = files.get(1).unwrap();
+    assert_eq!(first.get::<String>("id").unwrap(), "demozoo.7");
+    assert_eq!(first.get::<String>("title").unwrap(), "A");
+    assert!(globals.get::<Option<mlua::Table>>("Missing").unwrap().is_none());
+}
+
+#[test]
+fn a_black_frame_has_nothing_lit() {
+    assert_eq!(frame_stats(&[0xff00_0000, 0xff10_1010]).0, 0.0);
+    assert_eq!(frame_stats(&[0xff00_0000, 0xff00_0020]).0, 0.5);
+    assert_ne!(frame_stats(&[1]).1, frame_stats(&[2]).1);
 }
 
 /// Every `Cmd` round-trips through the name the Lua table exposes.

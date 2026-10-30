@@ -140,6 +140,7 @@ impl Emulator {
             DOWNLOAD_COUNTER.ended();
         }
         self.state = EmuState::Loading;
+        self.load_error = None;
         self.pending_load = Some(load_async(emu_file, over, global));
         DOWNLOAD_COUNTER.started();
     }

@@ -9,25 +9,36 @@
 //! across the FFI boundary, so they live in [`BOOTSTRAP`] instead.
 
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{self, File};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 use bevy::window::PrimaryWindow;
-use mlua::{Function, Lua, LuaOptions, StdLib};
+use mlua::{Function, IntoLuaMulti, Lua, LuaOptions, MultiValue, StdLib};
 
 use crate::commands::{Cmd, CmdMessage};
 use crate::config::{AppSettings, Args};
-use crate::emulator::Emulator;
+use crate::emu_file::{DemoId, EmuFile};
+use crate::emulator::{EmuState, Emulator};
 use crate::frontend::EmuView;
 use crate::headless::HeadlessTarget;
+use crate::loading::LoadFile;
+use crate::navigator::Navigator;
+use crate::playlists::{Playlists, entry_id};
 use crate::ui::key_message;
+
+/// Frames `quit()` gives outstanding screenshots to land.
+const QUIT_GRACE_FRAMES: u32 = 120;
+/// A channel above this counts as lit, so a dark grey "black" stays black.
+const BLACK_LEVEL: u8 = 16;
 
 /// What a Lua call asks the app to do, applied on the next `PreUpdate`.
 pub enum Action {
@@ -35,17 +46,34 @@ pub enum Action {
     KeyUp(KeyCode),
     Cmd(Cmd),
     Screenshot(PathBuf),
-    /// Start the db entry whose `id` meta is this, by value rather than index:
-    /// a script names a release the way the db does, not by where it landed in
-    /// the file list.
+    /// Start this entry: `demozoo.1234`, `csdb.5678`, or a bare id in the first
+    /// db. A script names a release the way the db does, not by where it landed
+    /// in the file list.
     LoadDemo(String),
+    AskNavigator(String),
+    AskPlaylist(String),
+    AskVideo,
+    AskStatus,
+    Playlist {
+        name: String,
+        id: String,
+        add: bool,
+    },
     Quit,
+}
+
+/// The answer to an `Ask*` action, picked up by the script a frame later.
+enum Reply {
+    Files(Option<Vec<EmuFile>>),
+    Video(f64, u32),
+    Status(&'static str, Option<String>),
 }
 
 /// The queue the Lua closures write to and the Bevy side reads.
 #[derive(Default)]
 struct RemoteState {
     actions: Vec<Action>,
+    reply: Option<Reply>,
     error: Option<String>,
 }
 
@@ -132,6 +160,28 @@ function press_key(key, frames)
     key_down(key)
     wait_frames(frames or 2)
     key_up(key)
+end
+
+local function ask(send, ...)
+    send(...)
+    coroutine.yield()
+    return Take_reply()
+end
+
+function get_navigator(path)
+    return ask(Ask_navigator, path)
+end
+
+function get_playlist(name)
+    return ask(Ask_playlist, name)
+end
+
+function video_level()
+    return ask(Ask_video)
+end
+
+function load_status()
+    return ask(Ask_status)
 end
 
 function Run(main_fn)
@@ -232,6 +282,10 @@ impl ScriptRunner {
         std::mem::take(&mut state.actions)
     }
 
+    fn reply(&self, reply: Reply) {
+        self.shared.lock().unwrap_or_else(|e| e.into_inner()).reply = Some(reply);
+    }
+
     /// True once `Main()` has returned or failed.
     #[cfg(test)]
     pub fn finished(&self) -> bool {
@@ -245,6 +299,47 @@ fn push(shared: &Arc<Mutex<RemoteState>>, action: Action) {
         .unwrap_or_else(|e| e.into_inner())
         .actions
         .push(action);
+}
+
+/// The id a script knows `file` by.
+fn script_id(file: &EmuFile) -> String {
+    match file.demo_id() {
+        Some(DemoId { db: "zoo", id }) => format!("demozoo.{id}"),
+        Some(DemoId { db, id }) => format!("{db}.{id}"),
+        None => entry_id(file),
+    }
+}
+
+/// The entry `id` names: `db.number`, or a bare id in the first db.
+fn find_demo(settings: &AppSettings, id: &str) -> Option<&'static EmuFile> {
+    if let Some(file) = settings.default_db().iter().find(|f| f.get_meta("id") == id) {
+        return Some(file);
+    }
+    let want = id
+        .rsplit_once('.')
+        .and_then(|(db, n)| DemoId::new(db, n.parse().ok()?));
+    let mut all = settings.files.values().flat_map(|files| files.iter());
+    all.find(|f| want.is_some() && f.demo_id() == want || entry_id(f) == id)
+}
+
+/// The share of `pixels` that isn't black, and a hash to tell frames apart.
+fn frame_stats(pixels: &[u32]) -> (f64, u32) {
+    let lit = pixels
+        .iter()
+        .filter(|p| p.to_le_bytes()[..3].iter().any(|c| *c > BLACK_LEVEL))
+        .count();
+    let mut hasher = DefaultHasher::new();
+    pixels.hash(&mut hasher);
+    (lit as f64 / pixels.len().max(1) as f64, hasher.finish() as u32)
+}
+
+fn file_table(lua: &Lua, file: &EmuFile) -> mlua::Result<mlua::Table> {
+    let table = lua.create_table()?;
+    for (key, value) in &file.meta {
+        table.set(*key, *value)?;
+    }
+    table.set("id", script_id(file))?;
+    Ok(table)
 }
 
 /// Register the globals a script drives demarc with. Every closure is `Send`
@@ -353,6 +448,65 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
         })?,
     )?;
 
+    let asks: [(&str, fn(String) -> Action); 2] = [
+        ("Ask_navigator", Action::AskNavigator),
+        ("Ask_playlist", Action::AskPlaylist),
+    ];
+    for (name, action) in asks {
+        let state = shared.clone();
+        globals.set(
+            name,
+            lua.create_function(move |_, arg: String| {
+                push(&state, action(arg));
+                Ok(())
+            })?,
+        )?;
+    }
+
+    let asks: [(&str, fn() -> Action); 2] = [
+        ("Ask_video", || Action::AskVideo),
+        ("Ask_status", || Action::AskStatus),
+    ];
+    for (name, action) in asks {
+        let state = shared.clone();
+        globals.set(
+            name,
+            lua.create_function(move |_, ()| {
+                push(&state, action());
+                Ok(())
+            })?,
+        )?;
+    }
+
+    let state = shared.clone();
+    globals.set(
+        "Take_reply",
+        lua.create_function(move |lua, ()| -> mlua::Result<MultiValue> {
+            let reply = state.lock().unwrap_or_else(|e| e.into_inner()).reply.take();
+            match reply {
+                Some(Reply::Files(Some(files))) => {
+                    let tables = files.iter().map(|f| file_table(lua, f));
+                    let tables = tables.collect::<mlua::Result<Vec<_>>>()?;
+                    lua.create_sequence_from(tables)?.into_lua_multi(lua)
+                }
+                Some(Reply::Video(lit, hash)) => (lit, hash).into_lua_multi(lua),
+                Some(Reply::Status(status, error)) => (status, error).into_lua_multi(lua),
+                Some(Reply::Files(None)) | None => Ok(MultiValue::new()),
+            }
+        })?,
+    )?;
+
+    for (name, add) in [("save_to_playlist", true), ("remove_from_playlist", false)] {
+        let state = shared.clone();
+        globals.set(
+            name,
+            lua.create_function(move |_, (name, id): (String, String)| {
+                push(&state, Action::Playlist { name, id, add });
+                Ok(())
+            })?,
+        )?;
+    }
+
     let state = shared.clone();
     globals.set(
         "quit",
@@ -376,7 +530,13 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
 
 /// `mlua::Lua` is `Send` but not `Sync`, so the runner is a non-send resource
 /// rather than a `Resource`.
-struct RemoteControl(ScriptRunner);
+struct RemoteControl {
+    runner: ScriptRunner,
+    /// Screenshots asked for and not on disk yet.
+    shots: Arc<AtomicUsize>,
+    /// Frames left before `quit()` gives up on `shots`.
+    quitting: Option<u32>,
+}
 
 /// Exclusive because only `World` can insert a non-send resource.
 fn init_script(world: &mut World) {
@@ -391,7 +551,11 @@ fn init_script(world: &mut World) {
                     .unwrap_or_else(|e| e.into_inner())
                     .push(rate, samples);
             });
-            world.insert_non_send(RemoteControl(runner));
+            world.insert_non_send(RemoteControl {
+                runner,
+                shots: Arc::default(),
+                quitting: None,
+            });
         }
         Err(e) => error!("No remote control: {e:#}"),
     }
@@ -405,12 +569,15 @@ fn run_script(
     mut exit: MessageWriter<AppExit>,
     mut settings: ResMut<AppSettings>,
     mut emus: Query<(&mut Emulator, &EmuView)>,
+    mut loads: MessageWriter<LoadFile>,
+    mut navigator: ResMut<Navigator>,
+    mut playlists: ResMut<Playlists>,
     windows: Query<Entity, With<PrimaryWindow>>,
     headless: Option<Res<HeadlessTarget>>,
 ) {
     let Some(mut remote) = remote else { return };
     let window = windows.single().unwrap_or(Entity::PLACEHOLDER);
-    for action in remote.0.update() {
+    for action in remote.runner.update() {
         match action {
             Action::KeyDown(key) => {
                 keys.write(key_message(key, ButtonState::Pressed, window));
@@ -429,31 +596,107 @@ fn run_script(
                     Some(h) => Screenshot::image(h.image.clone()),
                     None => Screenshot::primary_window(),
                 };
-                commands.spawn(shot).observe(save_to_disk(path));
+                if let Some(dir) = path.parent()
+                    && let Err(e) = fs::create_dir_all(dir)
+                {
+                    error!("Remote control: {dir:?}: {e}");
+                }
+                remote.shots.fetch_add(1, Ordering::Relaxed);
+                let shots = remote.shots.clone();
+                let mut save = save_to_disk(path);
+                commands
+                    .spawn(shot)
+                    .observe(move |captured: On<ScreenshotCaptured>| {
+                        save(captured);
+                        shots.fetch_sub(1, Ordering::Relaxed);
+                    });
             }
             Action::LoadDemo(id) => {
-                let index = settings
-                    .default_db()
-                    .iter()
-                    .position(|f| f.get_meta("id") == id);
-                match index {
-                    // Stepped to like `NextFile`, not `Reload`: on the first
-                    // frame a reload raced the startup load of the db's first entry.
-                    Some(index) => {
-                        settings.current_game = index as isize - 1;
-                        for (mut emu, view) in &mut emus {
-                            if !emu.is_crossfade && view.index == settings.current_emu {
-                                emu.run_next = true;
-                            }
-                        }
-                    }
-                    None => error!("Remote control: no demo with id {id}"),
+                let Some(file) = find_demo(&settings, &id) else {
+                    error!("Remote control: no demo with id {id}");
+                    continue;
+                };
+                let db = settings.default_db();
+                if let Some(index) = db.iter().position(|f| std::ptr::eq(f, file)) {
+                    settings.current_game = index as isize;
                 }
+                // Dropped so the load below replaces the startup load of the
+                // db's first entry instead of racing it.
+                for (mut emu, view) in &mut emus {
+                    if view.index == settings.current_emu {
+                        emu.run_next = false;
+                        emu.run_prev = false;
+                    }
+                }
+                loads.write(LoadFile {
+                    emu_file: file.clone(),
+                    target_emulator: Some(settings.current_emu),
+                });
+            }
+            Action::AskNavigator(path) => {
+                remote.runner.reply(Reply::Files(navigator.files_at(&path)));
+            }
+            Action::AskPlaylist(name) => {
+                let index = playlists.find(&name);
+                let files = index.map(|i| playlists.lists[i].files.to_vec());
+                remote.runner.reply(Reply::Files(files));
+            }
+            Action::AskVideo => {
+                let mut stats = (0.0, 0);
+                let current = emus.iter().find(|(emu, view)| {
+                    !emu.is_crossfade && view.index == settings.current_emu
+                });
+                if let Some(core) = current.and_then(|(emu, _)| emu.core.as_ref()) {
+                    core.with_frame(&mut |width, height, pixels| {
+                        stats = frame_stats(&pixels[..width * height]);
+                    });
+                }
+                remote.runner.reply(Reply::Video(stats.0, stats.1));
+            }
+            Action::AskStatus => {
+                let current = emus.iter().find(|(emu, view)| {
+                    !emu.is_crossfade && view.index == settings.current_emu
+                });
+                let (status, error) = match current {
+                    Some((emu, _)) => match (&emu.state, &emu.load_error) {
+                        (EmuState::Loading, _) => ("loading", None),
+                        (_, Some(error)) => ("failed", Some(error.clone())),
+                        (EmuState::Stopped, None) => ("idle", None),
+                        _ => ("running", None),
+                    },
+                    None => ("idle", None),
+                };
+                remote.runner.reply(Reply::Status(status, error));
+            }
+            Action::Playlist { name, id, add } => {
+                let Some(file) = find_demo(&settings, &id) else {
+                    error!("Remote control: no demo with id {id}");
+                    continue;
+                };
+                let index = if add {
+                    playlists.create(&name)
+                } else {
+                    playlists.find(&name)
+                };
+                let Some(index) = index else { continue };
+                if playlists.lists[index].contains(file) != add {
+                    playlists.toggle(index, file, "");
+                }
+                let list = &playlists.lists[index];
+                navigator.add_playlist(&list.name, list.files);
             }
             Action::Quit => {
-                exit.write(AppExit::Success);
+                remote.quitting.get_or_insert(QUIT_GRACE_FRAMES);
             }
         }
+    }
+
+    let shots = remote.shots.load(Ordering::Relaxed);
+    if let Some(frames) = &mut remote.quitting {
+        if shots == 0 || *frames == 0 {
+            exit.write(AppExit::Success);
+        }
+        *frames = frames.saturating_sub(1);
     }
 }
 

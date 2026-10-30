@@ -212,39 +212,45 @@ impl Navigator {
             return self.go_root();
         }
         debug!("Goto: '{}'", path);
-        let (db, rest) = path.split_once('/').unwrap_or((path, ""));
-        let Some(files) = self.files.get(db).copied() else {
-            warn!("No such database: {db}");
-            return self;
-        };
-        if rest.is_empty() && self.playlists.contains(db) {
+        if let Some(source) = self.source_for(path) {
             self.push(NavList {
                 id: 0,
-                source: Arc::new(PickerSource::new(files, None, IconMode::All)),
+                source,
                 path: path.into(),
                 prompt: String::new(),
                 selected: None,
             });
-            return self;
+        }
+        self
+    }
+
+    fn source_for(&self, path: &str) -> Option<ListSource> {
+        let (db, rest) = path.split_once('/').unwrap_or((path, ""));
+        let Some(files) = self.files.get(db).copied() else {
+            warn!("No such database: {db}");
+            return None;
+        };
+        if rest.is_empty() && self.playlists.contains(db) {
+            return Some(Arc::new(PickerSource::new(files, None, IconMode::All)));
         }
         for (key, val) in &self.mapping {
             if let Some(m) = key.captures(rest) {
                 let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
                 // A callback returning None declines the path; keep looking.
-                let Some(source) = val(&groups, files) else {
-                    continue;
-                };
-                self.push(NavList {
-                    id: 0,
-                    source,
-                    path: path.into(),
-                    prompt: String::new(),
-                    selected: None,
-                });
-                return self;
+                if let Some(source) = val(&groups, files) {
+                    return Some(source);
+                }
             }
         }
-        self
+        None
+    }
+
+    /// The entries listed at `path`, in the order shown. A path that lists
+    /// folders has none; `None` if the path doesn't exist.
+    pub(crate) fn files_at(&self, path: &str) -> Option<Vec<EmuFile>> {
+        let source = self.source_for(path)?;
+        let ids = source.search("", usize::MAX);
+        Some(ids.into_iter().filter_map(|id| source.get_data(id)).collect())
     }
 
     fn current_path(&self) -> &str {
@@ -915,6 +921,26 @@ mod test {
         navigator.remove_playlist("Old");
         navigator.pop();
         assert_eq!(navigator.get_showing(), vec!["Keep"]);
+    }
+
+    #[test]
+    fn files_at_lists_entries_without_navigating() {
+        let dbs: IndexMap<String, &'static [EmuFile]> = [(
+            "Demozoo".to_string(),
+            db("id:1\ttitle:A\tplatform:Amiga\tdownload:http://x/a.zip\n\
+                id:2\ttitle:B\tplatform:C64\tdownload:http://x/b.zip\n"),
+        )]
+        .into();
+        let mut navigator = Navigator::new();
+        setup_navigator(&dbs, &mut navigator).unwrap();
+        navigator.go_root();
+
+        let files = navigator.files_at("Demozoo/Platforms/C64").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].get_meta("id"), "2");
+        assert!(navigator.files_at("Demozoo/Platforms").unwrap().is_empty());
+        assert!(navigator.files_at("Nope/Platforms").is_none());
+        assert_eq!(navigator.current_path(), "");
     }
 
     #[test]
