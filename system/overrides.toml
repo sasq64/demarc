@@ -1719,3 +1719,11 @@ file = "dieanderung_win32.zip"
 
 #[zoo.3985]
 #meta = { wine_res = "1024x768" }
+
+# Struct
+[zoo.4473]
+fix_info = '''
+Sets its viewport from the window, so a mode smaller than the session is
+cropped to the top left of its buffers. Mode and session have to match.
+'''
+meta = { wine_res = "1920x1080", wine_dialog_res = "1920x1080" }
