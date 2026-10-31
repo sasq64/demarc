@@ -213,11 +213,11 @@ pub struct Args {
     #[arg(long, value_name = "FILE")]
     pub frame_log: Option<PathBuf>,
 
-    /// Report whether Windows releases can be run here — wine, bwrap and the
-    /// ~/.wine-demarc prefix — then exit. Without all three, .exe releases are
-    /// left to whatever else can claim them.
+    /// Check everything demarc relies on, say what to do about whatever is
+    /// wrong, and print the cache sizes, then exit. Exits with 1 when something
+    /// required is missing.
     #[arg(long)]
-    pub check_wine: bool,
+    pub check: bool,
 
     /// Install wine if needed and set up the ~/.wine-demarc prefix for Windows
     /// releases (Linux only), then exit.

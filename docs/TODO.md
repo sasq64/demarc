@@ -19,3 +19,8 @@
 - [ ] Override keys
 - [ ] Override fast-load
 - [ ] Clear config override order (Amiga)
+
+
+NEW
+
+Check pause / audio handling

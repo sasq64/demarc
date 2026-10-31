@@ -185,6 +185,11 @@ pub fn prune_cache() {
     CORES.prune();
 }
 
+/// Is `name` here already, so that [`get_libretro`] needs no download?
+pub fn has_core(name: &str) -> bool {
+    local_core(name).is_some() || CORES.is_cached(&core_url(name), &dylib_name(name))
+}
+
 /// Locate and if necessary download a libretro dynamic library.
 ///
 /// A hand-built core in `$DEMARC_CORE_DIR` wins over the buildbot (see

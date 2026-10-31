@@ -353,6 +353,12 @@ fn usable(base: &Path) -> bool {
     })
 }
 
+/// Can a sandbox be made around the prefix `base`?
+pub fn works(base: &Path) -> bool {
+    ensure_socket_dir();
+    usable(base)
+}
+
 /// Does this entry want a sandbox? See [`META_SANDBOX`].
 pub fn wanted(meta: &HashMap<String, String>) -> bool {
     meta.get(META_SANDBOX)

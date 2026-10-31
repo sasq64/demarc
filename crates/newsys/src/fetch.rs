@@ -328,6 +328,10 @@ pub fn prune_cache() {
     DOWNLOADS.prune();
 }
 
+pub fn cache_size() -> u64 {
+    DOWNLOADS.size()
+}
+
 /// Download `url` to `path`, trying every url [`candidates`] offers for it
 /// until one works — for a link class that is each mirror in turn, and the one
 /// that answered is remembered for next time (see [`MIRROR_ROTATION`]).

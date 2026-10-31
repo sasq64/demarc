@@ -121,7 +121,7 @@ demarc --setup-wine
 installs wine (if there is none), bubblewrap and cabextract, and sets up the
 `~/.wine-demarc` prefix. Run it again to repair or update the prefix.
 
-Use `demarc --check-wine` to see if requirements are met.
+Use `demarc --check` to see if requirements are met, and what to do if not.
 
 ## BUILD
 

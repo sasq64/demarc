@@ -165,6 +165,10 @@ pub fn prune_cache() {
     CACHE.prune();
 }
 
+pub fn cache_size() -> u64 {
+    CACHE.size()
+}
+
 /// What a `.neo` cartridge ROM opens with: the NeoSD container's tag, ahead of
 /// a version byte that is not worth being fussy about.
 const NEO_ROM_MAGIC: &[u8] = b"NEO";

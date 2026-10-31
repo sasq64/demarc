@@ -896,6 +896,10 @@ pub fn prune_cache() {
     CACHE.prune();
 }
 
+pub fn cache_size() -> u64 {
+    CACHE.size()
+}
+
 #[cfg(test)]
 #[path = "tests/disc_tests.rs"]
 mod tests;

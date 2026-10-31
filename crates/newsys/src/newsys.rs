@@ -103,6 +103,15 @@ pub fn prune_caches() {
     playstation::prune_cache();
 }
 
+/// The caches [`prune_caches`] trims, by name, and what each holds in bytes.
+pub fn temp_cache_sizes() -> [(&'static str, u64); 3] {
+    [
+        ("cdda", disc::cache_size()),
+        ("neocd", neo_geo::cache_size()),
+        ("psxexe", playstation::cache_size()),
+    ]
+}
+
 /// Walk `dir`, calling `call` with the path, lowercased extension and the
 /// first `header_size` bytes of every file big enough to have them.
 pub fn walk_dir(

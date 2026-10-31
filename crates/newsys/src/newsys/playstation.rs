@@ -121,6 +121,10 @@ pub fn prune_cache() {
     CACHE.prune();
 }
 
+pub fn cache_size() -> u64 {
+    CACHE.size()
+}
+
 pub fn is_psx_exe(path: &Path) -> bool {
     read_header(path, 8).is_ok_and(|h| h == b"PS-X EXE")
 }

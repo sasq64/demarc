@@ -163,6 +163,10 @@ impl FileCache {
         &self.root
     }
 
+    pub fn size(&self) -> u64 {
+        entry_stats(&self.root).0
+    }
+
     pub fn is_cached(&self, key: &str, filename: &str) -> bool {
         let dir = self.root.join(hash_key(key));
         let path = dir.join(filename);

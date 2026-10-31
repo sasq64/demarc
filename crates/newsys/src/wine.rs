@@ -302,24 +302,14 @@ impl WineCheck {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
 
-    /// One line per requirement, for `--check-wine`.
-    pub fn report(&self) -> String {
-        let mut out = String::new();
-        for need in &self.needs {
-            let (mark, detail) = match &need.found {
-                Ok(path) => ("ok     ", path.display().to_string()),
-                Err(why) => ("MISSING", why.clone()),
-            };
-            out.push_str(&format!("  {:<7} {mark}  {detail}\n", need.what));
-        }
-        out.push_str(if self.ok() {
-            "\nWindows releases can be run."
-        } else {
-            "\nWindows releases are disabled."
-        });
-        out
-    }
+/// The wine [`SETUP_SCRIPT`] installs, as `wine --version` spells it.
+#[cfg(target_os = "linux")]
+pub fn wanted_version() -> Option<String> {
+    let script = std::fs::read_to_string(system_dir().join(SETUP_SCRIPT)).ok()?;
+    let version = script.lines().find_map(|line| line.strip_prefix("WINE_VERSION="))?;
+    Some(format!("wine-{}", version.trim()))
 }
 
 /// Run [`SETUP_SCRIPT`] on the terminal and give back its exit code.

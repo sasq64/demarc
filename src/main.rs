@@ -21,7 +21,7 @@ pub use ::newsys::wine;
 #[cfg(target_os = "linux")]
 pub use ::newsys::wine_sandbox;
 pub use ::newsys::{
-    cache, cbmconvert, degas, fetch, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
+    cache, cbmconvert, degas, fetch, health, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
     system_dir, tiff_pal, utils, workfile, zx_scr,
 };
 
@@ -177,36 +177,17 @@ fn default_dbs() -> Vec<std::path::PathBuf> {
     found
 }
 
-/// Print what `--check-wine` found and give back the exit code for it: 0 when
-/// a Windows release could be run here, 1 when one of the three pieces
-/// [`wine::check_wine`] looks for is missing.
-#[cfg(target_os = "linux")]
-fn check_wine_and_report() -> i32 {
-    let check = wine::check_wine();
-    println(check.report());
-    if check.ok() { 0 } else { 1 }
-}
-
-/// On Windows there is nothing to check: the release is simply started — see
-/// [`win_runner`].
-#[cfg(target_os = "windows")]
-fn check_wine_and_report() -> i32 {
-    println("Windows releases run directly.");
-    0
-}
-
-/// Elsewhere there is nothing to run them with: the Windows backend is either
-/// Windows itself or the gamescope core's, and that one is Linux only.
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn check_wine_and_report() -> i32 {
-    println("Windows releases are Linux and Windows only.");
-    1
+/// Print what [`health::check`] found and give back the exit code for it.
+fn check_and_report() -> i32 {
+    let report = health::check();
+    println(&report);
+    if report.ok() { 0 } else { 1 }
 }
 
 #[cfg(target_os = "linux")]
 fn setup_wine_and_report() -> i32 {
     let code = wine::setup_wine();
-    if code == 0 { check_wine_and_report() } else { code }
+    if code == 0 { check_and_report() } else { code }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -395,6 +376,9 @@ fn main() {
     if args.setup_wine {
         std::process::exit(setup_wine_and_report());
     }
+    if args.check {
+        std::process::exit(check_and_report());
+    }
 
     // On Unix, silence the cores by redirecting stdout/stderr to /dev/null
     #[cfg(unix)]
@@ -430,17 +414,11 @@ fn main() {
     #[cfg(not(unix))]
     builder.init();
 
-    // Asked and answered before anything else happens: nothing is loaded, no
-    // window opens, and the exit code says whether Windows releases would run,
-    // so this is usable from a script.
     if let Some(path) = &args.frame_log
         && let Err(e) = frame_log::open(path)
     {
         eprintln!("Could not open frame log {}: {e}", path.display());
         std::process::exit(1);
-    }
-    if args.check_wine {
-        std::process::exit(check_wine_and_report());
     }
 
     // Trim the caches before anything writes into them, so this run's own

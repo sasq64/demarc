@@ -316,7 +316,7 @@ had been run; the wine download and the prefix step have not, and neither has
    the controller. Moving the override to right after `wineboot -i` would not
    help for the same reason; setting `WINEDLLOVERRIDES=wineusb.sys=d` for the
    whole script should, and is untried.
-3. `demarc --check-wine` should list wine, bwrap and the prefix as ok.
+3. `demarc --check` should list wine, bwrap and the prefix as ok.
 4. `steamos-add-to-steam ~/demarc/demarc.sh` (with `DISPLAY=:0`).
 
 ---

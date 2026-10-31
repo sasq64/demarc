@@ -15,4 +15,4 @@ if ! grep -qs demarc.sh ~/.local/share/Steam/userdata/*/config/shortcuts.vdf; th
     DISPLAY=:0 steamos-add-to-steam "$PWD/demarc.sh"
 fi
 
-demarc --check-wine || true
+demarc --check || true

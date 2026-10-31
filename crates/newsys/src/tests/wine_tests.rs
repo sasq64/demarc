@@ -390,10 +390,9 @@ fn a_tool_on_the_path_has_to_be_executable() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The check looks for three things, and says so in the order it looked. What
-/// it must never do is call a machine ready when one of them is missing:
-/// `--check-wine` prints from this, and [`crate::newsys`] drops the Windows
-/// system on the strength of it.
+/// The check looks for three things, in that order. What it must never do is
+/// call a machine ready when one of them is missing: [`crate::newsys`] drops
+/// the Windows system on the strength of it.
 #[test]
 fn a_check_is_ready_only_when_nothing_is_missing() {
     let names: Vec<_> = check_wine().needs.iter().map(|need| need.what).collect();
@@ -411,7 +410,6 @@ fn a_check_is_ready_only_when_nothing_is_missing() {
     };
     assert!(all_there.ok());
     assert_eq!(all_there.missing(), "");
-    assert!(all_there.report().contains("can be run"));
 
     let short = WineCheck {
         needs: vec![
@@ -422,11 +420,4 @@ fn a_check_is_ready_only_when_nothing_is_missing() {
     };
     assert!(!short.ok());
     assert_eq!(short.missing(), "bwrap, prefix");
-    let report = short.report();
-    assert!(report.contains("disabled"), "{report}");
-    // Every requirement is in the report whether it was met or not: the point
-    // of printing it is to see which one to go and fix.
-    for what in ["wine", "bwrap", "prefix"] {
-        assert!(report.contains(what), "{what} missing from {report}");
-    }
 }
