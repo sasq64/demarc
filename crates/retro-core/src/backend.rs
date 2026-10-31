@@ -170,8 +170,8 @@ pub trait Backend {
     }
 
     /// Called every frontend tick, so the backend can tell the frontend has
-    /// stopped running.
-    fn keep_alive(&self) {}
+    /// stopped running, from having paused it (`paused`) or from a stall.
+    fn keep_alive(&self, _paused: bool) {}
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture

@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ringbuf::traits::Split;
+
 use crate::backend::frame_bytes;
 
 use super::*;
@@ -114,6 +116,40 @@ fn retro_threaded_works() {
     //emu.save_png(&root("test_amiga_threaded.png")).unwrap();
     let (w, h) = emu.get_frame_size();
     assert!(w > 0 && h > 0, "no frame produced by worker");
+}
+
+#[test]
+fn a_paused_worker_does_not_free_run_on_a_low_ring() {
+    let core_path = core("puae");
+    let system_dir = &root("system/amiga");
+    let game_path = root("testdata/amiga/rebels.adf");
+
+    let mut settings = HashMap::new();
+    settings.insert("puae_model".into(), "A500".into());
+
+    let mut emu =
+        RetroCoreThreaded::new(&core_path, system_dir, Some(&game_path), settings, false).unwrap();
+
+    // With no resampler nothing reaches this ring, so it stays low.
+    let sink = crate::audio::AudioSink::default();
+    let (producer, _consumer) = ringbuf::HeapRb::<f32>::new(crate::audio::RING_SIZE).split();
+    sink.set_producer(producer);
+    sink.set_low_water(1);
+    emu.set_audio_out(sink.out());
+    emu.set_latency(1);
+
+    let stepped_over = |emu: &RetroCoreThreaded, time| {
+        std::thread::sleep(time);
+        let before = emu.frames_stepped();
+        std::thread::sleep(time);
+        emu.frames_stepped() - before
+    };
+
+    emu.keep_alive(true);
+    assert_eq!(stepped_over(&emu, Duration::from_millis(500)), 0);
+
+    emu.keep_alive(false);
+    assert!(stepped_over(&emu, Duration::from_millis(500)) > 0);
 }
 
 #[test]

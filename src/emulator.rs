@@ -729,7 +729,7 @@ impl Emulator {
         let Some(core) = self.core.as_mut() else {
             return true;
         };
-        core.keep_alive();
+        core.keep_alive(self.paused);
         let idle = core.is_idle();
         let t = time.elapsed_secs();
         // A paused core stands still because it was asked to, so the timer is

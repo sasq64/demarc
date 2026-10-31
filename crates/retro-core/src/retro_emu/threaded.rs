@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ struct Fill {
     epoch: Instant,
     /// Milliseconds since `epoch` the frontend last ticked.
     last_tick: AtomicU64,
+    paused: AtomicBool,
 }
 
 impl Default for Fill {
@@ -55,6 +56,7 @@ impl Default for Fill {
             limit: AtomicUsize::new(0),
             epoch: Instant::now(),
             last_tick: AtomicU64::new(0),
+            paused: AtomicBool::new(false),
         }
     }
 }
@@ -375,7 +377,9 @@ fn worker_loop(
         }
 
         let full = fill.queued.load(Ordering::Acquire) >= fill.limit.load(Ordering::Relaxed);
-        let free_run = full && out.as_ref().is_some_and(|o| o.is_low(fill.stalled()));
+        let free_run = full
+            && !fill.paused.load(Ordering::Relaxed)
+            && out.as_ref().is_some_and(|o| o.is_low(fill.stalled()));
         if !speed_test && full && !free_run {
             let t = Instant::now();
             thread::park_timeout(THROTTLE_POLL);
@@ -608,8 +612,9 @@ impl Backend for RetroCoreThreaded {
         self.cmd_tx.send(RetroCmd::SetAudioOut(out)).is_ok()
     }
 
-    fn keep_alive(&self) {
+    fn keep_alive(&self, paused: bool) {
         self.fill.tick();
+        self.fill.paused.store(paused, Ordering::Relaxed);
     }
 
     fn send_events(&mut self, events: &[(u32, InputEvent)]) {
