@@ -65,3 +65,10 @@ Your Pocket" accumulates 256 samples in it.
 (checked in `wglMakeCurrent`). radeonsi (Mesa 26.2.5) faults and hangs the GPU
 drawing display lists with edge flags in polygon mode `GL_LINE` (Stravaganza's
 "This Way"). Its wireframes then show every triangle edge.
+
+`glGenLists` hands out low list numbers: Mesa aligns a range of 32 or more to a
+multiple of 32, while Windows drivers start at 1. Ctrl-Alt-Test's "D - Four"
+makes its font with first glyph 1 and draws raw ASCII, so it needs list 1.
+
+`glProgramParameteriEXT` is a no-op when wine has none: Mesa lacks
+`EXT_geometry_shader4`, and Mercury's "Epsilon" quits on the NULL.

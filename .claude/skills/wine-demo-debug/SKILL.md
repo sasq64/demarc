@@ -172,6 +172,16 @@ engine (Interceptor `zoo.6279`, Relais `zoo.3299`): `+opengl` shows
 `Extensions required for gl*NV not supported`. NV_vertex_program, NV_fence,
 NV_register_combiners are not in Mesa; mark it `known_issue`.
 
+**Text shifted by a constant, or wrong glyphs from display lists.** Mesa
+aligns `glGenLists(n >= 32)` to a multiple of 32; an intro that assumes it got
+1 draws off by 31. The opengl32 proxy's `glGenLists` covers it (D-Four,
+`zoo.4690`).
+
+**Silent exit behind a white or frozen frame.** Check the exe is alive with
+`ps -eo pid,comm`, then `+relay` for a `wglGetProcAddress` right before
+`ExitProcess`. The opengl32 proxy gives Epsilon (`zoo.23405`) a no-op
+`glProgramParameteriEXT`; add others there.
+
 **GL function pointer is NULL (page fault at 0).** wine's `wglGetProcAddress`
 refuses names whose extension is not on the context. `wine_gl_compat` asks
 Mesa for a 4.6 compatibility context. Functions above the context version are
@@ -227,6 +237,10 @@ FPU that CreateDevice sets: wine's QPC counts from boot, so days of uptime
 leave 1/16 s steps. Patch the CreateDevice flags to add
 `D3DCREATE_FPU_PRESERVE` (Iterate, `zoo.25005`).
 
+**NULL fault right after a D3D10 device call.** Map the vtable offset to a
+method and read `DXVK_LOG_LEVEL=debug`. `OpenSharedResource` at feature level
+9.x is refused by DXVK; `tools/d3d10_1` raises the level (Candy, `zoo.42678`).
+
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
 invalid API use.
@@ -265,6 +279,10 @@ voluntary context switches a second are lock contention: the futex address
 from `/proc/<pid>/task/<tid>/syscall`, looked up in `maps` and `nm ntdll.so`,
 names the lock. `fd_cache_mutex` is ntsync's handle cache: `wine_ntsync=false`
 (Ziphead, `zoo.136314`). Find the pid with `ps -eo pid,comm`, never `pgrep -f`.
+
+**Low frame rate in Direct2D scenes.** Count frames with `video_level()` every
+frame; `+d3dcompiler` shows repeated `D3DCompile`s, wine's d2d1 compiling per
+render target. `tools/d3dcompiler_47` caches them (Candy, `zoo.42678`).
 
 **Slow from the start, one core at 100%.** `perf record -p` shows i386
 `ntdll.dll` (SRW lock) and `opengl32.dll` thunks, with Mesa only a few

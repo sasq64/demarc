@@ -189,6 +189,14 @@ kernelbase:
 dx8vb:
     python3 tools/dx8vb/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/dx8vb.dll" system/win/prefix/dx8vb.dll
 
+# d3d10_1.dll that raises 9.x feature levels to 10.0 for DXVK (source in tools/d3d10_1).
+d3d10_1:
+    python3 tools/d3d10_1/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/d3d10_1.dll" system/win/prefix/d3d10_1.dll
+
+# d3dcompiler_47.dll that caches D3DCompile (source in tools/d3dcompiler_47).
+d3dcompiler_47:
+    python3 tools/d3dcompiler_47/build.py ~/.wine-demarc/drive_c/windows/syswow64/d3dcompiler_47_native.dll system/win/prefix/d3dcompiler_47.dll
+
 # opengl32.dll whose wglGetProcAddress also finds GL 1.1 functions (source in tools/opengl32).
 opengl32:
     python3 tools/opengl32/build.py "$(dirname "$(readlink -f "$(which wine)")")/../lib/wine/i386-windows/opengl32.dll" system/win/prefix/opengl32.dll

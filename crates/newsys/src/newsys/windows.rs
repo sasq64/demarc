@@ -28,7 +28,7 @@ use crate::utils::read_at;
 use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
-    DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
+    D3D10_1_OVERRIDE, DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
     META_D3D_CONFIG, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
     WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
     wine_prefix,
@@ -366,7 +366,7 @@ impl System for WindowsSystem {
         #[cfg(target_os = "linux")]
         {
             let mut overrides = format!(
-                "d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE};{KERNELBASE_OVERRIDE};{DX8VB_OVERRIDE};{OPENGL32_OVERRIDE}"
+                "d3d*=n,b;{WINMM_OVERRIDE};{DCOMP_OVERRIDE};{KERNELBASE_OVERRIDE};{DX8VB_OVERRIDE};{OPENGL32_OVERRIDE};{D3D10_1_OVERRIDE}"
             );
             if is_yes(&file.get_meta_or(META_CNC_DDRAW, "")) {
                 overrides.push_str(";ddraw=n,b");

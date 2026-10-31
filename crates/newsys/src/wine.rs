@@ -152,6 +152,10 @@ pub const DX8VB_OVERRIDE: &str = "dx8vb=n,b";
 #[cfg(target_os = "linux")]
 pub const OPENGL32_OVERRIDE: &str = "opengl32=n,b";
 
+/// The same for the d3d10_1.dll that raises 9.x feature levels. See `tools/d3d10_1`.
+#[cfg(target_os = "linux")]
+pub const D3D10_1_OVERRIDE: &str = "d3d10_1=n,b";
+
 /// How long the driver keeps looking for a dialog before giving up.
 const DIALOG_TIMEOUT: f64 = 20.0;
 

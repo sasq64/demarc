@@ -158,6 +158,14 @@ setup_prefix() {
 
     # MFC42 (Codename Chinadoll)
     winetricks mfc42
+    # MP42 VfW decoder; wine has none (Haxholm). ff_vfw needs ffdshow's COM classes, so
+    # only the filter list entries go, or its filters would claim every demo's streams
+    winetricks ffdshow
+    for filter in 04FE9017-F873-410E-871E-AB91661A4EF7 0B390488-D80F-4A68-8408-48DC199F0E97 \
+        0F40E1E5-4F79-4988-B1A9-CC98794E6B55 B86F6BEE-E7C0-4D03-8D52-5B4430CF6C88 DBF9000E-F08C-4858-B769-C914A0FBB1D7; do
+        wine reg delete "HKLM\Software\Classes\Wow6432Node\CLSID\{083863F1-70DE-11D0-BD40-00A0C911CE86}\Instance\{$filter}" /f
+    done
+    wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v vidc.mp42 /t REG_SZ /d ff_vfw.dll /f
     # Native msvcp60 from the same download; wine's lacks exports (Come Clean)
     cabextract -q -d "$wow64" -F msvcp60.dll "$WINETRICKS_CACHE/vcrun6/vcredist.exe"
     # Speech (for Zoom 3)
@@ -213,6 +221,12 @@ install_prefix_files() {
     put dx8vb.dll syswow64
     # For intros that take GL 1.1 functions from wglGetProcAddress. See tools/opengl32.
     put opengl32.dll syswow64
+    # For D2D interop on a 9.x level D3D10.1 device. See tools/d3d10_1.
+    put d3d10_1.dll syswow64
+    # d2d1 recompiles its shaders per render target. See tools/d3dcompiler_47.
+    local wow64="$WINEPREFIX/drive_c/windows/syswow64"
+    [ -f "$wow64/d3dcompiler_47_native.dll" ] || mv "$wow64/d3dcompiler_47.dll" "$wow64/d3dcompiler_47_native.dll"
+    put d3dcompiler_47.dll syswow64
 }
 
 SYSTEM=$(detect_system)

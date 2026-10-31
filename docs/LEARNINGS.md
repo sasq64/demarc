@@ -870,3 +870,83 @@
   `!demarc visible` in the log. Tell frames apart too (`video_level()`'s hash).
   `load_demo` now takes `demozoo.1234`/`csdb.5678` and needs no `--db` if the
   default dbs load, which they do when no files are given.
+
+- A "silent still picture" from `scripts/test_demos.lua` can be a demo's own
+  launcher (Ephemera, `zoo.47716`), not a hang: look at the screenshot first.
+  Ephemera's ignores Enter, so it takes override clicks. `texture2DLod` in a
+  fragment shader is an error below GLSL 1.30 (`wine_glsl_version=130`), and it
+  can look like a demo's crash: Extatique (`zoo.37585`) faults at NULL after
+  the failed link, and leaves wine's crash dialog as its still picture.
+
+- A `RESULT Working` from `scripts/test_demos.lua` can still be a failed demo:
+  Code Is My Pron (`zoo.4688`) was white with music (Mesa refused `v.x` on a
+  float, though startup frames passed the moving test), and D-Four
+  (`zoo.4690`) drew `'063` for `FOUR`. Look at every screenshot, and take a
+  few 10 s apart when one is flat.
+
+- D-Four's text was off by 31 because Mesa aligns `glGenLists(n >= 32)` to a
+  multiple of 32 and the intro expects 1: it calls `wglUseFontBitmapsA(hdc, 1,
+  122, base)` and then `glCallLists` on raw ASCII. Characters shifted by a
+  constant point at display lists; the call site in `/proc/<pid>/mem` showed
+  `base` was `glGenLists`' result, after reading the relay's `first=1,
+  base=0x20` as swapped arguments cost a detour. The opengl32 proxy now hands
+  out low numbers.
+
+- Epsilon (`zoo.23405`) was a frozen white frame that looked like a hang, but
+  the exe had already quit: `ps` found no process, and a `+relay` run ended
+  `wglGetProcAddress("glProgramParameteriEXT")` then `ExitProcess(0)`. Its
+  dumped shaders were a red herring: they came from the demo tested before it.
+  Check that the demo is alive before reading its log.
+
+- A second `[zoo.N]` for an id already in `system/overrides.toml` is a TOML
+  "duplicate key": the whole file stops applying, and so a working override
+  (Superhero's clicks) looked like a regression for two runs. `grep` the id
+  before adding an entry, and the run's log for `** Error`.
+
+- `timeout` around a probe that overruns loses the buffered tail of the pipe
+  and leaves stale screenshots behind: delete the old shots first.
+
+- Haxholm (`zoo.21095`) needs a VfW decoder for MP42, which wine lacks: the
+  prefix takes `winetricks ffdshow` and a `vidc.mp42` key. `regsvr32 /u` on
+  `ffdshow.ax` breaks it, since `ff_vfw.dll` needs ffdshow's COM classes
+  (`ICOpen` then fails with the driver found), so only its entries in the
+  DirectShow filter list are deleted. The installer exits 1 without a display;
+  run it under headless gamescope when testing.
+  demarc ignores `WINEPREFIX` (always `~/.wine-demarc`): a copied prefix has to
+  be tested with `wine demarc-autodlg.exe --launch` under gamescope.
+
+- A remote-control script that fails (`error()`, or `test_demos.lua` finding
+  nothing at its path) leaves demarc idling forever, and `RUST_LOG=retro=warn`
+  hides the message: an empty log with no gamescope child sat for five hours.
+  Scene.org awards in the db stop at 2012, so `Scene.org 2013` is empty, and
+  `get_navigator` returns an empty list there, not nil. Run a sweep with a
+  time limit, and list the path first.
+
+- Candy (`zoo.42678`) faulted reading NULL right after a device vtable call at
+  0x17c: slot 95 of `ID3D10Device` is `OpenSharedResource`. Counting the slot
+  and `DXVK_LOG_LEVEL=debug` gave `Cannot create shared texture` with feature
+  level 0x9100, since Direct2D interop made its D3D10.1 device at level 9.1.
+  `tools/d3d10_1` raises that to 10.0. `d3d*=n,b` in `windows.rs` is no
+  wildcard to wine, so the proxy stayed builtin under demarc until it got its
+  own override, while plain wine with `d3d10_1=n,b` had already shown it working.
+
+- A running demo can still be the wrong shape: Candy's frames looked right, but
+  beside the release's `ss.png` circles were ellipses, 75% height with bars. Its
+  picture height is a share of a hard-coded 1024x768 window (`CreateWindowExA` in
+  `+relay`), so DXVK's "Buffer size: 1920x1080" said nothing about it. Trying
+  three `wine_res` values showed the ratio stays, and 1024x768 is the true shape.
+  A `+relay` of a live D3D demo writes 2.6 GB in 40 s: keep it short.
+
+- "Plays with music and moving frames" says nothing about frame rate: Candy was
+  called fixed on shots 10 s apart while it ran at 10 fps. `video_level()` every
+  frame, counting hash changes per second, measures it (a `wait_frames(1)` beside
+  it halves the ceiling to 30, which hid how fast the later scenes ran).
+  Wine's d2d1 compiles six shaders per render target and Candy makes one per
+  frame: `+d3dcompiler` showed the same sources 138 times a second. `tools/d3dcompiler_47`
+  caches `D3DCompile`; `d3dcompiler_47=b` alone only gave 22 fps.
+  Two wrong turns: a profile taken after the slow scene ended blamed the synth
+  thread's spin on `GetCurrentPosition`, which is by design (profile inside the
+  slow window, per thread), and `perf` here sees no kernel samples, so a thread
+  at 84% that perf calls idle needs utime/stime from `/proc/<pid>/task/*/stat`.
+  What is left is 13 s at 23 fps with `dxvk-submit` at 77% sys and the GPU at
+  under 50%: time in amdgpu's submit path, not reachable from an override.

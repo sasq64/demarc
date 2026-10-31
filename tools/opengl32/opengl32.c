@@ -521,10 +521,33 @@ static int __stdcall make_current(void *dc, HGLRC context)
     return ret;
 }
 
+// Mesa has no EXT_geometry_shader4, and Epsilon quits on the NULL.
+static void __stdcall program_parameteri_ext(unsigned program, unsigned pname, int value)
+{
+    (void)program, (void)pname, (void)value;
+}
+
+// Mesa aligns a range of 32 or more lists to a multiple of 32, Windows drivers
+// start at 1. D-Four takes that for granted and draws its text a list off.
+static unsigned(__stdcall *wine_gen_lists)(int range);
+static unsigned low_list = 1;
+
+static unsigned __stdcall gen_lists(int range)
+{
+    unsigned list = wine_gen_lists(range);
+    if (list && (list < low_list || !(list & 31)))
+        list = low_list;
+    if (list)
+        low_list = list + range;
+    return list;
+}
+
 // NVIDIA's driver hands out the GL 1.1 functions too, and Hexer relies on it.
 static void *__stdcall get_proc_address(const char *name)
 {
     void *address = wine_get_proc_address(name);
+    if (!address && equal(name, "glProgramParameteriEXT"))
+        return program_parameteri_ext;
     if (address && equal(name, "glShaderSource")) {
         wine_shader_source = address;
         return shader_source;
@@ -920,6 +943,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglUseFontOutlinesW")) {
                 use_font_outlines[1] = address;
                 address = use_font_outlines_w;
+            } else if (address && equal(names[i], "glGenLists")) {
+                wine_gen_lists = address;
+                address = gen_lists;
             } else if (address && equal(names[i], "glAccum")) {
                 wine_accum = address;
                 address = accum;
