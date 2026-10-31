@@ -519,6 +519,14 @@ meta = { wine_cnc_ddraw = "true" }
 meta = { wine_res = "640x480" }
 events = [{ frame = 900, key = "Space" }]
 
+[zoo.25508]
+fix_info = '''
+Music over a solid blue frame. Its shader uses << ^ & in an unversioned
+fragment shader, so Mesa refuses it; the failed link hides behind the clear
+colour.
+'''
+meta = { wine_glsl_version = "130" }
+
 [zoo.25005]
 fix_info = '''
 Showed one cube where there should be hundreds. Its timer is QPC * (1/freq)
@@ -541,8 +549,10 @@ events = [
   { frame = 30, key = "4" },
 ]
 
+# Batman Forever by Batman Group: waits on "press any key to start"
 [zoo.28174]
 boot = "Batman Forever (One disk version).dsk"
+events = [{ frame = 3000, key = "Space" }]
 
 [zoo.28488]
 events = [
@@ -1039,6 +1049,15 @@ it draws.
 '''
 meta = { wine_res = "1024x768" }
 
+[zoo.42678]
+fix_info = '''
+Crash at start: its Direct2D surface is a D3D11 keyed-mutex texture opened on a
+D3D10.1 device at level 9.1, which DXVK refuses; tools/d3d10_1 raises the level.
+It draws a 16:9 picture in a fixed 1024x768 window, so the session has to be
+4:3 or it comes out squashed.
+'''
+meta = { wine_res = "1024x768" }
+
 [zoo.46023]
 meta = { wine_res = "640x480" }
 
@@ -1401,7 +1420,18 @@ buffered format to a double-buffered one. wine_res 1280x720 for its hardcoded
 meta = { wine_res = "1280x720" }
 
 [zoo.37585]
+fix_info = '''
+final.fs and loading.fs use texture2DLod in a fragment shader, which needs GLSL
+1.30. Without it the final shader is missing and the demo crashes after loading.
+'''
+meta = { wine_glsl_version = "130" }
 events = [{ frame = 240, click = [0.32, 0.9] }]
+
+# Ephemera by Approximate: texture2DLod needs GLSL 1.30, and its launcher takes
+# no Enter
+[zoo.47716]
+meta = { wine_glsl_version = "130" }
+events = [{ frame = 300, click = [0.625, 0.5625] }, { frame = 350, click = [0.629, 0.814] }]
 
 [zoo.31640]
 known_issue = "Needs OpenCL"
@@ -1727,3 +1757,28 @@ Sets its viewport from the window, so a mode smaller than the session is
 cropped to the top left of its buffers. Mode and session have to match.
 '''
 meta = { wine_res = "1920x1080", wine_dialog_res = "1920x1080" }
+
+# Calyx by Penumbra
+[zoo.30042]
+fix_info = '''
+Its shaders define GL_core_profile, which Mesa refuses as a reserved name. The
+exe is 64-bit, so the opengl32 proxy's glsl patches don't reach it; the line is
+commented out in the shader files.
+'''
+patch = [
+  { info = "comment out #define GL_core_profile", target = "tsunami.vp", offset = 14, contents = "Ly8=" },
+  { info = "comment out #define GL_core_profile", target = "tsunami.fp", offset = 14, contents = "Ly8=" },
+]
+
+# Confetti by Nonoil & Brainstorm: its start button is "mayo!"
+[zoo.18316]
+events = [{ frame = 300, click = [0.727, 0.844] }]
+
+# Superhero vs Supervillain by Rebels: its launcher takes no Enter and misses
+# the first clicks, so Run demo comes third
+[zoo.159877]
+events = [{ frame = 700, click = [0.17, 0.91] }, { frame = 800, click = [0.17, 0.91] }, { frame = 900, click = [0.535, 0.804] }, { frame = 1000, click = [0.535, 0.804] }]
+
+# Code Is My Pron by Nuance: swizzles a float (v.x), which Mesa refuses
+[zoo.4688]
+glsl = { match = 'r\.y\+v\.x-', edits = [['r\.y\+v\.x-', "r.y+v-"]] }
