@@ -60,6 +60,7 @@ mod images;
 mod lynx;
 mod megadrive;
 mod music;
+pub use music::SongName;
 mod neo_geo;
 mod pico8;
 mod playstation;

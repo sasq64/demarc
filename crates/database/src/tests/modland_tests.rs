@@ -127,6 +127,36 @@ fn collect_builds_encoded_urls() {
 }
 
 #[test]
+fn a_song_brings_its_secondary_file() {
+    let mut out = vec![];
+    collect(
+        "12700\tTFMX/Chris Huelsbeck/mdat.apidya (end)\n\
+         88660\tTFMX/Chris Huelsbeck/smpl.apidya (end)\n\
+         1000\tTFMX/Chris Huelsbeck/mdat.no samples\n\
+         1000\tTFMX ST/Chris Huelsbeck/mdat.gem\n\
+         1000\tTFMX ST/Chris Huelsbeck/smpl.gem\n\
+         1000\tProtracker/Tip/mod.prefixed\n\
+         1000\tNintendo Sound Format/Tip/mod.acker.nsf\n",
+        &DbFilter::default(),
+        &mut out,
+    );
+    let titles: Vec<_> = out.iter().map(|f| f.game_info.title).collect();
+    assert_eq!(titles, ["Apidya (end)", "Prefixed", "Mod.acker"]);
+    let FileSource::Url(urls) = &out[0].path else {
+        panic!("not a URL: {:?}", out[0].path);
+    };
+    let base = "https://modland.com/pub/modules/TFMX/Chris%20Huelsbeck";
+    assert_eq!(
+        urls.as_slice(),
+        [
+            format!("{base}/mdat.apidya%20%28end%29"),
+            format!("{base}/smpl.apidya%20%28end%29"),
+        ]
+    );
+    assert_eq!(out[0].get_meta("platform"), "TFMX");
+}
+
+#[test]
 fn an_hvsc_name_is_turned_to_match_another_directory() {
     let mut out = vec![];
     collect(

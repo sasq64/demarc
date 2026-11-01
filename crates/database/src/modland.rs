@@ -5,11 +5,11 @@ use std::{
     ops::Range,
 };
 
-use newsys::NewSys;
+use newsys::{NewSys, SongName};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo, UrlList},
+    emu_file::{EmuFile, FileSource, GameInfo},
     files::{DbFilter, leak},
 };
 
@@ -122,14 +122,17 @@ fn hvsc_author(dir: &str, authors: &HashSet<String>) -> String {
     }
 }
 
+/// Top directories whose songs don't play, whatever their names say.
+const UNPLAYABLE: &[&str] = &["TFMX ST"];
+
 /// `.../<Format>/<Author>/<Title>`, matched from the right, or
 /// `<parent>/<Author>/<Game>/<file>` under a [`GAME_MUSIC`] parent. A
 /// `coop-<Name>` directory adds to the author. [`COLLECTIONS`] go their own way.
 pub(crate) fn parse_path<'a>(path: &'a str, authors: &HashSet<String>) -> Song<'a> {
     let mut dirs: Vec<&str> = path.split('/').collect();
     let file = dirs.pop().unwrap_or(path);
-    let stem = match file.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
+    let stem = match SongName::parse(file) {
+        Some(name) if !name.title.is_empty() => name.title,
         _ => file,
     };
     let mut coop = vec![];
@@ -198,19 +201,39 @@ pub fn collect(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     };
     let extensions = NewSys::supported_extensions();
     let authors = other_authors(text);
+    let paths: HashSet<&str> = text.lines().filter_map(index_path).collect();
     let mut songs = vec![];
     for line in text.lines() {
         let Some(path) = index_path(line) else {
             continue;
         };
-        let ext = path.rsplit_once('.').map_or("", |(_, ext)| ext);
-        if !extensions.contains(ext.to_ascii_lowercase().as_str()) || !filter.keeps(line) {
+        let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
+        let name = SongName::parse(file);
+        let supported = name.as_ref().is_some_and(|name| {
+            name.prefixed || extensions.contains(name.kind.to_ascii_lowercase().as_str())
+        });
+        let unplayable = UNPLAYABLE.contains(&path.split('/').next().unwrap_or(path));
+        if !supported || unplayable || !filter.keeps(line) {
+            continue;
+        }
+        let secondary = name
+            .and_then(|name| name.secondary())
+            .map(|name| format!("{dir}/{name}"));
+        if secondary
+            .as_ref()
+            .is_some_and(|p| !paths.contains(p.as_str()))
+        {
             continue;
         }
         let song = parse_path(path, &authors);
         let start = buf.len();
         buf.push_str(MODLAND_BASEURL);
         buf.extend(utf8_percent_encode(path, URL_PATH));
+        if let Some(secondary) = secondary {
+            buf.push(';');
+            buf.push_str(MODLAND_BASEURL);
+            buf.extend(utf8_percent_encode(&secondary, URL_PATH));
+        }
         let url = start..buf.len();
         let title = push(&mut buf, &song.title);
         let author = push(&mut buf, &song.author);
@@ -232,7 +255,7 @@ pub fn collect(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
         }
         out.push(EmuFile {
             game_info: GameInfo::new(&meta),
-            path: FileSource::Url(UrlList::one(url)),
+            path: FileSource::Url(url.split(';').collect::<Vec<_>>().into()),
             meta,
         });
     }

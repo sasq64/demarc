@@ -950,3 +950,16 @@
   at 84% that perf calls idle needs utime/stime from `/proc/<pid>/task/*/stat`.
   What is left is 13 s at 23 fps with `dxvk-submit` at 77% sys and the GPU at
   under 50%: time in amdgpu's submit path, not reachable from an override.
+
+- `Could not find a plugin for file` from musix also means every plugin that
+  claimed the name failed to load it, so it says nothing about the name. Modland's
+  `TFMX/` songs play only with their `smpl.*` beside them, while `TFMX ST/` has 12
+  songs with no `smpl.*` that fail and one with it that runs silent. Renaming
+  them to UADE's `mdst` prefix did not help. Check a format's odd cases with
+  `audio_level()` before listing them: `running` alone proved nothing here.
+
+- A format in UADE's `getSecondaryFiles` table is not always one musix will
+  open: `sng` is there, but commented out of `supported_ext`, so a Richard Joseph
+  pair fails with `No system recognized`. Before adding a row to
+  `SECONDARY_FILES`, play a whole pair; picking test songs with `head` on the
+  index can also land on ones with no secondary file, which are hidden.

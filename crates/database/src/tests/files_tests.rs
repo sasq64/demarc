@@ -302,6 +302,18 @@ fn collect_db_applies_header_tags() {
     assert_eq!(out[1].get_meta("platform"), "Amiga");
 }
 
+/// A song and its secondary file land in one directory, and neither is any
+/// use alone. Without the second one it is an ordinary download.
+#[test]
+fn a_song_is_fetched_with_its_secondary_file() {
+    let (song, samples) = ("https://x.com/mdat.a%20b", "https://x.com/smpl.a%20b");
+    assert_eq!(
+        release_downloads(&[samples, song]),
+        vec![Download::Disks(vec![vec![song], vec![samples]])]
+    );
+    assert_eq!(release_downloads(&[song]), vec![Download::File(song)]);
+}
+
 /// A disk image among the URLs makes the release disk based: the disk set
 /// is the first thing to try, whatever format its disks are in, and the
 /// extras are gone. Anything else that could be the release stays on as a

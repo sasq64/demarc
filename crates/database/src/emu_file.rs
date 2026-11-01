@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use newsys::SongName;
 use newsys::fetch::is_download_cached;
 use std::{
     cell::RefCell,
@@ -195,6 +196,20 @@ fn is_disk_image_url(url: &str) -> bool {
     url_extension(url).is_some_and(|e| DISK_IMAGE_EXTENSIONS.contains(&e.as_str()))
 }
 
+/// A song in `urls` and the file it needs beside it, if both are there. They
+/// are no use apart, and stems can't tell them from alternatives (`a.sng` and
+/// `a.ins`), so they are fetched together like the disks of a set.
+fn song_files<'a>(urls: &[&'a str]) -> Option<[&'a str; 2]> {
+    urls.iter().find_map(|&url| {
+        let name = url_file_name(url)?;
+        let secondary = SongName::parse(&name)?.secondary()?;
+        let other = urls
+            .iter()
+            .find(|u| url_file_name(u).is_some_and(|n| n.eq_ignore_ascii_case(&secondary)))?;
+        Some([url, *other])
+    })
+}
+
 /// The file name of a disk image URL without its extension, lowercased — what
 /// tells two copies of one disk apart from two disks of one set.
 ///
@@ -266,6 +281,10 @@ impl Download<'_> {
 pub fn release_downloads<'a>(urls: &[&'a str]) -> Vec<Download<'a>> {
     /// Extensions that are never the main file of a release.
     const IGNORED_EXTENSIONS: [&str; 3] = ["sid", "pdf", "rtf"];
+
+    if let Some(files) = song_files(urls) {
+        return vec![Download::Disks(files.map(|url| vec![url]).into())];
+    }
 
     let mut disks: Vec<(String, Vec<&'a str>)> = Vec::new();
     for url in urls.iter().copied().filter(|u| is_disk_image_url(u)) {
