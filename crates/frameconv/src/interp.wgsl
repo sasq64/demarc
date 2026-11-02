@@ -2,11 +2,11 @@
 // A or B, never a mix. With DEBUG set it writes which path decided the pixel.
 
 const S: i32 = 6;
-const TILE: i32 = 16;
+const TILE = vec2<i32>(16, 8);
 override DEBUG: bool = false;
 struct IP { a: vec4<u32>, b: vec4<u32> }; // a=(layer_a, layer_b, n, _), b=(tiles_x, tiles_y, _, _)
 @group(0) @binding(0) var frames: texture_2d_array<f32>;
-@group(0) @binding(1) var<storage, read> vecs: array<vec2<i32>>;
+@group(0) @binding(1) var<storage, read> vecs: array<vec4<i32>>; // (v, rigid, _)
 @group(0) @binding(2) var<uniform> u: IP;
 
 @vertex
@@ -19,7 +19,7 @@ fn ld(l: u32, q6: vec2<i32>) -> vec3<f32> {
     return textureLoad(frames, clamp(q6 / S, vec2(0), dims - 1), l, 0).rgb;
 }
 fn eq(x: vec3<f32>, y: vec3<f32>) -> bool { return all(abs(x - y) < vec3(0.5 / 255.0)); }
-fn tile_vec(t: vec2<i32>) -> vec2<i32> {
+fn tile_vec(t: vec2<i32>) -> vec4<i32> {
     let c = clamp(t, vec2(0), vec2<i32>(u.b.xy) - 1);
     return vecs[u32(c.y) * u.b.x + u32(c.x)];
 }
@@ -34,11 +34,23 @@ fn fs_interp(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let A0 = ld(u.a.x, p);
     if (n == 0) { return out(A0, 0u); }
     let B0 = ld(u.a.y, p);
-    if (eq(A0, B0)) { return out(A0, 0u); }
     let tc = p / (S * TILE);
-    var c = array<vec2<i32>, 5>(tile_vec(tc),
-        tile_vec(tc + vec2(1, 0)), tile_vec(tc - vec2(1, 0)),
-        tile_vec(tc + vec2(0, 1)), tile_vec(tc - vec2(0, 1)));
+    let own = tile_vec(tc);
+    if (eq(A0, B0)) {
+        // Unchanged, but a stroke can still cross it between the two frames.
+        if (any(own.xy != vec2(0))) {
+            let q = p - n * own.xy;
+            let r = p + (S - n) * own.xy;
+            let a = ld(u.a.x, q);
+            let b = ld(u.a.y, r);
+            let moved = own.z != 0 || !eq(a, ld(u.a.y, q)) || !eq(ld(u.a.x, r), b);
+            if (moved && eq(a, b) && !eq(a, A0)) { return out(a, 1u); }
+        }
+        return out(A0, 0u);
+    }
+    var c = array<vec2<i32>, 5>(own.xy,
+        tile_vec(tc + vec2(1, 0)).xy, tile_vec(tc - vec2(1, 0)).xy,
+        tile_vec(tc + vec2(0, 1)).xy, tile_vec(tc - vec2(0, 1)).xy);
     var vo = vec2(0, 0);
     for (var i = 0; i < 5; i++) {
         let v = c[i];

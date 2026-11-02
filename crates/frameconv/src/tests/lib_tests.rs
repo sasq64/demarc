@@ -363,3 +363,235 @@ fn a_resolve_is_the_box_mean_of_the_target() {
         }
     }
 }
+
+const BLACK: u32 = 0xff00_0000;
+
+/// 5x7 letters, one row per byte, with a mix of thin and crowded strokes.
+const GLYPHS: [[u8; 7]; 8] = [
+    [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11], // A
+    [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f], // E
+    [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11], // H
+    [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x1f], // I
+    [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11], // M
+    [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e], // O
+    [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e], // S
+    [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11], // W
+];
+
+/// `lines` rows of `columns` letters on black, in a colour gradient per row.
+struct Text {
+    width: usize,
+    height: usize,
+    pixels: Vec<u32>,
+    six: Vec<u32>,
+}
+
+impl Text {
+    fn new(columns: usize, lines: usize, scale: usize, seed: u32) -> Self {
+        let cell = (6 * scale, 9 * scale);
+        let (width, height) = (columns * cell.0, lines * cell.1);
+        let mut pixels = vec![BLACK; width * height];
+        let mut state = seed;
+        for line in 0..lines {
+            for column in 0..columns {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let glyph = &GLYPHS[(state >> 24) as usize % GLYPHS.len()];
+                for y in 0..7 * scale {
+                    for x in 0..5 * scale {
+                        if glyph[y / scale] >> (4 - x / scale) & 1 == 1 {
+                            let row = line * cell.1 + y;
+                            let shade = 0x60 + (y * 0x90 / (7 * scale)) as u32;
+                            pixels[row * width + column * cell.0 + x] =
+                                BLACK | shade << 16 | 0xc0 << 8 | (0xff - shade);
+                        }
+                    }
+                }
+            }
+        }
+        let s = SCALE as usize;
+        let mut six = Vec::with_capacity(pixels.len() * s * s);
+        for row in pixels.chunks_exact(width) {
+            let wide: Vec<u32> = row.iter().flat_map(|p| [*p; SCALE as usize]).collect();
+            for _ in 0..s {
+                six.extend_from_slice(&wide);
+            }
+        }
+        Self {
+            width,
+            height,
+            pixels,
+            six,
+        }
+    }
+
+    /// Copy `rows` rows starting at (`x`, `y`) of the text to row `to` of `frame`.
+    fn draw(
+        &self,
+        frame: &mut [u32],
+        to: usize,
+        (x, y): (usize, usize),
+        rows: usize,
+        scale: usize,
+    ) {
+        let (from, width, height) = if scale == 1 {
+            (&self.pixels, self.width, W as usize)
+        } else {
+            (&self.six, self.width * scale, (W * SCALE) as usize)
+        };
+        for row in 0..rows {
+            let line = &from[(y + row) * width + x..];
+            frame[(to + row) * height..][..height].copy_from_slice(&line[..height]);
+        }
+    }
+}
+
+/// Native pixels at the frame's sides left out of a measure: text entering there
+/// is in only one of the two frames.
+const SIDE: usize = 8;
+
+/// The mean wrong pixels per moved frame, within the 6x rows `rows`.
+fn wrong_per_frame(
+    gpu: &Gpu,
+    source: &dyn Fn(u64) -> Vec<u32>,
+    expected: &dyn Fn(u64) -> Vec<u32>,
+    rows: std::ops::Range<usize>,
+    frames: u64,
+) -> usize {
+    let width = (W * SCALE) as usize;
+    let mut conv = Converter::new(&gpu.device, &gpu.pipelines, W, H);
+    let mut cadence = Cadence::default();
+    let mut pair = (Arc::new(source(0)), Arc::new(source(1)));
+    let mut pair_at = 0;
+    let (mut wrong, mut moved) = (0, 0);
+    let mut by_path = [0; PATHS.len()];
+    for k in 0..frames {
+        let (a, n) = cadence.next();
+        if a != pair_at {
+            pair = (pair.1.clone(), Arc::new(source(a + 1)));
+            pair_at = a;
+        }
+        if n == 0 {
+            continue;
+        }
+        let got = gpu.render(&mut conv, &pair.0, &pair.1, n);
+        let paths = gpu.paths(&mut conv, &pair.0, &pair.1, n);
+        let want = expected(k);
+        moved += 1;
+        for row in rows.clone() {
+            let (got, want) = (&got[row * width..][..width], &want[row * width..][..width]);
+            if got == want {
+                continue;
+            }
+            for x in SIDE * SCALE as usize..width - SIDE * SCALE as usize {
+                if got[x] != want[x] {
+                    wrong += 1;
+                    by_path[paths[row * width + x] as u8 as usize] += 1;
+                }
+            }
+        }
+    }
+    println!(
+        "{} wrong/frame, by path {by_path:?} of {PATHS:?}",
+        wrong / moved
+    );
+    wrong / moved
+}
+
+fn frame_size(scale: usize) -> usize {
+    (W as usize * scale) * (H as usize * scale)
+}
+
+fn scroller(gpu: &Gpu, speed: usize, scale: usize) -> usize {
+    let text = Text::new(160, 1, scale, 7);
+    let rows = text.height;
+    let source = |f: u64| {
+        let mut frame = vec![BLACK; frame_size(1)];
+        text.draw(&mut frame, 40, (f as usize * speed, 0), rows, 1);
+        frame
+    };
+    let expected = |k: u64| {
+        let mut six = vec![BLACK; frame_size(SCALE as usize)];
+        let at = (5 * k as usize * speed, 0);
+        text.draw(&mut six, 240, at, rows * SCALE as usize, SCALE as usize);
+        six
+    };
+    wrong_per_frame(gpu, &source, &expected, 0..(H * SCALE) as usize, 30)
+}
+
+fn opposite_lines(gpu: &Gpu, speed: usize) -> usize {
+    let (top, bottom) = (Text::new(160, 1, 2, 7), Text::new(160, 1, 2, 99));
+    let rows = top.height;
+    // The lines share a 16 px tile but no 8 px one.
+    let (first, second) = (40, 40 + rows + 2);
+    let from = |f: usize| 400 - f * speed;
+    let source = |f: u64| {
+        let mut frame = vec![BLACK; frame_size(1)];
+        top.draw(&mut frame, first, (f as usize * speed, 0), rows, 1);
+        bottom.draw(&mut frame, second, (from(f as usize), 0), rows, 1);
+        frame
+    };
+    let expected = |k: u64| {
+        let s = SCALE as usize;
+        let mut six = vec![BLACK; frame_size(s)];
+        let step = 5 * k as usize * speed;
+        top.draw(&mut six, first * s, (step, 0), rows * s, s);
+        bottom.draw(&mut six, second * s, (from(0) * s - step, 0), rows * s, s);
+        six
+    };
+    wrong_per_frame(gpu, &source, &expected, 0..(H * SCALE) as usize, 30)
+}
+
+/// Rows entering at the frame's edges cannot be interpolated, so those are left out.
+fn vertical_text(gpu: &Gpu, speed: usize) -> usize {
+    let text = Text::new(60, 40, 2, 7);
+    let rows = H as usize;
+    let source = |f: u64| {
+        let mut frame = vec![BLACK; frame_size(1)];
+        text.draw(&mut frame, 0, (0, f as usize * speed), rows, 1);
+        frame
+    };
+    let expected = |k: u64| {
+        let s = SCALE as usize;
+        let mut six = vec![BLACK; frame_size(s)];
+        text.draw(&mut six, 0, (0, 5 * k as usize * speed), rows * s, s);
+        six
+    };
+    let edge = 8 * SCALE as usize;
+    let inner = edge..(H * SCALE) as usize - edge;
+    wrong_per_frame(gpu, &source, &expected, inner, 30)
+}
+
+#[test]
+fn a_text_scroller_stays_close_to_exact() {
+    let Some(gpu) = gpu() else { return };
+    for (scale, limits) in [
+        (1, [0, 220, 60, 570]),
+        (2, [0, 0, 10, 580]),
+        (3, [0, 0, 0, 10]),
+    ] {
+        for (speed, limit) in (1..).zip(limits) {
+            let wrong = scroller(&gpu, speed, scale);
+            assert!(
+                wrong <= limit,
+                "scale {scale} speed {speed}: {wrong} > {limit}"
+            );
+        }
+    }
+}
+
+#[test]
+fn opposite_lines_stay_close_to_exact() {
+    let Some(gpu) = gpu() else { return };
+    for (speed, limit) in (1..).zip([5400, 4100, 1900, 3100]) {
+        let wrong = opposite_lines(&gpu, speed);
+        assert!(wrong <= limit, "speed {speed}: {wrong} > {limit}");
+    }
+}
+
+#[test]
+fn vertical_text_is_exact_away_from_the_edges() {
+    let Some(gpu) = gpu() else { return };
+    for speed in 1..=4 {
+        assert_eq!(vertical_text(&gpu, speed), 0);
+    }
+}

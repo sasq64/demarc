@@ -1002,3 +1002,13 @@
 
 - A `frameconv` test helper that walks 3M pixels per frame took over 15 minutes in
   a debug build, and looked like a hung GPU; bulk copies brought it to 95 s.
+
+- Rectangle tests said nothing about text in `frameconv`: a penalty that found the
+  speed on a uniform background also punished the true vector whenever it landed on
+  another stroke, so characters flickered while blocks stayed perfect. Three things
+  found the causes quickly. A run with perfect oracle vectors separates estimation
+  errors from interpolation ones. A regular bitmap font finds what a TrueType font
+  misses: strokes on a pixel grid tie a vector with its opposite and with its own
+  multiples (speed equal to the font's pixel scale was the worst case). And frame
+  sides have to be left out of a text measure, since entering text is in only one
+  of the two frames, which looks like an interpolation bug.

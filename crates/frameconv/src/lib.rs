@@ -15,7 +15,10 @@ pub const SCALE: u32 = 6;
 /// Frames kept on the GPU; a conversion reads two of them.
 const LAYERS: usize = 4;
 
-const TILE: u32 = 16;
+const TILE: (u32, u32) = (16, 8);
+
+/// Motion candidates per tile, as `me.wgsl` has them.
+const CANDIDATES: u64 = 17;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -59,7 +62,7 @@ struct MeParams {
     la: u32,
     lb: u32,
     tiles_x: u32,
-    _pad: u32,
+    tiles_y: u32,
 }
 
 #[repr(C)]
@@ -71,7 +74,8 @@ struct InterpParams {
 
 /// The compiled passes, shared by every [`Converter`] on a device.
 pub struct Pipelines {
-    me: wgpu::ComputePipeline,
+    tile_cost: wgpu::ComputePipeline,
+    tile_pick: wgpu::ComputePipeline,
     me_layout: wgpu::BindGroupLayout,
     interp: wgpu::RenderPipeline,
     #[cfg(test)]
@@ -177,6 +181,11 @@ impl Pipelines {
                     buffer_binding(Storage { read_only: false }),
                 ),
                 entry(2, Stage::COMPUTE, buffer_binding(Uniform)),
+                entry(
+                    3,
+                    Stage::COMPUTE,
+                    buffer_binding(Storage { read_only: false }),
+                ),
             ],
         );
         let interp_layout = layout(
@@ -207,14 +216,18 @@ impl Pipelines {
             bind_group_layouts: &[Some(&me_layout)],
             immediate_size: 0,
         });
-        let me = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("frameconv me"),
-            layout: Some(&me_pipeline_layout),
-            module: &me_module,
-            entry_point: Some("tile_me"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let me_pipeline = |entry_point| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry_point),
+                layout: Some(&me_pipeline_layout),
+                module: &me_module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let tile_cost = me_pipeline("tile_cost");
+        let tile_pick = me_pipeline("tile_pick");
         let interp = fullscreen_pipeline(
             device,
             "frameconv interp",
@@ -241,7 +254,8 @@ impl Pipelines {
             &[],
         );
         Self {
-            me,
+            tile_cost,
+            tile_pick,
             me_layout,
             interp,
             #[cfg(test)]
@@ -315,10 +329,16 @@ impl Converter {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        let tiles = (width.div_ceil(TILE), height.div_ceil(TILE));
+        let tiles = (width.div_ceil(TILE.0), height.div_ceil(TILE.1));
         let vectors = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frameconv vectors"),
-            size: (tiles.0 * tiles.1) as u64 * 8,
+            size: (tiles.0 * tiles.1) as u64 * 16,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let costs = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frameconv costs"),
+            size: (tiles.0 * tiles.1) as u64 * CANDIDATES * 2 * 4,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -359,6 +379,7 @@ impl Converter {
                 wgpu::BindingResource::TextureView(&ring_view),
                 vectors.as_entire_binding(),
                 me_params.as_entire_binding(),
+                costs.as_entire_binding(),
             ],
         );
         let interp_group = group(
@@ -499,15 +520,17 @@ impl Converter {
                 la: la as u32,
                 lb: lb as u32,
                 tiles_x: self.tiles.0,
-                _pad: 0,
+                tiles_y: self.tiles.1,
             };
             queue.write_buffer(&self.me_params, 0, bytemuck::bytes_of(&params));
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("frameconv me"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&pipelines.me);
             pass.set_bind_group(0, &self.me_group, &[]);
+            pass.set_pipeline(&pipelines.tile_cost);
+            pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
+            pass.set_pipeline(&pipelines.tile_pick);
             pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
         }
 
