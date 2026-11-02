@@ -168,14 +168,21 @@ No Xwayland config has aux buffers either: RenderTexture mode strings
 Patch the string to `aux=0` (Tannhäuser Gate, `zoo.80364`).
 
 **"Critical Warning" box after the setup dialog.** Black Maiden's GeForce3
-engine (Interceptor `zoo.6279`, Relais `zoo.3299`): `+opengl` shows
-`Extensions required for gl*NV not supported`. NV_vertex_program, NV_fence,
-NV_register_combiners are not in Mesa; mark it `known_issue`.
+engine (Interceptor `zoo.6279`, Relais `zoo.3299`) shows this one box for any
+failed check. `warn+opengl` lists the missing functions, and `+relay` shows
+which check it was, such as a `glGetError` of 0x500 right before `MessageBoxA`.
+NV_vertex_program, NV_fence, NV_register_combiners are not in Mesa, so both
+run on NVIDIA only; the opengl32 proxy covers `EXT_paletted_texture` there.
 
 **Text shifted by a constant, or wrong glyphs from display lists.** Mesa
 aligns `glGenLists(n >= 32)` to a multiple of 32; an intro that assumes it got
 1 draws off by 31. The opengl32 proxy's `glGenLists` covers it (D-Four,
 `zoo.4690`).
+
+**Launcher still up after autodlg's `click`.** `+relay` the thread after
+`BM_CLICK`: a window destroyed with `GetMessageA` as the last call is a loop
+waiting for a posted message. autodlg's `WM_NULL` after a click covers it
+(bruh, `zoo.361793`). The picture may be a stale frame of a dead window.
 
 **Silent exit behind a white or frozen frame.** Check the exe is alive with
 `ps -eo pid,comm`, then `+relay` for a `wglGetProcAddress` right before

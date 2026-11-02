@@ -72,3 +72,11 @@ makes its font with first glyph 1 and draws raw ASCII, so it needs list 1.
 
 `glProgramParameteriEXT` is a no-op when wine has none: Mesa lacks
 `EXT_geometry_shader4`, and Mercury's "Epsilon" quits on the NULL.
+
+`glColorTableEXT` and `glTexImage2D` with `GL_COLOR_INDEX8_EXT` emulate
+`EXT_paletted_texture`, which NVIDIA dropped: the indices stay in the proxy and
+each level goes to GL as RGBA8, again whenever the palette changes. Interceptor
+only needs the entry point; Kolor's "Relais" draws with it.
+
+`wglChoosePixelFormatARB` retries without `WGL_SWAP_METHOD_ARB` when nothing
+matches. Relais asks for `WGL_SWAP_COPY_ARB`, which no Xwayland format has.

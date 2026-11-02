@@ -963,3 +963,28 @@
   pair fails with `No system recognized`. Before adding a row to
   `SECONDARY_FILES`, play a whole pair; picking test songs with `head` on the
   index can also land on ones with no secondary file, which are hidden.
+
+- Interceptor (`zoo.6279`) and Relais (`zoo.3299`) were listed as GeForce3-only,
+  but on an RTX 4070 every NV function they need still exists, and only
+  `glColorTableEXT` was NULL. The engine's one "Critical Warning" box hid three
+  failures: that NULL, a `WGL_SWAP_COPY_ARB` no format matches (the exe's log
+  is block-buffered stdout, so its reason never appears), and a `glGetError`
+  of 0x500 from `GL_COLOR_INDEX8_EXT` textures. A stub for an entry point is not
+  proof the feature is unused: Interceptor never calls it, Relais does, and
+  in BGR, which a first emulation ignored while the frames still looked fine.
+  Log the arguments of an emulated call before trusting a screenshot. The prefix's
+  `syswow64/opengl32.dll` is only replaced by `--setup-wine`, so a rebuilt proxy
+  has to be copied there for a test.
+
+- `-x boot=<exe>` does not change which exe a release starts: bruh (`zoo.361793`)
+  ran `msdfgen.exe` again, and a run looks like a demo test unless the `launched`
+  line is checked. To try another exe without an override, pass a copy of the
+  release directory with the wrong exes deleted.
+
+- A launcher that stays on screen after autodlg's `click "Start"` need not have
+  ignored it: bruh's took the click, destroyed its window and sat in `GetMessageA`
+  checking a flag. `BM_CLICK` is a sent message, which never returns that call,
+  and with its window gone no key or override click could wake it, so Enter
+  and a click on Start both looked like a dead launcher. A `+relay` of the
+  thread after `BM_CLICK` showed it; autodlg now posts `WM_NULL` after a click.
+  The leftover picture was the session's stale frame.

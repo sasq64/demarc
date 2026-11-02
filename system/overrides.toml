@@ -1439,17 +1439,18 @@ known_issue = "Needs OpenCL"
 # Interceptor by Black Maiden
 [zoo.6279]
 known_issue = """
-GeForce3 only. Quits with "Critical Warning" when any wglGetProcAddress
+NVIDIA only. Quits with "Critical Warning" when any wglGetProcAddress
 returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program
 and NV_register_combiners, none of which Mesa has.
 """
 
-# Relais by Kolor: same engine as Interceptor, also wants EXT_paletted_texture
+# Relais by Kolor: same engine as Interceptor
 [zoo.3299]
 known_issue = """
-GeForce3 only. Quits with "Critical Warning" when any wglGetProcAddress
-returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program,
-NV_register_combiners and EXT_paletted_texture, none of which Mesa has.
+NVIDIA only. Quits with "Critical Warning" when any wglGetProcAddress
+returns NULL, and needs NV_vertex_array_range, NV_fence, NV_vertex_program
+and NV_register_combiners, none of which Mesa has. EXT_paletted_texture is
+emulated by the opengl32 proxy.
 """
 
 # Spilled by Archee: D3DMULTISAMPLE_NONMASKABLE quality 4 is 16 samples to DXVK,
@@ -1782,3 +1783,17 @@ events = [{ frame = 700, click = [0.17, 0.91] }, { frame = 800, click = [0.17, 0
 # Code Is My Pron by Nuance: swizzles a float (v.x), which Mesa refuses
 [zoo.4688]
 glsl = { match = 'r\.y\+v\.x-', edits = [['r\.y\+v\.x-', "r.y+v-"]] }
+
+# Astro Dream by silvia: NVIDIA rejects gl_FragColor at #version 450
+[zoo.338621]
+glsl = {
+  match = "gl_FragColor",
+  edits = [
+    ["^(#version.*)", "$1\nout vec4 fragOut;"],
+    ['\bgl_FragColor\b', "fragOut"],
+  ]
+}
+
+# bruh I ain't naming things by Moonbase: tools in src/ outrank the demo
+[zoo.361793]
+boot = "bruh i aint naming things.exe"

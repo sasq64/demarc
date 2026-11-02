@@ -277,6 +277,7 @@ static unsigned __stdcall create_shader_programv(unsigned type, int count, const
 // Xwayland's GLX has no float fbconfigs, so wine has no WGL_TYPE_RGBA_FLOAT
 // format. A float pbuffer becomes a texture drawn through an FBO by contexts
 // made on the DC it was created from (Plastic's "Lady Of Dark Autumn").
+#define WGL_SWAP_METHOD_ARB 0x2007
 #define WGL_PIXEL_TYPE_ARB 0x2013
 #define WGL_COLOR_BITS_ARB 0x2014
 #define WGL_ALPHA_BITS_ARB 0x201B
@@ -390,8 +391,18 @@ static int __stdcall choose_pixel_format_arb(void *dc, const int *ints, const fl
         else if (a[0] == WGL_DEPTH_BITS_ARB)
             depth = a[1];
     }
-    if (!is_float)
-        return wine_choose_pixel_format_arb(dc, ints, floats, max, formats, count);
+    if (!is_float) {
+        int ret = wine_choose_pixel_format_arb(dc, ints, floats, max, formats, count);
+        if (ret && *count)
+            return ret;
+        // Relais asks for WGL_SWAP_COPY_ARB, which no Xwayland format has.
+        int kept[64], n = 0;
+        for (const int *a = ints; a && a[0] && n < 62; a += 2)
+            if (a[0] != WGL_SWAP_METHOD_ARB)
+                kept[n++] = a[0], kept[n++] = a[1];
+        kept[n] = 0;
+        return wine_choose_pixel_format_arb(dc, kept, floats, max, formats, count);
+    }
     if (max)
         formats[0] = FLOAT_FORMAT | (depth ? 0x10000 : 0) | (bits > 64 ? 0x8814 /* GL_RGBA32F */ : 0x881A);
     *count = max ? 1 : 0;
@@ -527,6 +538,108 @@ static void __stdcall program_parameteri_ext(unsigned program, unsigned pname, i
     (void)program, (void)pname, (void)value;
 }
 
+// NVIDIA dropped EXT_paletted_texture, which Relais uses and whose
+// glColorTableEXT the Black Maiden engine quits without. Indices stay here and
+// each level is handed to GL as RGBA, again when the palette changes.
+#define PALETTED_TEXTURES 256
+#define PALETTED_LEVELS 12
+#define GL_RGB 0x1907
+#define GL_RGBA 0x1908
+#define GL_BGR 0x80E0
+#define GL_BGRA 0x80E1
+#define GL_UNSIGNED_BYTE 0x1401
+#define GL_COLOR_INDEX 0x1900
+#define GL_COLOR_INDEX8_EXT 0x80E5
+
+struct paletted {
+    unsigned target, texture;
+    unsigned char palette[1024];
+    struct {
+        int width, height;
+        unsigned char *indices;
+    } levels[PALETTED_LEVELS];
+};
+
+static struct paletted *paletted[PALETTED_TEXTURES];
+static void(__stdcall *wine_tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+
+static struct paletted *bound_paletted(unsigned target)
+{
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    int texture = 0;
+    get_integerv(target == 0x84F5 /* GL_TEXTURE_RECTANGLE */ ? 0x84F6 : 0x8069, &texture);
+    unsigned i = 0;
+    for (; i < PALETTED_TEXTURES && paletted[i]; i++)
+        if (paletted[i]->texture == (unsigned)texture && paletted[i]->target == target)
+            return paletted[i];
+    if (i == PALETTED_TEXTURES || !(paletted[i] = glsl_alloc(sizeof(struct paletted))))
+        return 0;
+    unsigned char *clear = (unsigned char *)paletted[i];
+    for (unsigned n = 0; n < sizeof(struct paletted); n++)
+        clear[n] = 0;
+    paletted[i]->texture = texture;
+    paletted[i]->target = target;
+    return paletted[i];
+}
+
+static void upload_paletted(struct paletted *p, int level)
+{
+    int width = p->levels[level].width, height = p->levels[level].height;
+    unsigned count = width * height;
+    unsigned *rgba = glsl_alloc(count * 4);
+    if (!rgba)
+        return;
+    const unsigned *palette = (const unsigned *)p->palette;
+    for (unsigned i = 0; i < count; i++)
+        rgba[i] = palette[p->levels[level].indices[i]];
+    wine_tex_image(p->target, level, 0x8058 /* GL_RGBA8 */, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glsl_release(rgba);
+}
+
+static void __stdcall tex_image_2d(unsigned target, int level, int internal, int width, int height, int border,
+                                   unsigned format, unsigned type, const void *pixels)
+{
+    if (internal != GL_COLOR_INDEX8_EXT || format != GL_COLOR_INDEX) {
+        wine_tex_image(target, level, internal, width, height, border, format, type, pixels);
+        return;
+    }
+    struct paletted *p = bound_paletted(target);
+    if (!p || level >= PALETTED_LEVELS)
+        return;
+    unsigned count = width * height;
+    glsl_release(p->levels[level].indices);
+    p->levels[level].width = width;
+    p->levels[level].height = height;
+    p->levels[level].indices = glsl_alloc(count);
+    if (!p->levels[level].indices)
+        return;
+    for (unsigned i = 0; i < count; i++)
+        p->levels[level].indices[i] = pixels ? ((const unsigned char *)pixels)[i] : 0;
+    upload_paletted(p, level);
+}
+
+static void __stdcall color_table_ext(unsigned target, unsigned internal, int width, unsigned format,
+                                      unsigned type, const void *table)
+{
+    (void)internal;
+    unsigned step = format == GL_RGB || format == GL_BGR ? 3 : 4;
+    int swap = format == GL_BGR || format == GL_BGRA;
+    struct paletted *p = bound_paletted(target);
+    if (!p || type != GL_UNSIGNED_BYTE || width > 256)
+        return;
+    const unsigned char *in = table;
+    for (int i = 0; i < width; i++, in += step) {
+        unsigned char *out = p->palette + i * 4;
+        out[0] = in[swap ? 2 : 0];
+        out[1] = in[1];
+        out[2] = in[swap ? 0 : 2];
+        out[3] = step == 4 ? in[3] : 255;
+    }
+    for (int level = 0; level < PALETTED_LEVELS; level++)
+        if (p->levels[level].indices)
+            upload_paletted(p, level);
+}
+
 // Mesa aligns a range of 32 or more lists to a multiple of 32, Windows drivers
 // start at 1. D-Four takes that for granted and draws its text a list off.
 static unsigned(__stdcall *wine_gen_lists)(int range);
@@ -548,6 +661,8 @@ static void *__stdcall get_proc_address(const char *name)
     void *address = wine_get_proc_address(name);
     if (!address && equal(name, "glProgramParameteriEXT"))
         return program_parameteri_ext;
+    if (!address && equal(name, "glColorTableEXT"))
+        return color_table_ext;
     if (address && equal(name, "glShaderSource")) {
         wine_shader_source = address;
         return shader_source;
@@ -946,6 +1061,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "glGenLists")) {
                 wine_gen_lists = address;
                 address = gen_lists;
+            } else if (address && equal(names[i], "glTexImage2D")) {
+                wine_tex_image = address;
+                address = tex_image_2d;
             } else if (address && equal(names[i], "glAccum")) {
                 wine_accum = address;
                 address = accum;

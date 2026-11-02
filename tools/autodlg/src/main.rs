@@ -43,6 +43,7 @@ unsafe extern "system" {
     fn SetWindowPos(h: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> Bool32;
     fn SendMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> isize;
     fn PostMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> Bool32;
+    fn PostThreadMessageW(thread: u32, msg: u32, w: usize, l: isize) -> Bool32;
     fn SetForegroundWindow(h: Hwnd) -> Bool32;
 }
 #[link(name = "kernel32")]
@@ -412,6 +413,7 @@ const SW_SHOWNORMAL: u16 = 1;
 const GWL_STYLE: i32 = -16;
 const BM_GETCHECK: u32 = 0x00F0;
 const BM_CLICK: u32 = 0x00F5;
+const WM_NULL: u32 = 0;
 const BST_CHECKED: isize = 1;
 const CB_GETCURSEL: u32 = 0x0147;
 const CB_GETCOUNT: u32 = 0x0146;
@@ -526,7 +528,13 @@ impl Ctl {
     }
 
     fn click(&self) {
-        unsafe { SendMessageW(self.hwnd, BM_CLICK, 0, 0) };
+        unsafe {
+            let thread = GetWindowThreadProcessId(self.hwnd, std::ptr::null_mut());
+            SendMessageW(self.hwnd, BM_CLICK, 0, 0);
+            // A sent message doesn't return a loop parked in GetMessage, which
+            // may be checking a flag the click set.
+            PostThreadMessageW(thread, WM_NULL, 0, 0);
+        }
     }
 
     /// The messages that read and write a list of entries, for the two controls
