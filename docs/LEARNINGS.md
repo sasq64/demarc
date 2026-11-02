@@ -988,3 +988,17 @@
   and a click on Start both looked like a dead launcher. A `+relay` of the
   thread after `BM_CLICK` showed it; autodlg now posts `WM_NULL` after a click.
   The leftover picture was the session's stale frame.
+
+- Plain SAD block matching cannot find a thin moving edge on a textured
+  background: every static pixel in the tile votes for zero, so a solid rectangle
+  over noise gets no motion vector at all. Scoring changed pixels alone fails the
+  other way, since one that needs both directions to match is fooled by a
+  checkerboard, and one that needs either direction cannot tell speeds apart on a
+  uniform background. `crates/frameconv/src/me.wgsl` takes either direction and
+  penalises landing in the changed band, checked both ways because a tile can see
+  only part of that band. A numpy model of the shaders found all of this before
+  any GPU code existed. Still inexact: speed 2 and up over a periodic or few-colour
+  background, where the background matches itself in the uncovered band.
+
+- A `frameconv` test helper that walks 3M pixels per frame took over 15 minutes in
+  a debug build, and looked like a hung GPU; bulk copies brought it to 95 s.

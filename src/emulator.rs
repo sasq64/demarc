@@ -12,6 +12,7 @@ use wgpu::{Extent3d, TextureDimension, TextureFormat};
 use crate::audio::AudioSink;
 use retro_core::audio_recorder::RecorderOptions;
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
+use frameconv::Cadence;
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
@@ -36,6 +37,9 @@ const AUDIO_STOPPED_SECS: f64 = 2.0;
 
 /// Furthest behind its frame clock an emulator catches up instead of resyncing.
 const MAX_CATCH_UP: f64 = 0.25;
+
+/// Display frames in range before a frame conversion starts.
+const CONVERT_LATCH: usize = 8;
 
 type AudioTap = Box<dyn Fn(u32, &[f32]) + Send>;
 
@@ -82,6 +86,27 @@ impl InputMode {
             InputMode::Joystick2 => Some(1),
         }
     }
+}
+
+/// When an emulator converts its frames from 50 to 60 Hz.
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FrameConvert {
+    #[default]
+    Off,
+    /// Once the display runs at 6/5 of the core's rate.
+    Matching,
+    Always,
+}
+
+/// Where a running frame conversion is. The source frames themselves are the
+/// front of [`Emulator::frame_queue`].
+#[derive(Default)]
+pub struct Conversion {
+    cadence: Cadence,
+    /// The cadence's source frame the queue's front is.
+    source: u64,
+    /// Sixths of the way from the queue's front to the frame behind it.
+    phase: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -181,6 +206,10 @@ pub struct Emulator {
     /// copied and re-uploaded again.
     pub shown_frame: Option<Arc<Vec<u32>>>,
     pub latency: LatencySetting,
+    pub frame_convert: FrameConvert,
+    /// Display frames in a row that suited [`Self::frame_convert`].
+    convert_frames: usize,
+    pub(crate) conversion: Option<Conversion>,
     /// This emulator's `emu` column in the `--frame-log` CSV.
     log_id: usize,
 }
@@ -714,6 +743,24 @@ impl Emulator {
         }
     }
 
+    /// Whether [`Self::frame_queue`] is holding source frames for a conversion.
+    pub fn converting(&self) -> bool {
+        self.conversion.is_some() && !self.skipping
+    }
+
+    /// The two source frames either side of this display frame, and the phase
+    /// between them, in sixths.
+    pub fn conversion_pair(&self) -> Option<(&VideoFrame, &VideoFrame, u32)> {
+        let phase = self.conversion.as_ref().filter(|_| !self.skipping)?.phase;
+        Some((self.frame_queue.front()?, self.frame_queue.get(1)?, phase))
+    }
+
+    /// Frames the picture is held back. Audio of a self-pushing core is ahead by
+    /// the frames it runs ahead.
+    pub fn video_delay(&self) -> usize {
+        video_delay(&self.latency, self.self_audio)
+    }
+
     #[hotpath::measure(impl_type = "Emulator")]
     pub fn run(&mut self, time: &Time) -> bool {
         let delta = time.delta_secs_f64();
@@ -767,6 +814,22 @@ impl Emulator {
             }
         }
 
+        if self.conversion.is_none() {
+            let suits = match self.frame_convert {
+                FrameConvert::Off => false,
+                FrameConvert::Always => true,
+                FrameConvert::Matching => {
+                    !self.is_image && (1.0 - self.display_fps * 5.0 / 6.0 / core.fps()).abs() < 0.01
+                }
+            };
+            self.convert_frames = if suits { self.convert_frames + 1 } else { 0 };
+            if self.frame_convert == FrameConvert::Always || self.convert_frames >= CONVERT_LATCH {
+                info!("Converting frames from {} Hz", core.fps());
+                self.conversion = Some(Conversion::default());
+            }
+        }
+        let converting = self.conversion.is_some() && !self.skipping;
+
         let fps = core.fps();
         let frame_time = if fps > 0.0 {
             1.0 / core.fps()
@@ -804,14 +867,19 @@ impl Emulator {
 
         trace!("DELTA {delta} vs {}", self.display_fps,);
 
-        if occupied_len > self.latency.audio_buf_max {
+        if !converting && occupied_len > self.latency.audio_buf_max {
             trace!("Dropping frame");
             self.next_frame += frame_time;
             return true;
         }
 
         let mut result = true;
-        if self.match_fps {
+        if converting && let Some(conversion) = &mut self.conversion {
+            let depth = video_delay(&self.latency, self.self_audio) + 2;
+            let pull = occupied_len <= self.latency.audio_buf_max;
+            let extra = has_audio && occupied_len < self.latency.audio_buf_min;
+            result = conversion.step(core.as_mut(), &mut self.frame_queue, depth, pull, extra);
+        } else if self.match_fps {
             result = core.run();
         } else {
             let t = time.elapsed_secs_f64();
@@ -828,7 +896,7 @@ impl Emulator {
         // For safety: if the audio buffer is running dry, advance an extra frame
         // to refill it. Only meaningful when the core actually produces audio;
         // otherwise the buffer is always empty and this would fire every frame.
-        if has_audio && !self.skipping && occupied_len < self.latency.audio_buf_min {
+        if !converting && has_audio && !self.skipping && occupied_len < self.latency.audio_buf_min {
             result &= core.run();
             trace!("Duplicating frame");
         }
@@ -857,6 +925,53 @@ impl Emulator {
             self.audio_fill = 0.0;
         }
         result
+    }
+}
+
+impl Conversion {
+    /// One display frame: fetch a source frame into `queue` if `pull` and it
+    /// holds less than `depth`, then move on along the cadence. With too few
+    /// frames to do that, this display frame repeats the last one. An `extra`
+    /// frame, for a low audio ring, is skipped over.
+    fn step(
+        &mut self,
+        core: &mut (dyn Backend + Send + Sync),
+        queue: &mut VecDeque<VideoFrame>,
+        depth: usize,
+        pull: bool,
+        extra: bool,
+    ) -> bool {
+        let mut result = true;
+        let pulls = (pull && queue.len() < depth) as usize + extra as usize;
+        for _ in 0..pulls {
+            result &= core.run();
+            let frame = core.frame();
+            if queue.back().is_none_or(|last| !Arc::ptr_eq(&last.pixels, &frame.pixels)) {
+                queue.push_back(frame);
+            }
+        }
+        while queue.len() > depth {
+            queue.pop_front();
+        }
+        let (source, phase) = self.cadence.peek();
+        let advance = source != self.source;
+        if queue.len() >= 2 + advance as usize {
+            self.cadence.next();
+            self.source = source;
+            self.phase = phase;
+            if advance {
+                queue.pop_front();
+            }
+        }
+        result
+    }
+}
+
+fn video_delay(latency: &LatencySetting, self_audio: bool) -> usize {
+    if self_audio {
+        latency.video_delay.saturating_sub(latency.latency)
+    } else {
+        latency.video_delay
     }
 }
 

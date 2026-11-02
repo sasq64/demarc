@@ -36,6 +36,7 @@ use super::{
     ShaderPath, TARGET_FORMAT,
 };
 use crate::config::RenderSettings;
+use crate::frame_conv::ConvTargets;
 
 /// Draws every emulator view into the one emulator camera's view target.
 ///
@@ -81,6 +82,7 @@ pub(super) fn post_process_pass(
     shader_path: Res<ShaderPath>,
     mut chains: ResMut<SlangChains>,
     render_queue: Res<RenderQueue>,
+    conv_targets: Res<ConvTargets>,
     mut render_context: RenderContext,
 ) {
     let (view_target, camera, dj_camera) = view.into_inner();
@@ -158,6 +160,15 @@ pub(super) fn post_process_pass(
         // directly — in grid mode the answer differs from view to view.
         let crt_enabled = uniform.crt_enabled != 0;
 
+        // A converted frame replaces the source: at 6x where it is shown as it
+        // is, at native size where an effect takes its scale from the texture.
+        let conv = conv_targets.0.get(&post_process.source.id());
+        let six = conv.map(|c| TextureView::from(c.six_view().clone()));
+        let native = conv.map(|c| TextureView::from(c.native_view().clone()));
+        let plain_view = six.as_ref().unwrap_or(&source_image.texture_view);
+        let effect_view = native.as_ref().unwrap_or(&source_image.texture_view);
+        let effect_source = conv.map_or(&*source_image.texture, |c| c.native());
+
         // --- Stage 1 (slangp only): run the librashader chain into an intermediate ---
         //
         // Size the intermediate to the image's actual on-screen pixel extent under
@@ -178,8 +189,9 @@ pub(super) fn post_process_pass(
         let composite_input: &TextureView = match &shader_path.effect {
             // WGSL backend: the composite shader applies the effect itself while
             // sampling the emulator framebuffer directly — nothing to prepare.
-            ShaderEffect::Wgsl(_) => &source_image.texture_view,
-            ShaderEffect::Slangp(_) if post_process.raw => &source_image.texture_view,
+            ShaderEffect::Wgsl(_) if crt_enabled => effect_view,
+            ShaderEffect::Wgsl(_) => plain_view,
+            ShaderEffect::Slangp(_) if post_process.raw => plain_view,
             ShaderEffect::Slangp(_) => 'slangp: {
                 let src_size =
                     UVec2::new(source_image.texture.width(), source_image.texture.height());
@@ -232,7 +244,7 @@ pub(super) fn post_process_pass(
                 } else if crt_enabled {
                     ChainKind::Effect
                 } else {
-                    break 'slangp &source_image.texture_view;
+                    break 'slangp plain_view;
                 };
 
                 let device = render_context.render_device().clone();
@@ -241,14 +253,14 @@ pub(super) fn post_process_pass(
                     &render_queue,
                     render_context.command_encoder(),
                     post_process.source.id(),
-                    &source_image.texture,
+                    effect_source,
                     (inter_size.x, inter_size.y),
                     kind,
                     &shader_path.params,
                 );
                 match filtered {
                     ChainOutput::Filtered(view) => &TextureView::from(view),
-                    ChainOutput::Unfiltered => &source_image.texture_view,
+                    ChainOutput::Unfiltered => plain_view,
                     ChainOutput::Failed => continue 'views,
                 }
             }

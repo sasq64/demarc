@@ -39,6 +39,7 @@ mod emulator;
 #[cfg(test)]
 #[path = "tests/fake_backend.rs"]
 mod fake_backend;
+mod frame_conv;
 mod frame_log;
 mod frame_upload;
 mod frontend;
@@ -589,6 +590,7 @@ fn main() {
             .collect(),
         maximized: args.grid.is_none() || args.focus_first,
         speed_test: args.speed_test,
+        frame_convert: args.frame_convert,
         latency: args.latency,
         tv_mode: args.tv_mode,
         record: args.record,

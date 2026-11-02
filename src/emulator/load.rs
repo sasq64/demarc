@@ -391,6 +391,8 @@ impl Emulator {
         self.self_audio = !self.speed_test && core.set_audio_out(self.sink.out());
         self.core = Some(core);
         self.frame_queue.clear();
+        self.conversion = None;
+        self.convert_frames = 0;
         self.shown_frame = None;
         self.work_file = res.work_file;
 

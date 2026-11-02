@@ -209,6 +209,11 @@ pub struct Args {
     #[arg(long)]
     pub speed_test: bool,
 
+    /// Show 50 Hz sources on a 60 Hz display with motion-compensated frames,
+    /// running the source at exactly 5/6 of the display rate.
+    #[arg(long)]
+    pub frame_convert: bool,
+
     /// Write per-frame audio fill / frame delta / queued frame stats as CSV
     #[arg(long, value_name = "FILE")]
     pub frame_log: Option<PathBuf>,
@@ -688,6 +693,7 @@ pub struct AppSettings {
     pub hotkey_pressed_at: f32,
     pub mouse_index: Option<usize>,
     pub speed_test: bool,
+    pub frame_convert: bool,
     pub latency: Latency,
     pub tv_mode: bool,
     /// Record the audio of every demo started.

@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/database", "crates/flash-emu", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
+members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -108,6 +108,7 @@ retro-core = { path = "crates/retro-core" }
 # The egui HUD, picker and dialogs; `src/egui_ui.rs` is its Bevy side.
 retro-ui = { path = "crates/retro-ui" }
 # The `.slangp` filter chains, and the only thing that links librashader.
+frameconv = { path = "crates/frameconv" }
 retroarc = { path = "crates/retroarc" }
 ringbuf = "0.5.0"
 sha2.workspace = true

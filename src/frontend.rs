@@ -13,7 +13,8 @@ use bevy::{
 
 use crate::backend::{VideoFrame, ViewFocus};
 use crate::config::{AppSettings, Args, RenderSettings};
-use crate::emulator::Emulator;
+use crate::emulator::{Emulator, FrameConvert};
+use crate::frame_conv::FrameConvPlugin;
 use crate::frame_upload::FrameUploadPlugin;
 use crate::headless::{HeadlessTarget, camera_target};
 use crate::loading::LoadingPlugin;
@@ -561,6 +562,12 @@ pub(crate) fn run_frontend(
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
         emu.set_latency(settings.latency.setting());
+        emu.frame_convert = match (settings.frame_convert, headless.is_some()) {
+            (false, _) => FrameConvert::Off,
+            (true, false) => FrameConvert::Matching,
+            // No display, so no rate to wait for.
+            (true, true) => FrameConvert::Always,
+        };
         emu.run(&time);
 
         if emu.skip_finished() {
@@ -576,17 +583,14 @@ pub(crate) fn run_frontend(
         let bg_h = emu.height as usize;
 
         let frame = emu.core.as_ref().unwrap().frame();
-        emu.frame_queue.push_back(frame);
-        // Audio of a self-pushing core is ahead by the frames it runs ahead.
-        let video_delay = if emu.self_audio {
-            emu.latency.video_delay.saturating_sub(emu.latency.latency)
-        } else {
-            emu.latency.video_delay
-        };
-        while emu.frame_queue.len() > video_delay + 1 {
-            emu.frame_queue.pop_front();
+        if !emu.converting() {
+            emu.frame_queue.push_back(frame.clone());
+            let video_delay = emu.video_delay();
+            while emu.frame_queue.len() > video_delay + 1 {
+                emu.frame_queue.pop_front();
+            }
         }
-        let frame = emu.frame_queue.front().unwrap().clone();
+        let frame = emu.frame_queue.front().cloned().unwrap_or(frame);
 
         // The display refreshes faster than a core produces frames, so copying
         // the same pixels again would only make Bevy re-upload the texture.
@@ -662,7 +666,7 @@ impl Plugin for FrontendPlugin {
             (run_frontend, update_view_rects, draw_current_emu_outline),
         );
         app.add_systems(PostStartup, detect_screen);
-        app.add_plugins((LoadingPlugin, FrameUploadPlugin));
+        app.add_plugins((LoadingPlugin, FrameUploadPlugin, FrameConvPlugin));
     }
 }
 

@@ -2634,6 +2634,7 @@ dependencies = [
  "database",
  "dirs",
  "flash-emu",
+ "frameconv",
  "hotpath",
  "image",
  "indexmap",
@@ -3364,6 +3365,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "frameconv"
+version = "1.8.2"
+dependencies = [
+ "bytemuck",
+ "naga 29.0.4",
+ "pollster",
+ "wgpu 29.0.4",
 ]
 
 [[package]]
