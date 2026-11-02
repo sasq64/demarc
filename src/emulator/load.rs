@@ -141,6 +141,7 @@ impl Emulator {
         }
         self.state = EmuState::Loading;
         self.load_error = None;
+        self.failed_file = None;
         self.pending_load = Some(load_async(emu_file, over, global));
         DOWNLOAD_COUNTER.started();
     }
@@ -175,8 +176,10 @@ impl Emulator {
                     }
                     Err(err) => {
                         DOWNLOAD_COUNTER.ended();
+                        let title = file.game_info.title.to_string();
+                        self.failed_file = Some(file);
                         LoadStatus::Done {
-                            title: file.game_info.title.to_string(),
+                            title,
                             result: Err(Self::job_error(err)),
                         }
                         //self.failed_load(advance, info.title.to_string(), Self::job_error(err))
@@ -203,6 +206,7 @@ impl Emulator {
                         }
                     }
                     Err(err) => {
+                        self.failed_file = Some(file);
                         LoadStatus::Done {
                             title,
                             result: Err(Self::job_error(err)),
@@ -211,6 +215,16 @@ impl Emulator {
                     }
                 }
             }
+        }
+    }
+
+    /// The file a playlist command applies to, and the URLs it was fetched from.
+    pub(crate) fn playlist_file(&self) -> Option<(EmuFile, String)> {
+        match &self.failed_file {
+            Some(file) => Some((file.clone(), String::new())),
+            None => self.core.is_some().then(|| {
+                (self.emu_file.clone(), self.work_file.get_meta_or("fetched", ""))
+            }),
         }
     }
 

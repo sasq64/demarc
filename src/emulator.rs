@@ -173,6 +173,8 @@ pub struct Emulator {
     pub state: EmuState,
     /// Why the last load failed, until the next one starts.
     pub load_error: Option<String>,
+    /// The file that load was for, until the next one starts.
+    pub failed_file: Option<EmuFile>,
     /// Frames waiting to be shown, oldest first.
     pub frame_queue: VecDeque<VideoFrame>,
     /// Pixels last copied into [`Self::image`], so an unchanged frame is not

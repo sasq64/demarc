@@ -86,6 +86,13 @@ fn a_failed_download_finishes_the_load() {
     assert!(!emu.is_loading(), "the pending load is cleared either way");
     // Nothing was swapped in, so the emulator still has no core.
     assert!(emu.core.is_none());
+
+    let (file, fetched) = emu.playlist_file().expect("a failed load can be added");
+    assert_eq!(file.game_info.title, "Unreachable");
+    assert_eq!(fetched, "");
+
+    start_load(&mut emu, &EmuFile::default(), None);
+    assert!(emu.playlist_file().is_none(), "a new load forgets the failure");
 }
 
 /// The whole point of `update_load`: what reaches the main thread is an

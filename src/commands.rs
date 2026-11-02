@@ -735,21 +735,23 @@ pub(crate) fn handle_cmd(
                     Cmd::ToggleRecording if settings.record && emu.core.is_some() => {
                         emu.start_recording(&time, demo_settings.recording.options());
                     }
-                    Cmd::AddToPlaylist if emu.core.is_some() => {
-                        let picker = Arc::new(PlaylistPicker::new(&playlists, &emu.emu_file));
-                        show_list.write(ShowFuzzyList {
-                            id: PLAYLIST_PICKER,
-                            source: picker.clone(),
-                            prompt: Some(String::new()),
-                            selected: None,
-                            title: "Add to playlist".into(),
-                            title_select: -1,
-                        });
-                        commands.insert_resource(PlaylistPick {
-                            file: emu.emu_file.clone(),
-                            fetched: emu.work_file.get_meta_or("fetched", ""),
-                            picker,
-                        });
+                    Cmd::AddToPlaylist => {
+                        if let Some((file, fetched)) = emu.playlist_file() {
+                            let picker = Arc::new(PlaylistPicker::new(&playlists, &file));
+                            show_list.write(ShowFuzzyList {
+                                id: PLAYLIST_PICKER,
+                                source: picker.clone(),
+                                prompt: Some(String::new()),
+                                selected: None,
+                                title: "Add to playlist".into(),
+                                title_select: -1,
+                            });
+                            commands.insert_resource(PlaylistPick {
+                                file,
+                                fetched,
+                                picker,
+                            });
+                        }
                     }
                     Cmd::ToggleInfo => {
                         if emu.show_info {
