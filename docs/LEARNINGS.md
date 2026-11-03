@@ -1088,3 +1088,30 @@
   display a pasted log came from. A frame log with the ring pinned at
   `audio_buf_max` and `av_offset` falling meant the cadence was outrunning the
   sound and nothing held the picture back until the queue was empty.
+
+- Cycles picked in the settings UI only go into the system's meta, which is
+  read on the next load, so changing them while a demo plays does nothing; and
+  the highest fixed step equals the 200000 default. Test with `-x
+  dosbox_pure_cycles=<n>` and count `video_level()` hash changes per frame.
+  Trem muls (`zoo.23638`) went from 110 to 600 changes in 600 frames at `max`.
+  Its flood of `DMA segbound wrapping` lines (logged per byte) looked like the
+  cause but was not: logging once per block changed nothing.
+
+- The Seeker (`zoo.96729`) blew out to white through its glow. The cause was
+  a render target that deletes its old FBO and renderbuffers before making
+  new ones, from fields never set: wine's heap left a live FBO id (the DOF
+  downsample's) there, so `+opengl` showed `del_object Deleting framebuffer
+  client 0xa` and the next `glGenFramebuffers` handed that id to the scene.
+  An IFEO `GlobalFlag` of 0x20 (heap free checking, which fills new blocks
+  with 0x55) in `setup-wine.sh` fixes it without touching the UPX exe;
+  `WINEDEBUG=warn+heap` does the same for a test. Running a downloaded `upx`
+  is refused by the permission classifier.
+- Bisecting post-processing with `glsl` patches: one shader source can serve
+  several passes (The Seeker's blur is both DOF and glow), so zeroing it
+  changes more than the pass in mind. Match on a uniform only one pass has,
+  or trace which program each FBO pass binds first.
+- demarc's wine log drops repeated lines and stops at 4096 distinct ones, so a
+  per-frame `+opengl` sequence needs plain wine under `gamescope --backend
+  headless` with stderr to a file. Pointer-argument calls (`glFogfv`,
+  `glColor4iv`) show no values; a temporary logging hook in the opengl32 proxy
+  does.

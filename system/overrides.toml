@@ -519,6 +519,10 @@ meta = { wine_cnc_ddraw = "true" }
 meta = { wine_res = "640x480" }
 events = [{ frame = 900, key = "Space" }]
 
+# Trem muls / Retro A.C.: 640x400 and runs at ~11 fps at 200000 cycles
+[zoo.23638]
+libretro = { dosbox_pure_cycles = "max" }
+
 [zoo.25508]
 fix_info = '''
 Music over a solid blue frame. Its shader uses << ^ & in an unversioned
@@ -1810,3 +1814,17 @@ glsl = {
 # bruh I ain't naming things by Moonbase: tools in src/ outrank the demo
 [zoo.361793]
 boot = "bruh i aint naming things.exe"
+
+[zoo.21404]
+events = [{ frame = 342, click = [0.5950000286102295, 0.890999972820282] }]
+
+[zoo.96729]
+fix_info = '''
+Blown out to white by its glow. Its MSAA scene target deletes its old FBO
+from a field never set, and wine's heap left the DOF downsample's live FBO id
+there, so the DOF blur read a stale texture. setup-wine.sh sets an IFEO
+GlobalFlag of 0x20 for TheSeeker.exe (heap free checking fills new blocks
+with 0x55). On Mesa the resolve blit also failed on unsized depth formats;
+the opengl32 proxy sizes them. Slow (~28 fps) around 45-60 s from wow64 GL
+call overhead: ~110k immediate-mode calls a frame.
+'''
