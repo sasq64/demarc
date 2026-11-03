@@ -172,6 +172,9 @@ setup_prefix() {
     winetricks --force speechsdk
     # speechsdk leaves the prefix at winxp; UE4 then forces OpenGL (Dying Stars)
     wine reg add 'HKCU\Software\Wine\AppDefaults\ED3-Win64-Shipping.exe' /v Version /d win10 /f
+    # Heap free checking fills new blocks with 0x55. The Seeker deletes an FBO id from an
+    # uninitialised field, and the heap garbage wine leaves there is a live one
+    wine reg add 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\TheSeeker.exe' /v GlobalFlag /t REG_DWORD /d 0x20 /f
 
     # Don't use EGL (For 1995 / Kwelers)
     wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseEGL /d N /f

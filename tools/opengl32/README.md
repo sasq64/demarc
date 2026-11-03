@@ -80,3 +80,8 @@ only needs the entry point; Kolor's "Relais" draws with it.
 
 `wglChoosePixelFormatARB` retries without `WGL_SWAP_METHOD_ARB` when nothing
 matches. Relais asks for `WGL_SWAP_COPY_ARB`, which no Xwayland format has.
+
+`glTexImage2D` and `glRenderbufferStorage*` make an unsized `GL_DEPTH_COMPONENT`
+`GL_DEPTH_COMPONENT24`. Mesa picks different formats for the two, so a blit of
+colour and depth between them fails as a whole. Still's "The Seeker" resolves
+its MSAA scene that way and was black on Mesa.

@@ -250,6 +250,12 @@ leave 1/16 s steps. Patch the CreateDevice flags to add
 method and read `DXVK_LOG_LEVEL=debug`. `OpenSharedResource` at feature level
 9.x is refused by DXVK; `tools/d3d10_1` raises the level (Candy, `zoo.42678`).
 
+**GL post-processing blown out to white, or an FBO pass reading stale data.**
+`+opengl` shows a `del_object Deleting framebuffer client N` before a
+`glGenFramebuffersEXT` that reuses N, with N owned by another pass: a delete
+from an uninitialised field holding heap garbage. An IFEO `GlobalFlag` 0x20
+in `setup-wine.sh` makes new heap blocks 0x55 (The Seeker, `zoo.96729`).
+
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
 invalid API use.

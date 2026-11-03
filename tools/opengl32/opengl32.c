@@ -596,9 +596,43 @@ static void upload_paletted(struct paletted *p, int level)
     glsl_release(rgba);
 }
 
+// Mesa gives an unsized depth texture and renderbuffer different formats, and
+// The Seeker's MSAA resolve blit of colour and depth fails between them.
+#define GL_DEPTH_COMPONENT 0x1902
+#define GL_DEPTH_COMPONENT24 0x81A6
+
+static int sized_depth(int internal) { return internal == GL_DEPTH_COMPONENT ? GL_DEPTH_COMPONENT24 : internal; }
+
+static void(__stdcall *wine_renderbuffer_storage)(unsigned, unsigned, int, int);
+static void(__stdcall *wine_renderbuffer_storage_ext)(unsigned, unsigned, int, int);
+static void(__stdcall *wine_renderbuffer_storage_ms)(unsigned, int, unsigned, int, int);
+static void(__stdcall *wine_renderbuffer_storage_ms_ext)(unsigned, int, unsigned, int, int);
+
+static void __stdcall renderbuffer_storage_core(unsigned target, unsigned internal, int width, int height)
+{
+    wine_renderbuffer_storage(target, sized_depth(internal), width, height);
+}
+
+static void __stdcall renderbuffer_storage_ext(unsigned target, unsigned internal, int width, int height)
+{
+    wine_renderbuffer_storage_ext(target, sized_depth(internal), width, height);
+}
+
+static void __stdcall renderbuffer_storage_ms(unsigned target, int samples, unsigned internal, int width, int height)
+{
+    wine_renderbuffer_storage_ms(target, samples, sized_depth(internal), width, height);
+}
+
+static void __stdcall renderbuffer_storage_ms_ext(unsigned target, int samples, unsigned internal, int width,
+                                                  int height)
+{
+    wine_renderbuffer_storage_ms_ext(target, samples, sized_depth(internal), width, height);
+}
+
 static void __stdcall tex_image_2d(unsigned target, int level, int internal, int width, int height, int border,
                                    unsigned format, unsigned type, const void *pixels)
 {
+    internal = sized_depth(internal);
     if (internal != GL_COLOR_INDEX8_EXT || format != GL_COLOR_INDEX) {
         wine_tex_image(target, level, internal, width, height, border, format, type, pixels);
         return;
@@ -663,6 +697,22 @@ static void *__stdcall get_proc_address(const char *name)
         return program_parameteri_ext;
     if (!address && equal(name, "glColorTableEXT"))
         return color_table_ext;
+    if (address && equal(name, "glRenderbufferStorage")) {
+        wine_renderbuffer_storage = address;
+        return renderbuffer_storage_core;
+    }
+    if (address && equal(name, "glRenderbufferStorageEXT")) {
+        wine_renderbuffer_storage_ext = address;
+        return renderbuffer_storage_ext;
+    }
+    if (address && equal(name, "glRenderbufferStorageMultisample")) {
+        wine_renderbuffer_storage_ms = address;
+        return renderbuffer_storage_ms;
+    }
+    if (address && equal(name, "glRenderbufferStorageMultisampleEXT")) {
+        wine_renderbuffer_storage_ms_ext = address;
+        return renderbuffer_storage_ms_ext;
+    }
     if (address && equal(name, "glShaderSource")) {
         wine_shader_source = address;
         return shader_source;
