@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
@@ -237,20 +237,28 @@ impl FfmpegEmu {
         n as usize * 2
     }
 
+    /// Wait for the next picture, so the sound never runs ahead of or behind
+    /// it; `false` if the decoder is gone.
+    fn next_frame(&mut self) -> bool {
+        let Ok(video) = self.decoders.video.get_mut() else {
+            return false;
+        };
+        match video.recv() {
+            Ok(frame) => self.frame = frame,
+            Err(_) => self.ended = true,
+        }
+        true
+    }
+
     /// Take one frame's worth of audio out of the decoder, or `None` once it
     /// has run dry.
-    fn take_audio(&mut self, block: bool) -> Option<Vec<f32>> {
+    fn take_audio(&mut self) -> Option<Vec<f32>> {
         let want = self.frame_samples();
         let rx = self.decoders.audio.as_mut()?.get_mut().ok()?;
         while self.pending.len() < want {
-            let chunk = if block {
-                rx.recv().ok()
-            } else {
-                rx.try_recv().ok()
-            };
-            match chunk {
-                Some(chunk) => self.pending.extend(chunk),
-                None => break,
+            match rx.recv() {
+                Ok(chunk) => self.pending.extend(chunk),
+                Err(_) => break,
             }
         }
         let n = want.min(self.pending.len());
@@ -263,15 +271,10 @@ impl Backend for FfmpegEmu {
         if self.ended {
             return true;
         }
-        let Ok(video) = self.decoders.video.get_mut() else {
+        if !self.next_frame() {
             return false;
-        };
-        match video.try_recv() {
-            Ok(frame) => self.frame = frame,
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => self.ended = true,
         }
-        if let Some(samples) = self.take_audio(false) {
+        if let Some(samples) = self.take_audio() {
             self.audio.extend(samples);
         }
         true
@@ -320,17 +323,10 @@ impl Backend for FfmpegEmu {
 
     fn skip_frames(&mut self, frames: u32) {
         for _ in 0..frames {
-            let Ok(video) = self.decoders.video.get_mut() else {
-                return;
-            };
-            match video.recv() {
-                Ok(frame) => self.frame = frame,
-                Err(_) => {
-                    self.ended = true;
-                    break;
-                }
+            if !self.next_frame() || self.ended {
+                break;
             }
-            self.take_audio(true);
+            self.take_audio();
         }
     }
 
