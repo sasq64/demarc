@@ -371,6 +371,24 @@
   entry twice (`unzip` calls it a zip bomb) can take a recompressed class in
   place when it is no larger; the bsdiff then stays at 12 KB.
 
+- A JDK 11 demo that freezes for 0.2–1.5 s at a time in its first minute,
+  then runs smooth (Transformer 3, `zoo.202844`): HotSpot's
+  `NativeLookup::lookup_critical_entry` runs on the Java thread each time a
+  native gets its wrapper, enumerating every module through psapi and running
+  dbghelp's `recalc_search_path` after a `LoadLibrary`. Under wine that is
+  thousands of `read_process_memory` server calls each time, and LWJGL has a
+  native per GL function. `-XX:-CriticalJNINatives` on a line under
+  `[JVMOptions]` in `app/*.cfg` fixes it; `JAVA_TOOL_OPTIONS` tries it. Not
+  JIT, GC or ntsync, though C2 is busy then too. What found it: sampling
+  `/proc/<tid>/syscall` showed the render thread in `read()` of 64 bytes (a
+  wineserver reply) during stalls instead of the DRM syncobj wait it is in
+  when smooth, then `+server` named the request. Tooling dead ends: perf
+  callchains are blocked here (`perf_event_paranoid=2`), wine's unix-side
+  stack holds no PE frames, the demarc wine log stops after 4096 distinct
+  lines (useless with `+timestamp`), and `winedbg`'s `bt` fails on a JVM
+  thread — `attach`, `break *addr`, `x /3000x $rsp` and matching the words
+  against jvm.dll's `.pdata` worked.
+
 - A GL intro whose `+opengl` trace shows `glUniform*` with `-nan(ind)` and
   frames slowing to seconds: an x87 stack leak. Yama (`zoo.398638`) pushes
   its time twice per frame and pops once; after 8 frames `fild` overflows to

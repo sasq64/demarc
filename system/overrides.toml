@@ -1264,13 +1264,26 @@ loads nothing above it, so the JVM aborted; Mesa gives the highest version and
 was fine. The jar is patched to ask for 4.3, a recompressed class put in place
 of the original (its central directory lists entries twice), shipped as
 win/patches/transformer3.bsdiff.
+
+Freezes in the first minute: HotSpot 11 looks for a critical JNI entry each
+time it wraps a native, enumerating every module through psapi, which under
+wine is thousands of wineserver round trips. LWJGL has one native per GL
+function, so each new scene stalled. -XX:-CriticalJNINatives in the launcher
+cfg skips the lookup.
 '''
-patch = {
-  info = "GL 4.3 context",
-  target = "demo-evoke-1.0-SNAPSHOT.jar",
-  format = "bsdiff",
-  source = "win/patches/transformer3.bsdiff",
-}
+patch = [
+  {
+    info = "GL 4.3 context",
+    target = "demo-evoke-1.0-SNAPSHOT.jar",
+    format = "bsdiff",
+    source = "win/patches/transformer3.bsdiff",
+  },
+  {
+    info = "no critical JNI lookups",
+    target = "Transformer3.cfg",
+    contents = "W0FwcGxpY2F0aW9uXQ0KYXBwLm5hbWU9VHJhbnNmb3JtZXIzDQphcHAudmVyc2lvbj0xLjANCmFwcC5wcmVmZXJlbmNlcy5pZD1za2V0Y2hlcy9zZXJpYWxpemF0aW9uDQphcHAucnVudGltZT0kQVBQRElSXHJ1bnRpbWUNCmFwcC5pZGVudGlmaWVyPXNrZXRjaGVzLnNlcmlhbGl6YXRpb24NCmFwcC5jbGFzc3BhdGg9ZGVtby1ldm9rZS0xLjAtU05BUFNIT1QuamFyDQphcHAuYXBwbGljYXRpb24uaW5zdGFuY2U9bXVsdGlwbGUNCmFwcC5tYWluamFyPWRlbW8tZXZva2UtMS4wLVNOQVBTSE9ULmphcg0KYXBwLm1haW5jbGFzcz1za2V0Y2hlcy9zZXJpYWxpemF0aW9uL1NlcmlhbGl6YXRpb24wMDFLdA0KcGFja2FnZXIuamF2YS52ZXJzaW9uPTExLjAuMg0KDQpbSlZNT3B0aW9uc10NCi1YWDotQ3JpdGljYWxKTklOYXRpdmVzDQoNCltKVk1Vc2VyT3B0aW9uc10NCg0KW0FyZ09wdGlvbnNdDQo=",
+  },
+]
 
 # Click Clack, Lobster attack! by Lobstarrs. Its libjpeg spills progressive
 # JPEGs to tmpfile(), which the old CRT creates in the drive root (Z: = `/`

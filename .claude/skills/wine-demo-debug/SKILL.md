@@ -197,7 +197,9 @@ still refused.
 **Java demos.** A `runtime/` + `app/*.cfg` release is javapackager: run
 `runtime/bin/java.exe -cp app/<jar> <app.mainclass>` for the stack trace. A GL
 4.x call on a 3.3 core context dies on NVIDIA only; bump the GLFW hint in the
-jar (`zoo.202844`).
+jar (`zoo.202844`). Freezes in the first minute that then go away (JDK 11 +
+LWJGL): `-XX:-CriticalJNINatives` under `[JVMOptions]` in the cfg, or HotSpot
+enumerates every module through wineserver per new native (`zoo.202844`).
 
 **Black screen with music.** Check `+opengl` for `glDrawBuffer buf 1028` or a
 single-buffered pixel format: front-buffer drawing never reaches the session
