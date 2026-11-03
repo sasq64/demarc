@@ -58,6 +58,7 @@ pub enum Cmd {
     AddToPlaylist,
     OpenKeyboard,
     ToggleRecording,
+    ToggleMotion,
 }
 
 impl Cmd {
@@ -92,6 +93,7 @@ impl Cmd {
         Cmd::AddToPlaylist,
         Cmd::OpenKeyboard,
         Cmd::ToggleRecording,
+        Cmd::ToggleMotion,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -130,6 +132,7 @@ impl Cmd {
             Cmd::AddToPlaylist => "Add to playlist",
             Cmd::OpenKeyboard => "Toggle on-screen keyboard",
             Cmd::ToggleRecording => "Start/Stop audio recording",
+            Cmd::ToggleMotion => "Toggle motion compensation",
         }
     }
 }
@@ -191,6 +194,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyS, Cmd::ChangeScale),
     KeyMapping::new(KeyCode::KeyC, Cmd::ToggleCrt),
     KeyMapping::new(KeyCode::KeyB, Cmd::ToggleBorder),
+    KeyMapping::new(KeyCode::KeyK, Cmd::ToggleMotion),
     KeyMapping::new(KeyCode::KeyU, Cmd::PauseResume),
     KeyMapping::new(KeyCode::KeyM, Cmd::MouseClick),
     KeyMapping::new(KeyCode::KeyF, Cmd::Fullscreen),
@@ -559,6 +563,20 @@ pub(crate) fn handle_cmd(
                         "Filter on"
                     } else {
                         "Filter off"
+                    })
+                    .into(),
+                    delay: Duration::from_secs(0),
+                    duration: Duration::from_secs(1),
+                    location: HudLocation::TopLeft,
+                });
+            }
+            Cmd::ToggleMotion => {
+                render.no_motion = !render.no_motion;
+                writer.write(SetHudText {
+                    text: (if render.no_motion {
+                        "Motion compensation off"
+                    } else {
+                        "Motion compensation on"
                     })
                     .into(),
                     delay: Duration::from_secs(0),

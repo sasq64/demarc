@@ -570,6 +570,7 @@ fn main() {
         // `--shader none` starts with the shaders disabled; an
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
+        no_motion: false,
     };
     let sys = std::sync::Arc::new(NewSys::new(&(&args).into()));
     let settings = AppSettings {

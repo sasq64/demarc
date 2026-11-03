@@ -13,6 +13,7 @@ use bevy::{
 use frameconv::{Converter, Pipelines};
 
 use crate::backend::VideoFrame;
+use crate::config::RenderSettings;
 use crate::emulator::Emulator;
 
 pub struct FrameConvPlugin;
@@ -24,10 +25,15 @@ pub(crate) struct ConvTargets(pub HashMap<AssetId<Image>, Converter>);
 #[derive(Resource, Default)]
 struct ExtractedPairs(Vec<(AssetId<Image>, VideoFrame, VideoFrame, u32)>);
 
-fn extract_pairs(mut pairs: ResMut<ExtractedPairs>, emus: Extract<Query<&Emulator>>) {
+fn extract_pairs(
+    mut pairs: ResMut<ExtractedPairs>,
+    emus: Extract<Query<&Emulator>>,
+    settings: Extract<Res<RenderSettings>>,
+) {
     pairs.0.clear();
     for emu in &emus {
         if let Some((a, b, n)) = emu.conversion_pair() {
+            let n = if settings.no_motion { 0 } else { n };
             pairs.0.push((emu.image.id(), a.clone(), b.clone(), n));
         }
     }

@@ -667,6 +667,8 @@ pub struct RenderSettings {
     pub border_mode: BorderMode,
     pub scale_mode: ScaleMode,
     pub crt_effect: bool,
+    /// Converted frames repeat their source instead of interpolating.
+    pub no_motion: bool,
 }
 
 #[derive(Resource, Default)]
