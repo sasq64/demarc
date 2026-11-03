@@ -1018,3 +1018,17 @@
   `repeated` lines at the jumps before touching `crates/frameconv`. A core
   that isn't exactly 50 Hz (C64 PAL is 50.1245) drains the audio ring faster than
   the proportional `rate_adjust` can hold above `audio_buf_min`.
+
+- RIFE (rife-v4.6) takes 3 ms per 384x272 frame on an RTX 4070 in a tight loop
+  but 10.5 ms called once per display frame from demarc's render thread: its own
+  VkDevice shares the GPU with wgpu's. Measure inside the app before deciding
+  where an ncnn call can run; it has to run ahead on a worker thread
+  (`rife::Worker`), and `Emulator::conversion_ahead` shows it which pairs come next.
+- `rustfmt src/main.rs` formats every module it declares, and the repo is not
+  rustfmt-clean at the default width, so it rewrites unrelated files. Format the
+  files you changed only through a crate whose root you did not touch, or not at all.
+- `Emulator::display_fps` is smoothed, so at startup it climbs through every
+  rate below the real one. A conversion that latched as soon as the display was
+  faster than the core picked 50:51 on a 60 Hz screen: phases in 51sths, nearly
+  every display frame needing RIFE, and audio drift dropping source frames. The
+  latch now needs one whole rate for `CONVERT_LATCH` frames in a row.

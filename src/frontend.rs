@@ -12,7 +12,7 @@ use bevy::{
 };
 
 use crate::backend::{VideoFrame, ViewFocus};
-use crate::config::{AppSettings, Args, RenderSettings};
+use crate::config::{AppSettings, Args, FrameConvMethod, Latency, RenderSettings};
 use crate::emulator::{Emulator, FrameConvert};
 use crate::frame_conv::FrameConvPlugin;
 use crate::frame_upload::FrameUploadPlugin;
@@ -561,8 +561,13 @@ pub(crate) fn run_frontend(
                 .flatten();
             emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
         }
-        emu.set_latency(settings.latency.setting());
-        emu.frame_convert = match (settings.frame_convert, headless.is_some()) {
+        // RIFE gets as far ahead as the sound is, so it needs a deep audio buffer.
+        let latency = match settings.frame_convert {
+            Some(FrameConvMethod::Rife) => settings.latency.max(Latency::High),
+            _ => settings.latency,
+        };
+        emu.set_latency(latency.setting());
+        emu.frame_convert = match (settings.frame_convert.is_some(), headless.is_some()) {
             (false, _) => FrameConvert::Off,
             (true, false) => FrameConvert::Matching,
             // No display, so no rate to wait for.

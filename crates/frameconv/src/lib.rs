@@ -1,6 +1,6 @@
-//! Motion-compensated 50 to 60 Hz frame conversion on plain wgpu.
+//! Motion-compensated frame rate conversion on plain wgpu.
 //!
-//! Display frames map to source frames on a locked 5:6 [`Cadence`]. A
+//! Display frames map to source frames on a locked [`Cadence`]. A
 //! [`Converter`] then estimates motion between the two source frames either side
 //! of a display frame and draws the frame between them, in a 6x integer-scaled
 //! target so that a phase of one sixth lands on whole pixels.
@@ -25,27 +25,70 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// One finished source frame of packed RGBA pixels.
 pub type Pixels = Arc<Vec<u32>>;
 
-/// Maps display frames to source frames: five sources for every six displays.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Maps display frames to source frames: `num` sources for every `den` displays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cadence {
     k: u64,
+    num: u64,
+    den: u64,
+}
+
+impl Default for Cadence {
+    fn default() -> Self {
+        Self::new(5, 6)
+    }
 }
 
 impl Cadence {
-    /// The source frame `a` and the phase `n`, in sixths of the way to `a + 1`,
-    /// of the next display frame.
+    /// A cadence for `num` source frames per `den` display frames, `num <= den`.
+    pub fn new(num: u64, den: u64) -> Self {
+        let (num, den) = (num.clamp(1, den.max(1)), den.max(1));
+        let g = gcd(num, den);
+        Self {
+            k: 0,
+            num: num / g,
+            den: den / g,
+        }
+    }
+
+    /// Source frames shown per display frame.
+    pub fn ratio(&self) -> f64 {
+        self.num as f64 / self.den as f64
+    }
+
+    /// The source frame `a` and the phase `t`, the fraction of the way to
+    /// `a + 1`, of the next display frame.
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> (u64, u32) {
-        let (a, n) = self.peek();
+    pub fn next(&mut self) -> (u64, f32) {
+        let next = self.peek();
         self.k += 1;
-        (a, n)
+        next
     }
 
     /// What [`Self::next`] would return, for a caller that has to hold back.
-    pub fn peek(&self) -> (u64, u32) {
-        let num = self.k * 5;
-        (num / 6, (num % 6) as u32)
+    pub fn peek(&self) -> (u64, f32) {
+        let pos = self.k * self.num;
+        (pos / self.den, (pos % self.den) as f32 / self.den as f32)
     }
+
+    /// The phases of the display frames that fall on source frame `a`.
+    pub fn phases(&self, a: u64) -> impl Iterator<Item = f32> + use<> {
+        let (num, den) = (self.num, self.den);
+        let first = (a * den).div_ceil(num);
+        (first..)
+            .map(move |k| k * num - a * den)
+            .take_while(move |&pos| pos < den)
+            .map(move |pos| pos as f32 / den as f32)
+    }
+}
+
+fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// A phase as the nearest of the [`SCALE`] steps [`Converter::render`] takes.
+pub fn sixths(t: f32) -> u32 {
+    ((t * SCALE as f32).round() as u32).min(SCALE - 1)
 }
 
 /// Whether `device` can run a conversion of a `width`x`height` source.
@@ -539,6 +582,45 @@ impl Converter {
         self.render_with(interp, pipelines, queue, encoder, a, b, n);
     }
 
+    /// Record `frame`, interpolated elsewhere, into the targets as it is.
+    pub fn present(
+        &mut self,
+        pipelines: &Pipelines,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &Pixels,
+    ) {
+        let layer = self.layer(queue, frame) as u32;
+        let params = InterpParams {
+            a: [layer, layer, 0, 0],
+            b: [self.tiles.0, self.tiles.1, 0, 0],
+        };
+        queue.write_buffer(&self.interp_params, 0, bytemuck::bytes_of(&params));
+        self.draw(pipelines, encoder, &pipelines.interp);
+    }
+
+    fn draw(
+        &self,
+        pipelines: &Pipelines,
+        encoder: &mut wgpu::CommandEncoder,
+        interp: &wgpu::RenderPipeline,
+    ) {
+        fullscreen_pass(
+            encoder,
+            "frameconv interp",
+            &self.six_view,
+            interp,
+            &self.interp_group,
+        );
+        fullscreen_pass(
+            encoder,
+            "frameconv resolve",
+            &self.native_view,
+            &pipelines.resolve,
+            &self.resolve_group,
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_with(
         &mut self,
@@ -581,20 +663,7 @@ impl Converter {
             b: [self.tiles.0, self.tiles.1, 0, 0],
         };
         queue.write_buffer(&self.interp_params, 0, bytemuck::bytes_of(&params));
-        fullscreen_pass(
-            encoder,
-            "frameconv interp",
-            &self.six_view,
-            interp,
-            &self.interp_group,
-        );
-        fullscreen_pass(
-            encoder,
-            "frameconv resolve",
-            &self.native_view,
-            &pipelines.resolve,
-            &self.resolve_group,
-        );
+        self.draw(pipelines, encoder, interp);
     }
 }
 

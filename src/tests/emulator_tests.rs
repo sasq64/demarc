@@ -504,6 +504,10 @@ fn a_core_reporting_no_fps_is_paced_at_60() {
 
 /// One display frame at 60 Hz. The core has a new picture when `fresh`.
 fn converted_tick(core: &FakeBackend, emu: &mut Emulator, time: &mut Time, fresh: bool) {
+    tick_at(core, emu, time, fresh, 16667);
+}
+
+fn tick_at(core: &FakeBackend, emu: &mut Emulator, time: &mut Time, fresh: bool, micros: u64) {
     if fresh {
         core.lock().frame = VideoFrame {
             width: 1,
@@ -511,7 +515,7 @@ fn converted_tick(core: &FakeBackend, emu: &mut Emulator, time: &mut Time, fresh
             pixels: Arc::new(vec![0]),
         };
     }
-    time.advance_by(Duration::from_micros(16667));
+    time.advance_by(Duration::from_micros(micros));
     emu.run(time);
 }
 
@@ -529,7 +533,7 @@ fn a_conversion_runs_five_source_frames_in_six_displays() {
     let mut phases = Vec::new();
     for _ in 0..60 {
         converted_tick(&core, &mut emu, &mut time, true);
-        phases.push(emu.conversion_pair().unwrap().2);
+        phases.push(frameconv::sixths(emu.conversion_pair().unwrap().2));
     }
 
     assert_eq!(core.lock().runs, runs + 50);
@@ -553,12 +557,44 @@ fn a_conversion_repeats_its_frame_while_the_core_has_none() {
 }
 
 #[test]
-fn a_conversion_starts_only_on_a_display_at_six_fifths_of_the_core() {
+fn a_conversion_runs_fifty_source_frames_in_144_displays() {
     let core = FakeBackend::default();
     let mut emu = emulator(&core);
     emu.frame_convert = FrameConvert::Matching;
     let mut time = Time::default();
-    for _ in 0..7 {
+    for _ in 0..100 {
+        tick_at(&core, &mut emu, &mut time, true, 6944);
+    }
+    assert!(emu.converting());
+
+    let runs = core.lock().runs;
+    for _ in 0..144 {
+        tick_at(&core, &mut emu, &mut time, true, 6944);
+    }
+    assert_eq!(core.lock().runs, runs + 50);
+}
+
+#[test]
+fn a_conversion_waits_for_the_display_rate_to_settle() {
+    let core = FakeBackend::default();
+    let mut emu = emulator(&core);
+    emu.frame_convert = FrameConvert::Matching;
+    let mut time = Time::default();
+    tick_at(&core, &mut emu, &mut time, true, 19608);
+    for _ in 0..300 {
+        converted_tick(&core, &mut emu, &mut time, true);
+    }
+    let (_, _, t) = emu.conversion_pair().unwrap();
+    assert!((t * 6.0 - (t * 6.0).round()).abs() < 1e-4, "{t}");
+}
+
+#[test]
+fn a_conversion_starts_only_on_a_display_faster_than_the_core() {
+    let core = FakeBackend::default();
+    let mut emu = emulator(&core);
+    emu.frame_convert = FrameConvert::Matching;
+    let mut time = Time::default();
+    for _ in 0..60 {
         converted_tick(&core, &mut emu, &mut time, true);
     }
     assert!(!emu.converting());

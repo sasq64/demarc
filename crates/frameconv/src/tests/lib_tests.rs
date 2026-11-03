@@ -208,7 +208,8 @@ impl Scene {
         let mut fallback = 0;
         let mut failures = Vec::new();
         for k in 0..self.frames() {
-            let (a, n) = cadence.next();
+            let (a, t) = cadence.next();
+            let n = sixths(t);
             if a != pair_at {
                 pair = (pair.1.clone(), self.source(a + 1));
                 pair_at = a;
@@ -275,13 +276,50 @@ fn cadence_steps_five_sources_in_six_displays() {
     let mut cadence = Cadence::default();
     for k in 0..600 {
         assert_eq!(cadence.peek(), cadence.clone().next());
-        let (a, n) = cadence.next();
-        assert_eq!(a * 6 + n as u64, 5 * k);
+        let (a, t) = cadence.next();
+        assert_eq!(a * 6 + sixths(t) as u64, 5 * k);
     }
     let mut cadence = Cadence::default();
-    let phases: Vec<u32> = (0..6).map(|_| cadence.next().1).collect();
+    let phases: Vec<u32> = (0..6).map(|_| sixths(cadence.next().1)).collect();
     assert_eq!(phases, [0, 5, 4, 3, 2, 1]);
-    assert_eq!(cadence.next(), (5, 0));
+    assert_eq!(cadence.next(), (5, 0.0));
+}
+
+#[test]
+fn cadence_spreads_sources_over_a_faster_display() {
+    for (num, den) in [(50, 144), (60, 144), (50, 100), (50, 165)] {
+        let mut cadence = Cadence::new(num, den);
+        let mut last = (0, -1.0);
+        for k in 0..den * 3 {
+            let (a, t) = cadence.next();
+            assert!(a == last.0 && t > last.1 || a == last.0 + 1 && t <= last.1);
+            assert!((a as f64 + t as f64 - (k * num) as f64 / den as f64).abs() < 1e-4);
+            last = (a, t);
+        }
+        assert_eq!(cadence.next(), (3 * num, 0.0));
+    }
+}
+
+#[test]
+fn cadence_phases_are_what_next_gives_for_a_source() {
+    for (num, den) in [(5, 6), (50, 144), (60, 144), (50, 100)] {
+        let mut cadence = Cadence::new(num, den);
+        let mut seen: Vec<Vec<f32>> = Vec::new();
+        for _ in 0..den * 2 {
+            let (a, t) = cadence.next();
+            if seen.len() <= a as usize {
+                seen.push(Vec::new());
+            }
+            seen[a as usize].push(t);
+        }
+        for (a, phases) in seen.iter().enumerate() {
+            assert_eq!(
+                &cadence.phases(a as u64).collect::<Vec<_>>(),
+                phases,
+                "{num}:{den} at {a}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -465,7 +503,8 @@ fn wrong_per_frame(
     let (mut wrong, mut moved) = (0, 0);
     let mut by_path = [0; PATHS.len()];
     for k in 0..frames {
-        let (a, n) = cadence.next();
+        let (a, t) = cadence.next();
+        let n = sixths(t);
         if a != pair_at {
             pair = (pair.1.clone(), Arc::new(source(a + 1)));
             pair_at = a;

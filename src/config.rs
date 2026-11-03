@@ -209,10 +209,10 @@ pub struct Args {
     #[arg(long)]
     pub speed_test: bool,
 
-    /// Show 50 Hz sources on a 60 Hz display with motion-compensated frames,
-    /// running the source at exactly 5/6 of the display rate.
-    #[arg(long)]
-    pub frame_convert: bool,
+    /// Show sources on a faster display with motion-interpolated frames,
+    /// running the source at an exact ratio of the display rate.
+    #[arg(long, value_name = "METHOD", num_args = 0..=1, require_equals = true, default_missing_value = "simple")]
+    pub frame_convert: Option<FrameConvMethod>,
 
     /// Write per-frame audio fill / frame delta / queued frame stats as CSV
     #[arg(long, value_name = "FILE")]
@@ -386,6 +386,14 @@ pub enum SortArg {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum FrameConvMethod {
+    /// Tile motion estimation on the GPU.
+    Simple,
+    /// RIFE, from librife_demarc (`just rife`).
+    Rife,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum InfoDisplay {
     /// Always show demo info on start
     Always,
@@ -493,7 +501,9 @@ impl From<ScaleModeArg> for ScaleMode {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, bevy::reflect::Reflect, clap::ValueEnum)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, bevy::reflect::Reflect, clap::ValueEnum,
+)]
 pub enum Latency {
     VeryLow,
     Low,
@@ -669,6 +679,7 @@ pub struct RenderSettings {
     pub crt_effect: bool,
     /// Converted frames repeat their source instead of interpolating.
     pub no_motion: bool,
+    pub rife: bool,
 }
 
 #[derive(Resource, Default)]
@@ -695,7 +706,7 @@ pub struct AppSettings {
     pub hotkey_pressed_at: f32,
     pub mouse_index: Option<usize>,
     pub speed_test: bool,
-    pub frame_convert: bool,
+    pub frame_convert: Option<FrameConvMethod>,
     pub latency: Latency,
     pub tv_mode: bool,
     /// Record the audio of every demo started.

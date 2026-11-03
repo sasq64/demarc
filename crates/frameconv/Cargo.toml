@@ -3,7 +3,7 @@ name = "frameconv"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
-description = "Motion-compensated 50 to 60 Hz frame conversion on plain wgpu"
+description = "Motion-compensated frame rate conversion on plain wgpu"
 
 [dependencies]
 bytemuck = "1"

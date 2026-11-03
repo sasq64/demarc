@@ -72,7 +72,8 @@ does not build for bionic).
 ## Docs worth reading before touching those areas
 
 `docs/AMIBERRY.md` (Amiga core options/WHDLoad), `docs/86BOX.md`, `PICO8.md`,
-`GAMESCOPE.md`, `PT2.md` and `FT2.md` (the non-buildbot cores),
+`GAMESCOPE.md`, `PT2.md` and `FT2.md` (the non-buildbot cores), `RIFE.md`
+(`--frame-convert=rife`),
 
 ## Releases
 

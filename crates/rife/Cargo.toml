@@ -1,0 +1,10 @@
+[package]
+name = "rife"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "RIFE frame interpolation through a dlopened librife_demarc"
+
+[dependencies]
+anyhow.workspace = true
+libloading.workspace = true

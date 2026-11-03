@@ -26,3 +26,5 @@ __pycache__/
 /demodb/*.txt
 /demodb/*.txt.gz
 
+/external/rife-ncnn-vulkan/
+/external/rife-demarc/build/

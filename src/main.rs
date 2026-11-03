@@ -76,7 +76,8 @@ use speed_test::SpeedTestPlugin;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::{
-    AppSettings, Args, GlobalSettings, InfoDisplay, RenderSettings, ShaderArg, ShaderEffect, SortArg,
+    AppSettings, Args, FrameConvMethod, GlobalSettings, InfoDisplay, RenderSettings, ShaderArg,
+    ShaderEffect, SortArg,
 };
 use crate::egui_ui::EguiUiPlugin;
 use crate::emu_file::EmuFile;
@@ -571,6 +572,7 @@ fn main() {
         // explicit `--slangp` always enables it.
         crt_effect: args.slangp.is_some() || !matches!(shader, ShaderArg::None),
         no_motion: false,
+        rife: args.frame_convert == Some(FrameConvMethod::Rife),
     };
     let sys = std::sync::Arc::new(NewSys::new(&(&args).into()));
     let settings = AppSettings {

@@ -10,14 +10,14 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::AudioSink;
-use retro_core::audio_recorder::RecorderOptions;
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
-use frameconv::Cadence;
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
 use crate::ui::{HudLocation, SetHudText};
 use crate::workfile::WorkFile;
+use retro_core::audio_recorder::RecorderOptions;
+use frameconv::Cadence;
 
 mod load;
 pub(crate) use load::{LoadStatus, PendingLoad};
@@ -38,8 +38,9 @@ const AUDIO_STOPPED_SECS: f64 = 2.0;
 /// Furthest behind its frame clock an emulator catches up instead of resyncing.
 const MAX_CATCH_UP: f64 = 0.25;
 
-/// Display frames in range before a frame conversion starts.
-const CONVERT_LATCH: usize = 8;
+/// Display frames at one settled rate before a frame conversion starts. The
+/// smoothed rate climbs through every rate below the real one at startup.
+const CONVERT_LATCH: usize = 60;
 
 type AudioTap = Box<dyn Fn(u32, &[f32]) + Send>;
 
@@ -88,12 +89,12 @@ impl InputMode {
     }
 }
 
-/// When an emulator converts its frames from 50 to 60 Hz.
+/// When an emulator converts its frames to the display's faster rate.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FrameConvert {
     #[default]
     Off,
-    /// Once the display runs at 6/5 of the core's rate.
+    /// Once the display runs faster than the core.
     Matching,
     Always,
 }
@@ -105,8 +106,8 @@ pub struct Conversion {
     cadence: Cadence,
     /// The cadence's source frame the queue's front is.
     source: u64,
-    /// Sixths of the way from the queue's front to the frame behind it.
-    phase: u32,
+    /// How far from the queue's front to the frame behind it.
+    phase: f32,
     /// Display frames shown while converting, and the seconds they took.
     displayed: u64,
     secs: f64,
@@ -212,6 +213,8 @@ pub struct Emulator {
     pub frame_convert: FrameConvert,
     /// Display frames in a row that suited [`Self::frame_convert`].
     convert_frames: usize,
+    /// The whole display rate those frames were at.
+    convert_rate: f64,
     pub(crate) conversion: Option<Conversion>,
     /// This emulator's `emu` column in the `--frame-log` CSV.
     log_id: usize,
@@ -752,10 +755,29 @@ impl Emulator {
     }
 
     /// The two source frames either side of this display frame, and the phase
-    /// between them, in sixths.
-    pub fn conversion_pair(&self) -> Option<(&VideoFrame, &VideoFrame, u32)> {
+    /// between them.
+    pub fn conversion_pair(&self) -> Option<(&VideoFrame, &VideoFrame, f32)> {
         let phase = self.conversion.as_ref().filter(|_| !self.skipping)?.phase;
         Some((self.frame_queue.front()?, self.frame_queue.get(1)?, phase))
+    }
+
+    /// The pairs of source frames in the queue from this display frame's on, with
+    /// the phases the display frames still to come will take between them.
+    pub fn conversion_ahead(&self) -> Vec<(&VideoFrame, &VideoFrame, Vec<f32>)> {
+        let Some(conversion) = self.conversion.as_ref().filter(|_| !self.skipping) else {
+            return Vec::new();
+        };
+        let frames = self.frame_queue.iter();
+        frames
+            .clone()
+            .zip(frames.skip(1))
+            .enumerate()
+            .map(|(i, (a, b))| {
+                let phases = conversion.cadence.phases(conversion.source + i as u64);
+                let phases = phases.filter(|&t| i > 0 || t >= conversion.phase).collect();
+                (a, b, phases)
+            })
+            .collect()
     }
 
     /// Frames the picture is held back. Audio of a self-pushing core is ahead by
@@ -822,13 +844,26 @@ impl Emulator {
                 FrameConvert::Off => false,
                 FrameConvert::Always => true,
                 FrameConvert::Matching => {
-                    !self.is_image && (1.0 - self.display_fps * 5.0 / 6.0 / core.fps()).abs() < 0.01
+                    !self.is_image
+                        && self.display_fps > core.fps() * 1.02
+                        && (self.display_fps - self.display_fps.round()).abs() < self.display_fps * 0.01
                 }
             };
-            self.convert_frames = if suits { self.convert_frames + 1 } else { 0 };
+            let rate = self.display_fps.round();
+            let settled = suits && rate == self.convert_rate;
+            self.convert_frames = if settled { self.convert_frames + 1 } else { 0 };
+            self.convert_rate = rate;
             if self.frame_convert == FrameConvert::Always || self.convert_frames >= CONVERT_LATCH {
-                info!("Converting frames from {} Hz", core.fps());
-                self.conversion = Some(Conversion::default());
+                // No display to measure when headless: 50 to 60 Hz.
+                let cadence = match self.frame_convert {
+                    FrameConvert::Always => Cadence::default(),
+                    _ => Cadence::new(core.fps().round() as u64, rate as u64),
+                };
+                info!("Converting frames from {} Hz ({cadence:?})", core.fps());
+                self.conversion = Some(Conversion {
+                    cadence,
+                    ..Default::default()
+                });
             }
         }
         let converting = self.conversion.is_some() && !self.skipping;
@@ -938,12 +973,12 @@ impl Emulator {
 
 impl Conversion {
     /// How much faster the core's sound has to play, for its frames being shown
-    /// at five per six display frames instead of at its own rate.
+    /// at the cadence's rate instead of at its own.
     fn audio_ratio(&self, fps: f64) -> f64 {
         if self.secs < 2.0 {
             return 1.0;
         }
-        let shown = self.displayed as f64 * 5.0 / 6.0 / self.secs;
+        let shown = self.displayed as f64 * self.cadence.ratio() / self.secs;
         (fps / shown).clamp(0.97, 1.03)
     }
 

@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc"]
+members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc", "crates/rife"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -109,6 +109,7 @@ retro-core = { path = "crates/retro-core" }
 retro-ui = { path = "crates/retro-ui" }
 # The `.slangp` filter chains, and the only thing that links librashader.
 frameconv = { path = "crates/frameconv" }
+rife = { path = "crates/rife" }
 retroarc = { path = "crates/retroarc" }
 ringbuf = "0.5.0"
 sha2.workspace = true

@@ -108,6 +108,19 @@ gamescope-core:
     ninja -C {{GAMESCOPE}}/build-lr src/gamescope src/gamescope_libretro.so
     @echo "core at {{GAMESCOPE}}/build-lr/src/gamescope_libretro.so"
 
+RIFE := "external/rife-ncnn-vulkan"
+
+# Build librife_demarc into target/rife, for `--frame-convert=rife`. See docs/RIFE.md.
+rife:
+    test -d {{RIFE}} || git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/nihui/rife-ncnn-vulkan {{RIFE}}
+    cmake -S external/rife-demarc -B external/rife-demarc/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    ninja -C external/rife-demarc/build rife_demarc
+    mkdir -p target/rife
+    cp external/rife-demarc/build/librife_demarc.so target/rife/
+    @echo "library at target/rife/librife_demarc.so"
+
 PT2 := "libretro/pt2-clone/libretro"
 
 # Build the ProTracker 2 clone as a libretro core, out of the checkout in
