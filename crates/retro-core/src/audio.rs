@@ -296,10 +296,10 @@ pub fn init_audio_stream(
 }
 
 /// Samples the ring between an emulator and its audio callback holds.
-pub const RING_SIZE: usize = 4096 * 8;
+pub const RING_SIZE: usize = 4096 * 32;
 
 /// Ring fill a worker keeps up on its own while the frontend is not ticking.
-pub const STALL_FILL: usize = RING_SIZE / 4;
+pub const STALL_FILL: usize = 4096 * 2;
 
 #[derive(Default)]
 struct SinkState {
@@ -483,6 +483,11 @@ impl AudioSink {
 
     pub fn occupied_len(&self) -> usize {
         self.state().occupied_len()
+    }
+
+    /// Output rate, or 0 without an audio device.
+    pub fn sample_rate(&self) -> f32 {
+        self.state().sample_rate
     }
 }
 

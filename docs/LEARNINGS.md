@@ -1066,3 +1066,14 @@
   to ~1. Mesa's VA-API `scale_vaapi` ignores colour tags (untagged BT.601 came
   out as BT.709, a tagged clip came out limited range), so keep the RGBA
   conversion in ffmpeg's software scaler.
+
+- A backend fed by separate decoder threads must not `try_recv` its streams
+  per frame: each miss drops that stream a frame for good, and the ffmpeg
+  backend drifted ~1 s out of sync. Block on both in `run()` so they advance in
+  lockstep; counting frames vs samples over 300 `run()`s shows the drift.
+
+- A/V sync while frame converting can't be checked headless: there is no audio
+  device, so the ring fill is a constant 6000 and the queue never moves. A
+  Python model of `Conversion::step` with a draining ring showed the queue
+  creeping from ~5 to `depth` (18) over a minute, putting the picture ~0.55 s
+  behind the sound.

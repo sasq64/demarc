@@ -30,7 +30,7 @@ fn shader_variants_compare_unequal() {
 fn latency_levels_fit_the_frame_fifo_and_the_audio_ring() {
     use clap::ValueEnum;
 
-    for level in Latency::value_variants() {
+    for level in Latency::value_variants().iter().chain([&Latency::MotionCompensation]) {
         let s = level.setting();
         assert!(
             (1..=crate::backend::MAX_LATENCY).contains(&s.latency),

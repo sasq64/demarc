@@ -918,7 +918,12 @@ impl Emulator {
 
         let mut result = true;
         if converting && let Some(conversion) = &mut self.conversion {
-            let depth = video_delay(&self.latency, self.self_audio) + 2;
+            let mut depth = video_delay(&self.latency, self.self_audio) + 2;
+            if has_audio {
+                // Hold back only as many source frames as there is sound queued.
+                let rate = self.sink.sample_rate().max(1.0) as f64;
+                depth = depth.min((self.audio_fill / (2.0 * rate) * fps).round() as usize + 2);
+            }
             let pull = occupied_len <= self.latency.audio_buf_max;
             let extra = has_audio && occupied_len < self.latency.audio_buf_min;
             result = conversion.step(core.as_mut(), &mut self.frame_queue, depth, pull, extra);
@@ -984,8 +989,8 @@ impl Conversion {
 
     /// One display frame: fetch a source frame into `queue` if `pull` and it
     /// holds less than `depth`, then move on along the cadence. With too few
-    /// frames to do that, this display frame repeats the last one. An `extra`
-    /// frame, for a low audio ring, is skipped over.
+    /// frames to do that, this display frame repeats the last one. Frames past
+    /// one over `depth`, as an `extra` one for a low audio ring, are skipped.
     fn step(
         &mut self,
         core: &mut (dyn Backend + Send + Sync),
@@ -1003,7 +1008,7 @@ impl Conversion {
                 queue.push_back(frame);
             }
         }
-        while queue.len() > depth {
+        while queue.len() > depth + 1 {
             debug!("frameconv: dropped a source frame (extra {extra})");
             queue.pop_front();
         }

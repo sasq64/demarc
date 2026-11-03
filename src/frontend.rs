@@ -563,7 +563,7 @@ pub(crate) fn run_frontend(
         }
         // RIFE gets as far ahead as the sound is, so it needs a deep audio buffer.
         let latency = match settings.frame_convert {
-            Some(FrameConvMethod::Rife) => settings.latency.max(Latency::High),
+            Some(FrameConvMethod::Rife) => Latency::MotionCompensation,
             _ => settings.latency,
         };
         emu.set_latency(latency.setting());
