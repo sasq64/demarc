@@ -10,7 +10,12 @@
 // a regular grid can tie a vector with the opposite one or with a multiple of
 // itself; a count over all pixels, static or not, breaks those ties. Within one
 // direction only a perfect count may do that, as a periodic background would
-// otherwise pick a multiple of the true speed.
+// otherwise pick a multiple of the true speed. The tile's vector for the previous
+// pair gets a small bonus, so ambiguous tiles keep their vector over time.
+//
+// tile_conf counts the changed pixels the vectors around a tile explain, and trust
+// turns the frame's share of them into a trust that drops at once and recovers
+// over a few pairs.
 
 const R: i32 = 4;
 const NC: u32 = 17u;
@@ -19,10 +24,15 @@ struct MeP { la: u32, lb: u32, tiles_x: u32, tiles_y: u32 };
 @group(0) @binding(1) var<storage, read_write> vecs: array<vec4<i32>>; // (v, rigid, _)
 @group(0) @binding(2) var<uniform> me: MeP;
 @group(0) @binding(3) var<storage, read_write> costs: array<u32>;
+// (explained, changed, doubt, _), then per tile changed | explained << 16
+@group(0) @binding(4) var<storage, read_write> conf: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read> prev: array<vec4<i32>>;
 var<workgroup> cost: array<atomic<u32>, 17>;
 var<workgroup> whole: array<atomic<u32>, 17>;
 var<workgroup> picked: vec2<i32>;
 var<workgroup> miss: atomic<u32>;
+var<workgroup> changed: atomic<u32>;
+var<workgroup> explained: atomic<u32>;
 
 fn cand(i: u32) -> vec2<i32> {
     if (i == 0u) { return vec2(0, 0); }
@@ -58,8 +68,11 @@ fn pick_vector(t: vec2<i32>) -> vec2<i32> {
     var best_cost = 0xffffffffu;
     var best_whole = 0xffffffffu;
     var best_exact = false;
+    let last = prev[u32(t.y) * me.tiles_x + u32(t.x)].xy;
+    let bonus = cross_sum(t, 0u) / 32u;
     for (var i = 0u; i < NC; i++) {
-        let c = cross_sum(t, i);
+        var c = cross_sum(t, i);
+        if (i != 0u && all(cand(i) == last)) { c -= min(c, bonus); }
         let w = cross_sum(t, i + NC);
         let tied = c == best_cost;
         let exact = w == 0u;
@@ -134,4 +147,61 @@ fn tile_pick(@builtin(global_invocation_id) gid: vec3<u32>,
         let rigid = atomicLoad(&miss) == 0u && any(v != vec2(0));
         vecs[wg.y * me.tiles_x + wg.x] = vec4(v, select(0, 1, rigid), 0);
     }
+}
+fn tile_at(t: vec2<i32>) -> vec2<i32> {
+    let c = clamp(t, vec2(0), vec2<i32>(i32(me.tiles_x), i32(me.tiles_y)) - 1);
+    return vecs[u32(c.y) * me.tiles_x + u32(c.x)].xy;
+}
+fn explains(v: vec2<i32>, p: vec2<i32>, a: vec3<f32>, b: vec3<f32>, dims: vec2<i32>) -> bool {
+    return any(v != vec2(0)) && (eq(a, px(me.lb, p + v, dims)) || eq(b, px(me.la, p - v, dims)));
+}
+@compute @workgroup_size(16, 8)
+fn tile_conf(@builtin(global_invocation_id) gid: vec3<u32>,
+             @builtin(local_invocation_index) li: u32,
+             @builtin(workgroup_id) wg: vec3<u32>) {
+    if (li == 0u) {
+        atomicStore(&changed, 0u);
+        atomicStore(&explained, 0u);
+    }
+    workgroupBarrier();
+    let dims = vec2<i32>(textureDimensions(frames));
+    let p = vec2<i32>(gid.xy);
+    let t = vec2<i32>(wg.xy);
+    if (all(p < dims)) {
+        let a = px(me.la, p, dims);
+        let b = px(me.lb, p, dims);
+        if (!eq(a, b)) {
+            atomicAdd(&changed, 1u);
+            if (explains(tile_at(t), p, a, b, dims)
+                || explains(tile_at(t + vec2(1, 0)), p, a, b, dims)
+                || explains(tile_at(t - vec2(1, 0)), p, a, b, dims)
+                || explains(tile_at(t + vec2(0, 1)), p, a, b, dims)
+                || explains(tile_at(t - vec2(0, 1)), p, a, b, dims)) {
+                atomicAdd(&explained, 1u);
+            }
+        }
+    }
+    workgroupBarrier();
+    if (li == 0u) {
+        let c = atomicLoad(&changed);
+        let e = atomicLoad(&explained);
+        atomicStore(&conf[4u + wg.y * me.tiles_x + wg.x], c | (e << 16u));
+        atomicAdd(&conf[0], e);
+        atomicAdd(&conf[1], c);
+    }
+}
+// Trust, in 256ths, is full from 90% explained and none below 60%.
+@compute @workgroup_size(1)
+fn trust() {
+    let e = atomicLoad(&conf[0]);
+    let c = atomicLoad(&conf[1]);
+    atomicStore(&conf[0], 0u);
+    atomicStore(&conf[1], 0u);
+    var target_doubt = 0u;
+    if (c >= 64u) {
+        let r = i32(e * 256u / c);
+        target_doubt = 256u - u32(clamp((r - 154) * 256 / (230 - 154), 0, 256));
+    }
+    let doubt = atomicLoad(&conf[2]);
+    atomicStore(&conf[2], max(target_doubt, doubt - min(doubt, 64u)));
 }

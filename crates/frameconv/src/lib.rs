@@ -76,6 +76,8 @@ struct InterpParams {
 pub struct Pipelines {
     tile_cost: wgpu::ComputePipeline,
     tile_pick: wgpu::ComputePipeline,
+    tile_conf: wgpu::ComputePipeline,
+    trust: wgpu::ComputePipeline,
     me_layout: wgpu::BindGroupLayout,
     interp: wgpu::RenderPipeline,
     #[cfg(test)]
@@ -186,6 +188,16 @@ impl Pipelines {
                     Stage::COMPUTE,
                     buffer_binding(Storage { read_only: false }),
                 ),
+                entry(
+                    4,
+                    Stage::COMPUTE,
+                    buffer_binding(Storage { read_only: false }),
+                ),
+                entry(
+                    5,
+                    Stage::COMPUTE,
+                    buffer_binding(Storage { read_only: true }),
+                ),
             ],
         );
         let interp_layout = layout(
@@ -199,6 +211,11 @@ impl Pipelines {
                     buffer_binding(Storage { read_only: true }),
                 ),
                 entry(2, Stage::FRAGMENT, buffer_binding(Uniform)),
+                entry(
+                    3,
+                    Stage::FRAGMENT,
+                    buffer_binding(Storage { read_only: true }),
+                ),
             ],
         );
         let resolve_layout = layout(
@@ -228,6 +245,8 @@ impl Pipelines {
         };
         let tile_cost = me_pipeline("tile_cost");
         let tile_pick = me_pipeline("tile_pick");
+        let tile_conf = me_pipeline("tile_conf");
+        let trust = me_pipeline("trust");
         let interp = fullscreen_pipeline(
             device,
             "frameconv interp",
@@ -256,6 +275,8 @@ impl Pipelines {
         Self {
             tile_cost,
             tile_pick,
+            tile_conf,
+            trust,
             me_layout,
             interp,
             #[cfg(test)]
@@ -298,6 +319,9 @@ pub struct Converter {
     /// The pair the vectors were estimated for.
     estimated: Option<(usize, usize)>,
     tiles: (u32, u32),
+    vectors: wgpu::Buffer,
+    /// The vectors of the pair estimated before.
+    prev: wgpu::Buffer,
     me_params: wgpu::Buffer,
     interp_params: wgpu::Buffer,
     me_group: wgpu::BindGroup,
@@ -330,9 +354,22 @@ impl Converter {
             ..Default::default()
         });
         let tiles = (width.div_ceil(TILE.0), height.div_ceil(TILE.1));
+        let vectors_size = (tiles.0 * tiles.1) as u64 * 16;
         let vectors = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frameconv vectors"),
-            size: (tiles.0 * tiles.1) as u64 * 16,
+            size: vectors_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let prev = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frameconv prev vectors"),
+            size: vectors_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let conf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frameconv confidence"),
+            size: (4 + tiles.0 * tiles.1) as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -380,6 +417,8 @@ impl Converter {
                 vectors.as_entire_binding(),
                 me_params.as_entire_binding(),
                 costs.as_entire_binding(),
+                conf.as_entire_binding(),
+                prev.as_entire_binding(),
             ],
         );
         let interp_group = group(
@@ -389,6 +428,7 @@ impl Converter {
                 wgpu::BindingResource::TextureView(&ring_view),
                 vectors.as_entire_binding(),
                 interp_params.as_entire_binding(),
+                conf.as_entire_binding(),
             ],
         );
         let resolve_group = group(
@@ -404,6 +444,8 @@ impl Converter {
             next_layer: 0,
             estimated: None,
             tiles,
+            vectors,
+            prev,
             me_params,
             interp_params,
             me_group,
@@ -523,6 +565,7 @@ impl Converter {
                 tiles_y: self.tiles.1,
             };
             queue.write_buffer(&self.me_params, 0, bytemuck::bytes_of(&params));
+            encoder.copy_buffer_to_buffer(&self.vectors, 0, &self.prev, 0, None);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("frameconv me"),
                 timestamp_writes: None,
@@ -532,6 +575,10 @@ impl Converter {
             pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
             pass.set_pipeline(&pipelines.tile_pick);
             pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
+            pass.set_pipeline(&pipelines.tile_conf);
+            pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
+            pass.set_pipeline(&pipelines.trust);
+            pass.dispatch_workgroups(1, 1, 1);
         }
 
         let params = InterpParams {

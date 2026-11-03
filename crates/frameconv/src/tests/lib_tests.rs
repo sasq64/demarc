@@ -8,7 +8,7 @@ const RECT_SIZE: (i32, i32) = (40, 30);
 
 /// The pixel the debug pipeline writes for the fallback path.
 const FALLBACK: u32 = 0xff00_0003;
-const PATHS: [&str; 4] = ["static", "motion", "occlusion", "fallback"];
+const PATHS: [&str; 5] = ["static", "motion", "occlusion", "fallback", "doubt"];
 
 struct Gpu {
     device: wgpu::Device,
@@ -594,4 +594,26 @@ fn vertical_text_is_exact_away_from_the_edges() {
     for speed in 1..=4 {
         assert_eq!(vertical_text(&gpu, speed), 0);
     }
+}
+
+#[test]
+fn a_cut_shows_the_nearest_frame_and_trust_recovers() {
+    let Some(gpu) = gpu() else { return };
+    let mut conv = Converter::new(&gpu.device, &gpu.pipelines, W, H);
+    let before: Pixels = Arc::new(noise());
+    let after: Pixels = Arc::new(noise().iter().map(|p| p ^ 0x005a_5a5a).collect());
+    assert!(gpu.render(&mut conv, &before, &after, 2) == scale(&before));
+    assert!(gpu.render(&mut conv, &before, &after, 4) == scale(&after));
+
+    let scene = directions(&noise(), 1).remove(0);
+    let background = scale(&scene.bg);
+    // Source pairs and phases that land on whole display frames.
+    let exact: Vec<bool> = [(1, 4), (2, 3), (3, 2), (4, 1), (6, 4)]
+        .into_iter()
+        .map(|(a, n)| {
+            let got = gpu.render(&mut conv, &scene.source(a), &scene.source(a + 1), n);
+            got == scene.expected(&background, (6 * a + n as u64) / 5)
+        })
+        .collect();
+    assert_eq!(exact, [false, false, false, true, true]);
 }
