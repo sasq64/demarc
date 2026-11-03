@@ -16,6 +16,9 @@ use crate::backend::{Backend, VideoFrame};
 
 const SAMPLE_RATE: u32 = 48000;
 
+/// Codecs worth decoding on the GPU; NVDEC gets MPEG-4 ASP wrong.
+const HWACCEL_CODECS: &[&str] = &["h264", "hevc", "vp9", "av1"];
+
 /// Bytes of audio read from the pipe at a time.
 const AUDIO_CHUNK: usize = 4096;
 
@@ -41,6 +44,7 @@ pub struct VideoInfo {
     pub fps: f64,
     /// Pixel aspect ratio.
     pub sar: f64,
+    pub codec: String,
 }
 
 /// `30000/1001` or `16:9` as a number; `None` for `0/0`, `N/A` and the like.
@@ -72,6 +76,7 @@ pub fn parse_probe(text: &str) -> Result<VideoInfo> {
             .get("sample_aspect_ratio")
             .and_then(|v| parse_ratio(v))
             .unwrap_or(1.0),
+        codec: fields.get("codec_name").map_or("", |v| v.trim()).to_owned(),
     })
 }
 
@@ -145,7 +150,7 @@ impl FfmpegEmu {
         let info = parse_probe(&ffprobe(
             path,
             "v:0",
-            "width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio",
+            "codec_name,width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio",
         )?)?;
         let has_audio = !ffprobe(path, "a:0", "index")?.trim().is_empty();
         let decoders = Self::start(path, &info, has_audio)?;
@@ -163,9 +168,14 @@ impl FfmpegEmu {
     }
 
     fn start(path: &Path, info: &VideoInfo, has_audio: bool) -> Result<Decoders> {
+        let hwaccel: &[&str] = if HWACCEL_CODECS.contains(&info.codec.as_str()) {
+            &["-hwaccel", "auto"]
+        } else {
+            &[]
+        };
         let (video_child, mut stdout) = spawn_ffmpeg(
             path,
-            &["-hwaccel", "auto"],
+            hwaccel,
             &["-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "rgba"],
         )?;
         let mut children = vec![video_child];

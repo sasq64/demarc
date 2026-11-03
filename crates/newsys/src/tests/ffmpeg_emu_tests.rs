@@ -5,12 +5,13 @@ use super::*;
 #[test]
 fn probe_output_is_parsed() {
     let info = parse_probe(
-        "width=720\nheight=576\nsample_aspect_ratio=16:15\navg_frame_rate=0/0\nr_frame_rate=30000/1001\n",
+        "codec_name=mpeg4\nwidth=720\nheight=576\nsample_aspect_ratio=16:15\navg_frame_rate=0/0\nr_frame_rate=30000/1001\n",
     )
     .unwrap();
     assert_eq!((info.width, info.height), (720, 576));
     assert!((info.fps - 29.97).abs() < 0.01);
     assert!((info.sar - 16.0 / 15.0).abs() < 1e-9);
+    assert_eq!(info.codec, "mpeg4");
 
     let info = parse_probe("width=64\nheight=48\nsample_aspect_ratio=N/A\n").unwrap();
     assert_eq!(info.fps, 25.0);
