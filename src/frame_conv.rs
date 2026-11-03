@@ -90,7 +90,7 @@ struct RifeState {
 impl RifeState {
     fn start() -> Self {
         Self {
-            worker: Worker::start(2, || Rife::load(&rife_model()?)),
+            worker: Worker::start(|| Rife::load(&rife_model()?)),
             status: Status::Loading,
         }
     }
@@ -146,10 +146,11 @@ fn convert_frames(
         .flatten();
     if let Some(rife) = &mut rife {
         let ahead = pairs.ahead.iter().filter(|(_, a, b, _)| convertible(a, b));
-        rife.keep(ahead.clone().map(|(id, a, b, phases)| {
-            let from = phases.first().copied().unwrap_or(f32::INFINITY);
-            (*id, &a.pixels, &b.pixels, from)
-        }));
+        rife.keep(
+            ahead
+                .clone()
+                .map(|(id, a, b, _)| (*id, &a.pixels, &b.pixels)),
+        );
         for (id, a, b, phases) in ahead {
             let phases: Vec<f32> = phases.iter().copied().filter(|&t| t > 0.0).collect();
             let size = (a.width as u32, a.height as u32);
