@@ -13,9 +13,8 @@
 // otherwise pick a multiple of the true speed. The tile's vector for the previous
 // pair gets a small bonus, so ambiguous tiles keep their vector over time.
 //
-// tile_conf counts the changed pixels the vectors around a tile explain, and trust
-// turns the frame's share of them into a trust that drops at once and recovers
-// over a few pairs.
+// tile_conf counts the changed pixels the vectors around a tile explain, and turns
+// their share into the tile's doubt, which rises at once and falls over a few pairs.
 
 const R: i32 = 4;
 const NC: u32 = 17u;
@@ -24,8 +23,7 @@ struct MeP { la: u32, lb: u32, tiles_x: u32, tiles_y: u32 };
 @group(0) @binding(1) var<storage, read_write> vecs: array<vec4<i32>>; // (v, rigid, _)
 @group(0) @binding(2) var<uniform> me: MeP;
 @group(0) @binding(3) var<storage, read_write> costs: array<u32>;
-// (explained, changed, doubt, _), then per tile changed | explained << 16
-@group(0) @binding(4) var<storage, read_write> conf: array<atomic<u32>>;
+@group(0) @binding(4) var<storage, read_write> doubts: array<u32>; // 256ths, per tile
 @group(0) @binding(5) var<storage, read> prev: array<vec4<i32>>;
 var<workgroup> cost: array<atomic<u32>, 17>;
 var<workgroup> whole: array<atomic<u32>, 17>;
@@ -185,23 +183,14 @@ fn tile_conf(@builtin(global_invocation_id) gid: vec3<u32>,
     if (li == 0u) {
         let c = atomicLoad(&changed);
         let e = atomicLoad(&explained);
-        atomicStore(&conf[4u + wg.y * me.tiles_x + wg.x], c | (e << 16u));
-        atomicAdd(&conf[0], e);
-        atomicAdd(&conf[1], c);
+        // None from 80% explained, full below 50%.
+        var target_doubt = 0u;
+        if (c >= 16u) {
+            let r = i32(e * 256u / c);
+            target_doubt = 256u - u32(clamp((r - 128) * 256 / (205 - 128), 0, 256));
+        }
+        let i = wg.y * me.tiles_x + wg.x;
+        let doubt = doubts[i];
+        doubts[i] = max(target_doubt, doubt - min(doubt, 64u));
     }
-}
-// Trust, in 256ths, is full from 90% explained and none below 60%.
-@compute @workgroup_size(1)
-fn trust() {
-    let e = atomicLoad(&conf[0]);
-    let c = atomicLoad(&conf[1]);
-    atomicStore(&conf[0], 0u);
-    atomicStore(&conf[1], 0u);
-    var target_doubt = 0u;
-    if (c >= 64u) {
-        let r = i32(e * 256u / c);
-        target_doubt = 256u - u32(clamp((r - 154) * 256 / (230 - 154), 0, 256));
-    }
-    let doubt = atomicLoad(&conf[2]);
-    atomicStore(&conf[2], max(target_doubt, doubt - min(doubt, 64u)));
 }

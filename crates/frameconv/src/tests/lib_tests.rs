@@ -617,3 +617,26 @@ fn a_cut_shows_the_nearest_frame_and_trust_recovers() {
         .collect();
     assert_eq!(exact, [false, false, false, true, true]);
 }
+
+#[test]
+fn unexplained_changes_leave_motion_elsewhere_exact() {
+    let Some(gpu) = gpu() else { return };
+    let mut conv = Converter::new(&gpu.device, &gpu.pipelines, W, H);
+    let scene = directions(&uniform(), 1).remove(0);
+    let half = (W * H / 2) as usize;
+    let source = |f: u64| -> Pixels {
+        let mut pixels = (*scene.source(f)).clone();
+        let key = (f as u32).wrapping_mul(0x0103_0507) & 0x00ff_ffff;
+        for (p, n) in pixels[half..].iter_mut().zip(&noise()[half..]) {
+            *p = n ^ key;
+        }
+        Arc::new(pixels)
+    };
+    let background = scale(&scene.bg);
+    let rows = 100 * (W * SCALE * SCALE) as usize;
+    for (a, n) in [(1, 4), (2, 3), (3, 2), (4, 1), (6, 4)] {
+        let got = gpu.render(&mut conv, &source(a), &source(a + 1), n);
+        let want = scene.expected(&background, (6 * a + n as u64) / 5);
+        assert!(got[..rows] == want[..rows], "pair {a} phase {n}");
+    }
+}

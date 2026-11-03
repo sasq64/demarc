@@ -77,7 +77,6 @@ pub struct Pipelines {
     tile_cost: wgpu::ComputePipeline,
     tile_pick: wgpu::ComputePipeline,
     tile_conf: wgpu::ComputePipeline,
-    trust: wgpu::ComputePipeline,
     me_layout: wgpu::BindGroupLayout,
     interp: wgpu::RenderPipeline,
     #[cfg(test)]
@@ -246,7 +245,6 @@ impl Pipelines {
         let tile_cost = me_pipeline("tile_cost");
         let tile_pick = me_pipeline("tile_pick");
         let tile_conf = me_pipeline("tile_conf");
-        let trust = me_pipeline("trust");
         let interp = fullscreen_pipeline(
             device,
             "frameconv interp",
@@ -276,7 +274,6 @@ impl Pipelines {
             tile_cost,
             tile_pick,
             tile_conf,
-            trust,
             me_layout,
             interp,
             #[cfg(test)]
@@ -367,9 +364,9 @@ impl Converter {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let conf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frameconv confidence"),
-            size: (4 + tiles.0 * tiles.1) as u64 * 4,
+        let doubts = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frameconv doubts"),
+            size: (tiles.0 * tiles.1) as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -417,7 +414,7 @@ impl Converter {
                 vectors.as_entire_binding(),
                 me_params.as_entire_binding(),
                 costs.as_entire_binding(),
-                conf.as_entire_binding(),
+                doubts.as_entire_binding(),
                 prev.as_entire_binding(),
             ],
         );
@@ -428,7 +425,7 @@ impl Converter {
                 wgpu::BindingResource::TextureView(&ring_view),
                 vectors.as_entire_binding(),
                 interp_params.as_entire_binding(),
-                conf.as_entire_binding(),
+                doubts.as_entire_binding(),
             ],
         );
         let resolve_group = group(
@@ -577,8 +574,6 @@ impl Converter {
             pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
             pass.set_pipeline(&pipelines.tile_conf);
             pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
-            pass.set_pipeline(&pipelines.trust);
-            pass.dispatch_workgroups(1, 1, 1);
         }
 
         let params = InterpParams {
