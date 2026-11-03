@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use crate::{fetch, newsys};
+use crate::{fetch, ffmpeg_emu, newsys};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -43,7 +43,6 @@ impl Line {
         }
     }
 
-    #[cfg(target_os = "linux")]
     fn fix(mut self, fix: impl Into<String>) -> Self {
         self.fix = Some(fix.into());
         self
@@ -133,11 +132,32 @@ fn cache_lines() -> Vec<Line> {
     ]
 }
 
+fn ffmpeg_line() -> Line {
+    if ffmpeg_emu::is_available() {
+        Line::new(Status::Ok, "ffmpeg", "ffmpeg and ffprobe run")
+    } else {
+        Line::new(Status::Warn, "ffmpeg", "not on PATH: video files cannot play")
+            .fix("Install ffmpeg")
+    }
+}
+
+fn rife_line() -> Line {
+    match rife::lib_candidates().into_iter().find(|path| path.is_file()) {
+        Some(path) => Line::new(Status::Ok, "RIFE", path.display().to_string()),
+        None => Line::new(
+            Status::Info,
+            "RIFE",
+            format!("no {}: --frame-convert=rife is unavailable", rife::LIB_NAME),
+        ),
+    }
+}
+
 /// Run every check. Takes a moment: it starts a test sandbox and a few tools.
 pub fn check() -> Report {
     let mut sections = vec![];
     #[cfg(target_os = "linux")]
     sections.extend(linux::sections());
+    sections.push(("Video".to_string(), vec![ffmpeg_line(), rife_line()]));
     let cache = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
     sections.push((
         format!("Caches ({})", cache.join("demarc").display()),

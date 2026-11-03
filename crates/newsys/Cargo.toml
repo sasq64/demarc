@@ -8,6 +8,8 @@ description = "Figures out which machine a demoscene release belongs to, and get
 [dependencies]
 # `System::create` hands back one of these, built on the libretro layer.
 retro-core = { path = "../retro-core" }
+# `--check` looks for its library.
+rife = { path = "../rife" }
 
 anyhow.workspace = true
 dirs.workspace = true
