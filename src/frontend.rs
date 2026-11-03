@@ -12,7 +12,7 @@ use bevy::{
 };
 
 use crate::backend::{VideoFrame, ViewFocus};
-use crate::config::{AppSettings, Args, FrameConvMethod, Latency, RenderSettings};
+use crate::config::{AppSettings, Args, FrameConvMethod, LatencySetting, RenderSettings};
 use crate::emulator::{Emulator, FrameConvert};
 use crate::frame_conv::FrameConvPlugin;
 use crate::frame_upload::FrameUploadPlugin;
@@ -563,10 +563,10 @@ pub(crate) fn run_frontend(
         }
         // RIFE gets as far ahead as the sound is, so it needs a deep audio buffer.
         let latency = match settings.frame_convert {
-            Some(FrameConvMethod::Rife) => Latency::MotionCompensation,
-            _ => settings.latency,
+            Some(FrameConvMethod::Rife) => LatencySetting::MOTION_COMPENSATION,
+            _ => settings.latency.setting(),
         };
-        emu.set_latency(latency.setting());
+        emu.set_latency(latency);
         emu.frame_convert = match (settings.frame_convert.is_some(), headless.is_some()) {
             (false, _) => FrameConvert::Off,
             (true, false) => FrameConvert::Matching,

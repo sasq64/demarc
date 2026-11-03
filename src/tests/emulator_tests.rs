@@ -736,3 +736,25 @@ fn cover_art_crops_the_middle_square_at_full_height() {
     assert!(cover.get_pixel(100, 100)[0] > 200);
     assert!(cover.get_pixel(5, 100)[2] < 100);
 }
+
+#[test]
+fn a_conversion_holds_its_source_frame_while_the_queue_is_short() {
+    let core = FakeBackend::default();
+    let mut emu = emulator(&core);
+    emu.frame_convert = FrameConvert::Always;
+    emu.latency.video_delay = 6;
+    let mut time = Time::default();
+    for _ in 0..30 {
+        converted_tick(&core, &mut emu, &mut time, true);
+    }
+    let front = |emu: &Emulator| Arc::as_ptr(&emu.conversion_pair().unwrap().0.pixels);
+    let mut fronts = vec![front(&emu)];
+    for _ in 0..30 {
+        converted_tick(&core, &mut emu, &mut time, false);
+        fronts.push(front(&emu));
+    }
+    fronts.dedup();
+    // Eight frames queued, and a move needs seven: two moves, where running
+    // the queue down to two frames would have made six.
+    assert_eq!(fronts.len(), 3, "{} source frames shown", fronts.len());
+}

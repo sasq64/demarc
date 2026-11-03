@@ -149,7 +149,7 @@ fn convert_frames(
         rife.keep(
             ahead
                 .clone()
-                .map(|(id, a, b, _)| (*id, &a.pixels, &b.pixels)),
+                .map(|(id, a, b, phases)| (*id, &a.pixels, &b.pixels, phases.as_slice())),
         );
         for (id, a, b, phases) in ahead {
             let phases: Vec<f32> = phases.iter().copied().filter(|&t| t > 0.0).collect();

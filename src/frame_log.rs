@@ -20,11 +20,13 @@ pub struct FrameStats {
     pub buf_max: usize,
     pub fps: f64,
     pub cpu: f32,
+    /// Seconds the picture is behind the sound while converting, else NaN.
+    pub av_offset: f64,
 }
 
 pub fn open(path: &Path) -> std::io::Result<()> {
     let mut file = LineWriter::new(File::create(path)?);
-    writeln!(file, "time,emu,delta,fill,queued,buf_min,buf_max,fps,cpu")?;
+    writeln!(file, "time,emu,delta,fill,queued,buf_min,buf_max,fps,cpu,av_offset")?;
     *LOG.lock().unwrap() = Some(file);
     Ok(())
 }
@@ -38,8 +40,8 @@ pub fn log(s: &FrameStats) {
     if let Some(file) = LOG.lock().unwrap().as_mut() {
         let _ = writeln!(
             file,
-            "{:.6},{},{:.6},{},{},{},{},{:.4},{:.4}",
-            s.time, s.emu, s.delta, s.fill, s.queued, s.buf_min, s.buf_max, s.fps, s.cpu
+            "{:.6},{},{:.6},{},{},{},{},{:.4},{:.4},{:.4}",
+            s.time, s.emu, s.delta, s.fill, s.queued, s.buf_min, s.buf_max, s.fps, s.cpu, s.av_offset
         );
     }
 }

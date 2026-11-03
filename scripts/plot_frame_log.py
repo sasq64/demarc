@@ -5,10 +5,11 @@
     scripts/plot_frame_log.py frames.csv            # window
     scripts/plot_frame_log.py frames.csv -o out.png # file
 
-Four stacked plots share the time axis: the audio ring fill against the
+Stacked plots share the time axis: the audio ring fill against the
 audio_buf_min/max window, the frame delta against the core's reported frame
-time, the number of finished frames waiting in the core's update channel, and
-how busy the core's worker thread was.
+time, the number of finished frames waiting in the core's update channel, how
+busy the core's worker thread was, and, while frame converting, how far the
+picture is behind the sound.
 
 Needs matplotlib:  python3 -m venv .venv && .venv/bin/pip install matplotlib
 """
@@ -31,6 +32,7 @@ DELTA = "#eb6834"
 QUEUED = "#1baf7a"
 CPU = "#4a3aa7"
 LIMIT = "#52514e"
+OFFSET = "#c2185b"
 
 
 def read(path):
@@ -64,8 +66,8 @@ def main():
             sys.exit(f"no emu {args.emu} in {args.csv}; have {sorted(emus)}")
         emus = {args.emu: emus[args.emu]}
 
-    fig, (ax_fill, ax_delta, ax_queue, ax_cpu) = plt.subplots(4, sharex=True, figsize=(14, 11),
-                                                              height_ratios=(3, 2, 1, 1.5))
+    fig, (ax_fill, ax_delta, ax_queue, ax_cpu, ax_av) = plt.subplots(
+        5, sharex=True, figsize=(14, 13), height_ratios=(3, 2, 1, 1.5, 1.5))
     for emu, c in emus.items():
         tag = f" (emu {emu})" if len(emus) > 1 else ""
         t = c["time"]
@@ -84,6 +86,9 @@ def main():
         if "cpu" in c:
             ax_cpu.plot(t, [v * 100.0 for v in c["cpu"]], color=CPU, lw=1, label="worker busy" + tag)
 
+        if "av_offset" in c:
+            ax_av.plot(t, [v * 1000.0 for v in c["av_offset"]], color=OFFSET, lw=1, label="picture behind sound" + tag)
+
         fps = sorted(set(round(f, 3) for f in c["fps"] if f > 0))
         print(f"emu {emu}: {len(t)} frames, reported fps {', '.join(map(str, fps)) or 'none'}")
 
@@ -93,10 +98,12 @@ def main():
     ax_queue.yaxis.get_major_locator().set_params(integer=True)
     ax_cpu.set_ylabel("core cpu (%)")
     ax_cpu.set_ylim(0, 105)
-    ax_cpu.set_xlabel("seconds")
-    for ax in (ax_fill, ax_delta, ax_queue, ax_cpu):
+    ax_av.set_ylabel("A/V offset (ms)")
+    ax_av.axhline(0, color=LIMIT, lw=1)
+    ax_av.set_xlabel("seconds")
+    for ax in (ax_fill, ax_delta, ax_queue, ax_cpu, ax_av):
         ax.grid(alpha=0.3)
-        if ax is not ax_cpu:
+        if ax not in (ax_cpu, ax_av):
             ax.set_ylim(bottom=0)
         ax.legend(loc="upper right", fontsize="small", ncols=2)
     fig.tight_layout()

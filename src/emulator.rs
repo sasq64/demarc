@@ -111,6 +111,9 @@ pub struct Conversion {
     /// Display frames shown while converting, and the seconds they took.
     displayed: u64,
     secs: f64,
+    /// Frames pulled from the core, and which pull each queued frame was.
+    pulled: u64,
+    pulls: VecDeque<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -896,6 +899,13 @@ impl Emulator {
             self.audio_rate_adjust *= conversion.audio_ratio(fps);
         }
 
+        let rate = self.sink.sample_rate() as f64;
+        let av_offset = match &self.conversion {
+            Some(c) if converting && rate > 0.0 => {
+                c.av_offset(occupied_len as f64 / (2.0 * rate), core.queued_frames(), fps)
+            }
+            _ => f64::NAN,
+        };
         crate::frame_log::log(&crate::frame_log::FrameStats {
             emu: self.log_id,
             time: time.elapsed_secs_f64(),
@@ -906,6 +916,7 @@ impl Emulator {
             buf_max: self.latency.audio_buf_max,
             fps,
             cpu: core.cpu_load(),
+            av_offset,
         });
 
         trace!("DELTA {delta} vs {}", self.display_fps,);
@@ -987,9 +998,20 @@ impl Conversion {
         (fps / shown).clamp(0.97, 1.03)
     }
 
+    /// Seconds the picture is behind the sound: `buffered` seconds of sound are
+    /// still to play, and `in_flight` frames' sound was pushed ahead of them.
+    fn av_offset(&self, buffered: f64, in_flight: usize, fps: f64) -> f64 {
+        let Some(&front) = self.pulls.front() else {
+            return f64::NAN;
+        };
+        let heard = (self.pulled + in_flight as u64) as f64 - buffered * fps;
+        (heard - front as f64 - self.phase as f64) / fps
+    }
+
     /// One display frame: fetch a source frame into `queue` if `pull` and it
     /// holds less than `depth`, then move on along the cadence. With too few
-    /// frames to do that, this display frame repeats the last one. Frames past
+    /// frames to do that, or to move on to the next source frame without getting
+    /// ahead of the sound, this display frame repeats the last one. Frames past
     /// one over `depth`, as an `extra` one for a low audio ring, are skipped.
     fn step(
         &mut self,
@@ -1002,24 +1024,31 @@ impl Conversion {
         let mut result = true;
         let pulls = (pull && queue.len() < depth) as usize + extra as usize;
         for _ in 0..pulls {
-            result &= core.run();
+            let ran = core.run();
+            result &= ran;
             let frame = core.frame();
             if queue.back().is_none_or(|last| !Arc::ptr_eq(&last.pixels, &frame.pixels)) {
                 queue.push_back(frame);
+                self.pulls.push_back(self.pulled);
             }
+            self.pulled += ran as u64;
         }
         while queue.len() > depth + 1 {
             debug!("frameconv: dropped a source frame (extra {extra})");
             queue.pop_front();
+            self.pulls.pop_front();
         }
         let (source, phase) = self.cadence.peek();
         let advance = source != self.source;
-        if queue.len() >= 2 + advance as usize {
+        // Moving on with a short queue would show the picture ahead of the sound.
+        let needed = if advance { depth.saturating_sub(1).max(3) } else { 2 };
+        if queue.len() >= needed {
             self.cadence.next();
             self.source = source;
             self.phase = phase;
             if advance {
                 queue.pop_front();
+                self.pulls.pop_front();
             }
         } else {
             debug!("frameconv: repeated a display frame (pull {pull}, {} queued)", queue.len());

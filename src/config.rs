@@ -510,9 +510,6 @@ pub enum Latency {
     #[default]
     Medium,
     High,
-    /// Deep buffers that give `--frame-convert=rife` time to work ahead.
-    #[value(skip)]
-    MotionCompensation,
 }
 
 /// What a [`Latency`] level stands for.
@@ -535,7 +532,6 @@ impl Latency {
             Latency::Low => (1, 0, 2000, 12000),
             Latency::Medium => (2, 6, 3000, 18000),
             Latency::High => (4, 16, 5400, 20000),
-            Latency::MotionCompensation => (4, 27, 38400, 76800),
         };
         LatencySetting {
             latency,
@@ -544,6 +540,16 @@ impl Latency {
             audio_buf_max,
         }
     }
+}
+
+impl LatencySetting {
+    /// Deep buffers that give `--frame-convert=rife` time to work ahead.
+    pub const MOTION_COMPENSATION: Self = Self {
+        latency: 4,
+        video_delay: 27,
+        audio_buf_min: 38400,
+        audio_buf_max: 76800,
+    };
 }
 
 impl Default for LatencySetting {

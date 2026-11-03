@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread::JoinHandle;
 
 use crate::Rife;
 
@@ -18,6 +19,9 @@ pub enum Status {
 /// A pair of frames of one view, by the addresses the `Arc`s keep alive.
 type Pair<K> = (K, usize, usize);
 
+/// One frame to make: a pair and the phase between them, as `f32` bits.
+type Key<K> = (Pair<K>, u32);
+
 struct Job<K> {
     view: K,
     a: Frame,
@@ -29,14 +33,16 @@ struct Job<K> {
 struct State<K> {
     status: Status,
     error: Option<String>,
-    wanted: HashSet<Pair<K>>,
-    done: HashMap<(Pair<K>, u32), (Frame, Frame, Frame)>,
+    wanted: HashSet<Key<K>>,
+    done: HashMap<Key<K>, (Frame, Frame, Frame)>,
+    stop: bool,
 }
 
 pub struct Worker<K> {
-    jobs: mpsc::Sender<Job<K>>,
+    jobs: Option<mpsc::Sender<Job<K>>>,
     state: Arc<Mutex<State<K>>>,
-    requested: HashSet<(Pair<K>, u32)>,
+    requested: HashSet<Key<K>>,
+    thread: Option<JoinHandle<()>>,
 }
 
 fn pair<K>(view: K, a: &Frame, b: &Frame) -> Pair<K> {
@@ -52,9 +58,10 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
             error: None,
             wanted: HashSet::new(),
             done: HashMap::new(),
+            stop: false,
         }));
         let shared = Arc::clone(&state);
-        std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             let mut rife = match load() {
                 Ok(rife) => {
                     shared.lock().unwrap().status = Status::Ready;
@@ -69,9 +76,15 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
             };
             let mut out = Vec::new();
             for job in recv {
-                let key = pair(job.view, &job.a, &job.b);
-                if !shared.lock().unwrap().wanted.contains(&key) {
-                    continue;
+                let key = (pair(job.view, &job.a, &job.b), job.t.to_bits());
+                {
+                    let state = shared.lock().unwrap();
+                    if state.stop {
+                        return;
+                    }
+                    if !state.wanted.contains(&key) {
+                        continue;
+                    }
                 }
                 let (width, height) = job.size;
                 if let Err(err) = rife.interpolate(&job.a, &job.b, width, height, job.t, &mut out) {
@@ -83,16 +96,15 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
                 let mut state = shared.lock().unwrap();
                 if state.wanted.contains(&key) {
                     let frame = Arc::new(std::mem::take(&mut out));
-                    state
-                        .done
-                        .insert((key, job.t.to_bits()), (job.a, job.b, frame));
+                    state.done.insert(key, (job.a, job.b, frame));
                 }
             }
         });
         Self {
-            jobs,
+            jobs: Some(jobs),
             state,
             requested: HashSet::new(),
+            thread: Some(thread),
         }
     }
 
@@ -102,20 +114,27 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
         (state.status, state.error.clone())
     }
 
-    /// Forget every pair but `pairs`, which are the ones still to be shown.
-    pub fn keep<'a>(&mut self, pairs: impl IntoIterator<Item = (K, &'a Frame, &'a Frame)>) {
+    /// Forget every frame but those at `phases` of each pair, which are the ones
+    /// still to be shown.
+    pub fn keep<'a>(
+        &mut self,
+        pairs: impl IntoIterator<Item = (K, &'a Frame, &'a Frame, &'a [f32])>,
+    ) {
         let wanted: HashSet<_> = pairs
             .into_iter()
-            .map(|(view, a, b)| pair(view, a, b))
+            .flat_map(|(view, a, b, phases)| {
+                let key = pair(view, a, b);
+                phases.iter().map(move |t| (key, t.to_bits()))
+            })
             .collect();
-        self.requested.retain(|(key, _)| wanted.contains(key));
+        self.requested.retain(|key| wanted.contains(key));
         let mut state = self.state.lock().unwrap();
-        state.done.retain(|(key, _), _| wanted.contains(key));
+        state.done.retain(|key, _| wanted.contains(key));
         state.wanted = wanted;
     }
 
-    /// Ask for the frames at each of `phases` from `a` to `b`, in order. A pair
-    /// has to be kept by [`Self::keep`] for its frames to be made.
+    /// Ask for the frames at each of `phases` from `a` to `b`, in order. A frame
+    /// has to be kept by [`Self::keep`] to be made.
     pub fn request(&mut self, view: K, a: &Frame, b: &Frame, size: (u32, u32), phases: &[f32]) {
         for &t in phases {
             if self.requested.insert((pair(view, a, b), t.to_bits())) {
@@ -126,7 +145,9 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
                     size,
                     t,
                 };
-                let _ = self.jobs.send(job);
+                if let Some(jobs) = &self.jobs {
+                    let _ = jobs.send(job);
+                }
             }
         }
     }
@@ -136,5 +157,17 @@ impl<K: Copy + Eq + Hash + Send + 'static> Worker<K> {
         let state = self.state.lock().unwrap();
         let (_, _, frame) = state.done.get(&(pair(view, a, b), t.to_bits()))?;
         Some(Arc::clone(frame))
+    }
+}
+
+impl<K> Drop for Worker<K> {
+    /// Waits for the frame being made, so the thread is not in the GPU when the
+    /// process exits.
+    fn drop(&mut self) {
+        self.state.lock().unwrap().stop = true;
+        self.jobs = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }

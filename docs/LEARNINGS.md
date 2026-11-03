@@ -1077,3 +1077,14 @@
   Python model of `Conversion::step` with a draining ring showed the queue
   creeping from ~5 to `depth` (18) over a minute, putting the picture ~0.55 s
   behind the sound.
+
+- Sync while converting depends only on the queue length and the ring fill as
+  long as each queued frame came with its own sound, so gaps (dropped frames,
+  a worker's free-run) heal once they leave the queue. Before blaming one,
+  record `--frame-log` and read the `av_offset` column.
+
+- The phases in `RIFE frame at .. not ready` lines give away the cadence: they
+  step by source/display rate (25/144 = 0.1736), which tells which file and
+  display a pasted log came from. A frame log with the ring pinned at
+  `audio_buf_max` and `av_offset` falling meant the cadence was outrunning the
+  sound and nothing held the picture back until the queue was empty.
