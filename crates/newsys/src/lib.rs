@@ -13,6 +13,7 @@ pub mod cache;
 pub mod cbmconvert;
 pub mod degas;
 pub mod fetch;
+pub mod ffmpeg_emu;
 pub mod health;
 pub mod ilbm;
 pub mod image_emu;

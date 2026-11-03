@@ -24,6 +24,7 @@ use atari_st::AtariStSystem;
 use atari_xl::AtariXlSystem;
 use c64::C64System;
 use dos::DosSystem;
+use ffmpeg::FfmpegSystem;
 use gameboy::GameboySystem;
 use gba::GBASystem;
 use images::ImageSystem;
@@ -54,6 +55,7 @@ mod c64;
 mod disc;
 mod dms;
 mod dos;
+mod ffmpeg;
 mod gameboy;
 mod gba;
 mod images;
@@ -569,6 +571,7 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
+            Box::new(FfmpegSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),
             Box::new(WebSystem {}),

@@ -1058,3 +1058,11 @@
 
 - Don't run `cargo fmt`: the tree is not rustfmt-clean (lines run past 100),
   so it rewrites dozens of unrelated files.
+
+- Judge ffmpeg decode cost paced (`-readrate 1`) on a high-bitrate clip, not
+  flat-out on `testsrc2`: flat-out runs inflate thread overhead, and testsrc2 is
+  so cheap to decode that `-hwaccel` looked like a loss (the VRAM download costs
+  more than the decode), while on a ~250 Mbit/s clip it cut CPU from ~3 cores
+  to ~1. Mesa's VA-API `scale_vaapi` ignores colour tags (untagged BT.601 came
+  out as BT.709, a tagged clip came out limited range), so keep the RGBA
+  conversion in ffmpeg's software scaler.

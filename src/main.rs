@@ -21,7 +21,7 @@ pub use ::newsys::wine;
 #[cfg(target_os = "linux")]
 pub use ::newsys::wine_sandbox;
 pub use ::newsys::{
-    cache, cbmconvert, degas, fetch, health, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
+    cache, cbmconvert, degas, fetch, ffmpeg_emu, health, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
     system_dir, tiff_pal, utils, workfile, zx_scr,
 };
 
