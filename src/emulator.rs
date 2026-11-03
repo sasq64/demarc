@@ -107,6 +107,9 @@ pub struct Conversion {
     source: u64,
     /// Sixths of the way from the queue's front to the frame behind it.
     phase: u32,
+    /// Display frames shown while converting, and the seconds they took.
+    displayed: u64,
+    secs: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -852,6 +855,11 @@ impl Emulator {
             self.audio_fill * 0.95 + occupied_len as f64 * 0.05
         };
         self.audio_rate_adjust = rate_adjust(self.audio_fill, &self.latency);
+        if converting && let Some(conversion) = &mut self.conversion {
+            conversion.displayed += 1;
+            conversion.secs += delta;
+            self.audio_rate_adjust *= conversion.audio_ratio(fps);
+        }
 
         crate::frame_log::log(&crate::frame_log::FrameStats {
             emu: self.log_id,
@@ -929,6 +937,16 @@ impl Emulator {
 }
 
 impl Conversion {
+    /// How much faster the core's sound has to play, for its frames being shown
+    /// at five per six display frames instead of at its own rate.
+    fn audio_ratio(&self, fps: f64) -> f64 {
+        if self.secs < 2.0 {
+            return 1.0;
+        }
+        let shown = self.displayed as f64 * 5.0 / 6.0 / self.secs;
+        (fps / shown).clamp(0.97, 1.03)
+    }
+
     /// One display frame: fetch a source frame into `queue` if `pull` and it
     /// holds less than `depth`, then move on along the cadence. With too few
     /// frames to do that, this display frame repeats the last one. An `extra`
@@ -951,6 +969,7 @@ impl Conversion {
             }
         }
         while queue.len() > depth {
+            debug!("frameconv: dropped a source frame (extra {extra})");
             queue.pop_front();
         }
         let (source, phase) = self.cadence.peek();
@@ -962,6 +981,8 @@ impl Conversion {
             if advance {
                 queue.pop_front();
             }
+        } else {
+            debug!("frameconv: repeated a display frame (pull {pull}, {} queued)", queue.len());
         }
         result
     }

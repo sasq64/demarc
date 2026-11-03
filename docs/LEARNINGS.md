@@ -1012,3 +1012,9 @@
   multiples (speed equal to the font's pixel scale was the worst case). And frame
   sides have to be left out of a text measure, since entering text is in only one
   of the two frames, which looks like an interpolation bug.
+
+- Judder under `--frame-convert` is more often pacing than motion estimation:
+  run with `RUST_LOG=demarc::emulator=debug` and look for `frameconv: dropped` /
+  `repeated` lines at the jumps before touching `crates/frameconv`. A core
+  that isn't exactly 50 Hz (C64 PAL is 50.1245) drains the audio ring faster than
+  the proportional `rate_adjust` can hold above `audio_buf_min`.
