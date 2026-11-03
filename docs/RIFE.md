@@ -17,7 +17,7 @@ just rife    # clones external/rife-ncnn-vulkan, builds target/rife/librife_dema
 `external/rife-demarc/` wraps the `RIFE` class in a C API (`rife_new`,
 `rife_process`, `rife_free`) that `crates/rife` loads with libloading. The
 library is looked for at `$DEMARC_RIFE`, beside the executable, then in
-`target/rife/`. Without it demarc warns and uses the simple method.
+`target/rife/`. Without it, or if RIFE cannot start, demarc exits with an error.
 
 The model (`rife-v4.6`) is downloaded on first use into
 `~/.cache/demarc/rife-v4.6`.
@@ -25,7 +25,7 @@ The model (`rife-v4.6`) is downloaded on first use into
 ## How it runs
 
 RIFE has its own Vulkan device and takes several milliseconds a frame, too long
-for the render thread. `rife::Worker` runs it on a thread of its own, and
+for the render thread. `rife::Worker` runs it on two threads of its own, and
 `src/frame_conv.rs` asks it for every phase of every source pair still in the
 emulator's frame queue (`Emulator::conversion_ahead`), so the frames are ready
 before they are shown. A frame that is not ready falls back to the simple method

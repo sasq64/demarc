@@ -735,5 +735,14 @@ fn main() {
     if !win && !headless {
         app.add_systems(PostStartup, enter_fullscreen);
     }
-    app.run();
+    if app.run().is_error() {
+        // Without atexit handlers: a shader chain still building on another
+        // thread would crash in glslang's freed statics.
+        #[cfg(unix)]
+        unsafe {
+            libc::_exit(1)
+        };
+        #[cfg(not(unix))]
+        std::process::exit(1);
+    }
 }

@@ -1032,3 +1032,11 @@
   faster than the core picked 50:51 on a 60 Hz screen: phases in 51sths, nearly
   every display frame needing RIFE, and audio drift dropping source frames. The
   latch now needs one whole rate for `CONVERT_LATCH` frames in a row.
+
+- Exiting the app early (an `AppExit::error()` in the first seconds) with
+  `std::process::exit` segfaults: librashader is still building shader chains
+  on rayon threads, and the atexit handlers free glslang's statics under them.
+  `main` uses `libc::_exit` for the error exit.
+
+- Don't run `cargo fmt`: the tree is not rustfmt-clean (lines run past 100),
+  so it rewrites dozens of unrelated files.

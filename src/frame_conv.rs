@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bevy::{
     prelude::*,
@@ -20,6 +20,10 @@ use crate::config::RenderSettings;
 use crate::emulator::Emulator;
 
 pub struct FrameConvPlugin;
+
+/// Why RIFE could not be used, handed from the render world to the main one.
+#[derive(Resource, Clone, Default)]
+struct RifeFailure(Arc<Mutex<Option<String>>>);
 
 /// The converted picture of each emulator that has one, by its source image.
 #[derive(Resource, Default)]
@@ -86,21 +90,19 @@ struct RifeState {
 impl RifeState {
     fn start() -> Self {
         Self {
-            worker: Worker::start(|| Rife::load(&rife_model()?)),
+            worker: Worker::start(2, || Rife::load(&rife_model()?)),
             status: Status::Loading,
         }
     }
 
-    fn ready(&mut self) -> Option<&mut Worker<AssetId<Image>>> {
+    fn ready(&mut self, failure: &RifeFailure) -> Option<&mut Worker<AssetId<Image>>> {
         let (status, error) = self.worker.status();
         if status != self.status {
             self.status = status;
             match status {
                 Status::Ready => info!("frameconv: interpolating with RIFE"),
-                _ => warn!(
-                    "frameconv: no RIFE, using simple motion: {}",
-                    error.unwrap_or_default()
-                ),
+                Status::Failed => *failure.0.lock().unwrap() = Some(error.unwrap_or_default()),
+                Status::Loading => {}
             }
         }
         (status == Status::Ready).then_some(&mut self.worker)
@@ -125,6 +127,7 @@ fn convert_frames(
     mut targets: ResMut<ConvTargets>,
     mut pipelines: Local<Option<Pipelines>>,
     mut rife: Local<Option<RifeState>>,
+    failure: Res<RifeFailure>,
 ) {
     let device = device.wgpu_device();
     let wanted = |id: &AssetId<Image>, size: (u32, u32)| {
@@ -139,15 +142,14 @@ fn convert_frames(
     let pipelines = pipelines.get_or_insert_with(|| Pipelines::new(device));
     let mut rife = pairs
         .rife
-        .then(|| rife.get_or_insert_with(RifeState::start).ready())
+        .then(|| rife.get_or_insert_with(RifeState::start).ready(&failure))
         .flatten();
     if let Some(rife) = &mut rife {
         let ahead = pairs.ahead.iter().filter(|(_, a, b, _)| convertible(a, b));
-        rife.keep(
-            ahead
-                .clone()
-                .map(|(id, a, b, _)| (*id, &a.pixels, &b.pixels)),
-        );
+        rife.keep(ahead.clone().map(|(id, a, b, phases)| {
+            let from = phases.first().copied().unwrap_or(f32::INFINITY);
+            (*id, &a.pixels, &b.pixels, from)
+        }));
         for (id, a, b, phases) in ahead {
             let phases: Vec<f32> = phases.iter().copied().filter(|&t| t > 0.0).collect();
             let size = (a.width as u32, a.height as u32);
@@ -183,12 +185,25 @@ fn convert_frames(
     queue.submit([encoder.finish()]);
 }
 
+fn exit_on_rife_failure(failure: Res<RifeFailure>, mut exit: MessageWriter<AppExit>) {
+    if let Some(error) = failure.0.lock().unwrap().take() {
+        crate::println(format!(
+            "** Error: --frame-convert=rife could not be used: {error}"
+        ));
+        exit.write(AppExit::error());
+    }
+}
+
 impl Plugin for FrameConvPlugin {
     fn build(&self, app: &mut App) {
+        let failure = RifeFailure::default();
+        app.insert_resource(failure.clone())
+            .add_systems(Update, exit_on_rife_failure);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
         render_app
+            .insert_resource(failure)
             .init_resource::<ConvTargets>()
             .init_resource::<ExtractedPairs>()
             .add_systems(ExtractSchedule, extract_pairs)
