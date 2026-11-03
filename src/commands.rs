@@ -570,6 +570,7 @@ pub(crate) fn handle_cmd(
                     location: HudLocation::TopLeft,
                 });
             }
+            Cmd::ToggleMotion if settings.frame_convert.is_none() => {}
             Cmd::ToggleMotion => {
                 render.no_motion = !render.no_motion;
                 writer.write(SetHudText {
