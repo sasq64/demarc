@@ -253,6 +253,51 @@ impl Navigator {
         Some(ids.into_iter().filter_map(|id| source.get_data(id)).collect())
     }
 
+    /// Every entry in every folder below the paths `pattern` matches. A `*` in
+    /// a path segment matches any text.
+    pub(crate) fn files_under(&self, pattern: &str) -> Vec<EmuFile> {
+        let mut files = vec![];
+        let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+        self.collect_files("", &segments, &mut files);
+        files
+    }
+
+    fn collect_files(&self, path: &str, pattern: &[&str], out: &mut Vec<EmuFile>) {
+        let join = |name: &str| {
+            if path.is_empty() {
+                name.to_string()
+            } else {
+                format!("{path}/{name}")
+            }
+        };
+        if let Some((first, rest)) = pattern.split_first()
+            && !first.contains('*')
+        {
+            return self.collect_files(&join(first), rest, out);
+        }
+        let source = if path.is_empty() {
+            Some(self.root_source())
+        } else {
+            self.source_for(path)
+        };
+        let Some(source) = source else { return };
+        let ids = source.search("", usize::MAX);
+        if pattern.is_empty() {
+            let files: Vec<_> = ids.iter().filter_map(|&id| source.get_data(id)).collect();
+            if !files.is_empty() {
+                out.extend(files);
+                return;
+            }
+        }
+        let (want, rest) = pattern.split_first().map_or(("*", &[][..]), |(w, r)| (*w, r));
+        for id in ids {
+            let name = source.get_text(id);
+            if source.get_data(id).is_none() && glob_match(want, &name) {
+                self.collect_files(&join(&name), rest, out);
+            }
+        }
+    }
+
     fn current_path(&self) -> &str {
         if self.pos < 0 {
             return "";
@@ -405,6 +450,25 @@ static CATS: [&str; 10] = [
     "Music",
     "Tracked Music",
 ];
+
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or("");
+    let Some(mut rest) = text.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    rest.ends_with(last)
+}
 
 /// Awards an entry won or was nominated for, each with the event it was given
 /// at. Awards are handed out the year after the release.
@@ -968,5 +1032,25 @@ mod test {
         );
         navigator.goto("Demozoo/Awards/The Meteoriks 2025/Best High-end demo");
         assert_eq!(navigator.get_showing(), vec!["C / I", "D / J", "B / H"]);
+
+        let ids = |pattern| -> Vec<&str> {
+            let files = navigator.files_under(pattern);
+            files.iter().map(|f| f.get_meta("id")).collect()
+        };
+        assert_eq!(ids("Demozoo/Awards/Scene.org *"), vec!["1", "1"]);
+        assert_eq!(ids("Demozoo/Awards/*2025"), vec!["3", "4", "2"]);
+        assert_eq!(ids("Demozoo/Awards/Scene.org 2008/Best direction"), vec!["1"]);
+        assert!(ids("Demozoo/Awards/Nope *").is_empty());
+    }
+
+    #[test]
+    fn glob() {
+        use super::glob_match;
+        assert!(glob_match("Scene.org *", "Scene.org 2010"));
+        assert!(!glob_match("Scene.org *", "The Meteoriks 2025"));
+        assert!(glob_match("*20*0", "Scene.org 2010"));
+        assert!(glob_match("*", ""));
+        assert!(!glob_match("a*b", "ab b c"));
+        assert!(glob_match("exact", "exact"));
     }
 }
