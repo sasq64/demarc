@@ -1837,3 +1837,46 @@ call overhead: ~110k immediate-mode calls a frame.
 
 [zoo.144]
 file = "tbl-tint-fixed.lha"
+
+# Fungi by Throb: a DOS port that reads the carry flag after GlobalAlloc as
+# the DPMI error flag.
+[zoo.50067]
+fix_info = '''
+A page fault at 0 in the precalc thread, only at some heap layouts (the
+1920x1080 session, not a desktop). The allocator ported from DPMI does a `jb`
+right after GlobalAlloc, and when wine returns with CF set it takes the error
+path, whose `ret` pops a saved register. The exe was unpacked with upx -d,
+the jb NOPed, and shipped as win/patches/fungi.bsdiff. wined3d's ddraw then
+drew the 320x200 frame unscaled in a corner; cnc-ddraw scales it.
+'''
+meta = { wine_cnc_ddraw = true }
+patch = {
+  info = "ignore CF after GlobalAlloc",
+  target = "FUNGI_F.EXE",
+  format = "bsdiff",
+  source = "win/patches/fungi.bsdiff",
+}
+
+# Population Zero by Värkki Tuotanto: crashes loading textures under DXVK.
+[zoo.68662]
+fix_info = '''
+A page fault in ntdll's heap during loading: right after KKUVIO2.dds the
+statically linked D3DX8 texture loader frees 0x60. Only under DXVK's d3d8;
+wined3d's loads every texture and the demo plays.
+'''
+meta = { wine_dll_overrides = "d3d8=b" }
+
+# Epic4KFail / cinderproject_1 by Ragebit: the blinnphong shader resource IDs
+# are swapped, so the vertex shader is compiled as the fragment shader.
+[zoo.127452]
+fix_info = '''
+Black with a few seconds of music, then a clean exit before the first frame.
++debugstr showed "Could not load & compile shader: FRAGMENT: error C5052:
+gl_Position is not accessible", and the app quits on that. The code loads
+blinnphong.fs.glsl as resource 143 and blinnphong.vs.glsl as 142, but 143
+holds the vertex shader. Two byte patches swap the IDs.
+'''
+patch = [
+  { info = "load blinnphong.fs.glsl from resource 142", target = "cinderproject_1.exe", offset = 594130, contents = "jg==" },
+  { info = "load blinnphong.vs.glsl from resource 143", target = "cinderproject_1.exe", offset = 594191, contents = "jw==" },
+]
