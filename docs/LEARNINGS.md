@@ -1145,3 +1145,13 @@
 - Overrides are keyed on the db entry: a demo launched from its zip path gets
   none of them. Test an override with `load_demo("demozoo.<id>")` in the
   script and no file argument.
+
+- Tannhäuser Gate (`zoo.80364`) worked on AMD but died on NVIDIA with a GLX
+  `BadMatch` in `X_GLXMakeContextCurrent`. The `aux=0` patch only drops the
+  aux buffer from the format; RenderTexture still calls
+  `wglBindTexImageARB(WGL_AUX0_ARB)`, which the opengl32 proxy passed on to
+  wine's internal-context copy. demarc's `+opengl` log was cut off before the
+  error; plain wine under headless gamescope with autodlg's `--launch` and
+  stderr to a file showed the last call. The prefix copy of a rebuilt proxy is
+  not refreshed by a demarc build: install it into `syswow64` (or rerun
+  `--setup-wine`).
