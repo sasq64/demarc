@@ -16,7 +16,6 @@ pub const WIDGET_WIDTH: f32 = 320.0;
 pub const ROW_SPACING: egui::Vec2 = egui::vec2(24.0, 12.0);
 /// Fraction of the screen height the field grid may take before it scrolls.
 pub const GRID_HEIGHT_FRACTION: f32 = 0.85;
-pub const DISABLED_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x80, 0x80);
 /// How much of the close button's side the painted cross spans.
 const CROSS_FRACTION: f32 = 0.45;
 

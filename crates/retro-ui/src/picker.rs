@@ -13,7 +13,7 @@ use egui::{
 };
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource, ListIcon};
-use crate::{MARGIN, TEXT_COLOR, panel_frame, take_key};
+use crate::{MARGIN, take_key, theme};
 
 pub type ListSource<T> = Arc<dyn FuzzySource<T>>;
 
@@ -42,17 +42,13 @@ const ICON_SIZE: f32 = ROW_SIZE;
 const ICON_GAP: f32 = 8.0;
 
 const TITLE_SIZE: f32 = 30.0;
-const TITLE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xee, 0xcc);
-const SELECTED_TITLE_BG: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x70, 0x50);
 
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
 /// the centred layout doesn't jump as the selection moves between items whose
 /// info differs in length.
 const INFO_LINES: f32 = 5.0;
-const INFO_COLOR: egui::Color32 = egui::Color32::from_rgb(0xaa, 0xff, 0xe7);
-const SELECTED_ROW_COLOR: egui::Color32 = egui::Color32::from_rgb(0x0, 0x0, 0x6c);
-/// How long [`SELECTED_ROW_COLOR`] takes to fade away once the selection has
+/// How long the selected row's highlight takes to fade away once the selection has
 /// left a row, so a row the user passed over dims out instead of blinking off.
 const FADE_SECS: f32 = 0.5;
 
@@ -133,7 +129,7 @@ fn draw_row(
             draw_list_icon(ui, &painter, icon_rect, icon);
         }
     }
-    painter.galley(text_rect.min, galley, TEXT_COLOR);
+    painter.galley(text_rect.min, galley, theme(ui.ctx()).text);
     for &(texture, offset) in images {
         let image_rect = egui::Rect::from_min_size(
             egui::pos2(text_rect.right() + offset, text_rect.top()),
@@ -397,6 +393,7 @@ impl<T: 'static> Picker<T> {
             self.list_info_item = info_item;
         }
 
+        let theme = theme(ctx);
         egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -404,7 +401,7 @@ impl<T: 'static> Picker<T> {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing.y = PANEL_GAP;
 
-                panel_frame().show(ui, |ui| {
+                theme.panel_frame().show(ui, |ui| {
                     let inner_width = ui.available_width();
                     ui.set_width(inner_width);
                     let (index, title) = &self.list_title;
@@ -413,7 +410,7 @@ impl<T: 'static> Picker<T> {
                             ui.add_space(10.0);
                             for (i, part) in title.iter().enumerate() {
                                 let bg = if (i as i32) == (*index + 1) {
-                                    SELECTED_TITLE_BG
+                                    theme.picker.title_selected_fill
                                 } else {
                                     egui::Color32::TRANSPARENT
                                 };
@@ -421,7 +418,7 @@ impl<T: 'static> Picker<T> {
                                     egui::RichText::new(part)
                                         .size(TITLE_SIZE)
                                         .background_color(bg)
-                                        .color(TITLE_COLOR),
+                                        .color(theme.picker.title),
                                 ));
                             }
                         });
@@ -438,7 +435,7 @@ impl<T: 'static> Picker<T> {
                             .margin(egui::Margin::ZERO)
                             .desired_width(inner_width)
                             .font(egui::FontId::proportional(QUERY_SIZE))
-                            .text_color(TEXT_COLOR),
+                            .text_color(theme.text),
                     );
                     if !response.has_focus() {
                         response.request_focus();
@@ -457,7 +454,7 @@ impl<T: 'static> Picker<T> {
                             0.0,
                             egui::TextFormat::simple(
                                 egui::FontId::proportional(ROW_SIZE),
-                                TEXT_COLOR,
+                                theme.text,
                             ),
                         );
                         let images = render(&mut job, source.as_ref(), id);
@@ -468,14 +465,14 @@ impl<T: 'static> Picker<T> {
 
                 // The info box stays hidden while there is nothing to say.
                 if !self.list_info.is_empty() {
-                    panel_frame().show(ui, |ui| {
+                    theme.panel_frame().show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(&self.list_info)
                                     .size(INFO_SIZE)
-                                    .color(INFO_COLOR),
+                                    .color(theme.picker.info),
                             )
                             .wrap(),
                         );
@@ -512,7 +509,9 @@ fn scroll_area<T>(
 ) -> ScrollAreaOutput<()> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
-    panel_frame()
+    let theme = theme(ui.ctx());
+    theme
+        .panel_frame()
         .show(ui, |ui| {
             // An anchored `Area` hands its content last frame's size as the
             // space available, so a scroll area that only caps its height
@@ -560,7 +559,7 @@ fn scroll_area<T>(
                         ui.painter().rect_filled(
                             rect,
                             egui::CornerRadius::ZERO,
-                            SELECTED_ROW_COLOR.linear_multiply(level),
+                            theme.picker.row_selected_fill.linear_multiply(level),
                         );
                     }
 

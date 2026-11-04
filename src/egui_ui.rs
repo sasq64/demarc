@@ -2,7 +2,6 @@
 //! and state, and turns what it returns back into messages.
 
 use bevy::{camera::visibility::RenderLayers, prelude::*};
-use bevy_egui::egui::Color32;
 use bevy_egui::{
     EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui,
 };
@@ -18,9 +17,6 @@ use resvg::tiny_skia;
 use resvg::usvg::{self, Tree};
 
 pub struct EguiUiPlugin;
-
-const GOLD_COLOR: egui::Color32 = egui::Color32::from_rgb(0x80, 0x60, 0x10);
-const SILVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0x60, 0x60, 0x80);
 
 static ICON_SVG: &[u8] = include_bytes!("../files/coupdecoeur.svg");
 static STAR_SVG: &[u8] = include_bytes!("../files/viewingtip.svg");
@@ -253,6 +249,7 @@ fn draw_picker(
     picker: &mut Picker<EmuFile>,
 ) -> Option<retro_ui::Picked<EmuFile>> {
     let (heart_id, star_id) = icons(ctx)?;
+    let colors = retro_ui::theme(ctx).picker.clone();
     picker.show(ctx, |job, source, id| {
         let mut cdc = 0;
         let mut vt = false;
@@ -284,7 +281,7 @@ fn draw_picker(
             job.append(
                 "\u{f409}",
                 10.0,
-                egui::TextFormat::simple(font.clone(), Color32::WHITE),
+                egui::TextFormat::simple(font.clone(), colors.cached),
             );
         }
 
@@ -292,14 +289,14 @@ fn draw_picker(
             job.append(
                 " \u{f4cf}",
                 0.0,
-                egui::TextFormat::simple(font.clone(), GOLD_COLOR),
+                egui::TextFormat::simple(font.clone(), colors.award_winner),
             );
         }
         for _ in 0..nominee {
             job.append(
                 " \u{f4cf}",
                 0.0,
-                egui::TextFormat::simple(font.clone(), SILVER_COLOR),
+                egui::TextFormat::simple(font.clone(), colors.award_nominee),
             );
         }
         let mut x = if winner > 0 || nominee > 0 {

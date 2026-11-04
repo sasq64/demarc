@@ -50,10 +50,10 @@ use regex::Regex;
 use tracing::warn;
 
 use crate::dialog::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
+    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
     TITLE_SIZE, WIDGET_WIDTH, close_button, draw_number, scale_widgets,
 };
-use crate::{panel_frame, take_key};
+use crate::{panel_frame, take_key, theme};
 
 /// The file the collections are read from, in the shader dir or, failing that,
 /// the system dir. Every pattern in it is relative to the shader dir.
@@ -705,7 +705,7 @@ impl ShaderDialog {
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                panel_frame().show(ui, |ui| {
+                panel_frame(ctx).show(ui, |ui| {
                     scale_widgets(ui);
                     let panel = ui
                         .vertical(|ui| {
@@ -727,7 +727,7 @@ impl ShaderDialog {
                             ui.label(
                                 egui::RichText::new(&composed)
                                     .size(BODY_SIZE * 0.75)
-                                    .color(DISABLED_COLOR),
+                                    .color(theme(ctx).dim_text),
                             );
                         })
                         .response
@@ -894,7 +894,7 @@ fn draw_level(ui: &mut Ui, level: usize, state: &Level) -> Option<usize> {
         ui.label(
             egui::RichText::new("—")
                 .size(BODY_SIZE)
-                .color(DISABLED_COLOR),
+                .color(theme(ui.ctx()).dim_text),
         );
         return None;
     }

@@ -10,22 +10,23 @@ pub mod fuzzy_list;
 pub mod hud;
 pub mod picker;
 pub mod shader_dialog;
+pub mod theme;
 
 pub use hud::{Hud, HudLocation};
 pub use picker::{Picked, Picker};
+pub use theme::{Theme, set_theme, theme};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
 
 pub const HEADING_SIZE: f32 = 72.0;
 const BODY_SIZE: f32 = 32.0;
-pub const TEXT_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 const MARGIN: egui::Vec2 = egui::vec2(64.0, 32.0);
 
 /// Height of the virtual space every size in this crate is given in.
 const VIRTUAL_HEIGHT: f32 = 1600.0;
 
-/// Give `ctx` the app font and text styles.
+/// Give `ctx` the app font, text styles and [`Theme::DEFAULT`].
 pub fn apply_style(ctx: &egui::Context, font: Vec<u8>) {
     let mut font_defs = egui::FontDefinitions::default();
     font_defs.font_data.insert(
@@ -51,8 +52,8 @@ pub fn apply_style(ctx: &egui::Context, font: Vec<u8>) {
         style
             .text_styles
             .insert(egui::TextStyle::Body, egui::FontId::proportional(BODY_SIZE));
-        style.visuals.override_text_color = Some(TEXT_COLOR);
     });
+    set_theme(ctx, Theme::DEFAULT);
 }
 
 /// Scale `ctx` to a window `logical_height` points tall, so the UI keeps its
@@ -62,18 +63,9 @@ pub fn set_scale(ctx: &egui::Context, logical_height: f32, scale_factor: f32, zo
     ctx.set_pixels_per_point(scale_factor * scale * zoom);
 }
 
-/// Look of the boxes the picker and the dialogs are drawn in: near-opaque black
-/// behind a 2px orange border.
-const PANEL_FILL: egui::Color32 = egui::Color32::from_black_alpha(230);
-const PANEL_STROKE: egui::Color32 = egui::Color32::from_rgb(0xff, 0xaa, 0x7c);
-const PANEL_BORDER: f32 = 2.0;
-const PANEL_PADDING: i8 = 16;
-
-pub fn panel_frame() -> egui::Frame {
-    egui::Frame::new()
-        .fill(PANEL_FILL)
-        .stroke(egui::Stroke::new(PANEL_BORDER, PANEL_STROKE))
-        .inner_margin(egui::Margin::same(PANEL_PADDING))
+/// The box the picker and the dialogs are drawn in.
+pub fn panel_frame(ctx: &egui::Context) -> egui::Frame {
+    theme(ctx).panel_frame()
 }
 
 /// Counts and removes every press of `key` among this frame's events, whatever

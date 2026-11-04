@@ -51,10 +51,10 @@ use bevy_egui::{
 };
 
 use retro_ui::dialog::{
-    BODY_SIZE, CLOSE_SIZE, DISABLED_COLOR, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
+    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
     TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
 };
-use retro_ui::{panel_frame, take_key};
+use retro_ui::{panel_frame, take_key, theme};
 
 use crate::egui_ui::{HudState, update_ui};
 
@@ -497,7 +497,7 @@ fn unsupported(ui: &mut Ui) {
     ui.label(
         egui::RichText::new("<unsupported>")
             .size(BODY_SIZE)
-            .color(DISABLED_COLOR)
+            .color(theme(ui.ctx()).dim_text)
             .italics(),
     );
 }
@@ -801,7 +801,7 @@ fn settings_ui<T: SettingsType>(
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
-            panel_frame().show(ui, |ui| {
+            panel_frame(ctx).show(ui, |ui| {
                 scale_widgets(ui);
                 let min = ctx.content_rect().size() * PANEL_MIN_FRACTION;
                 let panel = ui

@@ -20,7 +20,7 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.set_width(size.y);
-                    panel_frame().show(ui, |ui| {
+                    crate::panel_frame(ctx).show(ui, |ui| {
                         ui.label(egui::RichText::new("query").size(QUERY_SIZE));
                     });
                     let out = scroll_area(ui, items.saturating_sub(1), 0.0, &ids, |_, _, _| {});

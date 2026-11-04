@@ -5,7 +5,7 @@ use std::{collections::HashMap, ops::Range, time::Duration};
 
 use egui::Ui;
 
-use crate::{HEADING_SIZE, MARGIN};
+use crate::{HEADING_SIZE, MARGIN, theme};
 
 /// Multipliers on [`HEADING_SIZE`], one per corner HUD text, so each can be
 /// sized on its own without touching [`egui::TextStyle::Heading`] elsewhere.
@@ -13,8 +13,6 @@ const TOP_LEFT_SCALE: f32 = 1.0;
 const TOP_RIGHT_SCALE: f32 = 2.5;
 const BOTTOM_LEFT_SCALE: f32 = 1.0;
 const INFO_TEXT_SCALE: f32 = 1.0;
-const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x10, 0x10);
-const FAVORITE_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0x20, 0x20);
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum HudLocation {
@@ -81,6 +79,7 @@ impl Hud {
         recording: Option<Duration>,
     ) {
         let rect = ctx.content_rect().shrink2(MARGIN);
+        let theme = theme(ctx);
 
         egui::Area::new(egui::Id::new("overlay"))
             .fixed_pos(rect.min)
@@ -122,7 +121,7 @@ impl Hud {
                         };
 
                         let color = (if text == HudLocation::Error {
-                            ERROR_COLOR
+                            theme.hud.error
                         } else {
                             ui.visuals().text_color()
                         })
@@ -157,7 +156,7 @@ impl Hud {
                     );
                     let pos = line.left_center()
                         - egui::vec2(galley.size().x + size * 0.3, galley.size().y / 2.0);
-                    paint_with_shadow(ui, pos, galley, size, FAVORITE_COLOR.linear_multiply(t));
+                    paint_with_shadow(ui, pos, galley, size, theme.hud.favorite.linear_multiply(t));
                 }
             });
 
@@ -176,9 +175,6 @@ impl Hud {
     }
 }
 
-/// Colour of the download counter, distinct from the HUD texts sharing the
-/// corner so the two don't read as one line when both are up.
-const DOWNLOAD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xe0, 0xff, 0xe0);
 /// Size of the download counter. Deliberately smaller than the corner HUD
 /// texts: it is status, not a title.
 const DOWNLOAD_SIZE: f32 = 32.0;
@@ -204,32 +200,27 @@ fn render_downloads(ctx: &egui::Context, pos: egui::Pos2, bytes: u64) {
                 ui,
                 format!("\u{f409} {text}").as_str(),
                 DOWNLOAD_SIZE,
-                DOWNLOAD_COLOR.linear_multiply((t - 0.5) * 2.0),
+                theme(ctx).hud.download.linear_multiply((t - 0.5) * 2.0),
                 egui::Align::Min,
             );
         });
 }
 
-const RECORD_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0x20, 0x20);
-
 fn render_recording(ctx: &egui::Context, pos: egui::Pos2, time: Duration) {
     let secs = time.as_secs();
     let text = format!("{:02}:{:02}", secs / 60, secs % 60);
+    let hud = theme(ctx).hud.clone();
     egui::Area::new(egui::Id::new("recording"))
         .pivot(egui::Align2::RIGHT_TOP)
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                heading_with_shadow(ui, "\u{f044a}", DOWNLOAD_SIZE, RECORD_COLOR, egui::Align::Min);
-                heading_with_shadow(ui, &text, DOWNLOAD_SIZE, DOWNLOAD_COLOR, egui::Align::Min);
+                heading_with_shadow(ui, "\u{f044a}", DOWNLOAD_SIZE, hud.record, egui::Align::Min);
+                heading_with_shadow(ui, &text, DOWNLOAD_SIZE, hud.download, egui::Align::Min);
             });
         });
 }
-
-/// How far the drop shadow under the corner HUD texts is offset, as a fraction
-/// of the font size, so it keeps its look at every [`HEADING_SIZE`] scale.
-const SHADOW_OFFSET: f32 = 0.05;
 
 /// Draws `text` as a heading with a solid black copy of itself painted first,
 /// offset down and to the right, so it stays readable over a bright emulator
@@ -255,7 +246,7 @@ fn heading_with_shadow(
     );
     job.halign = align;
     let galley = ui.painter().layout_job(job);
-    let offset = egui::Vec2::splat(size * SHADOW_OFFSET);
+    let offset = egui::Vec2::splat(size * theme(ui.ctx()).hud.shadow_offset);
     // The shadow is part of the text as far as the layout is concerned, so the
     // corner it is anchored in leaves room for it.
     let (rect, _) = ui.allocate_exact_size(galley.size() + offset, egui::Sense::hover());
@@ -278,9 +269,9 @@ fn paint_with_shadow(
     size: f32,
     color: egui::Color32,
 ) {
-    let offset = egui::Vec2::splat(size * SHADOW_OFFSET);
-    // Black at the text's own alpha, so shadow and text fade together.
-    let shadow = egui::Color32::from_black_alpha(color.a());
+    let hud = &theme(ui.ctx()).hud;
+    let offset = egui::Vec2::splat(size * hud.shadow_offset);
+    let shadow = hud.shadow.gamma_multiply_u8(color.a());
     ui.painter().galley(pos + offset, galley.clone(), shadow);
     ui.painter().galley(pos, galley, color);
 }
