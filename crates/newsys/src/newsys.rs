@@ -297,10 +297,7 @@ fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
         debug!("Override asks for the fast Amiga configuration");
         amiga::apply_fast(file);
     }
-    for (key, val) in &over.meta {
-        debug!("Override sets {key}={val}");
-        file.set_meta(key, *val);
-    }
+    apply_override_meta(file, over);
     // An in-place release was patched before it was written back
     if !over.patches.is_empty() && !file.is_in_place() {
         apply_patches(file, &over.patches)?;
@@ -330,6 +327,13 @@ fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn apply_override_meta(file: &mut WorkFile, over: &Override) {
+    for (key, val) in &over.meta {
+        debug!("Override sets {key}={val}");
+        file.set_meta(key, *val);
+    }
 }
 
 /// The directory holding the release, whether the work file points at the
@@ -667,6 +671,14 @@ impl NewSys {
         self.load_prepared(unpack_release(path, meta)?, over)
     }
 
+    /// Last, so that `-x` on the command line beats every other source.
+    fn apply_cmdline_meta(&self, wf: &mut WorkFile) {
+        for (key, val) in self.meta_mut().iter() {
+            debug!("Adding {key}={val}");
+            wf.set_meta(key, val);
+        }
+    }
+
     /// Finish loading an already-[unpacked](unpack_release) release: apply the
     /// override, fill in meta, find the system that claims it and build its
     /// backend.
@@ -683,11 +695,7 @@ impl NewSys {
             apply_override(&mut wf, over)?;
         }
 
-        // Last, so that `-x` on the command line beats every other source.
-        for (key, val) in self.meta_mut().iter() {
-            debug!("Adding {key}={val}");
-            wf.set_meta(key, val);
-        }
+        self.apply_cmdline_meta(&mut wf);
 
         // Sort out which side of a disc release we were pointed at before any
         // system looks at it, since a directory holding a cue and its tracks is
@@ -720,6 +728,11 @@ impl NewSys {
             trace!("Trying to load with {}", sys.name());
             if sys.load(&mut wf)? {
                 debug!("System {} can load {:?}", sys.name(), wf.path);
+                // Again, so they also beat what the system derived in `load`.
+                if let Some(over) = over {
+                    apply_override_meta(&mut wf, over);
+                }
+                self.apply_cmdline_meta(&mut wf);
                 // Whichever system claimed the release, a cue's MP3 audio tracks
                 // are unplayable to every core here — they read the compressed
                 // bytes straight through as PCM — so the sheet is rewritten with
