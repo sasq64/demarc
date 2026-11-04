@@ -1115,3 +1115,8 @@
   headless` with stderr to a file. Pointer-argument calls (`glFogfv`,
   `glColor4iv`) show no values; a temporary logging hook in the opengl32 proxy
   does.
+
+- ffmpeg's `color=black` source does not decode to RGB exactly 0 (YUV range
+  conversion leaves small values); test for "lit" pixels with a threshold.
+  In filtergraph arguments `:` is escaped only at the option level (`\:` →
+  `\\:` after graph escaping), not twice.

@@ -19,6 +19,11 @@ const SAMPLE_RATE: u32 = 48000;
 /// Codecs worth decoding on the GPU; NVDEC gets MPEG-4 ASP wrong.
 const HWACCEL_CODECS: &[&str] = &["h264", "hevc", "vp9", "av1"];
 
+/// Subtitle codecs that are pictures, drawn with `overlay` instead of libass.
+const IMAGE_SUB_CODECS: &[&str] = &["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"];
+
+const SUB_EXTENSIONS: &[&str] = &["srt", "ass", "ssa", "vtt"];
+
 /// Bytes of audio read from the pipe at a time.
 const AUDIO_CHUNK: usize = 4096;
 
@@ -78,6 +83,146 @@ pub fn parse_probe(text: &str) -> Result<VideoInfo> {
             .unwrap_or(1.0),
         codec: fields.get("codec_name").map_or("", |v| v.trim()).to_owned(),
     })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Subtitle {
+    File(PathBuf),
+    /// Index among the file's subtitle streams.
+    Text(usize),
+    Image(usize),
+}
+
+/// `key=value` fields of one `ffprobe -of compact=p=0` line, which escapes
+/// `|` and `\` with a backslash.
+fn compact_fields(line: &str) -> HashMap<String, String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => field.extend(chars.next()),
+            '|' => fields.push(std::mem::take(&mut field)),
+            c => field.push(c),
+        }
+    }
+    fields.push(field);
+    fields
+        .iter()
+        .filter_map(|f| f.split_once('='))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
+}
+
+/// Subtitle streams and their names, one per line as listed by `ffprobe -of
+/// compact=p=0 -show_entries stream=codec_name:stream_tags=language,title`.
+pub fn parse_subtitle_streams(text: &str) -> Vec<(Subtitle, String)> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .enumerate()
+        .map(|(i, line)| {
+            let f = compact_fields(line.trim());
+            let get = |k: &str| f.get(k).map(String::as_str).filter(|v| !v.is_empty());
+            let codec = get("codec_name").unwrap_or("");
+            let name = match (get("tag:title"), get("tag:language")) {
+                (Some(t), Some(l)) => format!("{t} ({l})"),
+                (Some(n), None) | (None, Some(n)) => n.to_owned(),
+                (None, None) => format!("Track {} ({codec})", i + 1),
+            };
+            let sub = if IMAGE_SUB_CODECS.contains(&codec) {
+                Subtitle::Image(i)
+            } else {
+                Subtitle::Text(i)
+            };
+            (sub, name)
+        })
+        .collect()
+}
+
+/// `movie.srt`, `movie.en.srt` and the like next to `movie.mkv`.
+fn external_subtitles(path: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let ext_ok = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| SUB_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            ext_ok && name.strip_prefix(stem).is_some_and(|rest| rest.starts_with('.'))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn subtitle_tracks(path: &Path) -> Vec<(Subtitle, String)> {
+    let mut tracks: Vec<(Subtitle, String)> = external_subtitles(path)
+        .into_iter()
+        .map(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            (Subtitle::File(p), name)
+        })
+        .collect();
+    let streams = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "s", "-show_entries"])
+        .arg("stream=codec_name:stream_tags=language,title")
+        .args(["-of", "compact=p=0"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output();
+    if let Ok(out) = streams {
+        tracks.extend(parse_subtitle_streams(&String::from_utf8_lossy(&out.stdout)));
+    }
+    tracks
+}
+
+/// Escape a path for use as a filter option inside a filtergraph: once for
+/// the option value, once more for the graph.
+fn escape_filter_arg(s: &str) -> String {
+    let escape = |s: &str, special: &str| {
+        s.chars().fold(String::new(), |mut out, c| {
+            if special.contains(c) {
+                out.push('\\');
+            }
+            out.push(c);
+            out
+        })
+    };
+    escape(&escape(s, "\\':"), "\\'[],;")
+}
+
+/// Output arguments for the picture process. Input seeking restarts the
+/// timestamps at zero, so libass gets them shifted back by `pos`.
+pub fn video_output_args(path: &Path, sub: Option<&Subtitle>, pos: &str) -> Vec<String> {
+    let libass = |file: &Path, extra: String| {
+        let file = escape_filter_arg(&file.to_string_lossy());
+        vec![
+            "-map".into(),
+            "0:v:0".into(),
+            "-vf".into(),
+            format!("setpts=PTS+{pos}/TB,subtitles={file}{extra},setpts=PTS-STARTPTS"),
+        ]
+    };
+    let mut args = match sub {
+        None => vec!["-map".into(), "0:v:0".into()],
+        Some(Subtitle::File(file)) => libass(file, String::new()),
+        Some(Subtitle::Text(i)) => libass(path, format!(":si={i}")),
+        Some(Subtitle::Image(i)) => vec![
+            "-filter_complex".into(),
+            format!("[0:v:0][0:s:{i}]overlay[v]"),
+            "-map".into(),
+            "[v]".into(),
+        ],
+    };
+    args.extend(["-f", "rawvideo", "-pix_fmt", "rgba"].map(String::from));
+    args
 }
 
 fn ffprobe(path: &Path, stream: &str, entries: &str) -> Result<String> {
@@ -147,6 +292,8 @@ pub struct FfmpegEmu {
     frames: u64,
     /// Seconds, when the container knows.
     length: Option<f64>,
+    subtitles: Vec<(Subtitle, String)>,
+    subtitle: Option<usize>,
 }
 
 impl FfmpegEmu {
@@ -162,7 +309,7 @@ impl FfmpegEmu {
             .strip_prefix("duration=")
             .and_then(|d| d.parse::<f64>().ok())
             .filter(|d| *d > 0.0);
-        let decoders = Self::start(path, &info, has_audio, 0.0)?;
+        let decoders = Self::start(path, &info, has_audio, None, 0.0)?;
         Ok(Self {
             path: path.to_owned(),
             frame: Arc::new(vec![u32::from_ne_bytes([0, 0, 0, 255]); info.width * info.height]),
@@ -175,20 +322,26 @@ impl FfmpegEmu {
             ended: false,
             frames: 0,
             length,
+            subtitles: subtitle_tracks(path),
+            subtitle: None,
         })
     }
 
-    fn start(path: &Path, info: &VideoInfo, has_audio: bool, pos: f64) -> Result<Decoders> {
+    fn start(
+        path: &Path,
+        info: &VideoInfo,
+        has_audio: bool,
+        sub: Option<&Subtitle>,
+        pos: f64,
+    ) -> Result<Decoders> {
         let pos = format!("{pos:.3}");
         let mut input = vec!["-ss", &pos];
         if HWACCEL_CODECS.contains(&info.codec.as_str()) {
             input.extend(["-hwaccel", "auto"]);
         }
-        let (video_child, mut stdout) = spawn_ffmpeg(
-            path,
-            &input,
-            &["-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "rgba"],
-        )?;
+        let output = video_output_args(path, sub, &pos);
+        let output: Vec<&str> = output.iter().map(String::as_str).collect();
+        let (video_child, mut stdout) = spawn_ffmpeg(path, &input, &output)?;
         let mut children = vec![video_child];
         let pixels = info.width * info.height;
         let (tx, video) = sync_channel(4);
@@ -290,7 +443,8 @@ impl FfmpegEmu {
     }
 
     fn seek_to(&mut self, pos: f64) {
-        match Self::start(&self.path, &self.info, self.has_audio, pos) {
+        let sub = self.subtitle.map(|i| &self.subtitles[i].0);
+        match Self::start(&self.path, &self.info, self.has_audio, sub, pos) {
             Ok(decoders) => self.decoders = decoders,
             Err(e) => {
                 warn!("Could not restart ffmpeg: {e}");
@@ -386,10 +540,26 @@ impl Backend for FfmpegEmu {
     }
 
     fn media(&mut self, cmd: MediaCmd) {
-        if let MediaCmd::Seek(secs) = cmd {
-            let pos = self.frames as f64 / self.info.fps + secs as f64;
-            self.seek_to(pos.max(0.0));
+        let now = self.frames as f64 / self.info.fps;
+        match cmd {
+            MediaCmd::Seek(secs) => self.seek_to((now + secs as f64).max(0.0)),
+            MediaCmd::NextSubtitle if !self.subtitles.is_empty() => {
+                self.subtitle = match self.subtitle {
+                    None => Some(0),
+                    Some(i) if i + 1 < self.subtitles.len() => Some(i + 1),
+                    Some(_) => None,
+                };
+                self.seek_to(now);
+            }
+            _ => {}
         }
+    }
+
+    fn subtitle_name(&self) -> Option<String> {
+        if self.subtitles.is_empty() {
+            return None;
+        }
+        Some(self.subtitle.map_or("None".into(), |i| self.subtitles[i].1.clone()))
     }
 
     fn set_disk(&mut self, _no: u32) {}

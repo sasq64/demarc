@@ -72,6 +72,7 @@ pub enum Cmd {
     ScrollDown,
     ScrollLeft,
     ScrollRight,
+    NextSubtitle,
 }
 
 impl Cmd {
@@ -119,6 +120,7 @@ impl Cmd {
         Cmd::ScrollDown,
         Cmd::ScrollLeft,
         Cmd::ScrollRight,
+        Cmd::NextSubtitle,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -170,6 +172,7 @@ impl Cmd {
             Cmd::ScrollDown => "Scroll down",
             Cmd::ScrollLeft => "Scroll left",
             Cmd::ScrollRight => "Scroll right",
+            Cmd::NextSubtitle => "Next subtitle track",
         }
     }
 
@@ -187,6 +190,7 @@ impl Cmd {
             Cmd::ScrollDown => MediaCmd::Scroll(0, 1),
             Cmd::ScrollLeft => MediaCmd::Scroll(-1, 0),
             Cmd::ScrollRight => MediaCmd::Scroll(1, 0),
+            Cmd::NextSubtitle => MediaCmd::NextSubtitle,
             _ => return None,
         })
     }
@@ -292,6 +296,7 @@ const VIDEO_KEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::ArrowUp, Cmd::SeekFwd10m),
     KeyMapping::new(KeyCode::ArrowDown, Cmd::SeekBack10m),
     KeyMapping::new(KeyCode::Space, Cmd::PauseResume),
+    KeyMapping::new(KeyCode::KeyT, Cmd::NextSubtitle),
 ];
 
 const IMAGE_KEYS: &[KeyMapping] = &[
@@ -899,6 +904,16 @@ pub(crate) fn handle_cmd(
                     c if let Some(media) = c.media() => {
                         if let Some(core) = emu.core.as_mut() {
                             core.media(media);
+                            if let (MediaCmd::NextSubtitle, Some(name)) =
+                                (media, core.subtitle_name())
+                            {
+                                writer.write(SetHudText {
+                                    text: name,
+                                    delay: Duration::from_secs(0),
+                                    duration: Duration::from_secs(2),
+                                    location: HudLocation::TopLeft,
+                                });
+                            }
                         }
                     }
                     Cmd::PauseResume => {

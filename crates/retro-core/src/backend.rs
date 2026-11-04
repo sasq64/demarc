@@ -58,6 +58,7 @@ pub enum MediaCmd {
     /// Zoom steps in (or out, when negative).
     Zoom(i32),
     Scroll(i32, i32),
+    NextSubtitle,
 }
 
 /// Bit in the mask returned by [`Backend::state`]: the backend is fast-forwarding
@@ -198,6 +199,11 @@ pub trait Backend {
     }
 
     fn media(&mut self, _cmd: MediaCmd) {}
+
+    /// Name of the subtitle track shown, or `"None"`; `None` without subtitles.
+    fn subtitle_name(&self) -> Option<String> {
+        None
+    }
 
     /// How far into the file playback has come.
     fn position(&self) -> Option<std::time::Duration> {
