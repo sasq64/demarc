@@ -115,6 +115,11 @@ pub struct Args {
     #[arg(long)]
     pub shader_dir: Option<PathBuf>,
 
+    /// UI theme: a file in `system/themes/` named without its `.toml`, or a
+    /// path to a theme file. Reloaded whenever the file changes.
+    #[arg(long)]
+    pub theme: Option<String>,
+
     /// Path to lua script used for music visualization
     #[arg(long)]
     pub lua: Option<PathBuf>,

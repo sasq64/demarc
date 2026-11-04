@@ -94,6 +94,55 @@ fn setup_egui(
     Ok(())
 }
 
+fn theme_path(theme: &str) -> std::path::PathBuf {
+    let path = std::path::PathBuf::from(theme);
+    if path.is_file() {
+        return path;
+    }
+    newsys::system_dir().join("themes").join(format!("{theme}.toml"))
+}
+
+/// Loads `--theme`, and loads it again whenever the file's mtime changes.
+fn reload_theme(
+    mut contexts: EguiContexts,
+    args: Res<Args>,
+    time: Res<Time<Real>>,
+    mut next_check: Local<f32>,
+    mut loaded: Local<Option<std::time::SystemTime>>,
+) -> Result {
+    let Some(theme) = &args.theme else {
+        return Ok(());
+    };
+    let now = time.elapsed_secs();
+    if now < *next_check {
+        return Ok(());
+    }
+    *next_check = now + 0.5;
+    let path = theme_path(theme);
+    let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
+        if loaded.is_none() {
+            warn!("Theme {} not found", path.display());
+            *loaded = Some(std::time::SystemTime::UNIX_EPOCH);
+        }
+        return Ok(());
+    };
+    if *loaded == Some(modified) {
+        return Ok(());
+    }
+    *loaded = Some(modified);
+    match std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|src| retro_ui::Theme::from_toml(&src))
+    {
+        Ok(t) => {
+            info!("Theme {} loaded", path.display());
+            retro_ui::set_theme(contexts.ctx_mut()?, t);
+        }
+        Err(e) => warn!("Theme {}: {e}", path.display()),
+    }
+    Ok(())
+}
+
 /// The icon textures for `ctx`, rasterized and uploaded on first use. Each
 /// window's context has its own texture manager, so they cannot be shared.
 fn icons(ctx: &egui::Context) -> Option<(egui::TextureId, egui::TextureId)> {
@@ -382,6 +431,7 @@ impl Plugin for EguiUiPlugin {
                 EguiPrimaryContextPass,
                 (
                     setup_egui,
+                    reload_theme,
                     update_ui.run_if(not(resource_exists::<HeadlessTarget>)),
                 )
                     .chain(),

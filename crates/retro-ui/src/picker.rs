@@ -129,7 +129,7 @@ fn draw_row(
             draw_list_icon(ui, &painter, icon_rect, icon);
         }
     }
-    painter.galley(text_rect.min, galley, theme(ui.ctx()).text);
+    painter.galley(text_rect.min, galley, theme(ui.ctx()).text.color);
     for &(texture, offset) in images {
         let image_rect = egui::Rect::from_min_size(
             egui::pos2(text_rect.right() + offset, text_rect.top()),
@@ -435,7 +435,7 @@ impl<T: 'static> Picker<T> {
                             .margin(egui::Margin::ZERO)
                             .desired_width(inner_width)
                             .font(egui::FontId::proportional(QUERY_SIZE))
-                            .text_color(theme.text),
+                            .text_color(theme.text.color),
                     );
                     if !response.has_focus() {
                         response.request_focus();
@@ -454,7 +454,7 @@ impl<T: 'static> Picker<T> {
                             0.0,
                             egui::TextFormat::simple(
                                 egui::FontId::proportional(ROW_SIZE),
-                                theme.text,
+                                theme.text.color,
                             ),
                         );
                         let images = render(&mut job, source.as_ref(), id);

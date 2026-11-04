@@ -727,7 +727,7 @@ impl ShaderDialog {
                             ui.label(
                                 egui::RichText::new(&composed)
                                     .size(BODY_SIZE * 0.75)
-                                    .color(theme(ctx).dim_text),
+                                    .color(theme(ctx).text.dim),
                             );
                         })
                         .response
@@ -894,7 +894,7 @@ fn draw_level(ui: &mut Ui, level: usize, state: &Level) -> Option<usize> {
         ui.label(
             egui::RichText::new("—")
                 .size(BODY_SIZE)
-                .color(theme(ui.ctx()).dim_text),
+                .color(theme(ui.ctx()).text.dim),
         );
         return None;
     }

@@ -10,5 +10,6 @@ egui.workspace = true
 nucleo-matcher = "0.3"
 # The shader dialog: `shaders.toml` and its `<Tag>` patterns.
 regex = "1"
+serde = { version = "1.0.229", features = ["derive"] }
 toml = { version = "1.1.4", features = ["preserve_order"] }
 tracing.workspace = true

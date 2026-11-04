@@ -1,0 +1,107 @@
+# demarc UI theme. Pick one with `--theme <name>` (a file in system/themes/)
+# or `--theme <path>`; the file is reloaded while demarc runs.
+#
+# Colours are "#rrggbb" or "#rrggbbaa" (alpha 00 = transparent), or the name
+# of a [palette] entry. Strokes are { width = <points>, color = <colour> }.
+# Anything a theme leaves out comes from this default, so a theme can be as
+# small as a palette plus the keys it changes. Sizes are in a 1600 point tall
+# screen.
+
+[palette]
+white = "#ffffff"
+grey = "#808080"
+black_glass = "#000000e6"
+peach = "#ffaa7c"
+cream = "#ffeecc"
+brown = "#a07050"
+navy = "#00006c"
+mint = "#aaffe7"
+red = "#e02020"
+
+# Main text colour, and the colour of hints and disabled entries.
+[text]
+color = "white"
+dim = "grey"
+
+# Text fields and drag values.
+[field]
+fill = "#0a0a0a"
+
+# The boxes the file picker and the dialogs are drawn in.
+[panel]
+fill = "black_glass"
+border = { width = 2.0, color = "peach" }
+padding = 16
+corner_radius = 0
+
+# Combo box drop-downs.
+[popup]
+fill = "#1b1b1b"
+border = { width = 1.0, color = "#3c3c3c" }
+padding = 6
+corner_radius = 6
+
+# Selected text, and the selected entry of a combo box.
+[selection]
+fill = "#005c80"
+border = { width = 1.0, color = "#c0deff" }
+
+# Buttons, combo boxes, checkboxes and sliders in each state.
+# button_fill: button / combo box background; fill: checkbox / slider background;
+# foreground: check marks, arrows and the close cross.
+[widgets.noninteractive]
+button_fill = "#1b1b1b"
+fill = "#1b1b1b"
+border = { width = 1.0, color = "#3c3c3c" }
+foreground = { width = 1.0, color = "#8c8c8c" }
+corner_radius = 2
+
+[widgets.inactive]
+button_fill = "#3c3c3c"
+fill = "#3c3c3c"
+border = { width = 0.0, color = "#00000000" }
+foreground = { width = 1.0, color = "#b4b4b4" }
+corner_radius = 2
+
+[widgets.hovered]
+button_fill = "#464646"
+fill = "#464646"
+border = { width = 1.0, color = "#969696" }
+foreground = { width = 1.5, color = "#f0f0f0" }
+corner_radius = 3
+
+# While pressed or dragged.
+[widgets.active]
+button_fill = "#373737"
+fill = "#373737"
+border = { width = 1.0, color = "white" }
+foreground = { width = 2.0, color = "white" }
+corner_radius = 2
+
+# An open combo box or collapsing header.
+[widgets.open]
+button_fill = "#2d2d2d"
+fill = "#1b1b1b"
+border = { width = 1.0, color = "#3c3c3c" }
+foreground = { width = 1.0, color = "#d2d2d2" }
+corner_radius = 2
+
+# The file picker.
+[picker]
+title = "cream"
+title_selected_fill = "brown"
+row_selected_fill = "navy"
+info = "mint"
+cached = "white"
+award_winner = "#806010"
+award_nominee = "#606080"
+
+# Texts drawn straight over the picture.
+[hud]
+error = "#a01010"
+favorite = "red"
+download = "#e0ffe0"
+record = "#ff2020"
+# Shadow behind each text, and how far it is offset as a fraction of font size.
+shadow = "#000000"
+shadow_offset = 0.05

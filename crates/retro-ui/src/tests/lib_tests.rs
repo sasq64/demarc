@@ -162,7 +162,7 @@ fn style_installs_the_font_and_sizes() {
             HEADING_SIZE
         );
         assert_eq!(style.text_styles[&egui::TextStyle::Body].size, BODY_SIZE);
-        assert_eq!(style.visuals.override_text_color, Some(Theme::DEFAULT.text));
+        assert_eq!(style.visuals.override_text_color, Some(Theme::DEFAULT.text.color));
         ctx.fonts(|f| {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 assert_eq!(f.definitions().families[&family][0], APP_FONT);

@@ -6560,6 +6560,7 @@ dependencies = [
  "egui",
  "nucleo-matcher",
  "regex",
+ "serde",
  "toml",
  "tracing",
 ]

@@ -497,7 +497,7 @@ fn unsupported(ui: &mut Ui) {
     ui.label(
         egui::RichText::new("<unsupported>")
             .size(BODY_SIZE)
-            .color(theme(ui.ctx()).dim_text)
+            .color(theme(ui.ctx()).text.dim)
             .italics(),
     );
 }
