@@ -1135,3 +1135,13 @@
   can be the exe calling `HeapAlloc(GetProcessHeap(), HEAP_NO_SERIALIZE, ..)`:
   harmless alone on 2004 Windows, a race once DXVK's threads share the heap.
   Check the flags with `+relay` before hunting an overrun (.kkrieger beta).
+
+- Under heavy `WINEDEBUG` (`+relay`, `+virtual`) demarc's forwarded wine log
+  stops after a few thousand lines and the timing change can hide the bug, so
+  two runs showed nothing. Reproduce with plain wine under `gamescope
+  --backend headless -w 1920 -h 1080` (the session size matters for heap
+  layout) and send stderr to a file; `winedbg --file` there gives the stack.
+
+- Overrides are keyed on the db entry: a demo launched from its zip path gets
+  none of them. Test an override with `load_demo("demozoo.<id>")` in the
+  script and no file argument.
