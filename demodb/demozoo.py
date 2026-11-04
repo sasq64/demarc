@@ -447,7 +447,7 @@ TAG_BLACKLIST = {"no-binary", "no-binaries"}
 # thing itself.  Matched against the type names exactly as Demozoo spells them
 # (the `category:` field); a release carrying any of them is dropped, even when
 # it also carries a type we do want.
-CATEGORY_BLACKLIST = {"Game", "Tool", "Video"}
+CATEGORY_BLACKLIST = {"Tool", "Video"}
 
 DOWNLOAD_BLACKLIST = [
     "*.php",

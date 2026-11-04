@@ -306,6 +306,7 @@ events = [
 # Closer / CNCD
 [zoo.7613]
 assign = { CNCD = "SYS:" }
+meta = { amiga_core = "puae" }
 
 [zoo.7909]
 file = "asd-the_butterfly_effect.zip"
@@ -377,6 +378,11 @@ events = [
 
 [zoo.8960]
 file = "petroleo_boah.zip"
+
+[zoo.9064]
+meta = {
+  amiberry_cpu_model = "68030",
+}
 
 # Planet Loop by Madwizards & Nah-Kolor: the party version needs EXT_vertex_weighting
 [zoo.9072]
@@ -1762,11 +1768,11 @@ meta = { wine_res = "640x480" }
 [zoo.67994]
 file = "dieanderung_win32.zip"
 
-#[zoo.8302]
-#meta = { wine_res = "800x600" }
+# [zoo.8302]
+# meta = { wine_res = "800x600" }
 
-#[zoo.3985]
-#meta = { wine_res = "1024x768" }
+# [zoo.3985]
+# meta = { wine_res = "1024x768" }
 
 # Struct
 [zoo.4473]
@@ -1828,3 +1834,6 @@ with 0x55). On Mesa the resolve blit also failed on unsized depth formats;
 the opengl32 proxy sizes them. Slow (~28 fps) around 45-60 s from wow64 GL
 call overhead: ~110k immediate-mode calls a frame.
 '''
+
+[zoo.144]
+file = "tbl-tint-fixed.lha"
