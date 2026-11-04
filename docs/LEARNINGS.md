@@ -1120,3 +1120,8 @@
   conversion leaves small values); test for "lit" pixels with a threshold.
   In filtergraph arguments `:` is escaped only at the option level (`\:` →
   `\\:` after graph escaping), not twice.
+
+- MicroW8 (`uw8` core): an invalid cart makes the core print a wasm3 error and
+  call `exit(1)` inside `retro_load_game`, killing demarc with no log line.
+  `examples/rust/tunnel.uw8` in the microw8 repo is itself corrupt (UTF-8
+  replacement bytes); test with `site/static/uw8/skipahead.uw8`.

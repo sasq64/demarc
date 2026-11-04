@@ -30,6 +30,7 @@ use gba::GBASystem;
 use images::ImageSystem;
 use lynx::LynxSystem;
 use megadrive::MegadriveSystem;
+use microw8::MicroW8System;
 use music::MusicSystem;
 use neo_geo::NeoGeoSystem;
 use pico8::Pico8System;
@@ -61,6 +62,7 @@ mod gba;
 mod images;
 mod lynx;
 mod megadrive;
+mod microw8;
 mod music;
 pub use music::SongName;
 mod neo_geo;
@@ -552,6 +554,7 @@ impl NewSys {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             Box::new(WindowsSystem {}),
             Box::new(Tic80System {}),
+            Box::new(MicroW8System {}),
             Box::new(Pico8System {}),
             Box::new(AmigaSystem::new(args)),
             Box::new(AtariStSystem::new(args)),

@@ -24,7 +24,7 @@ An command line emulator frontend for the demoscene
 ## Platforms
 
 C64, Amiga, Atari ST, Amstrad CPC, C16, ZX Spectrum, Megadrive, SNES, Atari
-2600, Atari XL, Tic-80, Pico-8, Playstation, Gameboy (Color), Gameboy Advance,
+2600, Atari XL, Tic-80, Pico-8, MicroW8, Playstation, Gameboy (Color), Gameboy Advance,
 Neo Geo, PC (DOS, and Windows through wine)
 
 ## Graphics Format Support
