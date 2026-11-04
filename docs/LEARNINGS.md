@@ -1125,3 +1125,13 @@
   call `exit(1)` inside `retro_load_game`, killing demarc with no log line.
   `examples/rust/tunnel.uw8` in the microw8 repo is itself corrupt (UTF-8
   replacement bytes); test with `site/static/uw8/skipahead.uw8`.
+
+- In TOML, every key after a `[table]` header belongs to that table, so a theme
+  file's top-level keys written below `[palette]` silently became palette
+  entries. The theme has no top-level keys for that reason; keep it that way.
+
+- A demo crashing at random places inside ntdll's heap (`main process heap
+  section ... wait timed out`, `err:heap` from several threads under `+heap`)
+  can be the exe calling `HeapAlloc(GetProcessHeap(), HEAP_NO_SERIALIZE, ..)`:
+  harmless alone on 2004 Windows, a race once DXVK's threads share the heap.
+  Check the flags with `+relay` before hunting an overrun (.kkrieger beta).

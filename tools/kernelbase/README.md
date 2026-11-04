@@ -15,6 +15,11 @@ It also exports a few names wine's kernelbase lacks (`EXTRA` in `build.py`:
 wine's kernel32 on first call. Crinkler falls back to export #1 (`AccessCheck`)
 for a name it cannot find; Kindercrasher's `OpenFile` of `drivers/gm.dls` did.
 
+It also hot-patches ntdll's `RtlAllocateHeap` and `RtlFreeHeap` to drop
+`HEAP_NO_SERIALIZE` on the process heap. .kkrieger's malloc passes it, which
+was safe alone on 2004 Windows and corrupts the heap once DXVK's threads share
+it. Being loaded first in every process is why it lives here.
+
 kernel32 imports kernelbase, so this imports only ntdll. kernelbase is a
 KnownDLL, so it has to be in `syswow64`; an app-dir copy is ignored.
 

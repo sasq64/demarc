@@ -304,6 +304,13 @@ render target. `tools/d3dcompiler_47` caches them (Candy, `zoo.42678`).
 percent: hundreds of thousands of immediate-mode calls a frame, and wine
 pays ~1 µs for each (Balance, `zoo.84239`). No override fixes that yet.
 
+**Heap faults that move between runs and threads.** `main process heap
+section ... wait timed out` or `err:heap` from several threads under `+heap`:
+`+relay` the exe's `RtlAllocateHeap`/`HeapFree` and check for flags `1`
+(`HEAP_NO_SERIALIZE` on the process heap, racing DXVK's threads). Flipping the
+`push 1` through `/proc/<pid>/mem` once unpacked confirms it. The kernelbase
+proxy strips the flag in ntdll's hot-patch prologues (.kkrieger, `zoo.3543`).
+
 **Freeze with `loader_section ... wait timed out`.** A DLL's init (under
 the loader lock) waits for a thread it started. `+loaddll,+relay` shows the
 holder's last calls before its `WaitFor*`. The winmm proxy covers the first
