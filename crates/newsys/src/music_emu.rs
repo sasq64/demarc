@@ -663,6 +663,16 @@ impl Backend for MusicEmu {
         Some(MediaKind::Music)
     }
 
+    fn position(&self) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_secs_f64(self.frame_count as f64 / FRAME_RATE))
+    }
+
+    fn length(&self) -> Option<std::time::Duration> {
+        let (_, value) = self.meta.iter().find(|(k, _)| k == "length")?;
+        let secs: u64 = std::str::from_utf8(value).ok()?.parse().ok()?;
+        (secs > 0).then(|| std::time::Duration::from_secs(secs))
+    }
+
     fn media(&mut self, cmd: MediaCmd) {
         let songs: i32 = self
             .player

@@ -83,7 +83,7 @@ pub fn parse_probe(text: &str) -> Result<VideoInfo> {
 fn ffprobe(path: &Path, stream: &str, entries: &str) -> Result<String> {
     let out = Command::new("ffprobe")
         .args(["-v", "error", "-select_streams", stream, "-show_entries"])
-        .arg(format!("stream={entries}"))
+        .arg(entries)
         .args(["-of", "default=nw=1"])
         .arg(path)
         .stdin(Stdio::null())
@@ -145,6 +145,8 @@ pub struct FfmpegEmu {
     ended: bool,
     /// Pictures shown since the start of the file.
     frames: u64,
+    /// Seconds, when the container knows.
+    length: Option<f64>,
 }
 
 impl FfmpegEmu {
@@ -152,9 +154,14 @@ impl FfmpegEmu {
         let info = parse_probe(&ffprobe(
             path,
             "v:0",
-            "codec_name,width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio",
+            "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio",
         )?)?;
-        let has_audio = !ffprobe(path, "a:0", "index")?.trim().is_empty();
+        let has_audio = !ffprobe(path, "a:0", "stream=index")?.trim().is_empty();
+        let length = ffprobe(path, "v:0", "format=duration")?
+            .trim()
+            .strip_prefix("duration=")
+            .and_then(|d| d.parse::<f64>().ok())
+            .filter(|d| *d > 0.0);
         let decoders = Self::start(path, &info, has_audio, 0.0)?;
         Ok(Self {
             path: path.to_owned(),
@@ -167,6 +174,7 @@ impl FfmpegEmu {
             sample_debt: 0.0,
             ended: false,
             frames: 0,
+            length,
         })
     }
 
@@ -367,6 +375,14 @@ impl Backend for FfmpegEmu {
 
     fn media_kind(&self) -> Option<MediaKind> {
         Some(MediaKind::Video)
+    }
+
+    fn position(&self) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_secs_f64(self.frames as f64 / self.info.fps))
+    }
+
+    fn length(&self) -> Option<std::time::Duration> {
+        self.length.map(std::time::Duration::from_secs_f64)
     }
 
     fn media(&mut self, cmd: MediaCmd) {

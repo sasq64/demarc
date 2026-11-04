@@ -667,6 +667,59 @@ fn reload(emu: &mut Emulator, settings: &mut AppSettings, navigator: &mut Naviga
     emu.run_next = true;
 }
 
+fn format_time(t: Duration) -> String {
+    let s = t.as_secs();
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+/// Running time for music, and for video while paused or just after a seek.
+fn media_time_hud(
+    emus: Query<(&Emulator, &EmuView)>,
+    settings: Res<AppSettings>,
+    time: Res<Time>,
+    mut cmds: MessageReader<CmdMessage>,
+    mut seeked_at: Local<Option<f32>>,
+    mut shown: Local<String>,
+    mut writer: MessageWriter<SetHudText>,
+) {
+    let now = time.elapsed_secs();
+    if cmds.read().any(|c| matches!(c.0.media(), Some(MediaCmd::Seek(_)))) {
+        *seeked_at = Some(now);
+    }
+    let emu = emus
+        .iter()
+        .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu)
+        .map(|(emu, _)| emu);
+    let text = emu
+        .and_then(|emu| {
+            let core = emu.core.as_ref()?;
+            let show = match core.media_kind()? {
+                MediaKind::Music => true,
+                MediaKind::Video => emu.paused || seeked_at.is_some_and(|t| now - t < 1.0),
+                MediaKind::Image => false,
+            };
+            let pos = format_time(core.position().filter(|_| show)?);
+            Some(match core.length() {
+                Some(len) => format!("{pos} / {}", format_time(len)),
+                None => pos,
+            })
+        })
+        .unwrap_or_default();
+    if text != *shown {
+        writer.write(SetHudText {
+            text: text.clone(),
+            duration: Duration::from_secs(3600),
+            location: HudLocation::BottomLeft,
+            ..Default::default()
+        });
+        *shown = text;
+    }
+}
+
 pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
     mut emus: Query<(&mut Emulator, &EmuView)>,
@@ -1119,6 +1172,7 @@ impl Plugin for CommandPlugin {
                     handle_textlist,
                     handle_playlist_pick,
                     handle_cmd.run_if(on_message::<CmdMessage>),
+                    media_time_hud.after(handle_cmd),
                     close_keyboard_on_load.run_if(on_message::<crate::loading::LoadFile>),
                 ),
             )

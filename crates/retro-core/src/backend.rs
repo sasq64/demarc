@@ -198,6 +198,15 @@ pub trait Backend {
     }
 
     fn media(&mut self, _cmd: MediaCmd) {}
+
+    /// How far into the file playback has come.
+    fn position(&self) -> Option<std::time::Duration> {
+        None
+    }
+
+    fn length(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture
