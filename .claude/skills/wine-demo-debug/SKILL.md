@@ -264,6 +264,18 @@ invalid API use.
 stopping after kernel32 is wine's import walk on an overlapping 1k header;
 autodlg works around the known case.
 
+**Fault at 0 right after an API call in a DOS port.** Code ported from DPMI
+may test CF after a Win32 call (`call GlobalAlloc; jb fail`); wine leaves
+flags as they fall, so it breaks only at some heap layouts (the 1920x1080
+session, not the desktop). winedbg's stack dump shows the return address
+just past the call. NOP the `jb` in the unpacked exe (Fungi, `zoo.50067`).
+
+**Cinder app exits before its first frame.** `+debugstr` prints `Could not
+load & compile shader`, and the app `quit()`s on it. Check the
+`FindResourceW` IDs under `+relay` against the resource contents: a swapped
+pair compiles the vertex shader as the fragment one (Epic4KFail,
+`zoo.127452`).
+
 **Message box before any window.** `WINEDEBUG=+relay wine demo.exe 2>&1 | grep
 'ret=004'` lists the calls up to the `MessageBoxA`; often a failed
 `SetCurrentDirectory` or file open, not a codec. A `CreateFileA("\\tNN.")` that fails is
