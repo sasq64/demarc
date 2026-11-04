@@ -111,7 +111,8 @@ static void *(__stdcall *wine_get_proc_address)(const char *name);
 // wine copies a render-texture pbuffer with its internal context, whose pixel
 // format is not the pbuffer's; NVIDIA's GLX fails that with a fatal BadMatch.
 // Copy with a context made on the pbuffer's own DC instead (Plastic's "Your
-// Fingers So Gently On My Skin").
+// Fingers So Gently On My Skin"). No GLX config has aux buffers, so an aux
+// buffer is copied from the back one, as wine's copy does on Mesa.
 typedef void *HGLRC;
 static int(__stdcall *wine_bind_tex_image)(void *pbuffer, int buffer);
 static void *(__stdcall *get_pbuffer_dc)(void *pbuffer);
@@ -125,6 +126,8 @@ static int(__stdcall *query_pbuffer)(void *pbuffer, int attribute, int *value);
 #define WGL_TEXTURE_2D_ARB 0x207A
 #define WGL_FRONT_LEFT_ARB 0x2083
 #define WGL_BACK_LEFT_ARB 0x2085
+#define WGL_AUX0_ARB 0x2087
+#define WGL_AUX9_ARB 0x2090
 
 static struct {
     void *dc;
@@ -170,7 +173,8 @@ static int __stdcall bind_tex_image(void *pbuffer, int buffer)
     void *dc = get_pbuffer_dc ? get_pbuffer_dc(pbuffer) : 0;
     HGLRC context = current_context();
     void *context_dc = current_dc();
-    if (!dc || !query_pbuffer || (buffer != WGL_FRONT_LEFT_ARB && buffer != WGL_BACK_LEFT_ARB) ||
+    if (!dc || !query_pbuffer || (buffer != WGL_FRONT_LEFT_ARB && buffer != WGL_BACK_LEFT_ARB &&
+                                   (buffer < WGL_AUX0_ARB || buffer > WGL_AUX9_ARB)) ||
         !query_pbuffer(pbuffer, WGL_TEXTURE_TARGET_ARB, &target) || target != WGL_TEXTURE_2D_ARB ||
         !query_pbuffer(pbuffer, WGL_TEXTURE_FORMAT_ARB, &format) ||
         !query_pbuffer(pbuffer, WGL_PBUFFER_WIDTH_ARB, &width) ||

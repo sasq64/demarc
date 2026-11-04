@@ -30,7 +30,8 @@ import by position, which lands two exports later in wine's table; Fulcrum's
 `wglBindTexImageARB` copies the pbuffer with a context of its own, made on
 the pbuffer's DC and sharing with the caller's. wine's copies with an
 internal context of another pixel format, a fatal GLX `BadMatch` on NVIDIA
-(Plastic's "Your Fingers So Gently On My Skin").
+(Plastic's "Your Fingers So Gently On My Skin"). An aux buffer, which no GLX
+config has, is copied from the back buffer (Cubicle's "Tannhäuser Gate").
 
 Float pbuffers (`WGL_TYPE_RGBA_FLOAT_ARB`) are emulated: Xwayland's GLX has
 no float fbconfigs, so wine finds no format and the pbuffer is never made.

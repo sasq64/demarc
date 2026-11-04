@@ -14,6 +14,7 @@ meta = { vice_sid_extra = "0xd420" }
 
 [zoo.20]
 meta = { wine_res = "1024x768" }
+events = [{ frame = 505, click = [0.0729999989271164, 0.39800000190734863] }, { frame = 603, click = [0.503000020980835, 0.5220000147819519] }]
 
 # Rupture by ASD. Picks ARB vertex programs only when GL_VENDOR contains "ATI",
 # and NV_vertex_program (vp30) otherwise, which Mesa does not have: black screen.
@@ -464,6 +465,8 @@ Most effects were black. They render to pbuffers through Mark Harris'
 RenderTexture, with the mode "rgb double depth aux=1 tex2D rtt". No Xwayland
 GLX config has aux buffers, so wglChoosePixelFormatARB found no format and no
 pbuffer was made. The patch asks for aux=0, and the effects render without it.
+It still binds WGL_AUX0_ARB, which the opengl32 proxy copies from the back
+buffer (wine's own copy is a fatal BadMatch on NVIDIA).
 wine_res fits the picture to the screen.
 '''
 meta = { wine_res = "640x480" }
@@ -1731,7 +1734,7 @@ The click picks "watch fullscreen"; the menu ignores keys. It sits low because
 the window is 637x451, not the 640x480 the click is scaled over.
 '''
 meta = { wine_res = "640x480" }
-events = [{ frame = 300, click = [0.477, 0.955] }]
+events = [{ frame = 392, click = [0.5120000243186951, 0.953000009059906] }]
 patch = [
   { info = "unpacker exit jumps to the cave", target = "bass.dll", offset = 602, contents = "0gsAAA==" },
   { info = "jle/jg to jbe/ja in the position search", target = "bass.dll", offset = 3632, contents = "xgXsiwEQdsYFBIwBEHfpoXz+/w==" },
@@ -1880,3 +1883,9 @@ patch = [
   { info = "load blinnphong.fs.glsl from resource 142", target = "cinderproject_1.exe", offset = 594130, contents = "jg==" },
   { info = "load blinnphong.vs.glsl from resource 143", target = "cinderproject_1.exe", offset = 594191, contents = "jw==" },
 ]
+
+[zoo.19424]
+events = [{ frame = 34, key = "4" }]
+
+[zoo.79625]
+events = [{ frame = 29, key = "N" }]

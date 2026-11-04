@@ -165,7 +165,9 @@ finds nothing under Xwayland; the opengl32 proxy emulates them with FBOs
 whose files were never shipped: hide the name with an override `patch`.
 No Xwayland config has aux buffers either: RenderTexture mode strings
 (`"rgb ... aux=1 ... rtt"`) find no format, and the effects are black.
-Patch the string to `aux=0` (Tannhäuser Gate, `zoo.80364`).
+Patch the string to `aux=0` (Tannhäuser Gate, `zoo.80364`); its
+`wglBindTexImageARB(WGL_AUX0_ARB)` goes through the proxy's copy, since
+wine's is a fatal GLX `BadMatch` on NVIDIA.
 
 **"Critical Warning" box after the setup dialog.** Black Maiden's GeForce3
 engine (Interceptor `zoo.6279`, Relais `zoo.3299`) shows this one box for any
