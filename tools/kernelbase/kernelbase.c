@@ -89,12 +89,58 @@ void *__stdcall resolve_extra(unsigned i)
     return address;
 }
 
+__declspec(dllimport) NTSTATUS __stdcall NtProtectVirtualMemory(void *process, void **addr, ULONG *size,
+                                                               ULONG prot, ULONG *old);
+__declspec(dllimport) void *__stdcall RtlAllocateHeap(void *heap, ULONG flags, ULONG size);
+__declspec(dllimport) int __stdcall RtlFreeHeap(void *heap, ULONG flags, void *ptr);
+
+#define PAGE_EXECUTE_READWRITE 0x40
+
+// A demo passing HEAP_NO_SERIALIZE on the process heap races DXVK's and
+// wine's threads on it (.kkrieger), so those calls lock anyway.
+void *alloc_continue, *free_continue;
+
+#define STRIP_NO_SERIALIZE(name, cont)                                         \
+    __attribute__((naked)) static void name(void)                              \
+    {                                                                          \
+        __asm__("movl %fs:0x30, %eax\n"                                        \
+                "movl 0x18(%eax), %eax\n"                                      \
+                "cmpl 4(%esp), %eax\n"                                         \
+                "jne 1f\n"                                                     \
+                "andl $-2, 8(%esp)\n"                                          \
+                "1: jmp *_" #cont "\n");                                       \
+    }
+
+STRIP_NO_SERIALIZE(alloc_hook, alloc_continue)
+STRIP_NO_SERIALIZE(free_hook, free_continue)
+
+// Over a `mov edi,edi` hot-patch prologue: a jmp to `hook` in the padding
+// before it, and a short jmp back to that.
+static void hotpatch(unsigned char *fn, void (*hook)(void), void **cont)
+{
+    if (fn[0] != 0x8b || fn[1] != 0xff)
+        return;
+    void *addr = fn - 5;
+    ULONG size = 7, old;
+    if (NtProtectVirtualMemory((void *)-1, &addr, &size, PAGE_EXECUTE_READWRITE, &old))
+        return;
+    *cont = fn + 2;
+    fn[-5] = 0xe9;
+    *(long *)(fn - 4) = (long)((unsigned char *)hook - fn);
+    *(volatile unsigned short *)fn = 0xf9eb;
+    addr = fn - 5;
+    size = 7;
+    NtProtectVirtualMemory((void *)-1, &addr, &size, old, &old);
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
     if (reason != DLL_PROCESS_ATTACH)
         return 1;
     LdrDisableThreadCalloutsForDll(self);
+    hotpatch((unsigned char *)RtlAllocateHeap, alloc_hook, &alloc_continue);
+    hotpatch((unsigned char *)RtlFreeHeap, free_hook, &free_continue);
     HMODULE real = load_wine_kernelbase();
     if (!real)
         return 0;
