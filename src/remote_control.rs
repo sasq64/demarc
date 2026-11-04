@@ -51,6 +51,7 @@ pub enum Action {
     /// in the file list.
     LoadDemo(String),
     AskNavigator(String),
+    AskNavigatorTree(String),
     AskPlaylist(String),
     AskVideo,
     AskStatus,
@@ -170,6 +171,10 @@ end
 
 function get_navigator(path)
     return ask(Ask_navigator, path)
+end
+
+function collect_navigator(pattern)
+    return ask(Ask_navigator_tree, pattern)
 end
 
 function get_playlist(name)
@@ -448,8 +453,9 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
         })?,
     )?;
 
-    let asks: [(&str, fn(String) -> Action); 2] = [
+    let asks: [(&str, fn(String) -> Action); 3] = [
         ("Ask_navigator", Action::AskNavigator),
+        ("Ask_navigator_tree", Action::AskNavigatorTree),
         ("Ask_playlist", Action::AskPlaylist),
     ];
     for (name, action) in asks {
@@ -635,6 +641,10 @@ fn run_script(
             }
             Action::AskNavigator(path) => {
                 remote.runner.reply(Reply::Files(navigator.files_at(&path)));
+            }
+            Action::AskNavigatorTree(pattern) => {
+                let files = navigator.files_under(&pattern);
+                remote.runner.reply(Reply::Files(Some(files)));
             }
             Action::AskPlaylist(name) => {
                 let index = playlists.find(&name);

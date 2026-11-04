@@ -7,9 +7,11 @@
 -- "failed" plus the reason.
 -- get_navigator(path) lists the entries at a navigator path like
 -- "Demozoo/Parties/Evoke 2005/Demo", as tables of the db's fields with the id in
--- the form above; nil if there is no such path. get_playlist(name) does the same
--- for a playlist, and save_to_playlist(name, id) and
--- remove_from_playlist(name, id) change one, creating it if needed.
+-- the form above; nil if there is no such path. collect_navigator(pattern) gives
+-- every entry in the folders below a path, where a "*" in a segment matches any
+-- text: "Demozoo/Awards/Scene.org *". get_playlist(name) lists a playlist, and
+-- save_to_playlist(name, id) and remove_from_playlist(name, id) change one,
+-- creating it if needed.
 -- audio_level() is the RMS (0..1) of what the cores played since it was last
 -- asked, and record_audio("out.wav") writes all of it from then on.
 -- video_level() is the share (0..1) of the current frame that isn't black, plus

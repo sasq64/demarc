@@ -23,6 +23,7 @@ fn names(actions: &[Action]) -> Vec<String> {
             Action::Screenshot(p) => format!("shot {}", p.display()),
             Action::LoadDemo(id) => format!("load {id}"),
             Action::AskNavigator(path) => format!("navigator {path}"),
+            Action::AskNavigatorTree(pattern) => format!("tree {pattern}"),
             Action::AskPlaylist(name) => format!("playlist {name}"),
             Action::AskVideo => "video".into(),
             Action::AskStatus => "status".into(),

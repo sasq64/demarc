@@ -1,5 +1,6 @@
--- Plays every demo under a navigator path and sorts them into playlists by what
--- they did. Run with no files, so the default dbs are loaded:
+-- Plays every unique demo below a navigator path and sorts them into playlists
+-- by what they did. Demos already on one of those playlists are skipped. Run
+-- with no files, so the default dbs are loaded:
 --
 --   demarc --headless --no-silence --remote-control scripts/test_demos.lua
 --
@@ -8,7 +9,8 @@
 -- One with audio and a picture that never moves goes on the black screen list:
 -- that is how a demo looks when its frames don't reach the session.
 
-local PATH = "Demozoo/Awards/Scene.org 2010/Best breakthrough performance"
+-- "*" in a segment matches any text.
+local PATH = "Demozoo/Awards/Scene.org *"
 local SHOTS = "test_shots/"
 
 local NO_START = "Test: No Start"
@@ -81,9 +83,20 @@ local function test_demo(demo)
 end
 
 function Main()
-    local demos = get_navigator(PATH)
-    if not demos or #demos == 0 then
-        error("nothing to test at " .. PATH)
+    local demos, seen = {}, {}
+    for _, list in { NO_START, BLACK, WORKING } do
+        for _, demo in get_playlist(list) or {} do
+            seen[demo.id] = true
+        end
+    end
+    for _, demo in collect_navigator(PATH) do
+        if not seen[demo.id] then
+            seen[demo.id] = true
+            table.insert(demos, demo)
+        end
+    end
+    if #demos == 0 then
+        error("nothing left to test at " .. PATH)
     end
     print("Testing " .. #demos .. " demos from " .. PATH)
 
