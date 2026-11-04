@@ -24,7 +24,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, MediaCmd, MediaKind};
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
 use crate::tiff_pal;
@@ -38,6 +38,8 @@ const CRNG_RATE_60HZ: f64 = 16384.0;
 /// at. The colour-cycling animation advances one frame per call, so this is
 /// both the reported [`fps`](RetroEmu::fps) and the time base for cycling.
 const FRAME_RATE: f64 = 60.0;
+
+const MAX_ZOOM: usize = 8;
 
 /// Largest colour count [`load_image`] reports in place of a bit depth; past
 /// this a truecolour image is described by its depth as before.
@@ -124,6 +126,11 @@ pub struct ImageEmu {
     last_offsets: Vec<i64>,
     /// What the file turned out to be, as shown by [`Backend::get_info`].
     info: String,
+    zoom: usize,
+    /// Top left of the zoomed-in area, in image pixels.
+    offset: (usize, usize),
+    /// The zoomed-in area scaled up to the full frame size.
+    view: Vec<u32>,
 }
 
 impl ImageEmu {
@@ -204,6 +211,9 @@ impl ImageEmu {
                     frames: 0,
                     last_offsets: Vec::new(),
                     info,
+                    zoom: 1,
+                    offset: (0, 0),
+                    view: Vec::new(),
                 };
                 // Render the initial (unrotated) frame so the first presented
                 // frame is correct even before any time has elapsed.
@@ -234,6 +244,9 @@ impl ImageEmu {
                     frames: 0,
                     last_offsets: Vec::new(),
                     info,
+                    zoom: 1,
+                    offset: (0, 0),
+                    view: Vec::new(),
                 })
             }
         }
@@ -276,6 +289,36 @@ impl ImageEmu {
     }
 }
 
+impl ImageEmu {
+    fn visible(&self) -> (usize, usize) {
+        ((self.width / self.zoom).max(1), (self.height / self.zoom).max(1))
+    }
+
+    fn move_to(&mut self, x: isize, y: isize) {
+        let (vw, vh) = self.visible();
+        self.offset = (
+            x.clamp(0, (self.width - vw) as isize) as usize,
+            y.clamp(0, (self.height - vh) as isize) as usize,
+        );
+        self.update_view();
+    }
+
+    fn update_view(&mut self) {
+        if self.zoom == 1 {
+            return;
+        }
+        let (vw, vh) = self.visible();
+        let (w, h) = (self.width, self.height);
+        self.view.resize(w * h, 0);
+        for y in 0..h {
+            let src = (self.offset.1 + y * vh / h) * w + self.offset.0;
+            for x in 0..w {
+                self.view[y * w + x] = self.frame[src + x * vw / w];
+            }
+        }
+    }
+}
+
 impl Backend for ImageEmu {
     // Advance the colour-cycling animation. A static image (no active ranges)
     // leaves the frame untouched; otherwise the frame is only rebuilt when the
@@ -288,13 +331,15 @@ impl Backend for ImageEmu {
         let offsets = self.cycle_offsets(elapsed);
         if offsets != self.last_offsets {
             self.render(elapsed);
+            self.update_view();
             self.last_offsets = offsets;
         }
         true
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
-        f(self.width, self.height, &self.frame);
+        let pixels = if self.zoom > 1 { &self.view } else { &self.frame };
+        f(self.width, self.height, pixels);
     }
 
     // No audio; the frontend pushes nothing when the callback stays empty.
@@ -338,6 +383,31 @@ impl Backend for ImageEmu {
     // decoded from, its displayed size and its colour mode.
     fn get_info(&self) -> Option<String> {
         Some(self.info.clone())
+    }
+
+    fn media_kind(&self) -> Option<MediaKind> {
+        Some(MediaKind::Image)
+    }
+
+    fn media(&mut self, cmd: MediaCmd) {
+        let (vw, vh) = self.visible();
+        let (x, y) = (self.offset.0 as isize, self.offset.1 as isize);
+        match cmd {
+            MediaCmd::Zoom(steps) => {
+                let (cx, cy) = (x + vw as isize / 2, y + vh as isize / 2);
+                self.zoom = match steps {
+                    1.. => (self.zoom * 2).min(MAX_ZOOM),
+                    _ => (self.zoom / 2).max(1),
+                };
+                let (vw, vh) = self.visible();
+                self.move_to(cx - vw as isize / 2, cy - vh as isize / 2);
+            }
+            MediaCmd::Scroll(dx, dy) => self.move_to(
+                x + dx as isize * (vw as isize / 4).max(1),
+                y + dy as isize * (vh as isize / 4).max(1),
+            ),
+            _ => {}
+        }
     }
 }
 

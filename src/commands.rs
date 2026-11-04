@@ -10,6 +10,7 @@ use bevy::render::view::screenshot::Screenshot;
 use bevy::render::view::screenshot::save_to_disk;
 use bevy::window::{CursorMoved, PrimaryWindow, WindowMode};
 
+use crate::backend::{MediaCmd, MediaKind};
 use crate::config::{AppSettings, RenderSettings};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
@@ -59,6 +60,18 @@ pub enum Cmd {
     OpenKeyboard,
     ToggleRecording,
     ToggleMotion,
+    NextSong,
+    PrevSong,
+    SeekFwd30,
+    SeekBack30,
+    SeekFwd10m,
+    SeekBack10m,
+    ZoomIn,
+    ZoomOut,
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+    ScrollRight,
 }
 
 impl Cmd {
@@ -94,6 +107,18 @@ impl Cmd {
         Cmd::OpenKeyboard,
         Cmd::ToggleRecording,
         Cmd::ToggleMotion,
+        Cmd::NextSong,
+        Cmd::PrevSong,
+        Cmd::SeekFwd30,
+        Cmd::SeekBack30,
+        Cmd::SeekFwd10m,
+        Cmd::SeekBack10m,
+        Cmd::ZoomIn,
+        Cmd::ZoomOut,
+        Cmd::ScrollUp,
+        Cmd::ScrollDown,
+        Cmd::ScrollLeft,
+        Cmd::ScrollRight,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -133,7 +158,37 @@ impl Cmd {
             Cmd::OpenKeyboard => "Toggle on-screen keyboard",
             Cmd::ToggleRecording => "Start/Stop audio recording",
             Cmd::ToggleMotion => "Toggle motion compensation",
+            Cmd::NextSong => "Next subsong",
+            Cmd::PrevSong => "Previous subsong",
+            Cmd::SeekFwd30 => "Skip 30s forward",
+            Cmd::SeekBack30 => "Skip 30s back",
+            Cmd::SeekFwd10m => "Skip 10min forward",
+            Cmd::SeekBack10m => "Skip 10min back",
+            Cmd::ZoomIn => "Zoom in",
+            Cmd::ZoomOut => "Zoom out",
+            Cmd::ScrollUp => "Scroll up",
+            Cmd::ScrollDown => "Scroll down",
+            Cmd::ScrollLeft => "Scroll left",
+            Cmd::ScrollRight => "Scroll right",
         }
+    }
+
+    fn media(self) -> Option<MediaCmd> {
+        Some(match self {
+            Cmd::NextSong => MediaCmd::NextSong,
+            Cmd::PrevSong => MediaCmd::PrevSong,
+            Cmd::SeekFwd30 => MediaCmd::Seek(30),
+            Cmd::SeekBack30 => MediaCmd::Seek(-30),
+            Cmd::SeekFwd10m => MediaCmd::Seek(600),
+            Cmd::SeekBack10m => MediaCmd::Seek(-600),
+            Cmd::ZoomIn => MediaCmd::Zoom(1),
+            Cmd::ZoomOut => MediaCmd::Zoom(-1),
+            Cmd::ScrollUp => MediaCmd::Scroll(0, -1),
+            Cmd::ScrollDown => MediaCmd::Scroll(0, 1),
+            Cmd::ScrollLeft => MediaCmd::Scroll(-1, 0),
+            Cmd::ScrollRight => MediaCmd::Scroll(1, 0),
+            _ => return None,
+        })
     }
 }
 
@@ -170,6 +225,12 @@ impl KeyMapping {
             KeyCode::Tab => '\u{f0312}',
             KeyCode::Enter => '\u{f0311}',
             KeyCode::Space => '\u{f1050}',
+            KeyCode::ArrowLeft => '←',
+            KeyCode::ArrowRight => '→',
+            KeyCode::ArrowUp => '↑',
+            KeyCode::ArrowDown => '↓',
+            KeyCode::Equal | KeyCode::NumpadAdd => '+',
+            KeyCode::Minus | KeyCode::NumpadSubtract => '-',
             _ => {
                 let letter = format!("{:?}", self.key).chars().next_back().unwrap_or('?');
                 char::from_u32(letter as u32 - b'A' as u32 + 0xf0b08).unwrap_or('?')
@@ -217,6 +278,69 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll),
     KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
 ];
+
+/// Keys for the music, video and image views, used without the hot key.
+const MUSIC_KEYS: &[KeyMapping] = &[
+    KeyMapping::new(KeyCode::ArrowRight, Cmd::NextSong),
+    KeyMapping::new(KeyCode::ArrowLeft, Cmd::PrevSong),
+    KeyMapping::new(KeyCode::Space, Cmd::PauseResume),
+];
+
+const VIDEO_KEYS: &[KeyMapping] = &[
+    KeyMapping::new(KeyCode::ArrowRight, Cmd::SeekFwd30),
+    KeyMapping::new(KeyCode::ArrowLeft, Cmd::SeekBack30),
+    KeyMapping::new(KeyCode::ArrowUp, Cmd::SeekFwd10m),
+    KeyMapping::new(KeyCode::ArrowDown, Cmd::SeekBack10m),
+    KeyMapping::new(KeyCode::Space, Cmd::PauseResume),
+];
+
+const IMAGE_KEYS: &[KeyMapping] = &[
+    KeyMapping::new(KeyCode::Equal, Cmd::ZoomIn),
+    KeyMapping::new(KeyCode::NumpadAdd, Cmd::ZoomIn),
+    KeyMapping::new(KeyCode::Minus, Cmd::ZoomOut),
+    KeyMapping::new(KeyCode::NumpadSubtract, Cmd::ZoomOut),
+    KeyMapping::new(KeyCode::ArrowUp, Cmd::ScrollUp),
+    KeyMapping::new(KeyCode::ArrowDown, Cmd::ScrollDown),
+    KeyMapping::new(KeyCode::ArrowLeft, Cmd::ScrollLeft),
+    KeyMapping::new(KeyCode::ArrowRight, Cmd::ScrollRight),
+];
+
+fn nav_keys(kind: Option<MediaKind>) -> &'static [KeyMapping] {
+    match kind {
+        Some(MediaKind::Music) => MUSIC_KEYS,
+        Some(MediaKind::Video) => VIDEO_KEYS,
+        Some(MediaKind::Image) => IMAGE_KEYS,
+        None => &[],
+    }
+}
+
+fn current_media_kind(
+    emus: &Query<(&Emulator, &EmuView)>,
+    settings: &AppSettings,
+) -> Option<MediaKind> {
+    emus.iter()
+        .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu)
+        .and_then(|(emu, _)| emu.core.as_ref()?.media_kind())
+}
+
+fn handle_nav_keys(
+    input: Res<ButtonInput<KeyCode>>,
+    emus: Query<(&Emulator, &EmuView)>,
+    settings: Res<AppSettings>,
+    ui_state: Res<UiState>,
+    mut writer: MessageWriter<CmdMessage>,
+) {
+    let hot_key_pressed = input.pressed(KeyCode::AltRight) || input.pressed(KeyCode::ControlRight);
+    if hot_key_pressed || ui_state.modal {
+        return;
+    }
+    if let Some(m) = nav_keys(current_media_kind(&emus, &settings))
+        .iter()
+        .find(|m| input.just_pressed(m.key))
+    {
+        writer.write(CmdMessage(m.cmd));
+    }
+}
 
 /// Returns the [`Cmd`] bound to whichever hotkey was just pressed this frame,
 /// or `None` if no hotkey was pressed.
@@ -436,7 +560,16 @@ fn gamepad_mouse(
 }
 
 /// The rows of the command overlay, and the [`Cmd`] each one runs.
-fn command_list(pad: bool) -> Vec<(String, Cmd)> {
+fn command_list(pad: bool, media: Option<MediaKind>) -> Vec<(String, Cmd)> {
+    let mut nav: Vec<&KeyMapping> = Vec::new();
+    for m in nav_keys(media) {
+        if !nav.iter().any(|n| n.cmd == m.cmd) {
+            nav.push(m);
+        }
+    }
+    let nav = nav
+        .into_iter()
+        .map(|m| (format!(" {} {} ", m.label(), m.cmd.description()), m.cmd));
     if pad {
         PAD_HOTKEYS
             .iter()
@@ -446,6 +579,7 @@ fn command_list(pad: bool) -> Vec<(String, Cmd)> {
         HOTKEYS
             .iter()
             .map(|m| (format!(" {} {} ", m.label(), m.cmd.description()), m.cmd))
+            .chain(nav)
             .collect()
     }
 }
@@ -454,7 +588,9 @@ fn handle_textlist(
     mut settings: ResMut<AppSettings>,
     input: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
+    emus: Query<(&Emulator, &EmuView)>,
     mut pad_list: Local<bool>,
+    mut list_media: Local<Option<MediaKind>>,
     mut file_reader: MessageReader<FuzzyListSelect>,
     mut writer: MessageWriter<CmdMessage>,
     mut show_list: MessageWriter<ShowFuzzyList>,
@@ -465,7 +601,7 @@ fn handle_textlist(
 ) {
     for msg in file_reader.read() {
         if msg.id == 99
-            && let Some(&(_, cmd)) = command_list(*pad_list).get(msg.item)
+            && let Some(&(_, cmd)) = command_list(*pad_list, *list_media).get(msg.item)
         {
             writer.write(CmdMessage(cmd));
         }
@@ -489,7 +625,8 @@ fn handle_textlist(
         }
         if time.elapsed_secs() - settings.hotkey_pressed_at < 0.35 {
             *pad_list = pad_released || crate::on_steam_deck();
-            let lines = command_list(*pad_list)
+            *list_media = current_media_kind(&emus, &settings);
+            let lines = command_list(*pad_list, *list_media)
                 .into_iter()
                 .map(|(line, _)| line)
                 .collect::<Vec<_>>();
@@ -706,6 +843,11 @@ pub(crate) fn handle_cmd(
                         });
                     }
                     Cmd::Reload => reload(&mut emu, &mut settings, &mut navigator),
+                    c if let Some(media) = c.media() => {
+                        if let Some(core) = emu.core.as_mut() {
+                            core.media(media);
+                        }
+                    }
                     Cmd::PauseResume => {
                         emu.paused = !emu.paused;
                         if !emu.is_image {
@@ -972,6 +1114,7 @@ impl Plugin for CommandPlugin {
                 (
                     handle_hotkey.in_set(FrontendSet::Input),
                     handle_media_keys.in_set(FrontendSet::Input),
+                    handle_nav_keys.in_set(FrontendSet::Input),
                     handle_gamepad.in_set(FrontendSet::Input),
                     handle_textlist,
                     handle_playlist_pick,

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::backend::{Backend, VideoFrame, ViewFocus};
+use crate::backend::{Backend, MediaCmd, MediaKind, VideoFrame, ViewFocus};
 
 /// What a [`FakeBackend`] was told, and what it answers with.
 pub struct FakeState {
@@ -16,6 +16,7 @@ pub struct FakeState {
     pub buttons: Vec<(bool, bool, bool)>,
     pub focus: Vec<ViewFocus>,
     pub latency: Option<usize>,
+    pub media: Vec<MediaCmd>,
 
     pub frame: VideoFrame,
     pub used: Option<(usize, usize)>,
@@ -26,6 +27,7 @@ pub struct FakeState {
     pub activity: f32,
     pub state: u64,
     pub info: Option<String>,
+    pub media_kind: Option<MediaKind>,
 }
 
 impl Default for FakeState {
@@ -43,6 +45,7 @@ impl Default for FakeState {
             buttons: Vec::new(),
             focus: Vec::new(),
             latency: None,
+            media: Vec::new(),
             frame: VideoFrame::default(),
             used: None,
             audio: Vec::new(),
@@ -52,6 +55,7 @@ impl Default for FakeState {
             activity: 0.5,
             state: 0,
             info: None,
+            media_kind: None,
         }
     }
 }
@@ -179,5 +183,13 @@ impl Backend for FakeBackend {
 
     fn get_info(&self) -> Option<String> {
         self.lock().info.clone()
+    }
+
+    fn media_kind(&self) -> Option<MediaKind> {
+        self.lock().media_kind
+    }
+
+    fn media(&mut self, cmd: MediaCmd) {
+        self.lock().media.push(cmd);
     }
 }

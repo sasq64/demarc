@@ -316,3 +316,41 @@ fn color_cycling_changes_the_frame() {
     let frame_b = emu.frame.clone();
     assert_ne!(frame_a, frame_b, "colour cycling did not change the frame");
 }
+
+fn grid(width: usize, height: usize) -> ImageEmu {
+    let path = root("testdata/test.iff");
+    let mut emu = ImageEmu::new(&path).unwrap();
+    emu.width = width;
+    emu.height = height;
+    emu.frame = (0..(width * height) as u32).collect();
+    emu
+}
+
+fn shown(emu: &ImageEmu) -> Vec<u32> {
+    let mut out = Vec::new();
+    emu.with_frame(&mut |_, _, px| out = px.to_vec());
+    out
+}
+
+#[test]
+fn zoom_keeps_the_centre_and_scroll_stops_at_the_edges() {
+    let mut emu = grid(4, 4);
+    emu.media(MediaCmd::Zoom(1));
+    // The middle 2x2 of the 4x4, each pixel doubled.
+    assert_eq!(shown(&emu), [5, 5, 6, 6, 5, 5, 6, 6, 9, 9, 10, 10, 9, 9, 10, 10]);
+    emu.media(MediaCmd::Scroll(-1, -1));
+    emu.media(MediaCmd::Scroll(-1, -1));
+    assert_eq!(emu.offset, (0, 0));
+    for _ in 0..5 {
+        emu.media(MediaCmd::Scroll(1, 1));
+    }
+    assert_eq!(emu.offset, (2, 2));
+    for _ in 0..5 {
+        emu.media(MediaCmd::Zoom(1));
+    }
+    assert_eq!(emu.zoom, MAX_ZOOM);
+    for _ in 0..5 {
+        emu.media(MediaCmd::Zoom(-1));
+    }
+    assert_eq!(shown(&emu), (0..16).collect::<Vec<_>>());
+}

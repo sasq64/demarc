@@ -484,3 +484,45 @@ fn frame_lengths_track_the_sample_rate() {
         "a second of audio was {total} samples, expected ~{expected}"
     );
 }
+
+#[test]
+fn subsongs_wrap_and_a_single_song_stays() {
+    struct Songs {
+        songs: &'static str,
+        seeks: Arc<Mutex<Vec<i32>>>,
+        files: Vec<PathBuf>,
+    }
+    impl MusixPlayer for Songs {
+        fn get_song_files(&self) -> &Vec<PathBuf> {
+            &self.files
+        }
+        fn get_frequency(&self) -> u32 {
+            44100
+        }
+        fn get_samples(&mut self, _target: &mut [i16]) -> usize {
+            0
+        }
+        fn get_meta_string(&mut self, what: &str) -> Option<String> {
+            match what {
+                "songs" => Some(self.songs.into()),
+                "startSong" => Some("1".into()),
+                _ => None,
+            }
+        }
+        fn seek(&self, song: i32, _seconds: i32) {
+            self.seeks.lock().unwrap().push(song);
+        }
+    }
+    let play = |songs, cmds: &[MediaCmd]| {
+        let seeks = Arc::new(Mutex::new(Vec::new()));
+        let player = Songs { songs, seeks: seeks.clone(), files: Vec::new() };
+        let mut emu = MusicEmu::from_player(Box::new(player), "".into(), 44100.0, 2);
+        for &cmd in cmds {
+            emu.media(cmd);
+        }
+        seeks.lock().unwrap().clone()
+    };
+    use MediaCmd::*;
+    assert_eq!(play("3", &[NextSong, NextSong, PrevSong]), [2, 0, 2]);
+    assert!(play("1", &[NextSong, PrevSong]).is_empty());
+}

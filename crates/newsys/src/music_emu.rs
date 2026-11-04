@@ -29,7 +29,7 @@ use anyhow::{Result, anyhow};
 use musix::MusixPlayer;
 use tracing::{debug, error, info, warn};
 
-use crate::backend::{Backend, ViewFocus, i16_to_f32};
+use crate::backend::{Backend, MediaCmd, MediaKind, ViewFocus, i16_to_f32};
 use crate::music_vis::Visualizer;
 
 /// Rate the frontend paces [`run`](Backend::run) at. Nothing in the music
@@ -261,6 +261,8 @@ pub struct MusicEmu {
     /// reaches a sink.
     focus: ViewFocus,
     info: String,
+    /// The subsong playing.
+    song: i32,
 }
 
 // Safety: every player `musix::load_song` can return (`ChipPlayer`, wrapping an
@@ -334,11 +336,15 @@ impl MusicEmu {
     }
 
     fn from_player(
-        player: Box<dyn MusixPlayer>,
+        mut player: Box<dyn MusixPlayer>,
         info: String,
         sample_rate: f64,
         channels: u32,
     ) -> Self {
+        let song = player
+            .get_meta_string("startSong")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         Self {
             player,
             sample_rate,
@@ -359,7 +365,23 @@ impl MusicEmu {
             ended: false,
             focus: ViewFocus::Focus,
             info,
+            song,
         }
+    }
+
+    fn restart(&mut self, song: i32) {
+        self.song = song;
+        self.player.seek(song, 0);
+        self.audio.clear();
+        self.scope.clear();
+        self.pending.clear();
+        self.pending_pos = 0;
+        self.empty_reads = 0;
+        self.ended = false;
+        self.frame_count = 0;
+        // A script that failed on the old position gets another chance.
+        self.vis_failed = false;
+        self.meta_dirty = true;
     }
 
     /// Re-read `keys` from the player into [`Self::meta`]. Called at load for
@@ -634,17 +656,27 @@ impl Backend for MusicEmu {
     /// Restart from the beginning of the first subsong. Plugins that do not
     /// implement seeking ignore this.
     fn reset(&mut self) {
-        self.player.seek(0, 0);
-        self.audio.clear();
-        self.scope.clear();
-        self.pending.clear();
-        self.pending_pos = 0;
-        self.empty_reads = 0;
-        self.ended = false;
-        self.frame_count = 0;
-        // A script that failed on the old position gets another chance.
-        self.vis_failed = false;
-        self.meta_dirty = true;
+        self.restart(0);
+    }
+
+    fn media_kind(&self) -> Option<MediaKind> {
+        Some(MediaKind::Music)
+    }
+
+    fn media(&mut self, cmd: MediaCmd) {
+        let songs: i32 = self
+            .player
+            .get_meta_string("songs")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let step = match cmd {
+            MediaCmd::NextSong => 1,
+            MediaCmd::PrevSong => -1,
+            _ => return,
+        };
+        if songs > 1 {
+            self.restart((self.song + step).rem_euclid(songs));
+        }
     }
 
     // A song has no disks, no keyboard, no joypad and no mouse.

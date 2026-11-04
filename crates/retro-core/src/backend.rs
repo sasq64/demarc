@@ -40,6 +40,26 @@ pub enum ViewFocus {
     Focus,
 }
 
+/// The non-libretro views that take plain-key navigation.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MediaKind {
+    Music,
+    Video,
+    Image,
+}
+
+/// A navigation command for a [`MediaKind`] backend.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MediaCmd {
+    NextSong,
+    PrevSong,
+    /// Seconds to move forward (or back, when negative).
+    Seek(i32),
+    /// Zoom steps in (or out, when negative).
+    Zoom(i32),
+    Scroll(i32, i32),
+}
+
 /// Bit in the mask returned by [`Backend::state`]: the backend is fast-forwarding
 /// through the frames asked for by [`Backend::skip_frames`] and has not caught up
 /// yet. Cleared on the frame the skip runs out.
@@ -172,6 +192,12 @@ pub trait Backend {
     /// Called every frontend tick, so the backend can tell the frontend has
     /// stopped running, from having paused it (`paused`) or from a stall.
     fn keep_alive(&self, _paused: bool) {}
+
+    fn media_kind(&self) -> Option<MediaKind> {
+        None
+    }
+
+    fn media(&mut self, _cmd: MediaCmd) {}
 }
 
 /// Reinterpret a slice of packed RGBA pixels as the raw bytes the GPU texture

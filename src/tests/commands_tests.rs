@@ -30,14 +30,25 @@ fn pad_select_toggles_the_keyboard() {
 
 #[test]
 fn command_list_shows_pad_buttons() {
-    let pad = command_list(true);
+    let pad = command_list(true, None);
     assert_eq!(pad.len(), PAD_HOTKEYS.len());
     assert_eq!(
         pad[0],
         (" \u{f0c32}      Open file menu ".to_string(), Cmd::OpenFile)
     );
     assert!(pad.iter().any(|(line, _)| line.starts_with(" L2+R1 ")));
-    assert_eq!(command_list(false).len(), HOTKEYS.len());
+    assert_eq!(command_list(false, None).len(), HOTKEYS.len());
+    assert_eq!(command_list(true, Some(MediaKind::Image)).len(), PAD_HOTKEYS.len());
+}
+
+#[test]
+fn command_list_shows_the_current_views_nav_keys_once() {
+    let image = command_list(false, Some(MediaKind::Image));
+    assert_eq!(image.len(), HOTKEYS.len() + 6);
+    assert_eq!(image[HOTKEYS.len()], (" + Zoom in ".to_string(), Cmd::ZoomIn));
+    let music = command_list(false, Some(MediaKind::Music));
+    let cmds: Vec<Cmd> = music[HOTKEYS.len()..].iter().map(|(_, c)| *c).collect();
+    assert_eq!(cmds, [Cmd::NextSong, Cmd::PrevSong, Cmd::PauseResume]);
 }
 
 #[test]
@@ -53,7 +64,8 @@ fn stick_moves_the_cursor_outside_the_deadzone() {
 
 #[test]
 fn every_bound_command_has_a_name() {
-    for cmd in HOTKEYS.iter().map(|m| m.cmd).chain(PAD_HOTKEYS.iter().map(|m| m.cmd)) {
+    let nav = MUSIC_KEYS.iter().chain(VIDEO_KEYS).chain(IMAGE_KEYS);
+    for cmd in HOTKEYS.iter().chain(nav).map(|m| m.cmd).chain(PAD_HOTKEYS.iter().map(|m| m.cmd)) {
         assert_eq!(Cmd::from_name(&format!("{cmd:?}")), Some(cmd));
     }
     assert_eq!(Cmd::from_name("NoSuchCommand"), None);
@@ -298,4 +310,28 @@ fn reload_steps_back_and_next_all_advances_every_emu() {
 
     run_cmds(&mut world, &[Cmd::NextFileAll]);
     assert_eq!(run_next(&mut world), [true, true]);
+}
+
+#[test]
+fn nav_keys_follow_the_current_views_kind_without_the_hot_key() {
+    let (mut world, _dir) = world();
+    let e = spawn(&mut world, 0);
+    let fake = crate::fake_backend::FakeBackend::default();
+    fake.lock().media_kind = Some(MediaKind::Video);
+    world.get_mut::<Emulator>(e).unwrap().core = fake.boxed();
+
+    world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ArrowUp);
+    world.run_system_once(handle_nav_keys).unwrap();
+    assert_eq!(sent(&mut world), [Cmd::SeekFwd10m]);
+    run_cmds(&mut world, &[Cmd::SeekFwd10m, Cmd::SeekBack30]);
+    assert_eq!(fake.lock().media, [MediaCmd::Seek(600), MediaCmd::Seek(-30)]);
+
+    world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ControlRight);
+    world.run_system_once(handle_nav_keys).unwrap();
+    assert!(sent(&mut world).is_empty());
+
+    fake.lock().media_kind = None;
+    world.resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::ControlRight);
+    world.run_system_once(handle_nav_keys).unwrap();
+    assert!(sent(&mut world).is_empty());
 }

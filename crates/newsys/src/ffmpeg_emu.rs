@@ -12,7 +12,7 @@ use std::thread;
 use anyhow::{Context, Result, bail};
 use tracing::warn;
 
-use crate::backend::{Backend, VideoFrame};
+use crate::backend::{Backend, MediaCmd, MediaKind, VideoFrame};
 
 const SAMPLE_RATE: u32 = 48000;
 
@@ -143,6 +143,8 @@ pub struct FfmpegEmu {
     audio: Vec<f32>,
     sample_debt: f64,
     ended: bool,
+    /// Pictures shown since the start of the file.
+    frames: u64,
 }
 
 impl FfmpegEmu {
@@ -153,7 +155,7 @@ impl FfmpegEmu {
             "codec_name,width,height,avg_frame_rate,r_frame_rate,sample_aspect_ratio",
         )?)?;
         let has_audio = !ffprobe(path, "a:0", "index")?.trim().is_empty();
-        let decoders = Self::start(path, &info, has_audio)?;
+        let decoders = Self::start(path, &info, has_audio, 0.0)?;
         Ok(Self {
             path: path.to_owned(),
             frame: Arc::new(vec![u32::from_ne_bytes([0, 0, 0, 255]); info.width * info.height]),
@@ -164,18 +166,19 @@ impl FfmpegEmu {
             audio: Vec::new(),
             sample_debt: 0.0,
             ended: false,
+            frames: 0,
         })
     }
 
-    fn start(path: &Path, info: &VideoInfo, has_audio: bool) -> Result<Decoders> {
-        let hwaccel: &[&str] = if HWACCEL_CODECS.contains(&info.codec.as_str()) {
-            &["-hwaccel", "auto"]
-        } else {
-            &[]
-        };
+    fn start(path: &Path, info: &VideoInfo, has_audio: bool, pos: f64) -> Result<Decoders> {
+        let pos = format!("{pos:.3}");
+        let mut input = vec!["-ss", &pos];
+        if HWACCEL_CODECS.contains(&info.codec.as_str()) {
+            input.extend(["-hwaccel", "auto"]);
+        }
         let (video_child, mut stdout) = spawn_ffmpeg(
             path,
-            hwaccel,
+            &input,
             &["-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "rgba"],
         )?;
         let mut children = vec![video_child];
@@ -199,7 +202,7 @@ impl FfmpegEmu {
             let rate = SAMPLE_RATE.to_string();
             let (audio_child, mut stdout) = spawn_ffmpeg(
                 path,
-                &[],
+                &["-ss", &pos],
                 &["-map", "0:a:0", "-f", "f32le", "-ac", "2", "-ar", &rate],
             )?;
             children.push(audio_child);
@@ -254,7 +257,10 @@ impl FfmpegEmu {
             return false;
         };
         match video.recv() {
-            Ok(frame) => self.frame = frame,
+            Ok(frame) => {
+                self.frame = frame;
+                self.frames += 1;
+            }
             Err(_) => self.ended = true,
         }
         true
@@ -273,6 +279,21 @@ impl FfmpegEmu {
         }
         let n = want.min(self.pending.len());
         Some(self.pending.drain(..n).collect())
+    }
+
+    fn seek_to(&mut self, pos: f64) {
+        match Self::start(&self.path, &self.info, self.has_audio, pos) {
+            Ok(decoders) => self.decoders = decoders,
+            Err(e) => {
+                warn!("Could not restart ffmpeg: {e}");
+                return;
+            }
+        }
+        self.pending.clear();
+        self.audio.clear();
+        self.sample_debt = 0.0;
+        self.ended = false;
+        self.frames = (pos * self.info.fps).round() as u64;
     }
 }
 
@@ -341,17 +362,18 @@ impl Backend for FfmpegEmu {
     }
 
     fn reset(&mut self) {
-        match Self::start(&self.path, &self.info, self.has_audio) {
-            Ok(decoders) => self.decoders = decoders,
-            Err(e) => {
-                warn!("Could not restart ffmpeg: {e}");
-                return;
-            }
+        self.seek_to(0.0);
+    }
+
+    fn media_kind(&self) -> Option<MediaKind> {
+        Some(MediaKind::Video)
+    }
+
+    fn media(&mut self, cmd: MediaCmd) {
+        if let MediaCmd::Seek(secs) = cmd {
+            let pos = self.frames as f64 / self.info.fps + secs as f64;
+            self.seek_to(pos.max(0.0));
         }
-        self.pending.clear();
-        self.audio.clear();
-        self.sample_debt = 0.0;
-        self.ended = false;
     }
 
     fn set_disk(&mut self, _no: u32) {}
