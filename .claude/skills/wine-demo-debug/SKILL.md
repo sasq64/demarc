@@ -188,6 +188,11 @@ aligns `glGenLists(n >= 32)` to a multiple of 32; an intro that assumes it got
 waiting for a posted message. autodlg's `WM_NULL` after a click covers it
 (bruh, `zoo.361793`). The picture may be a stale frame of a dead window.
 
+**Picture hidden for the first ten seconds.** `the dialog driver never said
+the demo was up`: autodlg blocked sending to a window whose thread never
+pumps messages. It skips frameless windows at the origin now; a framed one
+would still hang (polystreptikum, `zoo.66322`).
+
 **Exit right after loading, dialog still on screen.** An MFC launcher's
 dialog is the main window, and its `OnNcDestroy` posts WM_QUIT; a demo loop
 that quits on WM_QUIT ends before its first frame. `+relay` shows
