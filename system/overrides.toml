@@ -145,6 +145,16 @@ patch = {
   contents = "McmQ",
 }
 
+# Glowsick by Portal Process: the setup dialog leaves a WM_QUIT behind
+[zoo.1526]
+fix_info = '''
+It loaded and then exited before its first frame. The setup dialog is MFC's
+main window, so destroying it runs AfxPostQuitMessage(0), and the demo's
+PeekMessage loop takes that WM_QUIT as the end. The patch NOPs the call in
+CWnd::OnNcDestroy.
+'''
+patch = { info = "no quit when the dialog closes", target = "portalPlayer.exe", offset = 657309, contents = "kJCQkJCQ" }
+
 # Patter by Doom. Its aspect fit scales by the screen width instead of the
 # height when the screen is wider than 16:10, and centres with an unsigned
 # shift; wine draws the resulting 0x7ffffdc0 offscreen.
@@ -254,6 +264,25 @@ glsl = {
 
 # [zoo.4767]
 # boot = "final.png"
+
+# fr-065: Euphotic / Farbrausch. Its 3D text in Georgia crashes the mesh code
+# under wine.
+[zoo.5151]
+fix_info = '''
+Crashed with a page fault in the werkkzeug3 mesh code during loading. The 3D
+text op tessellates GetGlyphOutline outlines with glu32, links the triangles'
+edges and flips thin ones; for the four credits in Georgia (2.05, as on XP) the
+links come out wrong and the flips read unset corners, so where it dies depends
+on heap garbage. Not DXVK (wined3d crashes too) and not the garbage itself
+(zeroed allocations still crash). Under winedbg it fails every time, which is
+the way to test. The patches set those four ops' font to Verdana.
+'''
+patch = [
+  { info = "visualice credit in verdana", target = "fr-065_euphotic.exe", offset = 758074, contents = "dmVyZGFuYQ==" },
+  { info = "melwyn credit in verdana", target = "fr-065_euphotic.exe", offset = 758094, contents = "dmVyZGFuYQ==" },
+  { info = "little bitchard credit in verdana", target = "fr-065_euphotic.exe", offset = 758123, contents = "dmVyZGFuYQ==" },
+  { info = "werkkzeug3 credit in verdana", target = "fr-065_euphotic.exe", offset = 758149, contents = "dmVyZGFuYQ==" },
+]
 
 # Grayscale by Keyboarders: wined3d's ddraw draws to the GL front buffer, black
 [zoo.5252]
