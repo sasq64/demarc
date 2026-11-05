@@ -1956,3 +1956,17 @@ events = [{ frame = 29, key = "N" }]
 
 [zoo.50084]
 boot = "cubase64.prg"
+
+# polystreptikum by Minas & Solenoid: all white under DXVK, right with wined3d
+[zoo.66322]
+fix_info = '''
+Under DXVK every frame is plain white; wined3d draws the red point clouds on
+white that the release shows. It never pumps messages, which used to hang
+autodlg's undecorate step and hide the first ten seconds.
+'''
+meta = { wine_dll_overrides = "d3d9=b" }
+
+# Mescaline Synesthesia by deMarche: ships Unreal Speccy, which was started
+# instead and quits on "wrong ini-file version"
+[zoo.70380]
+boot = "ms_zx128.tap"
