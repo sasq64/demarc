@@ -74,6 +74,10 @@ makes its font with first glyph 1 and draws raw ASCII, so it needs list 1.
 `glProgramParameteriEXT` is a no-op when wine has none: Mesa lacks
 `EXT_geometry_shader4`, and Mercury's "Epsilon" quits on the NULL.
 
+NVIDIA lists `ARB_geometry_shader4` but not the EXT one, so `GL_EXTENSIONS`
+gets `GL_EXT_geometry_shader4` added there, and its four functions come from
+the ARB ones. PlayPsyCo's "Phon" quits without it.
+
 `glColorTableEXT` and `glTexImage2D` with `GL_COLOR_INDEX8_EXT` emulate
 `EXT_paletted_texture`, which NVIDIA dropped: the indices stay in the proxy and
 each level goes to GL as RGBA8, again whenever the palette changes. Interceptor

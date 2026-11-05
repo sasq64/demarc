@@ -693,10 +693,47 @@ static unsigned __stdcall gen_lists(int range)
     return list;
 }
 
+// NVIDIA lists only ARB_geometry_shader4 but takes EXT_geometry_shader4 code,
+// and Phon quits without the EXT name; its functions map to the ARB ones.
+static const unsigned char *(__stdcall *wine_get_string)(unsigned);
+static const unsigned char *extensions_in;
+static char *extensions_out;
+
+static const unsigned char *__stdcall get_string(unsigned name)
+{
+    const unsigned char *s = wine_get_string(name);
+    if (name != 0x1F03 /* GL_EXTENSIONS */ || !s || !contains((const char *)s, "GL_ARB_geometry_shader4") ||
+        contains((const char *)s, "GL_EXT_geometry_shader4"))
+        return s;
+    if (s != extensions_in) {
+        static const char extra[] = " GL_EXT_geometry_shader4";
+        unsigned n = length((const char *)s);
+        char *out = glsl_alloc(n + sizeof(extra));
+        if (!out)
+            return s;
+        for (unsigned i = 0; i < n; i++)
+            out[i] = s[i];
+        for (unsigned i = 0; i < sizeof(extra); i++)
+            out[n + i] = extra[i];
+        extensions_in = s;
+        extensions_out = out;
+    }
+    return (const unsigned char *)extensions_out;
+}
+
 // NVIDIA's driver hands out the GL 1.1 functions too, and Hexer relies on it.
 static void *__stdcall get_proc_address(const char *name)
 {
     void *address = wine_get_proc_address(name);
+    static const char *const gs4[][2] = {
+        {"glProgramParameteriEXT", "glProgramParameteriARB"},
+        {"glFramebufferTextureEXT", "glFramebufferTextureARB"},
+        {"glFramebufferTextureFaceEXT", "glFramebufferTextureFaceARB"},
+        {"glFramebufferTextureLayerEXT", "glFramebufferTextureLayerARB"},
+    };
+    for (unsigned i = 0; !address && i < sizeof(gs4) / sizeof(gs4[0]); i++)
+        if (equal(name, gs4[i][0]))
+            address = wine_get_proc_address(gs4[i][1]);
     if (!address && equal(name, "glProgramParameteriEXT"))
         return program_parameteri_ext;
     if (!address && equal(name, "glColorTableEXT"))
@@ -1112,6 +1149,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglUseFontOutlinesW")) {
                 use_font_outlines[1] = address;
                 address = use_font_outlines_w;
+            } else if (address && equal(names[i], "glGetString")) {
+                wine_get_string = address;
+                address = get_string;
             } else if (address && equal(names[i], "glGenLists")) {
                 wine_gen_lists = address;
                 address = gen_lists;
