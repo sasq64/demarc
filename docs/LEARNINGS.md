@@ -1206,3 +1206,13 @@
   be a still picture: Burj Babil (`zoo.919`) was black only because its shader
   needs `wine_glsl_version=130` (`switch`); a lit still picture in that
   category now counts as working.
+- A demo that never pumps messages (polystreptikum, `zoo.66322`: its loop is
+  only waveOutGetPosition/GetAsyncKeyState/SwitchToThread) hung autodlg's
+  `fill_desktop`: SetWindowLongPtr/SetWindowPos on another process's window
+  send to its thread and wait. "the dialog driver never said the demo was up"
+  then hid the first ten seconds. autodlg now leaves a frameless window at the
+  origin alone; wined3d's WS_SYSMENU on its fullscreen window is not a frame.
+- A "No Start" entry for another platform can be a release that bundles a
+  Windows emulator (Mescaline Synesthesia, `zoo.70380`, ships Unreal Speccy);
+  demarc started the exe. `--boot-file <image>` tests the native image before
+  writing a `boot` override.

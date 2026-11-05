@@ -40,6 +40,7 @@ unsafe extern "system" {
     fn GetWindowLongPtrW(h: Hwnd, idx: i32) -> isize;
     fn SetWindowLongPtrW(h: Hwnd, idx: i32, v: isize) -> isize;
     fn GetClientRect(h: Hwnd, r: *mut Rect) -> Bool32;
+    fn GetWindowRect(h: Hwnd, r: *mut Rect) -> Bool32;
     fn SetWindowPos(h: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> Bool32;
     fn SendMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> isize;
     fn PostMessageW(h: Hwnd, msg: u32, w: usize, l: isize) -> Bool32;
@@ -153,6 +154,7 @@ const WS_DECORATION: isize = 0x00C0_0000  // WS_CAPTION (WS_BORDER | WS_DLGFRAME
     | 0x0008_0000  // WS_SYSMENU
     | 0x0002_0000  // WS_MINIMIZEBOX
     | 0x0001_0000; // WS_MAXIMIZEBOX
+const WS_FRAME: isize = 0x00C0_0000 | 0x0004_0000;
 const WS_EX_DECORATION: isize = 0x0000_0200  // WS_EX_CLIENTEDGE
     | 0x0000_0100  // WS_EX_WINDOWEDGE
     | 0x0000_0001; // WS_EX_DLGMODALFRAME
@@ -175,6 +177,14 @@ fn fill_desktop(hwnd: Hwnd) {
         }
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        // These send to the demo's thread and block on one that never pumps
+        // messages (polystreptikum). WS_SYSMENU alone draws nothing.
+        let mut wr = Rect::default();
+        GetWindowRect(hwnd, &mut wr);
+        if style & WS_FRAME == 0 && ex & WS_EX_DECORATION == 0 && wr.left == 0 && wr.top == 0 {
+            println!("the demo window is already undecorated at the desktop origin");
+            return;
+        }
         SetWindowLongPtrW(hwnd, GWL_STYLE, style & !WS_DECORATION);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & !WS_EX_DECORATION);
         SetWindowPos(
