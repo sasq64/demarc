@@ -305,6 +305,14 @@ fn prefers_the_program_named_after_an_early_dialog_mode() {
     assert_eq!(found.file_name().unwrap(), "640x480.exe");
     let found = sys.pick_target(&release, "800x600").unwrap().unwrap();
     assert_eq!(found.file_name().unwrap(), "demo.exe");
+
+    let release = dir.path().join("lines");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "x_2160p.exe");
+    let wanted = windows_exe(&release, "x_1080p.exe");
+    windows_exe(&release, "x_1440p.exe");
+    let found = sys.pick_target(&release, "1920x1080,1280x720").unwrap().unwrap();
+    assert_eq!(found, wanted);
 }
 
 /// The scan has to tell a screen mode from every other reason two numbers
@@ -328,6 +336,12 @@ fn reads_a_resolution_only_where_a_name_holds_one() {
     assert_eq!(res("demo 640.480.exe").as_deref(), Some("640x480"));
     // With both to go on, the `x` is the one that means a size.
     assert_eq!(res("party_2009_640x480.exe").as_deref(), Some("640x480"));
+    // A 16:9 mode named by its height.
+    assert_eq!(res("pbr-dreamtime_return_1080p.exe").as_deref(), Some("1920x1080"));
+    assert_eq!(res("intro_2160P.exe").as_deref(), Some("3840x2160"));
+    assert_eq!(res("demo_720p_final.exe").as_deref(), Some("1280x720"));
+    assert_eq!(res("demo_1080px.exe"), None);
+    assert_eq!(res("demo_11080p.exe"), None);
 
     // Not sizes: a pack count, a version, a hex address, a texture.
     assert_eq!(res("pack2x2.exe"), None);
