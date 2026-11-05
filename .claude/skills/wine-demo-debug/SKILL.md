@@ -118,7 +118,9 @@ shows only `"X.dll" failed to initialize`. Fixes, in order: winetricks native
 DLL in the prefix; `wine_dll_overrides` (wine's syntax, `d3dx9_37=n`); a proxy
 DLL like those in `tools/` (jumps into wine's builtin via `WINEDLLDIR<n>`). A
 real DLL copied over wine's fake in `syswow64` loads without an override.
-Only some d3dx9 versions are native; others still hit wine's stubs.
+Only some d3dx9 versions are native; others still hit wine's stubs. A msvcrt name
+wine keeps only in ucrtbase is found there by the kernelbase proxy's
+`GetProcAddress` hook (Brainworm, `zoo.202448`); add other fallbacks there.
 
 **Crinkler / packed 4k.** Imports are resolved by walking export tables, so a
 wine export list that differs from Windows breaks silently. Existing proxies:
@@ -314,7 +316,9 @@ release directory to its own drive for it, plain wine does not.
 
 **Unreal Engine 4 asks for `GlobalShaderCache-GLSL_150.bin`.** It fell back to
 OpenGL because the prefix says Windows XP (left by winetricks' `speechsdk`);
-an `AppDefaults\<exe>` `Version=win10` key in `setup-wine.sh` fixes it.
+an `AppDefaults\<exe>` `Version=win10` key in `setup-wine.sh` fixes it. UE4's
+stock `UE4Game-Win64-Shipping.exe` shows an empty "Fatal error!" box for the
+same reason (Variform 3, `zoo.166539`).
 
 **Old GL demo dies right after `glGetString`/`glGetIntegerv`.** Modern
 values overflow 2000-era assumptions: `GL_EXTENSIONS` into a fixed buffer,
@@ -362,6 +366,10 @@ wave open (Remembrance, `zoo.4030`).
 intros (`*_compatible.exe`) do `mov cl,15` and assume the rest of ECX is zero;
 wine leaves it set. Parsec's 14-byte patch fits them (Ex Fabric, `zoo.3578`).
 
+**Crash in demarc only, fine with `wine_sandbox=false`.** Rebuild the bwrap
+command by hand and drop arguments one at a time. The release directory's
+extra drive letter crashed Smode (Le Laboratoire D, `zoo.181204`).
+
 **Timing asserts and races.** `wine_cpus=N` limits the CPU count but may only
 make a race rarer; run several times before calling it fixed.
 
@@ -380,7 +388,9 @@ sizes. Fix the unpacked exe and ship a bsdiff `source` patch (Akkordarbeit,
 **Wrong font or missing glyphs in GDI-drawn text.** `WINEDEBUG=+font`, grep
 `HfontCreate` and `select_font Chosen`: a face missing from the prefix falls
 back to Arial. Segoe UI maps to Selawik through
-`HKCU\Software\Wine\Fonts\Replacements` (Epsilon, `zoo.23405`).
+`HKCU\Software\Wine\Fonts\Replacements` (Epsilon, `zoo.23405`). A face that is
+found but draws boxes lacks the glyphs: check its `cmap` with fontTools
+(wine's Wingdings had 49; `tools/wingdings`, ReelTime `zoo.379064`).
 
 **Picture frozen on frame one, music plays.** Count the exe's calls with
 `+relay` and `grep 'ret=004'`: a flood of failing `mciSendCommandA` is a
@@ -398,6 +408,13 @@ frame, which is the window's client area: a 640x480 window with a frame is
 stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth
 (`gm.dls`), and so does `midiStream*` (Anorgatronikum, `zoo.32482`). Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).
+
+**Web demo stops on its loading bar.** Read the console over CDP
+(`--remote-debugging-port`) with `--ozone-platform=headless
+--use-angle=gl-egl`, since headless SwiftShader hides driver failures. A
+uniform the driver optimised out ("Cannot bind uniform") is kept by
+ANGLE-Vulkan: `gamescope_chrome_args = "--use-angle=vulkan"` (WUNDERLUST,
+`zoo.376145`).
 
 **OpenCV error box, music plays.** An AVI that VfW cannot decode:
 `+msvideo` shows `ICLocate Could not find a driver for codec`. Put the codec

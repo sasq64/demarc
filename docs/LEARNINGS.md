@@ -1262,3 +1262,47 @@
   frame, expecting it to survive the swap; under wine on NVIDIA it does not.
   Its swaps go through gdi32 `SwapBuffers`, so an opengl32 proxy swap hook
   never runs: check `+relay` for `gdi32.SwapBuffers` before writing one.
+- ReelTime (`zoo.379064`) drew boxes for its thumbs up/down: wine's builtin
+  `wingding.ttf` has only 49 glyphs, and `+font` showed Wingdings found, not
+  replaced, so the font list said nothing was wrong. Check the font's `cmap`
+  for the drawn codes (`F000 + byte`) with fontTools. `tools/wingdings` builds
+  a full one from Noto, installed as `Fonts/wingding.ttf`.
+
+- A web demo whose loader stops on one effect: read the console over CDP
+  (`chromium --headless=new --remote-debugging-port`, a node script with the
+  built-in `WebSocket`; plain `--enable-logging` printed nothing). Headless
+  Chrome falls back to SwiftShader, which hides GPU-only failures: pass
+  `--ozone-platform=headless --use-angle=gl-egl` to get the real driver.
+  WUNDERLUST (`zoo.376145`) threw "Cannot bind uniform ... is not used" on
+  ANGLE-GL, where NVIDIA drops a sampler the shader never reads; ANGLE-Vulkan
+  keeps it, as D3D does on Windows. `gamescope_chrome_args` passes the flag.
+
+- Brainworm (`zoo.202448`) faulted executing address 0 right after a heap
+  alloc. A `+relay` pairing of `GetProcAddress` calls with their return values
+  found it at once: `msvcrt._libm_sse2_sqrt_precise` returns NULL. Windows 10's
+  msvcrt exports it, wine's has it only in ucrtbase. kernel32's
+  `GetProcAddress` is its own code (not an import of kernelbase) and ntdll's
+  `LdrGetProcedureAddress` has no hot-patch prologue, so the kernelbase proxy
+  overwrites kernel32's entry with a jump to a wrapper instead.
+- Variform 3 (`zoo.166539`) is UE4's stock `UE4Game-Win64-Shipping.exe`; its
+  empty "Fatal error!" box is the winxp prefix again (as with Dying Stars). A
+  shipping build writes no log, so try win10 before reading traces.
+- Dragon Rising (`zoo.145076`): an MSVC "invalid null pointer" assertion was
+  just the missing command-line argument from `run.bat`. Read a release's
+  `.bat` before debugging the exe. It then compiles shaders for ~30 s, so a
+  short test window calls it black and silent.
+- Le Laboratoire D (`zoo.181204`) crashed only in demarc. Plain wine, autodlg
+  `--launch`, and a hand-built bwrap with the prefix overlay and pid namespace
+  all worked; adding the sandbox's `--symlink <release> dosdevices/<x>:` made it
+  crash, and the same symlink to an empty directory did not. Bisect the bwrap
+  argument list by hand when `wine_sandbox=false` fixes a demo.
+- winedbg tips from Tension and Observatory: a `break` on a builtin's symbol
+  ("No symbols found") fails, but a break on its address works
+  (`0x7be60000` + export RVA for i386 kernel32). Hit an import the exe calls
+  after unpacking (`SizeofResource`), then set the breakpoints in the unpacked
+  code. `x/s *(int*)($ebp+8)` dereferences once. `attach <pid>` from a
+  winedbg command file into a running wow64 process faults; launch under winedbg and
+  drive the dialog from a separate `demarc-autodlg.exe` without `--launch`.
+- Observatory (`zoo.109195`) showed its "File <" box in plain wine too, once
+  the dialog was answered; my first plain run had just sat at the dialog and
+  looked fine. Launch through autodlg when comparing plain wine with demarc.

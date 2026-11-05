@@ -71,8 +71,8 @@ wine_glsl_version=130 fixed the compiles but the intro then quit during
 loading, so glsl edits add the version line only to the shaders that need it.
 '''
 glsl = [
-  { match = '%', edits = [['^(.)', "#version 130\n$1"]] },
-  { match = 'transpose\(', edits = [['^(.)', "#version 120\n$1"]] },
+  { match = "%", edits = [["^(.)", "#version 130\n$1"]] },
+  { match = 'transpose\(', edits = [["^(.)", "#version 120\n$1"]] },
 ]
 
 # Crystal Dream / Triton: its Sound Blaster detection times out on a fast CPU.
@@ -2047,3 +2047,30 @@ glsl = {
     ['\bgl_FragColor\b', "bbFrag"],
   ]
 }
+
+[zoo.376082]
+meta = { wine_res = "1280x720" }
+
+[zoo.371359]
+meta = { wine_res = "1280x720" }
+
+[zoo.355409]
+meta = { wine_res = "1920x1080" }
+
+[zoo.335741]
+meta = { aga = "true" }
+
+# WUNDERLUST / Gray Marchers: ANGLE on GL drops an unused sampler, which the demo's
+# bindUniform throws on, stalling at "Tunnel"
+[zoo.376145]
+meta = { gamescope_chrome_args = "--use-angle=vulkan" }
+events = [{ frame = 900, click = [0.5, 0.5] }]
+
+# Dragon Rising: Draconian.exe asserts on a NULL string without the .dracosln run.bat passes
+[zoo.145076]
+boot = "run.bat"
+
+# Le Laboratoire D (Smode): faults on a NULL object, then opens its dumps folder, when the
+# sandbox also maps the release directory to a drive letter of its own
+[zoo.181204]
+meta = { wine_sandbox = "false" }
