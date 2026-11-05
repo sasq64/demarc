@@ -1970,3 +1970,80 @@ meta = { wine_dll_overrides = "d3d9=b" }
 # instead and quits on "wrong ini-file version"
 [zoo.70380]
 boot = "ms_zx128.tap"
+# Led Blur: SDL 1.2 ddraw, black on NVIDIA under wined3d's ddraw
+[zoo.144558]
+meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
+
+# Pornonoise: ddraw, black on NVIDIA under wined3d's ddraw
+[zoo.3302]
+meta = { wine_cnc_ddraw = "true" }
+
+# Indie-Vibes: scene.org copy is gone, and the Google Drive link is a page
+[zoo.143895]
+download = "https://ftp.untergrund.net/users/highsociety/dump/Kp-2015_Indie-vibes.exe"
+
+# Small Matters Of The Heart: GL-drawn launcher
+[zoo.136152]
+events = [{ frame = 600, key = "Enter" }]
+
+# Esocentrica: launcher waits on "Watch"
+[zoo.167713]
+events = [{ frame = 600, key = "Enter" }]
+
+# Emergency: IMS sound setup screen
+[zoo.333681]
+events = [{ frame = 600, key = "Enter" }, { frame = 700, key = "Enter" }]
+
+# In The Future: soundtrack menu; 2 is the one for a plain Spectrum
+[zoo.160458]
+events = [{ frame = 600, key = "2" }]
+
+# [ Type ]: "Click" to start
+[zoo.153542]
+events = [{ frame = 600, click = [0.5, 0.5] }]
+
+# Artifact: quality buttons
+[zoo.196630]
+events = [{ frame = 600, click = [0.354, 0.444] }]
+
+# The Dunesday Machine: START button
+[zoo.194395]
+events = [{ frame = 600, click = [0.023, 0.042] }]
+
+# Pinky Frinky: START button
+[zoo.189854]
+events = [{ frame = 600, click = [0.51, 0.54] }]
+
+# Bossa de Cores: "Start fullscreen"
+[zoo.284919]
+events = [{ frame = 600, click = [0.41, 0.5] }]
+
+# Condition: "click me!"
+[zoo.292275]
+events = [{ frame = 600, click = [0.03, 0.025] }]
+
+# Seven Days: "Full Screen" button
+[zoo.307633]
+events = [{ frame = 600, click = [0.5, 0.72] }]
+
+# 0mix: start button under the resolution picker
+[zoo.322650]
+events = [{ frame = 600, click = [0.023, 0.081] }]
+
+# Decompress of Empty: the .html download comes back as a mirror's page
+[zoo.323526]
+file = "decompress_of_empty_party.zip"
+
+# Genesis: the exe is a node server for the page
+[zoo.267672]
+boot = "client/index.html"
+
+# Horizon Machine: NVIDIA rejects gl_FragColor at #version 430
+[zoo.170744]
+glsl = {
+  match = "gl_FragColor",
+  edits = [
+    ["^(#version.*)", "$1\nout vec4 bbFrag;"],
+    ['\bgl_FragColor\b', "bbFrag"],
+  ]
+}

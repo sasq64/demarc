@@ -1216,3 +1216,49 @@
   Windows emulator (Mescaline Synesthesia, `zoo.70380`, ships Unreal Speccy);
   demarc started the exe. `--boot-file <image>` tests the native image before
   writing a `boot` override.
+
+- The "Nvidia Problem" playlist was two causes, not one. Led Blur
+  (`zoo.144558`, SDL 1.2) and Pornonoise (`zoo.3302`) are wined3d ddraw:
+  front-buffer drawing reaches the session on AMD but stays black on NVIDIA,
+  so a ddraw demo that works on the framework machine can still need
+  `wine_cnc_ddraw`. Die Ewigkeit Schmerzt (`zoo.9245`) was not a GPU problem:
+  the release-dir `--tmp-overlay` added for `tmpfile()` threw away the
+  precalc cache that `cache_writeback` exists to keep, so every run sat ~100 s
+  on a white frame. The framework machine had its cache from before that
+  change. In-place releases now skip the overlay.
+
+- Lua under `--remote-control` has no `os.getenv`: a script that reads one
+  fails silently and the run sits until the timeout with an empty log. Write
+  one script per demo instead.
+
+- `test_demos.log` holds only the tracing log; the script's `print` lines
+  (the per-demo reasons) go to stdout, so a sweep has to be rerun to see why
+  a demo landed on "Test: No Start". Every entry there is silent by
+  construction (sound sends a demo to Working or No Graphics), so an
+  all-silent triage is not a broken capture.
+- A web release's page was the first `.html` in walk order, which in a
+  release shipping `node_modules` was `LICENSE-W3C.html` (Holly, `zoo.104135`).
+  The web system now takes the shallowest page, `index.html` first.
+- Two Crinkler intros (Cassini `zoo.367582`, Eisenerz `zoo.266556`) die on a
+  call into an unimplemented wine user32 stub (`SetUserObjectCapability`,
+  `ShellHandwritingHandleDelegatedInput`), reported "from" kernelbase's
+  `RaiseException`, not the intro. Both stub names sort just before
+  `ShowCursor`, which both intros import: a hash collision with names wine
+  exports. wine's stubs call `___wine_spec_unimplemented_stub`, so a proxy
+  could leave them out.
+- Horizon Machine (`zoo.170744`) "black and silent" was two faults. The exe
+  was gone after its 4klang precalc: `ps` showed it at 96% CPU, then nothing.
+  A relay under plain gamescope showed the last call, `wglUseFontBitmapsA`,
+  faulting on a 333 MB glyph: its packed LOGFONT is 0x8000000 wide (`+font`
+  shows the `NtGdiHfontCreate` fields). The opengl32 proxy now gives such a
+  font width 0. Then it was white with music: `#version 430` with
+  `gl_FragColor`, which NVIDIA rejects and Mesa takes, so the software-Mesa
+  dump compiled cleanly and only `glslangValidator` on it showed the error.
+- From The Seas To The Stars (`zoo.192022`) is black for 60-90 s of Oidos
+  precalc and then plays; the sweep's 30 s window called it dead. Dreamtime
+  Return (`zoo.307507`) ships `_1080p`/`_1440p`/`_2160p` exes and the 2160p one
+  was started; `res_from_name` now reads `<height>p`. Bull (`zoo.292424`,
+  Leviathan 2.0) draws its scene twice and then copies the back buffer each
+  frame, expecting it to survive the swap; under wine on NVIDIA it does not.
+  Its swaps go through gdi32 `SwapBuffers`, so an opengl32 proxy swap hook
+  never runs: check `+relay` for `gdi32.SwapBuffers` before writing one.
