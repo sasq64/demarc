@@ -522,6 +522,26 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
         })?,
     )?;
 
+    // Luau's own print goes to fd 1, which is /dev/null or the log file.
+    globals.set(
+        "print",
+        lua.create_function(|_, args: mlua::Variadic<mlua::Value>| {
+            let parts = args
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<mlua::Result<Vec<_>>>()?;
+            crate::println(parts.join("\t"));
+            Ok(())
+        })?,
+    )?;
+
+    globals.set(
+        "log_to_file",
+        lua.create_function(|_, path: String| {
+            crate::log_to_file(Path::new(&path)).map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))
+        })?,
+    )?;
+
     let state = shared.clone();
     globals.set(
         "Set_error",

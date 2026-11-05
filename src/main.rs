@@ -134,6 +134,35 @@ impl std::io::Write for FdWriter {
 
 #[cfg(unix)]
 static SAVED_STDOUT: std::sync::OnceLock<FdWriter> = std::sync::OnceLock::new();
+/// Set by [`log_to_file`]: the log follows fd 1 into the file.
+#[cfg(unix)]
+static LOG_TO_FILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Send the log and the cores' own output to `path`; [`println`] keeps the terminal.
+#[cfg(unix)]
+pub(crate) fn log_to_file(path: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
+    let file = std::fs::File::create(path)?;
+    if SAVED_STDOUT.get().is_none() {
+        let saved = std::io::stdout().as_fd().try_clone_to_owned()?;
+        let _ = SAVED_STDOUT.set(FdWriter(saved.into_raw_fd()));
+    }
+    let _ = std::io::stdout().flush();
+    // SAFETY: dup2 onto STDOUT_FILENO/STDERR_FILENO; all fds are valid for the call.
+    for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        if unsafe { libc::dup2(file.as_raw_fd(), target) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    LOG_TO_FILE.store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn log_to_file(_path: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
 
 /// Print a line to the real terminal, bypassing the `/dev/null` redirect that
 /// [`silence_stdout`] installs on fd 1 to muzzle the libretro cores.
@@ -409,7 +438,15 @@ fn main() {
         .compact();
     #[cfg(unix)]
     match saved_stdout {
-        Some(writer) => builder.with_writer(move || writer).init(),
+        Some(writer) => builder
+            .with_writer(move || {
+                if LOG_TO_FILE.load(std::sync::atomic::Ordering::Relaxed) {
+                    FdWriter(libc::STDOUT_FILENO)
+                } else {
+                    writer
+                }
+            })
+            .init(),
         // Silencing disabled or redirect failed: use the default stdout writer.
         None => builder.init(),
     }

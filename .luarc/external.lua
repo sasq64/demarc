@@ -1,214 +1,266 @@
 ---@meta
+-- Globals for --remote-control scripts, registered in src/remote_control.rs.
 
-WIDTH = 320
-HEIGHT = 240
+---An entry from a db or playlist: the db's fields, plus `id`.
+---@class Demo
+---@field id string "demozoo.1234", "csdb.5678" or a bare id
+---@field title? string
+---@field [string] string
 
----@class Buffer
----@class Font
----@field width integer
----@field height integer
+---Keys demarc can deliver to the emulator.
+---@enum KeyName
+Key = {
+	Backspace = "Backspace",
+	Tab = "Tab",
+	Enter = "Enter",
+	Pause = "Pause",
+	Escape = "Escape",
+	Space = "Space",
+	Quote = "Quote",
+	Comma = "Comma",
+	Minus = "Minus",
+	Period = "Period",
+	Slash = "Slash",
+	Digit0 = "Digit0",
+	Digit1 = "Digit1",
+	Digit2 = "Digit2",
+	Digit3 = "Digit3",
+	Digit4 = "Digit4",
+	Digit5 = "Digit5",
+	Digit6 = "Digit6",
+	Digit7 = "Digit7",
+	Digit8 = "Digit8",
+	Digit9 = "Digit9",
+	Semicolon = "Semicolon",
+	Equal = "Equal",
+	BracketLeft = "BracketLeft",
+	Backslash = "Backslash",
+	BracketRight = "BracketRight",
+	Backquote = "Backquote",
+	KeyA = "KeyA",
+	KeyB = "KeyB",
+	KeyC = "KeyC",
+	KeyD = "KeyD",
+	KeyE = "KeyE",
+	KeyF = "KeyF",
+	KeyG = "KeyG",
+	KeyH = "KeyH",
+	KeyI = "KeyI",
+	KeyJ = "KeyJ",
+	KeyK = "KeyK",
+	KeyL = "KeyL",
+	KeyM = "KeyM",
+	KeyN = "KeyN",
+	KeyO = "KeyO",
+	KeyP = "KeyP",
+	KeyQ = "KeyQ",
+	KeyR = "KeyR",
+	KeyS = "KeyS",
+	KeyT = "KeyT",
+	KeyU = "KeyU",
+	KeyV = "KeyV",
+	KeyW = "KeyW",
+	KeyX = "KeyX",
+	KeyY = "KeyY",
+	KeyZ = "KeyZ",
+	Delete = "Delete",
+	Numpad0 = "Numpad0",
+	Numpad1 = "Numpad1",
+	Numpad2 = "Numpad2",
+	Numpad3 = "Numpad3",
+	Numpad4 = "Numpad4",
+	Numpad5 = "Numpad5",
+	Numpad6 = "Numpad6",
+	Numpad7 = "Numpad7",
+	Numpad8 = "Numpad8",
+	Numpad9 = "Numpad9",
+	NumpadDecimal = "NumpadDecimal",
+	NumpadDivide = "NumpadDivide",
+	NumpadMultiply = "NumpadMultiply",
+	NumpadSubtract = "NumpadSubtract",
+	NumpadAdd = "NumpadAdd",
+	NumpadEnter = "NumpadEnter",
+	NumpadEqual = "NumpadEqual",
+	ArrowUp = "ArrowUp",
+	ArrowDown = "ArrowDown",
+	ArrowRight = "ArrowRight",
+	ArrowLeft = "ArrowLeft",
+	Insert = "Insert",
+	Home = "Home",
+	End = "End",
+	PageUp = "PageUp",
+	PageDown = "PageDown",
+	F1 = "F1",
+	F2 = "F2",
+	F3 = "F3",
+	F4 = "F4",
+	F5 = "F5",
+	F6 = "F6",
+	F7 = "F7",
+	F8 = "F8",
+	F9 = "F9",
+	F10 = "F10",
+	F11 = "F11",
+	F12 = "F12",
+	F13 = "F13",
+	F14 = "F14",
+	F15 = "F15",
+	NumLock = "NumLock",
+	CapsLock = "CapsLock",
+	ScrollLock = "ScrollLock",
+	ShiftRight = "ShiftRight",
+	ShiftLeft = "ShiftLeft",
+	ControlRight = "ControlRight",
+	ControlLeft = "ControlLeft",
+	AltRight = "AltRight",
+	AltLeft = "AltLeft",
+	SuperLeft = "SuperLeft",
+	SuperRight = "SuperRight",
+	Help = "Help",
+	PrintScreen = "PrintScreen",
+	ContextMenu = "ContextMenu",
+	Power = "Power",
+	Undo = "Undo",
+	BrowserBack = "BrowserBack",
+	BrowserForward = "BrowserForward",
+	BrowserRefresh = "BrowserRefresh",
+	BrowserStop = "BrowserStop",
+	BrowserSearch = "BrowserSearch",
+	BrowserFavorites = "BrowserFavorites",
+	BrowserHome = "BrowserHome",
+	AudioVolumeMute = "AudioVolumeMute",
+	AudioVolumeDown = "AudioVolumeDown",
+	AudioVolumeUp = "AudioVolumeUp",
+	MediaTrackNext = "MediaTrackNext",
+	MediaTrackPrevious = "MediaTrackPrevious",
+	MediaStop = "MediaStop",
+	MediaPlayPause = "MediaPlayPause",
+	LaunchMail = "LaunchMail",
+}
 
----@class Color
+---Hotkey commands, for `send_cmd`.
+---@enum CmdName
+Cmd = {
+	NextFile = "NextFile",
+	PrevFile = "PrevFile",
+	SwapDisk = "SwapDisk",
+	ChangeScale = "ChangeScale",
+	ToggleCrt = "ToggleCrt",
+	ToggleBorder = "ToggleBorder",
+	PauseResume = "PauseResume",
+	MouseClick = "MouseClick",
+	ToggleInput = "ToggleInput",
+	ToggleInfo = "ToggleInfo",
+	Reset = "Reset",
+	Screenshot = "Screenshot",
+	ScreenshotAll = "ScreenshotAll",
+	Warp10 = "Warp10",
+	Warp30 = "Warp30",
+	Fullscreen = "Fullscreen",
+	ToggleAll = "ToggleAll",
+	NextEmu = "NextEmu",
+	PrevEmu = "PrevEmu",
+	Maximize = "Maximize",
+	NextFileAll = "NextFileAll",
+	OpenFile = "OpenFile",
+	Reload = "Reload",
+	Settings = "Settings",
+	ShaderDialog = "ShaderDialog",
+	StartOther = "StartOther",
+	AddToPlaylist = "AddToPlaylist",
+	OpenKeyboard = "OpenKeyboard",
+	ToggleRecording = "ToggleRecording",
+	ToggleMotion = "ToggleMotion",
+	NextSong = "NextSong",
+	PrevSong = "PrevSong",
+	SeekFwd30 = "SeekFwd30",
+	SeekBack30 = "SeekBack30",
+	SeekFwd10m = "SeekFwd10m",
+	SeekBack10m = "SeekBack10m",
+	ZoomIn = "ZoomIn",
+	ZoomOut = "ZoomOut",
+	ScrollUp = "ScrollUp",
+	ScrollDown = "ScrollDown",
+	ScrollLeft = "ScrollLeft",
+	ScrollRight = "ScrollRight",
+	NextSubtitle = "NextSubtitle",
+}
 
-function Init() end
+---Suspend the script for `n` frames.
+---@param n integer
+function wait_frames(n) end
 
----@param buf Buffer
-function Render(buf) end
+---Hold a key down, then release it.
+---@param key KeyName
+---@param frames? integer Frames to hold the key, default 2
+function press_key(key, frames) end
 
----@return table
-function get_meta() end
+---Press a key and keep it held until `key_up`.
+---@param key KeyName
+function key_down(key) end
 
----@param r integer
----@param g integer
----@param b integer
----@param a? integer
----@return Color
--- Pack color components into pixel
-function rgb(r, g, b, a) end
+---Release a key pressed with `key_down`.
+---@param key KeyName
+function key_up(key) end
 
----@param x integer
----@param y integer
----@param w integer
----@param h integer
----@param col Color
----@param buf Buffer
-function box(buf, x, y, w, h, col) end
+---Run a hotkey command, as if its key was pressed.
+---@param cmd CmdName
+function send_cmd(cmd) end
 
----@param bins integer
----@return table
-function get_spectrum(bins) end
+---Lands a few frames later; `quit()` waits for it.
+---@param path string
+function screenshot(path) end
 
----@param color Color
-function clear(buf, color) end
-
----@return table
-function get_samples() end
-
----@return Font
-function load_font(name) end
-
----@param x integer
----@param y integer
----@param font Font
----@param color Color
----@param buf Buffer
-function text(buf, font, x, y, text, color) end
-
----@return integer
-function get_time() end
---------------------------------------------------------------------------------
--- Luau's built-in `buffer` library.
---
--- Not something src/music_vis.rs registers -- it comes with StdLib::BUFFER, and
--- the `Buffer` class above is Luau's native `buffer` type. Declared here only
--- because lua-language-server targets PUC-Lua and so has never heard of it.
---
--- Every offset is in BYTES from the start of the buffer, and every access is
--- bounds-checked: out of range raises "buffer access out of bounds" rather than
--- being clipped or ignored. Integer reads/writes are little-endian.
---------------------------------------------------------------------------------
-
-buffer = {}
-
----@param size integer
----@return Buffer
--- A new, zero-filled buffer of `size` bytes.
-function buffer.create(size) end
-
----@param str string
----@return Buffer
--- A new buffer holding the bytes of `str`.
-function buffer.fromstring(str) end
-
----@param b Buffer
----@return string
--- The whole buffer as a byte string.
-function buffer.tostring(b) end
-
----@param b Buffer
----@return integer
--- Size in bytes. For the frame buffer this is WIDTH * HEIGHT * 4.
-function buffer.len(b) end
-
----@param b Buffer
----@param offset integer
----@return integer
-function buffer.readi8(b, offset) end
-
----@param b Buffer
----@param offset integer
----@return integer
-function buffer.readu8(b, offset) end
-
----@param b Buffer
----@param offset integer
----@return integer
-function buffer.readi16(b, offset) end
-
----@param b Buffer
----@param offset integer
----@return integer
-function buffer.readu16(b, offset) end
-
----@param b Buffer
----@param offset integer
----@return integer
-function buffer.readi32(b, offset) end
-
----@param b Buffer
----@param offset integer
----@return integer
--- Read one pixel: offset (y * WIDTH + x) * 4.
-function buffer.readu32(b, offset) end
-
----@param b Buffer
----@param offset integer
+---RMS (0..1) of what the cores played since it was last asked.
 ---@return number
-function buffer.readf32(b, offset) end
+function audio_level() end
 
----@param b Buffer
----@param offset integer
----@return number
-function buffer.readf64(b, offset) end
+---Write all audio from now on to a wav file.
+---@param path string
+function record_audio(path) end
 
----@param b Buffer
----@param offset integer
----@param value integer
-function buffer.writei8(b, offset, value) end
+---Share (0..1) of the current frame that isn't black, and a hash that tells frames apart.
+---@return number level
+---@return integer hash
+function video_level() end
 
----@param b Buffer
----@param offset integer
----@param value integer
-function buffer.writeu8(b, offset, value) end
+---Start an entry from the dbs; follow it with `load_status()`.
+---@param id string|integer "demozoo.1234", "csdb.5678", or a bare id in the first db
+function load_demo(id) end
 
----@param b Buffer
----@param offset integer
----@param value integer
-function buffer.writei16(b, offset, value) end
+---State of the current emulator. `error` is set when it is "failed".
+---@return "loading"|"running"|"idle"|"failed" status
+---@return string? error
+function load_status() end
 
----@param b Buffer
----@param offset integer
----@param value integer
-function buffer.writeu16(b, offset, value) end
+---Entries at a navigator path like "Demozoo/Parties/Evoke 2005/Demo"; nil if there is no such path.
+---@param path string
+---@return Demo[]?
+function get_navigator(path) end
 
----@param b Buffer
----@param offset integer
----@param value integer
-function buffer.writei32(b, offset, value) end
+---Every entry in the folders below a path; "*" in a segment matches any text.
+---@param pattern string
+---@return Demo[]?
+function collect_navigator(pattern) end
 
----@param b Buffer
----@param offset integer
----@param value Color
--- Write one pixel: offset (y * WIDTH + x) * 4, value from rgb().
-function buffer.writeu32(b, offset, value) end
+---Entries of a playlist; nil if there is no such playlist.
+---@param name string
+---@return Demo[]?
+function get_playlist(name) end
 
----@param b Buffer
----@param offset integer
----@param value number
-function buffer.writef32(b, offset, value) end
+---Add an entry to a playlist, creating it if needed.
+---@param name string
+---@param id string
+function save_to_playlist(name, id) end
 
----@param b Buffer
----@param offset integer
----@param value number
-function buffer.writef64(b, offset, value) end
+---Remove an entry from a playlist.
+---@param name string
+---@param id string
+function remove_from_playlist(name, id) end
 
----@param b Buffer
----@param offset integer
----@param count integer
----@return string
-function buffer.readstring(b, offset, count) end
+---Send the log and the cores' output to a file; `print` still goes to the terminal.
+---@param path string
+function log_to_file(path) end
 
----@param b Buffer
----@param offset integer
----@param value string
----@param count? integer defaults to #value
-function buffer.writestring(b, offset, value, count) end
-
----@param target Buffer
----@param targetOffset integer
----@param source Buffer
----@param sourceOffset? integer defaults to 0
----@param count? integer defaults to the rest of `source`
--- Overlapping ranges are handled correctly (memmove), so this can scroll a
--- frame within itself.
-function buffer.copy(target, targetOffset, source, sourceOffset, count) end
-
----@param b Buffer
----@param offset integer
----@param value integer only the low byte is used
----@param count? integer defaults to the rest of the buffer
--- Fills BYTES, not pixels -- so it can only paint colours whose four channels
--- are equal. Use clear() or a writeu32 loop for anything else.
-function buffer.fill(b, offset, value, count) end
-
----@param b Buffer
----@param bitOffset integer
----@param bitCount integer 0..32
----@return integer
-function buffer.readbits(b, bitOffset, bitCount) end
-
----@param b Buffer
----@param bitOffset integer
----@param bitCount integer 0..32
----@param value integer
-function buffer.writebits(b, bitOffset, bitCount, value) end
+---Exit demarc once pending screenshots are written.
+function quit() end
