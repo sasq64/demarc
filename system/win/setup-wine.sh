@@ -172,6 +172,8 @@ setup_prefix() {
     winetricks --force speechsdk
     # speechsdk leaves the prefix at winxp; UE4 then forces OpenGL (Dying Stars)
     wine reg add 'HKCU\Software\Wine\AppDefaults\ED3-Win64-Shipping.exe' /v Version /d win10 /f
+    # UE4's stock game exe dies with an empty "Fatal error!" box (Variform 3)
+    wine reg add 'HKCU\Software\Wine\AppDefaults\UE4Game-Win64-Shipping.exe' /v Version /d win10 /f
     # Unity's player refuses anything below Windows 7 (Works For Everybody)
     wine reg add 'HKCU\Software\Wine\AppDefaults\Player.exe' /v Version /d win10 /f
     # Heap free checking fills new blocks with 0x55. The Seeker deletes an FBO id from an
@@ -209,6 +211,8 @@ install_prefix_files() {
     for fcc in iv31 iv32; do
         wine reg add 'HKLM\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Drivers32' /v vidc.$fcc /t REG_SZ /d ir32_32.dll /f
     done
+    # Wine's Wingdings has 49 glyphs; tools/wingdings builds a full one (ReelTime)
+    put wingding.ttf Fonts
     put gm.dls syswow64/drivers
     put gm.dls system32/drivers
     wine reg add 'HKLM\Software\Microsoft\DirectMusic' /v GMFilePath /t REG_SZ /d 'C:\windows\system32\drivers\gm.dls' /f
