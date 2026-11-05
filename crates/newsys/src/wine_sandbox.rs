@@ -214,6 +214,7 @@ fn bwrap_args(
     base: &Path,
     prefix: &Path,
     workdir: Option<&Path>,
+    keep_writes: bool,
     cpus: Option<&Path>,
     hide_ntsync: Option<&Path>,
 ) -> Vec<String> {
@@ -278,12 +279,14 @@ fn bwrap_args(
         let dir = dir.to_string_lossy().into_owned();
         // The old MSVC `tmpfile()` writes to the root of the current drive, so
         // the release gets a drive of its own, overlaid so the files go away.
-        args.extend([
-            "--overlay-src".into(),
-            dir.clone(),
-            "--tmp-overlay".into(),
-            dir.clone(),
-        ]);
+        if !keep_writes {
+            args.extend([
+                "--overlay-src".into(),
+                dir.clone(),
+                "--tmp-overlay".into(),
+                dir.clone(),
+            ]);
+        }
         if let Some(drive) = free_drive(base) {
             args.extend([
                 "--symlink".into(),
@@ -333,7 +336,7 @@ fn usable(base: &Path) -> bool {
         // Overlaid onto itself: the probe wants a real overlay of a real
         // prefix, and inside the sandbox that is all this is. Nothing is
         // written, and the mount is gone with the process.
-        let args = bwrap_args(base, base, None, None, None);
+        let args = bwrap_args(base, base, None, false, None, None);
         let ok = Command::new(&args[0])
             .args(&args[1..])
             .arg("true")
@@ -384,12 +387,14 @@ pub fn ntsync(meta: &HashMap<String, String>) -> bool {
 }
 
 /// Prepare a sandbox around `base`, with `workdir` as the working directory.
+/// `keep_writes` lets what the demo writes there survive the session.
 ///
 /// Fails rather than falling back, so the caller decides what running without
 /// one means for it — which is not the same answer in both backends.
 pub fn prepare(
     base: &Path,
     workdir: Option<&Path>,
+    keep_writes: bool,
     cpus: Option<u32>,
     ntsync: bool,
 ) -> Result<Sandbox> {
@@ -448,6 +453,7 @@ pub fn prepare(
             base,
             &prefix,
             workdir,
+            keep_writes,
             cpus_file.as_deref(),
             ntsync_file.as_deref(),
         ),

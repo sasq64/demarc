@@ -146,6 +146,26 @@ fn res_from_name(path: &Path) -> Option<String> {
     RES_SEPARATORS
         .iter()
         .find_map(|&is_separator| scan_res(&stem, is_separator))
+        .or_else(|| scan_lines(&stem))
+}
+
+/// A 16:9 mode spelled by its height, as in `intro_1080p`.
+fn scan_lines(stem: &str) -> Option<String> {
+    let bytes = stem.as_bytes();
+    stem.match_indices(['p', 'P']).find_map(|(i, _)| {
+        if bytes.get(i + 1).is_some_and(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        let start = bytes[..i].iter().rposition(|c| !c.is_ascii_digit()).map_or(0, |p| p + 1);
+        let width = match &stem[start..i] {
+            "720" => 1280,
+            "1080" => 1920,
+            "1440" => 2560,
+            "2160" => 3840,
+            _ => return None,
+        };
+        Some(format!("{width}x{}", &stem[start..i]))
+    })
 }
 
 /// The first `<digits><separator><digits>` in `stem` that could be a screen
@@ -524,6 +544,7 @@ fn sandbox_for(file: &WorkFile) -> Option<Sandbox> {
     match wine_sandbox::prepare(
         &wine_prefix().ok()?,
         workdir,
+        file.is_in_place(),
         wine_sandbox::cpus(&meta),
         wine_sandbox::ntsync(&meta),
     ) {

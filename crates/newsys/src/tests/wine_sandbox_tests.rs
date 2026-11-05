@@ -6,6 +6,7 @@ fn args(base: &str, prefix: &str, workdir: Option<&str>) -> Vec<String> {
         Path::new(base),
         Path::new(prefix),
         workdir.map(Path::new),
+        false,
         None,
         None,
     )
@@ -133,6 +134,7 @@ fn binds_the_cpu_count_over_sysfs() {
         Path::new("/base"),
         Path::new("/session"),
         None,
+        false,
         Some(Path::new("/run/x/0.cpus")),
         None,
     );
@@ -154,6 +156,7 @@ fn binds_a_file_over_ntsync() {
         Path::new("/base"),
         Path::new("/session"),
         None,
+        false,
         None,
         Some(Path::new("/run/x/0.nontsync")),
     );
@@ -180,7 +183,7 @@ fn parses_the_cpu_count() {
 #[test]
 fn refuses_a_prefix_that_is_not_there() {
     let missing = std::env::temp_dir().join("demarc-no-such-prefix");
-    assert!(prepare(&missing, None, None, true).is_err());
+    assert!(prepare(&missing, None, false, None, true).is_err());
 }
 
 /// A crash leaves mount points behind. They are empty directories rather than
@@ -241,6 +244,20 @@ fn maps_the_release_directory_to_a_writable_drive() {
     let at = args.iter().position(|a| a == "--symlink").expect("a drive");
     assert_eq!(args[at + 1], "/demos/thing");
     assert_eq!(args[at + 2], "/session/dosdevices/d:");
+}
+
+#[test]
+fn keeps_writes_to_a_release_run_in_place() {
+    let args = bwrap_args(
+        Path::new("/nonexistent"),
+        Path::new("/session"),
+        Some(Path::new("/demos/thing")),
+        true,
+        None,
+        None,
+    );
+    assert!(!follows(&args, "--tmp-overlay", "/demos/thing"));
+    assert!(follows(&args, "--chdir", "/demos/thing"));
 }
 
 #[test]
