@@ -62,6 +62,19 @@ meta = { dosbox_pure_cycles = 100000 }
 [zoo.138]
 file = "variform_by_kewlers.zip"
 
+# B - Incubation / Ctrl-Alt-Test: unversioned shaders using % and transpose.
+[zoo.172]
+fix_info = '''
+Its shaders have no #version but use % (GLSL 1.30) and transpose (1.20), so
+Mesa refused them and scenes drew with missing or wrong materials.
+wine_glsl_version=130 fixed the compiles but the intro then quit during
+loading, so glsl edits add the version line only to the shaders that need it.
+'''
+glsl = [
+  { match = '%', edits = [['^(.)', "#version 130\n$1"]] },
+  { match = 'transpose\(', edits = [['^(.)', "#version 120\n$1"]] },
+]
+
 # Crystal Dream / Triton: its Sound Blaster detection times out on a fast CPU.
 # Picks Sound Blaster Pro, 44 kHz. Its player starts the next block once the
 # DSP stops reporting busy, which an SB16 never does.
@@ -112,6 +125,24 @@ patch = {
   target = "fr-063.exe",
   offset = 2215481,
   contents = "kJA=",
+}
+
+# Ballad of a Cluster Bomb Director's Cut by Kooma: locks its quad vertex
+# buffers with the vertex count as the byte size.
+[zoo.878]
+fix_info = '''
+Only the dark canvas showed, on both DXVK and wined3d. The post-process quads
+are updated with Lock(0, 4, ...) followed by a 96-byte copy: the helper passes
+the vertex count where D3D9 wants bytes. Windows uploads the whole buffer
+anyway; DXVK and wined3d upload only the 4 locked bytes, so every quad stayed
+degenerate. Found by making each pass's shader output a solid colour. The patch
+passes 0 (lock everything). The 1.02/1.03 patches only change OpenCV linking.
+'''
+patch = {
+  info = "lock the whole quad vertex buffer",
+  target = "bomb_dc.exe",
+  offset = 287859,
+  contents = "McmQ",
 }
 
 # Patter by Doom. Its aspect fit scales by the screen width instead of the
@@ -1889,3 +1920,6 @@ events = [{ frame = 34, key = "4" }]
 
 [zoo.79625]
 events = [{ frame = 29, key = "N" }]
+
+[zoo.50084]
+boot = "cubase64.prg"

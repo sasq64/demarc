@@ -1155,3 +1155,26 @@
   stderr to a file showed the last call. The prefix copy of a rebuilt proxy is
   not refreshed by a demarc build: install it into `syswow64` (or rerun
   `--setup-wine`).
+
+- Ballad of a Cluster Bomb (`zoo.878`) showed only its canvas. I spent a long
+  time on a wrong lead because a `sed` edit to an `.fx` file did not match
+  (tabs vs spaces) and the "solid colour" test silently ran the original
+  shader. Grep for the edited line before trusting a shader experiment. Making
+  each post-process pass return a solid colour, one at a time, found the pass
+  that drew nothing in a few runs; reading wined3d traces did not. The cause
+  was `Lock(0, 4, ...)` (vertex count passed as bytes) followed by a 96-byte
+  copy. The site was missed by grepping for `push 0x4` next to the vtable
+  call, because the size came from a stack argument: search for the `+0x2c`
+  vtable load and read the pushes around it. DB entries with several downloads
+  only fetch the first; the user asked whether v1.03 had been tested, and it
+  had not (it behaved the same).
+
+- B - Incubation (`zoo.172`, asked for as `zoo.782`, which is a mod): check
+  the id against `demodb/demozoo.txt` and the newest download in
+  `~/.cache/demarc/downloads/`. `wine_glsl_version=130` fixed every compile
+  error, but the intro then exited silently at its loading screen; a frame
+  that did not change in two minutes was the loader, not a hang, and `ps`
+  showed the exe gone. A `glsl` patch that adds `#version 130` only to
+  shaders containing `%` (and `#version 120` to ones using `transpose`) runs
+  it to the end. Its dialog's start button is "Test", now in autodlg's
+  default `--go` list.
