@@ -152,7 +152,9 @@ right after `glGetShaderiv` is an assert: the info log is in winedbg at the
 fault, the source in the unpacked image; glslang over every string in it finds
 the rest (On, `zoo.136151`). When the sources are not plain strings, iterate
 under software Mesa with dumps, one patch per error (Hologram, `zoo.119170`).
-A `match` is a regex.
+A `match` is a regex. `gl_FragColor` under `#version 420`+ compiles on Mesa
+and fails on NVIDIA: run `glslangValidator` on the Mesa dump, and rename it
+to an `out vec4` (Apex `zoo.274554`, Horizon Machine `zoo.170744`).
 
 **HLSL compile errors.** Use the builtin compiler to see return codes
 (`WINEDLLOVERRIDES=d3dcompiler_47=b` with `+relay`) and
