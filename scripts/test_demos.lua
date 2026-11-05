@@ -10,7 +10,7 @@
 -- that is how a demo looks when its frames don't reach the session.
 
 -- "*" in a segment matches any text.
-local PATH = "Demozoo/Awards/Scene.org *"
+local PATH = "Demozoo/Awards/The Meteoriks *"
 local SHOTS = "test_shots/"
 local LOG = "test_demos.log"
 

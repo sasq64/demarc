@@ -214,6 +214,7 @@ default, so `-x <key>=<value>` sets any of them to something not in the list —
 | `gamescope_mesa_glsl_version` | — | Mesa's `force_glsl_version` for the client only (never Xwayland). demarc sets it from `wine_glsl_version` |
 | `gamescope_mesa_allow_glsl_120_subset_in_110` | `false` | Mesa's `allow_glsl_120_subset_in_110` for the client only. demarc sends `true` unless an entry sets `wine_glsl_120_subset` to false |
 | `gamescope_expose_wayland` | `false` | give the client gamescope's Wayland socket instead of only Xwayland |
+| `gamescope_chrome_args` | — | extra arguments appended to a Chrome client's command line, split on whitespace (`--use-angle=vulkan`) |
 | `gamescope_audio` | `true` | capture the client into a sink of the session's own. `false` lets its sound go straight to the desktop's sink, as it did before there was a capture |
 
 `WindowsSystem` restates its own vocabulary into these in `capture_meta`
