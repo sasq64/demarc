@@ -250,6 +250,7 @@ mod linux {
         ("tssoft32.acm", "syswow64"),
         ("tsd32.dll", "syswow64"),
         ("ir32_32.dll", "syswow64"),
+        ("wingding.ttf", "Fonts"),
         ("gm.dls", "syswow64/drivers"),
         ("gm.dls", "system32/drivers"),
     ];
