@@ -702,7 +702,7 @@ fn parse_args() -> Args {
         prefer: vec![],
         check: vec![],
         uncheck: vec![],
-        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES", "DEMO", "INTRO", "WATCH"]
+        go: ["RUN", "OK", "START", "GO", "LAUNCH", "PLAY", "YES", "DEMO", "INTRO", "WATCH", "TEST"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -868,12 +868,11 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
         }
     }
 
-    let go: Vec<String> = args.go.iter().map(|g| norm(g)).collect();
-    if let Some(c) = kids
-        .iter()
-        .filter(|c| c.kind == Kind::Push)
-        .find(|c| go.contains(&norm(&c.text)))
-    {
+    // Ctrl-Alt-Test's dialogs say "Test"; earlier labels win over it.
+    if let Some(c) = args.go.iter().map(|g| norm(g)).find_map(|g| {
+        kids.iter()
+            .find(|c| c.kind == Kind::Push && norm(&c.text) == g)
+    }) {
         println!("click {:?}", c.text);
         c.click();
         return true;
