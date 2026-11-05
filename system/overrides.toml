@@ -145,6 +145,10 @@ patch = {
   contents = "McmQ",
 }
 
+# Burj Babil by Loonies: its shader uses `switch` without a #version
+[zoo.919]
+meta = { wine_glsl_version = "130" }
+
 # Glowsick by Portal Process: the setup dialog leaves a WM_QUIT behind
 [zoo.1526]
 fix_info = '''

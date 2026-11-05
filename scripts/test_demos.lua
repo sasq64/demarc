@@ -80,6 +80,9 @@ local function test_demo(demo)
 	if moving then
 		return WORKING, "silent"
 	end
+	if lit and string.find(demo.category or "", "Executable Graphics", 1, true) then
+		return WORKING, "still picture"
+	end
 	return NO_START, lit and "silent still picture" or "silent and black"
 end
 

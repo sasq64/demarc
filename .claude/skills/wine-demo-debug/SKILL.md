@@ -188,6 +188,17 @@ aligns `glGenLists(n >= 32)` to a multiple of 32; an intro that assumes it got
 waiting for a posted message. autodlg's `WM_NULL` after a click covers it
 (bruh, `zoo.361793`). The picture may be a stale frame of a dead window.
 
+**Exit right after loading, dialog still on screen.** An MFC launcher's
+dialog is the main window, and its `OnNcDestroy` posts WM_QUIT; a demo loop
+that quits on WM_QUIT ends before its first frame. `+relay` shows
+`PostQuitMessage` after `EndDialog`; NOP that call (Glowsick, `zoo.1526`).
+
+**Silent quit after GLEW's extension checks.** Find the check that counts
+the GLEW flags and map each flag to its name through the `push`es in
+`glewInit`. NVIDIA lacks `EXT_geometry_shader4`'s name, which the opengl32
+proxy adds (Phon, `zoo.1869`). Random werkkzeug3 mesh crashes: test under
+winedbg, where the debug heap makes them repeatable (Euphotic, `zoo.5151`).
+
 **Silent exit behind a white or frozen frame.** Check the exe is alive with
 `ps -eo pid,comm`, then `+relay` for a `wglGetProcAddress` right before
 `ExitProcess`. The opengl32 proxy gives Epsilon (`zoo.23405`) a no-op

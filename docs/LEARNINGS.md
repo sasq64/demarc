@@ -1178,3 +1178,31 @@
   shaders containing `%` (and `#version 120` to ones using `transpose`) runs
   it to the end. Its dialog's start button is "Test", now in autodlg's
   default `--go` list.
+
+- fr-065 Euphotic (`zoo.5151`) crashes at random places in werkkzeug3's mesh
+  code, so a single run proves nothing either way: patching one of its four
+  Georgia text ops "fixed" it in a few runs and crashed in the next demarc
+  run. Under winedbg (debug heap fill 0xbaadf00d) it fails every time, which
+  made it testable: all four credits in Verdana load, any one left in Georgia
+  crashes. Zeroing every heap allocation through a test kernelbase did not
+  help, so it is not plain heap garbage. Parallel test runs change the timing
+  and the crash rate; compare runs made the same way.
+- A demarc `--remote-control` run killed by `timeout` leaves its gamescope,
+  bwrap and wine processes behind; check `ps` for a stale `gamescopereaper`
+  after any timed-out run.
+- Glowsick (`zoo.1526`) "black" was a stale frame of its MFC setup dialog: the
+  dialog is MFC's main window, its OnNcDestroy posts WM_QUIT, and the demo's
+  PeekMessage loop exits on it right after loading. `+relay` showed one
+  PeekMessage and then ExitProcess; NOP the AfxPostQuitMessage call.
+- Phon (`zoo.1869`) quits silently after a GLEW check that wants both
+  `GL_ARB_geometry_shader4` and `GL_EXT_geometry_shader4`. NVIDIA lists only
+  the ARB one, and wine refuses the EXT functions; the opengl32 proxy now adds
+  the EXT name and maps its functions to the ARB ones. Mesa has neither, so it
+  stays NVIDIA-only. `objdump` cannot read a UPX exe and Yama blocks
+  `/proc/<pid>/mem` even from an ancestor of bwrap's pid namespace; `upx -d`
+  (installed now) or winedbg are the way in. A winedbg breakpoint on the
+  unpacked exe on ripper read the GLEW flags.
+- The test script's "silent and black" for a 4k executable graphics entry may
+  be a still picture: Burj Babil (`zoo.919`) was black only because its shader
+  needs `wine_glsl_version=130` (`switch`); a lit still picture in that
+  category now counts as working.
