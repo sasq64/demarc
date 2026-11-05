@@ -850,11 +850,64 @@ static int __stdcall swap_buffers(void *hdc)
     return ret;
 }
 
+// Horizon Machine's LOGFONT overlaps other data and is 0x8000000 wide; wine
+// renders a 333 MB glyph and the intro dies. Such a width is taken as 0.
+typedef struct {
+    long height, width, escapement, orientation, weight;
+    unsigned char rest[40];
+} LOGFONTA;
+
+static void *(__stdcall *get_current_object)(void *hdc, unsigned type);
+static int(__stdcall *get_object)(void *object, int size, void *buffer);
+static void *(__stdcall *create_font_indirect)(const LOGFONTA *font);
+static void *(__stdcall *select_object)(void *hdc, void *object);
+static int(__stdcall *delete_object)(void *object);
+static int(__stdcall *wine_use_font_bitmaps[2])(void *hdc, ULONG first, ULONG count, ULONG base);
+
+static int use_font_bitmaps_with_sane_width(int w, void *hdc, ULONG first, ULONG count, ULONG base)
+{
+    if (!delete_object) {
+        UNICODE_STRING name = {18, 20, u"gdi32.dll"};
+        HMODULE gdi32 = 0;
+        LdrLoadDll(0, 0, &name, &gdi32);
+        get_current_object = lookup(gdi32, "GetCurrentObject");
+        get_object = lookup(gdi32, "GetObjectA");
+        create_font_indirect = lookup(gdi32, "CreateFontIndirectA");
+        select_object = lookup(gdi32, "SelectObject");
+        delete_object = lookup(gdi32, "DeleteObject");
+    }
+    LOGFONTA font;
+    void *old = 0;
+    if (delete_object && (old = get_current_object(hdc, 6)) && get_object(old, sizeof font, &font) == sizeof font &&
+        (font.width > 0x7fff || font.width < -0x7fff)) {
+        font.width = 0;
+        void *sane = create_font_indirect(&font);
+        if (!sane || !select_object(hdc, sane))
+            old = 0;
+    } else {
+        old = 0;
+    }
+    int ret = wine_use_font_bitmaps[w](hdc, first, count, base);
+    if (old)
+        delete_object(select_object(hdc, old));
+    return ret;
+}
+
+static int __stdcall use_font_bitmaps_a(void *hdc, ULONG first, ULONG count, ULONG base)
+{
+    return use_font_bitmaps_with_sane_width(0, hdc, first, count, base);
+}
+
+static int __stdcall use_font_bitmaps_w(void *hdc, ULONG first, ULONG count, ULONG base)
+{
+    return use_font_bitmaps_with_sane_width(1, hdc, first, count, base);
+}
+
 // Crinkler finds wglUseFontBitmapsA by its position in Windows' export table,
 // which is wglUseFontOutlinesA in wine's: Fulcrum's 8K Reality pushes four
 // arguments, eight are popped, and its stack is off from then on. A format
 // that is neither 0 nor 1 gives such a call away; it goes to wglUseFontBitmaps.
-void *use_font_bitmaps[2], *use_font_outlines[2];
+void *use_font_bitmaps[2] = {use_font_bitmaps_a, use_font_bitmaps_w}, *use_font_outlines[2];
 void use_font_outlines_a(void), use_font_outlines_w(void);
 __asm__(".text\n"
         "_use_font_outlines_a:\n"
@@ -1140,9 +1193,11 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
                 wine_swap_buffers = address;
                 address = swap_buffers;
             } else if (address && equal(names[i], "wglUseFontBitmapsA")) {
-                use_font_bitmaps[0] = address;
+                wine_use_font_bitmaps[0] = address;
+                address = use_font_bitmaps_a;
             } else if (address && equal(names[i], "wglUseFontBitmapsW")) {
-                use_font_bitmaps[1] = address;
+                wine_use_font_bitmaps[1] = address;
+                address = use_font_bitmaps_w;
             } else if (address && equal(names[i], "wglUseFontOutlinesA")) {
                 use_font_outlines[0] = address;
                 address = use_font_outlines_a;

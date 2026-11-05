@@ -21,6 +21,10 @@ format 8, single-buffered in wine's list.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.
 
+`wglUseFontBitmapsA`/`W` select a copy of the DC's font with width 0 when its
+width is beyond 0x7fff. Eos & Alcatraz's "Horizon Machine" builds its LOGFONT
+from overlapping data, 0x8000000 wide, and wine's glyphs for it fault.
+
 `wglUseFontOutlinesA`/`W` with a format other than 0 or 1 goes to
 `wglUseFontBitmaps` instead. Crinkler takes `wglUseFontBitmapsA` from a range
 import by position, which lands two exports later in wine's table; Fulcrum's
