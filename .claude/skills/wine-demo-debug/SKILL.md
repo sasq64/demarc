@@ -138,7 +138,9 @@ override `patch`.
 `RUST_LOG=retro=warn`; `MESA_DEBUG=1` shows "program not linked" when
 `glCreateShaderProgramv` hides it. `MESA_SHADER_DUMP_PATH=<dir>` writes each
 shader as `FS_<hash>.glsl`. Fixes: `wine_glsl_version=130` for unversioned
-shaders using `texture()`/`round()`; `wine_glsl_120_subset` (on by default) for
+shaders using `texture()`/`round()`, or, when forcing every shader breaks
+the demo, a `glsl` patch adding `#version 130` to the failing ones only
+(B - Incubation, `zoo.172`); `wine_glsl_120_subset` (on by default) for
 int/float mixing; for anything else an override `glsl` patch edits the
 source by regex before it is compiled (fr-080 `zoo.4701`, Surveillance
 `zoo.155010`); `retro=debug` logs `opengl32: shader <hash>` for each.
@@ -257,6 +259,14 @@ method and read `DXVK_LOG_LEVEL=debug`. `OpenSharedResource` at feature level
 `glGenFramebuffersEXT` that reuses N, with N owned by another pass: a delete
 from an uninitialised field holding heap garbage. An IFEO `GlobalFlag` 0x20
 in `setup-wine.sh` makes new heap blocks 0x55 (The Seeker, `zoo.96729`).
+
+**D3D9 post-process pipeline shows only a background, same on DXVK and
+wined3d.** Make each pass's pixel shader return a solid colour (edit the
+`.fx` in a copy; grep that the edit applied) to find the pass that draws
+nothing. A `+d3d9` `vertexbuffer_Lock ... size 4` before a 4-vertex draw is
+a vertex count passed as bytes: Windows uploads the whole buffer, DXVK and
+wined3d only the locked range. Patch the size to 0 (Ballad of a Cluster
+Bomb, `zoo.878`).
 
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
