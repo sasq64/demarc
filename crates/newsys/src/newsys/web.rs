@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::System;
+use super::{System, walk_dir};
 use crate::backend::Backend;
 #[cfg(target_os = "linux")]
 use crate::libloader;
@@ -43,6 +44,17 @@ const CAN_RUN_WEB: bool = cfg!(target_os = "linux");
 #[cfg(target_os = "linux")]
 const CORE_NAME_GAMESCOPE: &str = "gamescope";
 
+/// The release's own page sits near the top; a release that ships its
+/// `node_modules` also ships their licence and test pages further down.
+fn pick_page(pages: &[PathBuf]) -> Option<&PathBuf> {
+    pages.iter().min_by_key(|p| {
+        let index = p
+            .file_stem()
+            .is_some_and(|s| s.eq_ignore_ascii_case("index"));
+        (p.components().count(), !index, p.as_os_str().len())
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn page_resolution(widescreen: bool) -> &'static str {
     if widescreen { "1280x720" } else { "800x600" }
@@ -55,6 +67,26 @@ impl System for WebSystem {
 
     fn can_load(&self, path: &std::path::Path) -> bool {
         CAN_RUN_WEB && self.handles_ext(path)
+    }
+
+    fn load(&self, file: &mut WorkFile) -> Result<bool> {
+        if !file.is_dir() {
+            return Ok(self.can_load(file));
+        }
+        let mut pages = Vec::new();
+        walk_dir(file, 0, |path, _, _| {
+            if self.can_load(path) {
+                pages.push(path.to_owned());
+            }
+            Ok(())
+        })?;
+        match pick_page(&pages) {
+            Some(page) => {
+                file.path = page.clone();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     fn default_meta(&self) -> HashMap<&str, &str> {
