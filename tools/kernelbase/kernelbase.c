@@ -24,6 +24,8 @@ __declspec(dllimport) NTSTATUS __stdcall LdrGetProcedureAddress(HMODULE module, 
 __declspec(dllimport) NTSTATUS __stdcall RtlQueryEnvironmentVariable_U(WCHAR *env, UNICODE_STRING *name,
                                                                       UNICODE_STRING *value);
 __declspec(dllimport) NTSTATUS __stdcall LdrDisableThreadCalloutsForDll(HMODULE module);
+__declspec(dllimport) NTSTATUS __stdcall LdrGetDllHandle(const WCHAR *path, ULONG flags,
+                                                        const UNICODE_STRING *name, HMODULE *module);
 
 // From thunks.S: one slot per export, preset to a stub that returns 0.
 extern void *slots[];
@@ -133,6 +135,64 @@ static void hotpatch(unsigned char *fn, void (*hook)(void), void **cont)
     NtProtectVirtualMemory((void *)-1, &addr, &size, old, &old);
 }
 
+// Windows' msvcrt has names wine keeps in ucrtbase only (Brainworm's
+// `_libm_sse2_sqrt_precise`), so a lookup that fails in msvcrt retries there.
+static void *(__stdcall *real_get_proc_address)(HMODULE module, const char *name);
+
+static int is_msvcrt(HMODULE module)
+{
+    unsigned char *base = module;
+    if (!base || ((unsigned long)base & 3))
+        return 0;
+    unsigned char *nt = base + *(long *)(base + 0x3c);
+    unsigned exports = *(unsigned *)(nt + 0x78);
+    if (!exports)
+        return 0;
+    const char *name = (const char *)base + *(unsigned *)(base + exports + 12);
+    const char *want = "msvcrt.dll";
+    for (; *want; name++, want++)
+        if ((*name | 0x20) != *want)
+            return 0;
+    return !*name;
+}
+
+static void *__stdcall get_proc_address(HMODULE module, const char *name)
+{
+    void *address = real_get_proc_address(module, name);
+    if (!address && (unsigned long)name > 0xffff && is_msvcrt(module)) {
+        static WCHAR dll[] = u"ucrtbase.dll";
+        UNICODE_STRING file = {sizeof(dll) - 2, sizeof(dll), dll};
+        HMODULE ucrtbase = 0;
+        if (!LdrLoadDll(0, 0, &file, &ucrtbase))
+            address = real_get_proc_address(ucrtbase, name);
+    }
+    return address;
+}
+
+// kernel32's GetProcAddress is its own code, not an import of ours: jump
+// from its first bytes to `get_proc_address`.
+static void hook_kernel32_get_proc_address(void)
+{
+    static WCHAR dll[] = u"kernel32.dll";
+    static const char proc[] = "GetProcAddress";
+    UNICODE_STRING file = {sizeof(dll) - 2, sizeof(dll), dll};
+    ANSI_STRING name = {sizeof(proc) - 1, sizeof(proc), proc};
+    HMODULE kernel32 = 0;
+    unsigned char *fn = 0;
+    if (LdrGetDllHandle(0, 0, &file, &kernel32) ||
+        LdrGetProcedureAddress(kernel32, &name, 0, (void **)&fn))
+        return;
+    void *addr = fn;
+    ULONG size = 5, old;
+    if (NtProtectVirtualMemory((void *)-1, &addr, &size, PAGE_EXECUTE_READWRITE, &old))
+        return;
+    fn[0] = 0xe9;
+    *(long *)(fn + 1) = (long)((unsigned char *)get_proc_address - (fn + 5));
+    addr = fn;
+    size = 5;
+    NtProtectVirtualMemory((void *)-1, &addr, &size, old, &old);
+}
+
 int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
 {
     (void)reserved;
@@ -156,5 +216,9 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
         if (address)
             slots[i] = address;
     }
+    static const char proc[] = "GetProcAddress";
+    ANSI_STRING name = {sizeof(proc) - 1, sizeof(proc), proc};
+    if (!LdrGetProcedureAddress(real, &name, 0, (void **)&real_get_proc_address))
+        hook_kernel32_get_proc_address();
     return 1;
 }

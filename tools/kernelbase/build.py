@@ -16,7 +16,7 @@ TARGET = "i686-pc-windows-msvc"
 
 NTDLL = ["LdrLoadDll@16", "LdrGetProcedureAddress@16", "RtlQueryEnvironmentVariable_U@12",
          "LdrDisableThreadCalloutsForDll@4", "NtProtectVirtualMemory@20", "RtlAllocateHeap@12",
-         "RtlFreeHeap@12"]
+         "RtlFreeHeap@12", "LdrGetDllHandle@16"]
 
 # Names Windows' kernelbase lookup finds that wine's kernelbase lacks. Crinkler
 # falls back to export #1 for a missing name; these jump into wine's kernel32.

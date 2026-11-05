@@ -20,6 +20,10 @@ It also hot-patches ntdll's `RtlAllocateHeap` and `RtlFreeHeap` to drop
 was safe alone on 2004 Windows and corrupts the heap once DXVK's threads share
 it. Being loaded first in every process is why it lives here.
 
+It also patches kernel32's `GetProcAddress` (its own code, not an import of
+ours) to retry a name msvcrt lacks in ucrtbase: Windows 10's msvcrt exports
+`_libm_sse2_sqrt_precise`, wine's has it in ucrtbase only (Brainworm).
+
 kernel32 imports kernelbase, so this imports only ntdll. kernelbase is a
 KnownDLL, so it has to be in `syswow64`; an app-dir copy is ignored.
 
