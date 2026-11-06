@@ -1328,3 +1328,13 @@
 - A theme screenshot that "looks right" doesn't show which font is in use;
   `[text] font` never reached the picker or HUD and that went unnoticed. Diff
   a crop against a run without the setting before calling a font applied.
+
+- A `ScrollArea` that auto-shrinks horizontally inside a panel with a min size
+  only covers its content's width, so its bar sits mid-panel, and on a bare
+  `egui::Context` the wheel didn't scroll it at all. `auto_shrink([false, true])`
+  fixes both. A scratch crate driving `Context::run_ui` with `MouseWheel` events
+  settles questions like this faster than reading egui.
+
+- The egui test `Harness` runs frames 0.1 s apart, so a `Harness::click`
+  followed straight away by another press is already a double click (egui's
+  limit is 0.3 s). Idle a few frames between clicks that should stay single.

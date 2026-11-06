@@ -399,7 +399,7 @@ impl<T: 'static> Picker<T> {
         }
 
         let theme = theme(ctx);
-        egui::Area::new(egui::Id::new(AREA_ID))
+        let clicked = egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
@@ -467,6 +467,7 @@ impl<T: 'static> Picker<T> {
                     },
                 );
                 self.list_scroll = scrolled.state.offset.y;
+                let clicked = scrolled.inner;
 
                 // The info box stays hidden while there is nothing to say.
                 if !self.list_info.is_empty() {
@@ -483,9 +484,24 @@ impl<T: 'static> Picker<T> {
                         );
                     });
                 }
-            });
+                clicked
+            })
+            .inner;
 
         self.list_reopened = false;
+        if let Some((row, double)) = clicked {
+            self.list_selected = row;
+            if double && let Some(&item) = self.list_items.get(row) {
+                self.show_list = false;
+                return Some(Picked {
+                    id: self.list_id,
+                    item: source.get_item(item),
+                    text: source.get_text(item),
+                    alt: shift,
+                    data: source.get_data(item),
+                });
+            }
+        }
         None
     }
 }
@@ -505,13 +521,14 @@ fn visible_rows(ctx: &egui::Context) -> f32 {
 /// anything at all -- only their painting is the caller's business.
 ///
 /// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
+/// Returns the row clicked, if any, and whether it was a double click.
 fn scroll_area<T>(
     ui: &mut Ui,
     selected: usize,
     list_scroll: f32,
     items: &[T],
     render: impl Fn(&mut Ui, egui::Rect, &T),
-) -> ScrollAreaOutput<()> {
+) -> ScrollAreaOutput<Option<(usize, bool)>> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();
     let theme = theme(ui.ctx());
@@ -542,11 +559,17 @@ fn scroll_area<T>(
             ui.spacing_mut().item_spacing.y = 0.0;
 
             scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
+                let mut clicked = None;
                 for row in rows {
-                    let (rect, _) = ui.allocate_exact_size(
+                    let (rect, response) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), ROW_HEIGHT),
-                        egui::Sense::hover(),
+                        egui::Sense::click(),
                     );
+                    if response.double_clicked() {
+                        clicked = Some((row, true));
+                    } else if response.clicked() {
+                        clicked = Some((row, false));
+                    }
                     // Fades live in egui's animation map, keyed by absolute row
                     // rather than by position in the viewport, so they follow
                     // their row when the list scrolls -- and keep decaying on
@@ -570,6 +593,7 @@ fn scroll_area<T>(
 
                     render(ui, rect, &items[row]);
                 }
+                clicked
             })
         })
         .inner

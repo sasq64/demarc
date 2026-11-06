@@ -299,3 +299,30 @@ fn side_margins_are_twice_the_vertical_ones() {
         "{side} beside, {vertical} above"
     );
 }
+
+/// A click highlights the row, a double click picks it.
+#[test]
+fn click_selects_and_double_click_picks() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    let pos = h.find("cherry").center();
+    let results = h.click(pos, |ctx| picker.show(ctx, |_, _, _| Vec::new()));
+    assert!(results.iter().all(Option::is_none));
+    assert_eq!(picker.selected_item(1), Some(2));
+    for _ in 0..5 {
+        step(&mut h, &mut picker, vec![]);
+    }
+
+    let button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    step(&mut h, &mut picker, vec![button(true)]);
+    step(&mut h, &mut picker, vec![button(false)]);
+    step(&mut h, &mut picker, vec![button(true)]);
+    let picked = step(&mut h, &mut picker, vec![button(false)]).expect("a pick");
+    assert_eq!(picked.text, "cherry");
+    assert!(!picker.is_open());
+}
