@@ -173,6 +173,15 @@ impl FileCache {
         path.is_file() || is_writeback(&path)
     }
 
+    /// The name of whatever entry is cached for `key`, if there is one.
+    pub fn cached_name(&self, key: &str) -> Option<String> {
+        std::fs::read_dir(self.root.join(hash_key(key)))
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|name| !name.starts_with('.'))
+    }
+
     /// The cached file `filename` for `key`, producing it if it isn't there.
     ///
     /// On a miss `produce` is called with the path to write and is expected to

@@ -1306,3 +1306,8 @@
 - Observatory (`zoo.109195`) showed its "File <" box in plain wine too, once
   the dialog was answered; my first plain run had just sat at the dialog and
   looked fine. Launch through autodlg when comparing plain wine with demarc.
+
+- A link that used to download an HTML page (e.g. a Google Drive share link
+  before it was rewritten) stays cached as that page under
+  `~/.cache/demarc/downloads/<hash>/`. When testing a download fix, delete the
+  old entry first or the old result is just reused.
