@@ -168,7 +168,11 @@ impl Hud {
 
     /// The text at `location` and how far it is faded in.
     fn fade(&self, ctx: &egui::Context, location: HudLocation, now: f32) -> (HudText, f32) {
-        let info = self.current_texts.get(&location).cloned().unwrap_or_default();
+        let info = self
+            .current_texts
+            .get(&location)
+            .cloned()
+            .unwrap_or_default();
         let on = info.duration.contains(&now);
         let t = ctx.animate_bool_with_time(egui::Id::new(&info.text), on, 0.5);
         (info, t)

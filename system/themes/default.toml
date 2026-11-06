@@ -36,6 +36,12 @@ corner_radius = 0
 # A halo outside the border: blur is the width of its soft edge, spread how
 # far it reaches before fading.
 glow = { blur = 24, spread = 4, color = "#ffaa7c60" }
+# A WGSL shader drawn under the fill (paths relative to this file). It gets
+#   ui.resolution, ui.origin, ui.screen (pixels), ui.time (seconds),
+#   tex + samp (the texture; plain white without one), and must define
+#   @fragment fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4f
+# with in.uv going 0..1 across the panel. Alpha is not premultiplied.
+# shader = { shader = "stars.wgsl", texture = "stars.png" }
 
 # Combo box drop-downs.
 [popup]
@@ -109,3 +115,7 @@ record = "#ff2020"
 # Shadow behind each text, and how far it is offset as a fraction of font size.
 shadow = "#000000"
 shadow_offset = 0.05
+
+# The whole screen while nothing is loaded; the same kind of shader as a panel's.
+[screen]
+# shader = { shader = "stars.wgsl" }

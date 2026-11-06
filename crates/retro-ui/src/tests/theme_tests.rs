@@ -105,8 +105,56 @@ fn panel_glow_becomes_the_frame_shadow() {
         "##,
     )
     .unwrap();
-    let shadow = theme.panel_frame().shadow;
+    let shadow = theme.panel.frame().shadow;
     assert_eq!(shadow.offset, [0, 0]);
     assert_eq!((shadow.blur, shadow.spread), (24, 4));
     assert_eq!(shadow.color, Color32::from_rgb(0xff, 0xaa, 0x7c));
+}
+
+#[test]
+fn shader_paths_are_not_palette_names() {
+    let theme = Theme::from_toml(
+        r##"
+        [palette]
+        stars = "#ffffff"
+        [panel.shader]
+        shader = "stars"
+        texture = "stars.png"
+        [screen.shader]
+        shader = "plasma.wgsl"
+        "##,
+    )
+    .unwrap();
+    let panel = theme.panel.shader.unwrap();
+    assert_eq!((panel.shader.as_str(), panel.texture.as_deref()), ("stars", Some("stars.png")));
+    assert_eq!(theme.screen.shader.unwrap().shader, "plasma.wgsl");
+}
+
+#[test]
+fn shaders_are_painted_under_the_panel_and_over_the_screen() {
+    use std::sync::Mutex;
+    let painted = Arc::new(Mutex::new(Vec::new()));
+    let mut harness = crate::tests::Harness::new();
+    let log = painted.clone();
+    crate::set_shader_painter(
+        &harness.ctx,
+        Arc::new(move |rect, bg: &ShaderBg| {
+            log.lock().unwrap().push((rect, bg.shader.clone()));
+            Some(egui::Shape::rect_filled(rect, 0, Color32::RED))
+        }),
+    );
+    let mut theme = Theme::DEFAULT;
+    theme.panel.shader = Some(ShaderBg { shader: "panel.wgsl".into(), texture: None });
+    theme.screen.shader = Some(ShaderBg { shader: "screen.wgsl".into(), texture: None });
+    set_theme(&harness.ctx, theme);
+    let mut panel = egui::Rect::NOTHING;
+    harness.frame(vec![], |ctx| {
+        paint_screen(ctx);
+        egui::Area::new(egui::Id::new("p")).show(ctx, |ui| {
+            panel = crate::show_panel(ui, |ui| ui.label("x")).response.rect;
+        });
+    });
+    let painted = painted.lock().unwrap();
+    assert_eq!(painted[0], (harness.ctx.content_rect(), "screen.wgsl".into()));
+    assert_eq!(painted[1], (panel, "panel.wgsl".into()));
 }

@@ -1311,3 +1311,14 @@
   before it was rewritten) stays cached as that page under
   `~/.cache/demarc/downloads/<hash>/`. When testing a download fix, delete the
   old entry first or the old result is just reused.
+
+- UI theme shaders (`src/ui_shader.rs`) get the `PRELUDE` only when the file
+  has no `var<uniform> ui`, so a shader that declares its own bindings is fine.
+  Read the loader before blaming the declarations. Compile errors are logged by
+  Bevy's `PipelineCache` at `error`, so they print even with the release
+  default filter.
+
+- bevy_egui 0.42 calls `EguiBevyPaintCallbackImpl::update` with
+  `screen_size_px` = 0 (`target_size` is never set), so `viewport_in_pixels()`
+  is all zeros there; only `render` gets the real size. Debug a theme shader by
+  outputting its uniforms as colours: it found this in one screenshot.

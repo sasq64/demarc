@@ -35,6 +35,7 @@ mod demarc_settings;
 mod dj;
 mod egui_settings;
 mod egui_ui;
+mod ui_shader;
 mod emulator;
 #[cfg(test)]
 #[path = "tests/fake_backend.rs"]

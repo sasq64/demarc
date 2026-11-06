@@ -94,7 +94,7 @@ fn setup_egui(
     Ok(())
 }
 
-fn theme_path(theme: &str) -> std::path::PathBuf {
+pub(crate) fn theme_path(theme: &str) -> std::path::PathBuf {
     let path = std::path::PathBuf::from(theme);
     if path.is_file() {
         return path;
@@ -268,6 +268,9 @@ pub(crate) fn update_ui(
     }
     // Before anything reads this frame's keys, the dialogs drawn after this
     // system included.
+    if emus.iter().all(|e| e.core.is_none()) {
+        retro_ui::paint_screen(ctx);
+    }
     let mods = live_modifiers(&keys);
     ctx.input_mut(|i| sync_modifiers(i, mods));
     state.hud.show(
@@ -421,7 +424,7 @@ fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>
 
 impl Plugin for EguiUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(EguiPlugin::default());
+        app.add_plugins((EguiPlugin::default(), crate::ui_shader::UiShaderPlugin));
         // `EguiPlugin::build` has already run and inserted the resource, so this
         // lands before any camera is spawned in `Startup`.
         app.world_mut()
@@ -432,6 +435,7 @@ impl Plugin for EguiUiPlugin {
                 (
                     setup_egui,
                     reload_theme,
+                    crate::ui_shader::update_shaders,
                     update_ui.run_if(not(resource_exists::<HeadlessTarget>)),
                 )
                     .chain(),

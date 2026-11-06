@@ -31,6 +31,26 @@ pub struct Theme {
     pub widgets: Widgets,
     pub picker: Picker,
     pub hud: Hud,
+    /// The whole screen while nothing is loaded.
+    #[serde(default)]
+    pub screen: Screen,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Screen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<ShaderBg>,
+}
+
+/// A WGSL fragment shader drawn as a background, with an optional PNG it can
+/// sample. Paths are relative to the theme file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShaderBg {
+    pub shader: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +82,9 @@ pub struct Panel {
     pub corner_radius: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glow: Option<Glow>,
+    /// Drawn under the fill, so a translucent fill tints it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<ShaderBg>,
 }
 
 /// A soft halo around a panel, drawn outside its border.
@@ -178,11 +201,8 @@ impl Theme {
             border: stroke(2.0, rgb(0xff, 0xaa, 0x7c)),
             padding: 16,
             corner_radius: 0,
-            glow: Some(Glow {
-                blur: 24,
-                spread: 4,
-                color: Color32::from_rgba_unmultiplied_const(0xff, 0xaa, 0x7c, 0x60),
-            }),
+            glow: None,
+            shader: None,
         },
         popup: Panel {
             fill: gray(27),
@@ -190,6 +210,7 @@ impl Theme {
             padding: 6,
             corner_radius: 6,
             glow: None,
+            shader: None,
         },
         field: Field { fill: gray(10) },
         selection: Selection {
@@ -250,6 +271,7 @@ impl Theme {
             shadow: Color32::BLACK,
             shadow_offset: 0.05,
         },
+        screen: Screen { shader: None },
     };
 
     /// Reads a theme file: `[palette]` names colours that any colour value
@@ -268,10 +290,6 @@ impl Theme {
         let mut theme = toml::Table::try_from(Theme::DEFAULT).map_err(|e| e.to_string())?;
         merge(&mut theme, file);
         theme.try_into().map_err(|e: toml::de::Error| e.to_string())
-    }
-
-    pub fn panel_frame(&self) -> egui::Frame {
-        self.panel.frame()
     }
 
     fn apply(&self, style: &mut egui::Style) {
@@ -321,7 +339,7 @@ fn use_palette(value: &mut toml::Value, palette: &toml::Table) -> Result<(), Str
             _ => return Err(format!("`{name}` is not in the palette")),
         },
         toml::Value::Table(table) => {
-            for (_, value) in table.iter_mut() {
+            for (_, value) in table.iter_mut().filter(|(key, _)| key.as_str() != "shader") {
                 use_palette(value, palette)?;
             }
         }
@@ -394,6 +412,69 @@ impl Panel {
             .inner_margin(egui::Margin::same(self.padding))
             .corner_radius(egui::CornerRadius::same(self.corner_radius))
             .shadow(self.glow.as_ref().map_or(egui::Shadow::NONE, Glow::shadow))
+    }
+
+    /// Draws `add_contents` in this panel, over its shader if it has one.
+    pub fn show<R>(
+        &self,
+        ui: &mut egui::Ui,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let slot = ui.painter().add(egui::Shape::Noop);
+        let frame = self.frame();
+        let inner = frame.shadow(egui::Shadow::NONE).show(ui, add_contents);
+        if frame.shadow != egui::Shadow::NONE {
+            // Clipped to the four strips outside the panel, so none of it
+            // shows through a translucent fill.
+            let rect = inner.response.rect;
+            let glow = frame.shadow.as_shape(rect, frame.corner_radius);
+            let outer = glow.visual_bounding_rect();
+            for clip in [
+                egui::Rect::from_x_y_ranges(outer.x_range(), outer.top()..=rect.top()),
+                egui::Rect::from_x_y_ranges(outer.x_range(), rect.bottom()..=outer.bottom()),
+                egui::Rect::from_x_y_ranges(outer.left()..=rect.left(), rect.y_range()),
+                egui::Rect::from_x_y_ranges(rect.right()..=outer.right(), rect.y_range()),
+            ] {
+                ui.painter().with_clip_rect(clip).add(glow.clone());
+            }
+        }
+        if let Some(shape) = self
+            .shader
+            .as_ref()
+            .and_then(|bg| shader_shape(ui.ctx(), inner.response.rect, bg))
+        {
+            ui.painter().set(slot, shape);
+        }
+        inner
+    }
+}
+
+/// Turns a [`ShaderBg`] over a rect into whatever the renderer draws it with.
+pub type ShaderPainter = Arc<dyn Fn(egui::Rect, &ShaderBg) -> Option<egui::Shape> + Send + Sync>;
+
+fn shader_painter_id() -> egui::Id {
+    egui::Id::new("retro_ui_shader_painter")
+}
+
+/// Without one, theme shaders are not drawn.
+pub fn set_shader_painter(ctx: &egui::Context, painter: ShaderPainter) {
+    ctx.data_mut(|d| d.insert_temp(shader_painter_id(), painter));
+}
+
+fn shader_shape(ctx: &egui::Context, rect: egui::Rect, bg: &ShaderBg) -> Option<egui::Shape> {
+    let painter = ctx.data(|d| d.get_temp::<ShaderPainter>(shader_painter_id()))?;
+    ctx.request_repaint();
+    painter(rect, bg)
+}
+
+/// Fills the screen, behind everything else, with the theme's screen shader.
+pub fn paint_screen(ctx: &egui::Context) {
+    let theme = theme(ctx);
+    let Some(bg) = &theme.screen.shader else {
+        return;
+    };
+    if let Some(shape) = shader_shape(ctx, ctx.content_rect(), bg) {
+        ctx.layer_painter(egui::LayerId::background()).add(shape);
     }
 }
 

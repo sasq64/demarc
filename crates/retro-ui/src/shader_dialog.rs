@@ -50,10 +50,10 @@ use regex::Regex;
 use tracing::warn;
 
 use crate::dialog::{
-    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
-    TITLE_SIZE, WIDGET_WIDTH, close_button, draw_number, scale_widgets,
+    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH,
+    close_button, draw_number, scale_widgets,
 };
-use crate::{panel_frame, take_key, theme};
+use crate::{show_panel, take_key, theme};
 
 /// The file the collections are read from, in the shader dir or, failing that,
 /// the system dir. Every pattern in it is relative to the shader dir.
@@ -705,7 +705,7 @@ impl ShaderDialog {
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                panel_frame(ctx).show(ui, |ui| {
+                show_panel(ui, |ui| {
                     scale_widgets(ui);
                     let panel = ui
                         .vertical(|ui| {

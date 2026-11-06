@@ -162,7 +162,10 @@ fn style_installs_the_font_and_sizes() {
             HEADING_SIZE
         );
         assert_eq!(style.text_styles[&egui::TextStyle::Body].size, BODY_SIZE);
-        assert_eq!(style.visuals.override_text_color, Some(Theme::DEFAULT.text.color));
+        assert_eq!(
+            style.visuals.override_text_color,
+            Some(Theme::DEFAULT.text.color)
+        );
         ctx.fonts(|f| {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 assert_eq!(f.definitions().families[&family][0], APP_FONT);
@@ -173,7 +176,10 @@ fn style_installs_the_font_and_sizes() {
 
 #[test]
 fn the_panel_frame_has_a_border_and_padding() {
-    let frame = panel_frame(&egui::Context::default());
+    let frame = theme(&egui::Context::default()).panel.frame();
     assert_eq!(frame.stroke, Theme::DEFAULT.panel.border);
-    assert_eq!(frame.inner_margin, egui::Margin::same(Theme::DEFAULT.panel.padding));
+    assert_eq!(
+        frame.inner_margin,
+        egui::Margin::same(Theme::DEFAULT.panel.padding)
+    );
 }

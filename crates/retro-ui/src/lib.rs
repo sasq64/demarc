@@ -14,7 +14,7 @@ pub mod theme;
 
 pub use hud::{Hud, HudLocation};
 pub use picker::{Picked, Picker};
-pub use theme::{Theme, set_theme, theme};
+pub use theme::{ShaderBg, ShaderPainter, Theme, paint_screen, set_shader_painter, set_theme, theme};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -63,9 +63,12 @@ pub fn set_scale(ctx: &egui::Context, logical_height: f32, scale_factor: f32, zo
     ctx.set_pixels_per_point(scale_factor * scale * zoom);
 }
 
-/// The box the picker and the dialogs are drawn in.
-pub fn panel_frame(ctx: &egui::Context) -> egui::Frame {
-    theme(ctx).panel_frame()
+/// Draws `add_contents` in the box the picker and the dialogs are drawn in.
+pub fn show_panel<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    theme(ui.ctx()).panel.show(ui, add_contents)
 }
 
 /// Counts and removes every press of `key` among this frame's events, whatever

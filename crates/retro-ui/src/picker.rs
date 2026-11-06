@@ -401,7 +401,7 @@ impl<T: 'static> Picker<T> {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing.y = PANEL_GAP;
 
-                theme.panel_frame().show(ui, |ui| {
+                theme.panel.show(ui, |ui| {
                     let inner_width = ui.available_width();
                     ui.set_width(inner_width);
                     let (index, title) = &self.list_title;
@@ -465,7 +465,7 @@ impl<T: 'static> Picker<T> {
 
                 // The info box stays hidden while there is nothing to say.
                 if !self.list_info.is_empty() {
-                    theme.panel_frame().show(ui, |ui| {
+                    theme.panel.show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
                         ui.add(
@@ -511,7 +511,7 @@ fn scroll_area<T>(
     let id = ui.id();
     let theme = theme(ui.ctx());
     theme
-        .panel_frame()
+        .panel
         .show(ui, |ui| {
             // An anchored `Area` hands its content last frame's size as the
             // space available, so a scroll area that only caps its height
