@@ -2018,6 +2018,10 @@ events = [{ frame = 600, click = [0.51, 0.54] }]
 [zoo.284919]
 events = [{ frame = 600, click = [0.41, 0.5] }]
 
+# Felid: play button; draws one still picture, no sound
+[zoo.342293]
+events = [{ frame = 600, click = [0.5, 0.43] }]
+
 # Condition: "click me!"
 [zoo.292275]
 events = [{ frame = 600, click = [0.03, 0.025] }]
@@ -2030,9 +2034,10 @@ events = [{ frame = 600, click = [0.5, 0.72] }]
 [zoo.322650]
 events = [{ frame = 600, click = [0.023, 0.081] }]
 
-# Decompress of Empty: the .html download comes back as a mirror's page
+# Decompress of Empty: the party zip's PNG lost its CR bytes
 [zoo.323526]
-file = "decompress_of_empty_party.zip"
+file = "2023_04_22_21_03_54_decompress_of_empty.html"
+events = [{ frame = 900, click = [0.5, 0.525] }]  # "2. Play!" after precompiling
 
 # Genesis: the exe is a node server for the page
 [zoo.267672]
@@ -2074,3 +2079,31 @@ boot = "run.bat"
 # sandbox also maps the release directory to a drive letter of its own
 [zoo.181204]
 meta = { wine_sandbox = "false" }
+
+# Newton Protocol
+[zoo.202470]
+fix_info = '''
+PNG-packed page. Its packer aliases WebGL methods as name[0]+name[6], and
+Chrome now has more methods per alias (ge = getInternalformatParameter), so
+the ambiguous ones are pinned. It also set drawBuffers after each draw and
+samples its own colour attachment 2, which ANGLE now refuses; draw buffers
+are set before the draw and attachment 2 is detached around it. The patch
+rewrites the bootstrap's eval(_) at the end of the file to edit the script.
+'''
+patch = {
+  info = "WebGL aliases pinned, draw buffers and feedback loop fixed",
+  target = "hbc-00017-newton_protocol.html",
+  offset = 4082,
+  contents = """
+KDEsZXZhbCkoXy5yZXBsYWNlKCc9R1thXTsnLCc9R1thXTtHLmJhPUcuYmluZEZyYW1lYnVmZmVy
+O0cuYmY9Ry5iaW5kQnVmZmVyO0cuY1M9Ry5jcmVhdGVTaGFkZXI7Ry5jVD1HLmNyZWF0ZVRleHR1
+cmU7Ry5jZT1HLmNvbXBpbGVTaGFkZXI7Ry5kcj1HLmRyYXdBcnJheXM7Ry5mdT1HLmZyYW1lYnVm
+ZmVyVGV4dHVyZTJEO0cuZ2U9Ry5nZXRFeHRlbnNpb247Ry5nZj1HLmdldFVuaWZvcm1Mb2NhdGlv
+bjtHLnRhPUcudGV4UGFyYW1ldGVyaTtHLnRnPUcudGV4SW1hZ2UyRDtHLnZBPUcudmVydGV4QXR0
+cmliUG9pbnRlcjsnKS5yZXBsYWNlKCdkcig0LDAsMyk7MT09cCYmZGYoWzM2MDY0LDM2MDY1XSk7
+Mj09cCYmZGYoWzM2MDY0LDM2MDY1LDM2MDY2XSknLCdPW3ldJiZkZihwPT0xP1szNjA2NCwzNjA2
+NV06cD09Mj9bMzYwNjQsMzYwNjUsMzYwNjZdOlszNjA2NF0pO3B8fCFPW3ldfHxmdSgzNjE2MCwz
+NjA2NiwzNTUzLG51bGwsMCk7ZHIoNCwwLDMpO3B8fCFPW3ldfHxmdSgzNjE2MCwzNjA2NiwzNTUz
+LFBbeSozKzJdLDApJykpPg==
+"""
+}
