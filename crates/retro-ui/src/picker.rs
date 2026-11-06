@@ -13,7 +13,7 @@ use egui::{
 };
 
 use crate::fuzzy_list::{DEFAULT_MAX_RESULTS, FuzzySource, ListIcon};
-use crate::{MARGIN, take_key, theme};
+use crate::{MARGIN, picker_font, take_key, theme};
 
 pub type ListSource<T> = Arc<dyn FuzzySource<T>>;
 
@@ -68,17 +68,22 @@ pub fn add_list_icon(id: u32, image: egui::ColorImage) {
 /// there -- one window's textures are no good to another's context.
 fn list_icon_texture(ctx: &egui::Context, id: u32) -> Option<egui::TextureId> {
     let key = egui::Id::new(("list_icon", id));
-    if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(key)) {
+    let picker = &theme(ctx).picker;
+    let tint = picker.icon_color;
+    if let Some((t, handle)) = ctx.data(|d| d.get_temp::<(egui::Color32, egui::TextureHandle)>(key))
+        && t == tint
+    {
         return Some(handle.id());
     }
-    let image = LIST_ICONS.lock().ok()?.get(&id).cloned()?;
-    let handle = ctx.load_texture(
-        format!("list_icon_{id}"),
-        image,
-        egui::TextureOptions::LINEAR,
-    );
+    let mut image = (*LIST_ICONS.lock().ok()?.get(&id).cloned()?).clone();
+    if tint.a() > 0 {
+        for px in &mut image.pixels {
+            *px = picker.tint_icon(*px);
+        }
+    }
+    let handle = ctx.load_texture(format!("list_icon_{id}"), image, egui::TextureOptions::LINEAR);
     let texture_id = handle.id();
-    ctx.data_mut(|d| d.insert_temp(key, handle));
+    ctx.data_mut(|d| d.insert_temp(key, (tint, handle)));
     Some(texture_id)
 }
 
@@ -92,7 +97,7 @@ fn draw_list_icon(ui: &Ui, painter: &egui::Painter, rect: egui::Rect, icon: List
                 egui::Align2::CENTER_CENTER,
                 ch,
                 egui::FontId::proportional(ICON_SIZE),
-                egui::Color32::from_rgb(r, g, b),
+                theme(ui.ctx()).picker.tint_icon(egui::Color32::from_rgb(r, g, b)),
             );
         }
         ListIcon::Image(id) => {
@@ -129,7 +134,7 @@ fn draw_row(
             draw_list_icon(ui, &painter, icon_rect, icon);
         }
     }
-    painter.galley(text_rect.min, galley, theme(ui.ctx()).text.color);
+    painter.galley(text_rect.min, galley, theme(ui.ctx()).picker.text);
     for &(texture, offset) in images {
         let image_rect = egui::Rect::from_min_size(
             egui::pos2(text_rect.right() + offset, text_rect.top()),
@@ -401,28 +406,28 @@ impl<T: 'static> Picker<T> {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing.y = PANEL_GAP;
 
+                let (index, title) = &self.list_title;
+                if !title.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+                        for (i, part) in title.iter().enumerate() {
+                            let bg = if (i as i32) == (*index + 1) {
+                                theme.picker.title_selected_fill
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(part)
+                                    .font(picker_font(ctx, TITLE_SIZE))
+                                    .background_color(bg)
+                                    .color(theme.picker.title),
+                            ));
+                        }
+                    });
+                }
                 theme.panel.show(ui, |ui| {
                     let inner_width = ui.available_width();
                     ui.set_width(inner_width);
-                    let (index, title) = &self.list_title;
-                    if !title.is_empty() {
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            for (i, part) in title.iter().enumerate() {
-                                let bg = if (i as i32) == (*index + 1) {
-                                    theme.picker.title_selected_fill
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                };
-                                ui.add(egui::Label::new(
-                                    egui::RichText::new(part)
-                                        .size(TITLE_SIZE)
-                                        .background_color(bg)
-                                        .color(theme.picker.title),
-                                ));
-                            }
-                        });
-                    }
                     // The picker is modal, so the search box keeps focus the whole
                     // time it is up: egui only routes key events to a focused
                     // widget, and a click on the emulator behind would otherwise
@@ -434,8 +439,8 @@ impl<T: 'static> Picker<T> {
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
                             .desired_width(inner_width)
-                            .font(egui::FontId::proportional(QUERY_SIZE))
-                            .text_color(theme.text.color),
+                            .font(picker_font(ctx, QUERY_SIZE))
+                            .text_color(theme.picker.text),
                     );
                     if !response.has_focus() {
                         response.request_focus();
@@ -453,8 +458,8 @@ impl<T: 'static> Picker<T> {
                             &source.get_text(id),
                             0.0,
                             egui::TextFormat::simple(
-                                egui::FontId::proportional(ROW_SIZE),
-                                theme.text.color,
+                                picker_font(ctx, ROW_SIZE),
+                                theme.picker.text,
                             ),
                         );
                         let images = render(&mut job, source.as_ref(), id);
@@ -471,7 +476,7 @@ impl<T: 'static> Picker<T> {
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(&self.list_info)
-                                    .size(INFO_SIZE)
+                                    .font(picker_font(ctx, INFO_SIZE))
                                     .color(theme.picker.info),
                             )
                             .wrap(),

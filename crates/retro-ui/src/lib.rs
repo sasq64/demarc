@@ -28,21 +28,8 @@ const VIRTUAL_HEIGHT: f32 = 1600.0;
 
 /// Give `ctx` the app font, text styles and [`Theme::DEFAULT`].
 pub fn apply_style(ctx: &egui::Context, font: Vec<u8>) {
-    let mut font_defs = egui::FontDefinitions::default();
-    font_defs.font_data.insert(
-        APP_FONT.to_owned(),
-        Arc::new(egui::FontData::from_owned(font)),
-    );
-    // Front of the list = primary; egui's own fonts stay behind it as fallbacks
-    // for glyphs `font.ttf` happens to be missing.
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        font_defs
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, APP_FONT.to_owned());
-    }
-    ctx.set_fonts(font_defs);
+    ctx.data_mut(|d| d.insert_temp(app_font_id(), Arc::new(egui::FontData::from_owned(font))));
+    set_fonts(ctx, [None, None, None]);
 
     ctx.all_styles_mut(|style| {
         style.text_styles.insert(
@@ -54,6 +41,64 @@ pub fn apply_style(ctx: &egui::Context, font: Vec<u8>) {
             .insert(egui::TextStyle::Body, egui::FontId::proportional(BODY_SIZE));
     });
     set_theme(ctx, Theme::DEFAULT);
+}
+
+const PICKER_FAMILY: &str = "picker";
+const HUD_FAMILY: &str = "hud";
+
+fn app_font_id() -> egui::Id {
+    egui::Id::new("retro_ui_app_font")
+}
+
+/// Puts the theme's UI, picker and HUD fonts (see [`Theme::fonts`]) in front of
+/// the app font, which stays behind them as a fallback for the glyphs they lack.
+pub fn set_fonts(ctx: &egui::Context, fonts: [Option<Vec<u8>>; 3]) {
+    use egui::FontFamily;
+    let Some(app) = ctx.data(|d| d.get_temp::<Arc<egui::FontData>>(app_font_id())) else {
+        return;
+    };
+    let mut defs = egui::FontDefinitions::default();
+    defs.font_data.insert(APP_FONT.to_owned(), app);
+    for (name, font) in ["ui", PICKER_FAMILY, HUD_FAMILY].into_iter().zip(fonts) {
+        if let Some(font) = font {
+            let data = Arc::new(egui::FontData::from_owned(font));
+            defs.font_data.insert(name.to_owned(), data);
+        }
+    }
+    let chain = |name: &str, family: &FontFamily| -> Vec<String> {
+        [name, "ui", APP_FONT]
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, n)| !(i == 1 && name == "ui") && defs.font_data.contains_key(n))
+            .map(|(_, n)| n)
+            .map(str::to_owned)
+            .chain(defs.families[family].iter().cloned())
+            .collect()
+    };
+    let families = [
+        (FontFamily::Proportional, chain("ui", &FontFamily::Proportional)),
+        (FontFamily::Monospace, chain("ui", &FontFamily::Monospace)),
+        (FontFamily::Name(PICKER_FAMILY.into()), chain(PICKER_FAMILY, &FontFamily::Proportional)),
+        (FontFamily::Name(HUD_FAMILY.into()), chain(HUD_FAMILY, &FontFamily::Proportional)),
+    ];
+    defs.families.extend(families);
+    ctx.set_fonts(defs);
+}
+
+fn family(ctx: &egui::Context, name: &str) -> egui::FontFamily {
+    if ctx.data(|d| d.get_temp::<Arc<egui::FontData>>(app_font_id())).is_some() {
+        egui::FontFamily::Name(name.into())
+    } else {
+        egui::FontFamily::Proportional
+    }
+}
+
+pub(crate) fn picker_font(ctx: &egui::Context, size: f32) -> egui::FontId {
+    egui::FontId::new(size, family(ctx, PICKER_FAMILY))
+}
+
+pub(crate) fn hud_font(ctx: &egui::Context, size: f32) -> egui::FontId {
+    egui::FontId::new(size, family(ctx, HUD_FAMILY))
 }
 
 /// Scale `ctx` to a window `logical_height` points tall, so the UI keeps its

@@ -158,3 +158,28 @@ fn shaders_are_painted_under_the_panel_and_over_the_screen() {
     assert_eq!(painted[0], (harness.ctx.content_rect(), "screen.wgsl".into()));
     assert_eq!(painted[1], (panel, "panel.wgsl".into()));
 }
+
+#[test]
+fn font_paths_are_not_palette_names() {
+    let theme = Theme::from_toml(
+        r##"
+        [palette]
+        topaz = "#ffffff"
+        [picker]
+        font = "topaz"
+        "##,
+    )
+    .unwrap();
+    assert_eq!(theme.fonts(), [None, Some("topaz"), None]);
+}
+
+#[test]
+fn icon_color_mixes_by_its_alpha() {
+    let blue = Color32::from_rgba_unmultiplied(0, 0, 255, 200);
+    let mut picker = Theme::DEFAULT.picker;
+    assert_eq!(picker.tint_icon(blue), blue);
+    picker.icon_color = Color32::WHITE;
+    assert_eq!(picker.tint_icon(blue).to_srgba_unmultiplied(), [255, 255, 255, 200]);
+    picker.icon_color = Color32::from_rgba_unmultiplied(0, 255, 0, 128);
+    assert_eq!(picker.tint_icon(blue).to_srgba_unmultiplied(), [0, 128, 128, 200]);
+}

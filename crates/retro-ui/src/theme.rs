@@ -56,6 +56,9 @@ pub struct ShaderBg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Text {
+    /// TTF/OTF for the whole UI, relative to the theme file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
     #[serde(with = "hex")]
     pub color: Color32,
     /// Hints and disabled entries.
@@ -155,6 +158,10 @@ pub struct Widget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Picker {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    #[serde(with = "hex")]
+    pub text: Color32,
     #[serde(with = "hex")]
     pub title: Color32,
     #[serde(with = "hex")]
@@ -169,12 +176,19 @@ pub struct Picker {
     pub award_winner: Color32,
     #[serde(with = "hex")]
     pub award_nominee: Color32,
+    /// Mixed into list icons by its alpha: opaque replaces their colour.
+    #[serde(with = "hex")]
+    pub icon_color: Color32,
 }
 
 /// The texts drawn straight over the picture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hud {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    #[serde(with = "hex")]
+    pub text: Color32,
     #[serde(with = "hex")]
     pub error: Color32,
     #[serde(with = "hex")]
@@ -190,9 +204,20 @@ pub struct Hud {
     pub shadow_offset: f32,
 }
 
+impl Picker {
+    /// `color` with its RGB moved towards `icon_color` by that one's alpha.
+    pub fn tint_icon(&self, color: Color32) -> Color32 {
+        let [r, g, b, a] = color.to_srgba_unmultiplied();
+        let [tr, tg, tb, ta] = self.icon_color.to_srgba_unmultiplied();
+        let mix = |c: u8, t: u8| ((c as u32 * (255 - ta as u32) + t as u32 * ta as u32 + 127) / 255) as u8;
+        Color32::from_rgba_unmultiplied(mix(r, tr), mix(g, tg), mix(b, tb), a)
+    }
+}
+
 impl Theme {
     pub const DEFAULT: Theme = Theme {
         text: Text {
+            font: None,
             color: rgb(0xff, 0xff, 0xff),
             dim: rgb(0x80, 0x80, 0x80),
         },
@@ -255,6 +280,8 @@ impl Theme {
             },
         },
         picker: Picker {
+            font: None,
+            text: Color32::WHITE,
             title: rgb(0xff, 0xee, 0xcc),
             title_selected_fill: rgb(0xa0, 0x70, 0x50),
             row_selected_fill: rgb(0x00, 0x00, 0x6c),
@@ -262,8 +289,11 @@ impl Theme {
             cached: Color32::WHITE,
             award_winner: rgb(0x80, 0x60, 0x10),
             award_nominee: rgb(0x60, 0x60, 0x80),
+            icon_color: Color32::TRANSPARENT,
         },
         hud: Hud {
+            font: None,
+            text: Color32::WHITE,
             error: rgb(0xa0, 0x10, 0x10),
             favorite: rgb(0xe0, 0x20, 0x20),
             download: rgb(0xe0, 0xff, 0xe0),
@@ -277,6 +307,11 @@ impl Theme {
     /// Reads a theme file: `[palette]` names colours that any colour value
     /// may then use instead of a `#rrggbb[aa]` hex code, and whatever the file
     /// leaves out is taken from [`Theme::DEFAULT`].
+    /// The fonts the theme names, for the UI, the picker and the HUD.
+    pub fn fonts(&self) -> [Option<&str>; 3] {
+        [&self.text.font, &self.picker.font, &self.hud.font].map(Option::as_deref)
+    }
+
     pub fn from_toml(src: &str) -> Result<Theme, String> {
         let mut file: toml::Table = src.parse().map_err(|e| format!("{e}"))?;
         if let Some(palette) = file.remove("palette") {
@@ -339,7 +374,7 @@ fn use_palette(value: &mut toml::Value, palette: &toml::Table) -> Result<(), Str
             _ => return Err(format!("`{name}` is not in the palette")),
         },
         toml::Value::Table(table) => {
-            for (_, value) in table.iter_mut().filter(|(key, _)| key.as_str() != "shader") {
+            for (_, value) in table.iter_mut().filter(|(key, _)| !matches!(key.as_str(), "shader" | "font")) {
                 use_palette(value, palette)?;
             }
         }

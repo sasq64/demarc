@@ -19,7 +19,11 @@ mint = "#aaffe7"
 red = "#e02020"
 
 # Main text colour, and the colour of hints and disabled entries.
+# A font (TTF/OTF, relative to this file) replaces the built-in one; glyphs it
+# lacks still come from the built-in font. The picker and the HUD can each
+# have a font of their own.
 [text]
+# font = "myfont.ttf"
 color = "white"
 dim = "grey"
 
@@ -98,6 +102,8 @@ corner_radius = 2
 
 # The file picker.
 [picker]
+# font = "myfont.ttf"
+text = "white"
 title = "cream"
 title_selected_fill = "brown"
 row_selected_fill = "navy"
@@ -105,9 +111,14 @@ info = "mint"
 cached = "white"
 award_winner = "#806010"
 award_nominee = "#606080"
+# Mixed into the list icons by its alpha: "#ffffffff" makes them white,
+# "#00ff0080" tints them half way to green.
+icon_color = "#00000000"
 
 # Texts drawn straight over the picture.
 [hud]
+# font = "myfont.ttf"
+text = "white"
 error = "#a01010"
 favorite = "red"
 download = "#e0ffe0"

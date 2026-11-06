@@ -136,7 +136,16 @@ fn reload_theme(
     {
         Ok(t) => {
             info!("Theme {} loaded", path.display());
-            retro_ui::set_theme(contexts.ctx_mut()?, t);
+            let dir = path.parent().unwrap_or(std::path::Path::new("."));
+            let fonts = t.fonts().map(|name| {
+                let file = dir.join(name?);
+                std::fs::read(&file)
+                    .inspect_err(|e| warn!("Font {}: {e}", file.display()))
+                    .ok()
+            });
+            let ctx = contexts.ctx_mut()?;
+            retro_ui::set_fonts(ctx, fonts);
+            retro_ui::set_theme(ctx, t);
         }
         Err(e) => warn!("Theme {}: {e}", path.display()),
     }

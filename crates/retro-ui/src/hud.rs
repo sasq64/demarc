@@ -5,7 +5,7 @@ use std::{collections::HashMap, ops::Range, time::Duration};
 
 use egui::Ui;
 
-use crate::{HEADING_SIZE, MARGIN, theme};
+use crate::{HEADING_SIZE, MARGIN, hud_font, theme};
 
 /// Multipliers on [`HEADING_SIZE`], one per corner HUD text, so each can be
 /// sized on its own without touching [`egui::TextStyle::Heading`] elsewhere.
@@ -123,7 +123,7 @@ impl Hud {
                         let color = (if text == HudLocation::Error {
                             theme.hud.error
                         } else {
-                            ui.visuals().text_color()
+                            theme.hud.text
                         })
                         .linear_multiply(t);
 
@@ -151,7 +151,7 @@ impl Hud {
                     let size = HEADING_SIZE * INFO_TEXT_SCALE;
                     let galley = ui.painter().layout_no_wrap(
                         info.text,
-                        egui::FontId::proportional(size),
+                        hud_font(ctx, size),
                         egui::Color32::PLACEHOLDER,
                     );
                     let pos = line.left_center()
@@ -246,7 +246,7 @@ fn heading_with_shadow(
     // `layout_no_wrap`, which has no say over `halign`.
     let mut job = egui::text::LayoutJob::single_section(
         text.to_owned(),
-        egui::TextFormat::simple(egui::FontId::proportional(size), egui::Color32::PLACEHOLDER),
+        egui::TextFormat::simple(hud_font(ui.ctx(), size), egui::Color32::PLACEHOLDER),
     );
     job.halign = align;
     let galley = ui.painter().layout_job(job);
