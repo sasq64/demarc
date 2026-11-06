@@ -65,3 +65,17 @@ fn sets_file() {
     let out = apply(81, Change::File("demo.zip".into()));
     assert!(out.contains("[zoo.81]\nmeta = { dos4gw = \"true\" }\nfile = \"demo.zip\""), "{out}");
 }
+
+#[test]
+fn amiga_settings_replace_each_other() {
+    let out = apply(81, Change::Amiga(Amiga::Fast));
+    assert!(out.contains("fast = true"), "{out}");
+    let out = apply_to(&out, 81, Change::Amiga(Amiga::Aga));
+    assert!(!out.contains("fast"), "{out}");
+    assert!(out.contains(r#"aga = "true""#), "{out}");
+    assert!(out.contains(r#"dos4gw = "true""#), "{out}");
+    let out = apply_to(&out, 81, Change::Amiga(Amiga::Cpu68030));
+    assert!(!out.contains("aga ="), "{out}");
+    assert!(out.contains(r#"amiberry_cpu_model = "68030""#), "{out}");
+    overrides::parse(&out, Emulator::resolve_key_name).unwrap();
+}

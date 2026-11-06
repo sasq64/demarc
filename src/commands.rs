@@ -664,7 +664,7 @@ fn close_keyboard_on_load() {
     steam_keyboard(false);
 }
 
-fn reload(emu: &mut Emulator, settings: &mut AppSettings, navigator: &mut Navigator) {
+pub(crate) fn reload(emu: &mut Emulator, settings: &mut AppSettings, navigator: &mut Navigator) {
     settings.current_game -= 1;
     if let Some(launch) = navigator.current_launch.as_mut() {
         launch.index -= 1;

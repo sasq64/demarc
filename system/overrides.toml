@@ -1970,6 +1970,7 @@ meta = { wine_dll_overrides = "d3d9=b" }
 # instead and quits on "wrong ini-file version"
 [zoo.70380]
 boot = "ms_zx128.tap"
+
 # Led Blur: SDL 1.2 ddraw, black on NVIDIA under wined3d's ddraw
 [zoo.144558]
 meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
@@ -2074,3 +2075,15 @@ boot = "run.bat"
 # sandbox also maps the release directory to a drive letter of its own
 [zoo.181204]
 meta = { wine_sandbox = "false" }
+
+[zoo.59676]
+meta = { fast = "true", amiberry_cpu_model = "68030" }
+
+[zoo.202828]
+meta = { amiberry_cpu_model = "68030" }
+
+[zoo.372606]
+meta = { amiberry_cpu_model = "68040" }
+
+# [zoo.8891]
+# fast = true

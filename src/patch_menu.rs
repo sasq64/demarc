@@ -9,11 +9,13 @@ use anyhow::{Context, Result, bail};
 use bevy::prelude::*;
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, value};
 
+use crate::commands::reload;
 use crate::config::AppSettings;
 use crate::emu_file::{DemoId, url_file_name};
 use crate::emulator::{Emulator, Recorded};
 use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
+use crate::navigator::Navigator;
 use crate::overrides;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
 
@@ -25,9 +27,13 @@ const ITEMS: &[&str] = &[
     "Apply boot file",
     "Apply download",
     "Add Enter x 3",
+    "Apply AGA",
+    "Apply Fast",
+    "Apply 68030",
+    "Apply core puae",
     "Record Events",
 ];
-const RECORD: usize = 5;
+const RECORD: usize = 9;
 
 pub struct PatchMenuPlugin;
 
@@ -77,6 +83,7 @@ fn handle_select(
     mut reader: MessageReader<FuzzyListSelect>,
     mut emus: Query<(&mut Emulator, &EmuView)>,
     mut settings: ResMut<AppSettings>,
+    mut navigator: ResMut<Navigator>,
     mut hud: MessageWriter<SetHudText>,
 ) {
     for msg in reader.read() {
@@ -90,7 +97,12 @@ fn handle_select(
             continue;
         };
         let text = match patch(&mut emu, msg.item, &mut settings) {
-            Ok(text) => text,
+            Ok(text) => {
+                if msg.item != RECORD {
+                    reload(&mut emu, &mut settings, &mut navigator);
+                }
+                text
+            }
             Err(err) => {
                 warn!("Patch menu: {err:#}");
                 format!("{err:#}")
@@ -121,7 +133,18 @@ enum Change {
     File(String),
     Enters,
     Events(Vec<(u64, Recorded)>),
+    Amiga(Amiga),
 }
+
+#[derive(Debug, PartialEq)]
+enum Amiga {
+    Aga,
+    Fast,
+    Cpu68030,
+}
+
+/// Meta keys an [`Amiga`] change may have set, cleared before a new one goes in.
+const AMIGA_META: &[&str] = &["aga", "amiberry_cpu_model"];
 
 fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
     Ok(match item {
@@ -148,6 +171,10 @@ fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
             Change::File(name)
         }
         4 => Change::Enters,
+        5 => Change::Amiga(Amiga::Aga),
+        6 => Change::Amiga(Amiga::Fast),
+        7 => Change::Amiga(Amiga::Cpu68030),
+        8 => Change::Meta("amiga_core", "puae".into()),
         _ => bail!("Unknown patch"),
     })
 }
@@ -196,14 +223,23 @@ fn edit(doc: &mut DocumentMut, id: DemoId, change: &Change) -> Result<()> {
         .as_table_like_mut()
         .context("entry is not a table")?;
     match change {
-        Change::Meta(key, val) => {
-            let meta = entry
-                .entry("meta")
-                .or_insert(value(InlineTable::new()))
-                .as_table_like_mut()
-                .context("meta is not a table")?;
-            meta.insert(key, value(val.as_str()));
-            meta.fmt();
+        Change::Meta(key, val) => set_meta(entry, key, val)?,
+        Change::Amiga(amiga) => {
+            entry.remove("fast");
+            for table in ["meta", "libretro"] {
+                let Some(t) = entry.get_mut(table).and_then(Item::as_table_like_mut) else {
+                    continue;
+                };
+                AMIGA_META.iter().for_each(|key| _ = t.remove(key));
+                if t.is_empty() {
+                    entry.remove(table);
+                }
+            }
+            match amiga {
+                Amiga::Aga => set_meta(entry, "aga", "true")?,
+                Amiga::Fast => _ = entry.insert("fast", value(true)),
+                Amiga::Cpu68030 => set_meta(entry, "amiberry_cpu_model", "68030")?,
+            }
         }
         Change::Boot(name) => {
             entry.insert("boot", value(name.as_str()));
@@ -246,6 +282,17 @@ fn edit(doc: &mut DocumentMut, id: DemoId, change: &Change) -> Result<()> {
             entry.insert("events", value(events));
         }
     }
+    Ok(())
+}
+
+fn set_meta(entry: &mut dyn toml_edit::TableLike, key: &str, val: &str) -> Result<()> {
+    let meta = entry
+        .entry("meta")
+        .or_insert(value(InlineTable::new()))
+        .as_table_like_mut()
+        .context("meta is not a table")?;
+    meta.insert(key, value(val));
+    meta.fmt();
     Ok(())
 }
 
