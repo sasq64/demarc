@@ -821,7 +821,7 @@ fn settings_ui<T: SettingsType>(
                         let max_height = ctx.content_rect().height() * GRID_HEIGHT_FRACTION;
                         egui::ScrollArea::vertical()
                             .max_height(max_height)
-                            .auto_shrink([true, true])
+                            .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 let SettingsState {
                                     draft, sections, ..
