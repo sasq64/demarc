@@ -730,7 +730,6 @@
   `could not open working directory E:\` was in the good runs as well, which
   made it look harmless. The Deck has bwrap 0.12 now and *is* sandboxed.
 
-
 - Trimming Bevy features: without `bevy_post_process` the frame renders black
   with no error in the log, even though demarc's `PostProcess` is its own code.
   Check a headless screenshot after every feature change, and put a few
@@ -749,7 +748,7 @@
   `w_set_winver winxp`. UE4 checks `VerifyWindowsVersion(6, 0)` and silently
   picks OpenGL, so a D3D-only cook fails with "GlobalShaderCache-GLSL_150.bin
   is missing" (Dying Stars). Shipping UE4 builds log nothing; the launcher's
-  `ED3 ` argument and `+process` ruled out `-opengl` before the version.
+  `ED3` argument and `+process` ruled out `-opengl` before the version.
 
 - A ddraw demo frozen on its first frame with the music playing need not be a
   presentation bug: Lasse Reinbong '96 (`zoo.198069`) polls `MCI_STATUS` from
@@ -1311,3 +1310,21 @@
   before it was rewritten) stays cached as that page under
   `~/.cache/demarc/downloads/<hash>/`. When testing a download fix, delete the
   old entry first or the old result is just reused.
+
+- Web releases now load over a local HTTP server, not `file://`. A PNG-packed
+  page (`<img src=#>` decoding itself) still "showed raw text" over HTTP; the
+  text is the PNG rendered as HTML, and stays visible when the script fails
+  behind a transparent canvas. Read the console over CDP before blaming the
+  transport: Newton Protocol (`zoo.202470`) threw on a renamed WebGL method,
+  and the party zip of Decompress of Empty had a PNG with its CR bytes lost. A `--remote-debugging-port`
+  passed through `gamescope_chrome_args` was not reachable from outside the
+  session; reproduce in plain headless Chromium against `python3 -m http.server`.
+- Edits to `system/overrides.toml` only reach a release build after
+  rebuilding (it is read from the embedded `system.zip`). Three Decompress of
+  Empty runs tested an old override and blamed the click; the "Found override"
+  debug line shows what was actually loaded.
+- scene.org's `de-https` mirror (NetCologne) puts a welcome page in front of
+  every `.html` it serves, so a web release read as text. The fetcher now
+  treats that as a failed mirror.
+- `cargo fmt` reformats the whole workspace (it is not fmt-clean); format only
+  the files you changed (`rustfmt <file>`).

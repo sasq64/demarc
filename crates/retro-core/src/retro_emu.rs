@@ -831,7 +831,9 @@ impl RetroCoreDirect {
         // need_fullpath content it loads from the path itself. In those cases
         // there are no bytes to hand over (and reading a directory errors with
         // IsADirectory), so pass data=null/size=0 and let the core use `path`.
-        let game_data = if game_path.is_dir() {
+        // A URL (the gamescope core's web pages) has no bytes here either.
+        let is_url = game_path.to_string_lossy().starts_with("http://");
+        let game_data = if game_path.is_dir() || is_url {
             None
         } else {
             Some(std::fs::read(game_path)?)
