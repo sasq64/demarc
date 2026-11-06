@@ -413,7 +413,12 @@ fn sync_ui_state(hud: Res<HudState>, mut ui: ResMut<UiState>) {
     });
 }
 
-fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>, args: Res<Args>) {
+fn setup_ui_camera(
+    mut commands: Commands,
+    headless: Option<Res<HeadlessTarget>>,
+    args: Res<Args>,
+    mut egui: ResMut<EguiGlobalSettings>,
+) {
     // Camera for full res UI on top of screen.
     let mut camera = commands.spawn((
         Camera2d,
@@ -428,6 +433,12 @@ fn setup_ui_camera(mut commands: Commands, headless: Option<Res<HeadlessTarget>>
     // In DJ mode the cue window's camera hosts egui instead (see `crate::dj`).
     if !crate::dj::enabled(&args) {
         camera.insert(PrimaryEguiContext);
+        // No window to take keyboard focus, so injected keys go to it directly.
+        if headless.is_some() {
+            let ui = camera.id();
+            egui.enable_focused_non_window_context_updates = false;
+            commands.insert_resource(bevy_egui::input::FocusedNonWindowEguiContext(ui));
+        }
     }
 }
 
@@ -445,7 +456,7 @@ impl Plugin for EguiUiPlugin {
                     setup_egui,
                     reload_theme,
                     crate::ui_shader::update_shaders,
-                    update_ui.run_if(not(resource_exists::<HeadlessTarget>)),
+                    update_ui,
                 )
                     .chain(),
             )

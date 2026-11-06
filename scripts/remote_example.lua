@@ -16,7 +16,8 @@
 -- asked, and record_audio("out.wav") writes all of it from then on.
 -- video_level() is the share (0..1) of the current frame that isn't black, plus
 -- a hash that tells frames apart.
--- screenshot(path) lands a few frames later; quit() waits for it.
+-- screenshot(path) lands a few frames later; quit() waits for it. It shows
+-- everything on screen, the picker and dialogs too, headless or not.
 
 function Main()
     wait_frames(300)

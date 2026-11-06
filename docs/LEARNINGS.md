@@ -1,8 +1,10 @@
 # Learnings
 
-- `--headless` has no primary window, so egui never runs: the fuzzy list and
-  other dialogs can't be opened or picked from a `--remote-control` script.
-  Test picker logic with unit tests on the `FuzzySource` instead.
+- `--headless` used to skip `update_ui`, a leftover from when it needed the
+  primary window, so the HUD and picker never drew there. The UI camera already
+  rendered into the headless image; all it took was dropping the `run_if` and
+  making the UI camera the `FocusedNonWindowEguiContext`, so injected keys
+  reach egui. A `screenshot()` from a script now shows the whole UI.
 
 - A libretro core's own log goes to the `retro` tracing target at *debug*, so
   `RUST_LOG=retro=debug` is what shows why a core refused a file. Reaching for
@@ -1322,3 +1324,7 @@
   `screen_size_px` = 0 (`target_size` is never set), so `viewport_in_pixels()`
   is all zeros there; only `render` gets the real size. Debug a theme shader by
   outputting its uniforms as colours: it found this in one screenshot.
+
+- A theme screenshot that "looks right" doesn't show which font is in use;
+  `[text] font` never reached the picker or HUD and that went unnoticed. Diff
+  a crop against a run without the setting before calling a font applied.
