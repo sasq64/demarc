@@ -60,6 +60,31 @@ pub struct Panel {
     pub border: Stroke,
     pub padding: i8,
     pub corner_radius: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<Glow>,
+}
+
+/// A soft halo around a panel, drawn outside its border.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Glow {
+    /// Width of the fuzzy edge; 0 is a sharp one.
+    pub blur: u8,
+    /// How far the halo extends past the panel before it starts to fade.
+    pub spread: u8,
+    #[serde(with = "hex")]
+    pub color: Color32,
+}
+
+impl Glow {
+    fn shadow(&self) -> egui::Shadow {
+        egui::Shadow {
+            offset: [0, 0],
+            blur: self.blur,
+            spread: self.spread,
+            color: self.color,
+        }
+    }
 }
 
 /// Selected text, and the highlight of a selected toggle or combo entry.
@@ -153,12 +178,18 @@ impl Theme {
             border: stroke(2.0, rgb(0xff, 0xaa, 0x7c)),
             padding: 16,
             corner_radius: 0,
+            glow: Some(Glow {
+                blur: 24,
+                spread: 4,
+                color: Color32::from_rgba_unmultiplied_const(0xff, 0xaa, 0x7c, 0x60),
+            }),
         },
         popup: Panel {
             fill: gray(27),
             border: stroke(1.0, gray(60)),
             padding: 6,
             corner_radius: 6,
+            glow: None,
         },
         field: Field { fill: gray(10) },
         selection: Selection {
@@ -249,6 +280,10 @@ impl Theme {
         visuals.override_text_color = Some(self.text.color);
         visuals.window_fill = self.popup.fill;
         visuals.window_stroke = self.popup.border;
+        if let Some(glow) = &self.popup.glow {
+            visuals.window_shadow = glow.shadow();
+            visuals.popup_shadow = glow.shadow();
+        }
         visuals.window_corner_radius = egui::CornerRadius::same(self.popup.corner_radius);
         visuals.menu_corner_radius = egui::CornerRadius::same(self.popup.corner_radius);
         visuals.panel_fill = self.popup.fill;
@@ -281,12 +316,10 @@ impl Default for Theme {
 
 fn use_palette(value: &mut toml::Value, palette: &toml::Table) -> Result<(), String> {
     match value {
-        toml::Value::String(name) if !name.starts_with('#') => {
-            match palette.get(name.as_str()) {
-                Some(toml::Value::String(color)) => *name = color.clone(),
-                _ => return Err(format!("`{name}` is not in the palette")),
-            }
-        }
+        toml::Value::String(name) if !name.starts_with('#') => match palette.get(name.as_str()) {
+            Some(toml::Value::String(color)) => *name = color.clone(),
+            _ => return Err(format!("`{name}` is not in the palette")),
+        },
         toml::Value::Table(table) => {
             for (_, value) in table.iter_mut() {
                 use_palette(value, palette)?;
@@ -325,7 +358,8 @@ mod hex {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Color32, D::Error> {
         let text = String::deserialize(d)?;
-        parse(&text).ok_or_else(|| D::Error::custom(format!("`{text}` is not a #rrggbb[aa] colour")))
+        parse(&text)
+            .ok_or_else(|| D::Error::custom(format!("`{text}` is not a #rrggbb[aa] colour")))
     }
 
     fn parse(text: &str) -> Option<Color32> {
@@ -335,7 +369,12 @@ mod hex {
         }
         let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
         let a = if hex.len() == 8 { byte(6)? } else { 255 };
-        Some(Color32::from_rgba_unmultiplied(byte(0)?, byte(2)?, byte(4)?, a))
+        Some(Color32::from_rgba_unmultiplied(
+            byte(0)?,
+            byte(2)?,
+            byte(4)?,
+            a,
+        ))
     }
 }
 
@@ -354,6 +393,7 @@ impl Panel {
             .stroke(self.border)
             .inner_margin(egui::Margin::same(self.padding))
             .corner_radius(egui::CornerRadius::same(self.corner_radius))
+            .shadow(self.glow.as_ref().map_or(egui::Shadow::NONE, Glow::shadow))
     }
 }
 

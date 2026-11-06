@@ -33,6 +33,9 @@ fill = "black_glass"
 border = { width = 2.0, color = "peach" }
 padding = 16
 corner_radius = 0
+# A halo outside the border: blur is the width of its soft edge, spread how
+# far it reaches before fading.
+glow = { blur = 24, spread = 4, color = "#ffaa7c60" }
 
 # Combo box drop-downs.
 [popup]
@@ -40,6 +43,7 @@ fill = "#1b1b1b"
 border = { width = 1.0, color = "#3c3c3c" }
 padding = 6
 corner_radius = 6
+# glow = { blur = 8, spread = 0, color = "#00000060" }
 
 # Selected text, and the selected entry of a combo box.
 [selection]

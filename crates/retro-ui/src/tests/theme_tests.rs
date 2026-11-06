@@ -23,7 +23,10 @@ fn set_theme_is_read_back() {
     t.text.color = Color32::RED;
     set_theme(&ctx, t.clone());
     assert_eq!(*theme(&ctx), t);
-    assert_eq!(ctx.global_style().visuals.override_text_color, Some(Color32::RED));
+    assert_eq!(
+        ctx.global_style().visuals.override_text_color,
+        Some(Color32::RED)
+    );
 }
 
 fn default_file() -> String {
@@ -47,7 +50,11 @@ fn default_file_is_the_whole_default_theme() {
     let file: toml::Table = default_file().parse().unwrap();
     let (mut have, mut want) = (Vec::new(), Vec::new());
     keys(&file, "", &mut have);
-    keys(&toml::Table::try_from(Theme::DEFAULT).unwrap(), "", &mut want);
+    keys(
+        &toml::Table::try_from(Theme::DEFAULT).unwrap(),
+        "",
+        &mut want,
+    );
     have.retain(|k| !k.starts_with("palette."));
     have.sort();
     want.sort();
@@ -85,4 +92,21 @@ fn theme_errors_are_reported() {
     ] {
         assert!(Theme::from_toml(src).is_err(), "{src}");
     }
+}
+
+#[test]
+fn panel_glow_becomes_the_frame_shadow() {
+    let theme = Theme::from_toml(
+        r##"
+        [palette]
+        peach = "#ffaa7c"
+        [panel]
+        glow = { blur = 24, spread = 4, color = "peach" }
+        "##,
+    )
+    .unwrap();
+    let shadow = theme.panel_frame().shadow;
+    assert_eq!(shadow.offset, [0, 0]);
+    assert_eq!((shadow.blur, shadow.spread), (24, 4));
+    assert_eq!(shadow.color, Color32::from_rgb(0xff, 0xaa, 0x7c));
 }
