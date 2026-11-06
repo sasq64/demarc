@@ -229,8 +229,28 @@ fn promote_mirror(mirror: Mirror) {
     MIRROR_ROTATION[mirror.class].store(mirror.base, Ordering::Relaxed);
 }
 
+/// The file id of a Google Drive share link.
+fn drive_id(url: &str) -> Option<String> {
+    let url = Url::parse(url).ok()?;
+    if !matches!(url.host_str()?, "drive.google.com" | "docs.google.com") {
+        return None;
+    }
+    if let Some(rest) = url.path().strip_prefix("/file/d/") {
+        return rest.split('/').next().map(String::from);
+    }
+    url.query_pairs()
+        .find(|(k, _)| k == "id")
+        .map(|(_, v)| v.into_owned())
+}
+
 /// Apply the first matching [`URL_REWRITES`] rule to `url`.
 fn rewrite(url: &str) -> String {
+    if let Some(id) = drive_id(url) {
+        // `confirm=t` skips the "can't scan for viruses" page large files get.
+        return format!(
+            "https://drive.usercontent.google.com/download?id={id}&export=download&confirm=t"
+        );
+    }
     for (prefix, replacement) in URL_REWRITES {
         if let Some(rest) = url.strip_prefix(prefix) {
             return format!("{replacement}{rest}");
@@ -281,8 +301,53 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
     // keeps its cache entry when [`LINK_BASES`] changes mirror; the name inside
     // it comes from the resolved url, which is the one that carries the file's
     // real name and extension.
-    let name = url_filename(&primary_url(url));
+    let name = download_name(url);
     DOWNLOADS.get_file(url, &name, |dest| download_to(url, dest, on_progress))
+}
+
+/// The name a download is cached under. A Drive link says nothing about the
+/// file, so its name comes from the server's `Content-Disposition`.
+fn download_name(url: &str) -> String {
+    let resolved = primary_url(url);
+    if drive_id(url).is_none() {
+        return url_filename(&resolved);
+    }
+    DOWNLOADS
+        .cached_name(url)
+        .or_else(|| attachment_name(&resolved))
+        .unwrap_or_else(|| url_filename(&resolved))
+}
+
+fn attachment_name(url: &str) -> Option<String> {
+    let response = ureq::head(url)
+        .config()
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_recv_response(Some(RESPONSE_TIMEOUT))
+        .build()
+        .call()
+        .inspect_err(|e| warn!("HEAD {url} failed: {e}"))
+        .ok()?;
+    let header = response.headers().get("content-disposition")?.to_str().ok()?;
+    disposition_filename(header)
+}
+
+/// The filename in a `Content-Disposition` header, made safe for the cache.
+fn disposition_filename(header: &str) -> Option<String> {
+    let mut plain = None;
+    for param in header.split(';').map(str::trim) {
+        if let Some(v) = param.strip_prefix("filename*=") {
+            let v = v.rsplit_once('\'').map_or(v, |(_, v)| v);
+            plain = Some(percent_decode_str(v).decode_utf8_lossy().into_owned());
+            break;
+        }
+        if let Some(v) = param.strip_prefix("filename=") {
+            plain = Some(v.trim_matches('"').to_string());
+        }
+    }
+    let name = plain?;
+    let name = name.rsplit(['/', '\\']).next()?;
+    (!name.is_empty() && name != "." && name != "..")
+        .then(|| utf8_percent_encode(name, FILENAME_ESCAPE).to_string())
 }
 
 /// Whether `path` is an entry in the download cache.
@@ -291,6 +356,9 @@ pub fn is_download(path: &Path) -> bool {
 }
 
 pub fn is_download_cached(url: &str) -> bool {
+    if drive_id(url).is_some() {
+        return DOWNLOADS.cached_name(url).is_some();
+    }
     let name = url_filename(&primary_url(url));
     DOWNLOADS.is_cached(url, &name)
 }

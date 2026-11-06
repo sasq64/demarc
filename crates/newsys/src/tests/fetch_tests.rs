@@ -227,3 +227,31 @@ fn fixes_spelled_out_amigascne_url() {
     .unwrap();
     assert!(std::fs::metadata(&path).unwrap().len() > 0);
 }
+
+#[test]
+fn rewrites_google_drive_links() {
+    let direct =
+        "https://drive.usercontent.google.com/download?id=0Bz-E0DzAyFSJM08xSklPSlZVMEE&export=download&confirm=t";
+    for link in [
+        "https://drive.google.com/open?id=0Bz-E0DzAyFSJM08xSklPSlZVMEE",
+        "https://drive.google.com/file/d/0Bz-E0DzAyFSJM08xSklPSlZVMEE/view?usp=sharing",
+        "https://drive.google.com/uc?export=download&id=0Bz-E0DzAyFSJM08xSklPSlZVMEE",
+    ] {
+        assert_eq!(resolve_url(link), vec![direct], "{link}");
+    }
+}
+
+#[test]
+fn reads_the_content_disposition_filename() {
+    assert_eq!(
+        disposition_filename(r#"attachment; filename="Kp-2015_Indie-vibes.exe""#).as_deref(),
+        Some("Kp-2015_Indie-vibes.exe")
+    );
+    assert_eq!(
+        disposition_filename("attachment; filename=\"a b.zip\"; filename*=UTF-8''a%20b.zip")
+            .as_deref(),
+        Some("a%20b.zip")
+    );
+    assert_eq!(disposition_filename(r#"attachment; filename="../""#), None);
+    assert_eq!(disposition_filename("inline"), None);
+}
