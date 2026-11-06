@@ -1970,6 +1970,7 @@ meta = { wine_dll_overrides = "d3d9=b" }
 # instead and quits on "wrong ini-file version"
 [zoo.70380]
 boot = "ms_zx128.tap"
+
 # Led Blur: SDL 1.2 ddraw, black on NVIDIA under wined3d's ddraw
 [zoo.144558]
 meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
@@ -1987,8 +1988,11 @@ download = "https://ftp.untergrund.net/users/highsociety/dump/Kp-2015_Indie-vibe
 events = [{ frame = 600, key = "Enter" }]
 
 # Esocentrica: launcher waits on "Watch"
+# Esocentrica: Satori's Circulation engine renders in GL and presents
+# through DirectDraw, which wined3d leaves black on NVIDIA.
 [zoo.167713]
 events = [{ frame = 600, key = "Enter" }]
+meta = { wine_cnc_ddraw = true }
 
 # Emergency: IMS sound setup screen
 [zoo.333681]
@@ -1998,9 +2002,9 @@ events = [{ frame = 600, key = "Enter" }, { frame = 700, key = "Enter" }]
 [zoo.160458]
 events = [{ frame = 600, key = "2" }]
 
-# [ Type ]: "Click" to start
+# [ Type ]: the "Click" link at the top left starts it
 [zoo.153542]
-events = [{ frame = 600, click = [0.5, 0.5] }]
+events = [{ frame = 600, click = [0.012, 0.016] }]
 
 # Artifact: quality buttons
 [zoo.196630]
@@ -2022,9 +2026,10 @@ events = [{ frame = 600, click = [0.41, 0.5] }]
 [zoo.342293]
 events = [{ frame = 600, click = [0.5, 0.43] }]
 
-# Condition: "click me!"
+# Condition: "click me!" at the top left, after a precalc of 20-40 s; a
+# click once it has started lands on the canvas and does nothing.
 [zoo.292275]
-events = [{ frame = 600, click = [0.03, 0.025] }]
+events = [{ frame = 1200, click = [0.016, 0.015] }, { frame = 1800, click = [0.016, 0.015] }, { frame = 2400, click = [0.016, 0.015] }, { frame = 3600, click = [0.016, 0.015] }]
 
 # Seven Days: "Full Screen" button
 [zoo.307633]
@@ -2039,9 +2044,13 @@ events = [{ frame = 600, click = [0.023, 0.081] }]
 file = "2023_04_22_21_03_54_decompress_of_empty.html"
 events = [{ frame = 900, click = [0.5, 0.525] }]  # "2. Play!" after precompiling
 
-# Genesis: the exe is a node server for the page
+# Genesis: the exe is a node server for the page; Space starts it. The music
+# was fetched from ../../music, the server's root, which under demarc's
+# /<n>/ prefix is outside the release; the timeline waits for the music.
 [zoo.267672]
 boot = "client/index.html"
+events = [{ frame = 600, key = "Space" }]
+patch = { info = "music from the page's own directory", target = "client/js/app.js", offset = 33148, contents = "Jy4vLi8uL211c2ljL2Z1bmN0aW9uMjAxOS0zLm1wMyc=" }
 
 # Horizon Machine: NVIDIA rejects gl_FragColor at #version 430
 [zoo.170744]
@@ -2107,3 +2116,54 @@ NjA2NiwzNTUzLG51bGwsMCk7ZHIoNCwwLDMpO3B8fCFPW3ldfHxmdSgzNjE2MCwzNjA2NiwzNTUz
 LFBbeSozKzJdLDApJykpPg==
 """
 }
+
+# Tension by x0f
+[zoo.269513]
+fix_info = '''
+Crashed at the first frame or, at random, exited silently while loading. One
+op calls GenerateMips with its texture index still -1, passing a texture as
+the SRV: DXVK reads NULL from it and wined3d asserts. Its render targets are
+made in a loop that never resets the size between formats, so it asks for
+textures up to 33554432 wide; the D3D11 runtime refuses anything over 16384,
+but DXVK hands the 32768 ones to the driver, which sometimes faults in
+vkAllocateMemory. The exe is kkrunchy packed, so the depacker jumps through a
+cave that, once unpacked, skips GenerateMips for index -1 and fails
+CreateTexture2D above 16384.
+'''
+patch = [
+  { info = "depacker exit jumps to the cave", target = "tension_partyversion.exe", offset = 22075, contents = "6SAEAAA=" },
+  { info = "cave: skip GenerateMips for index -1, no textures over 16384", target = "tension_partyversion.exe", offset = 23136, contents = "D3e+nJo/AMcFzpc/AKTC///pzPv//8YF2GJAAOnHBdliQADA9/7/xgUBIEAA6ccFAiBAAK46///pJhYBAIXAeA7/NIWQpEAAUf+S2AAAAOkyCAEAiwhSUIH/AEAAAHcI/1EU6UDFAACDxBC4VwAHgOkzxQAA" },
+]
+
+# Observatory by Cocoon
+[zoo.109195]
+fix_info = '''
+A "File <" box at start. A material's texture setter assigns its member
+string from a copy of the name it was passed, which is the member's own
+buffer, then loads the .png through that now-freed pointer. Windows' heap
+left the freed text in place; wine's writes over it. The patch loads from
+the member string instead.
+'''
+patch = { info = "load the texture by the live name", target = "EngineRelease.dll", offset = 207727, contents = "i9g=" }
+
+# Holly by Cabbibo: uses the pre-standard Web Audio noteOn/noteOff, which
+# Chrome no longer has; the first throws and nothing starts.
+[zoo.104135]
+patch = [
+  { info = "noteOff to stop", target = "Audio.js", offset = 4022, contents = "c3RvcCAgICgwKQ==" },
+  { info = "noteOn to start", target = "Audio.js", offset = 4204, contents = "c3RhcnQgKDAp" },
+]
+
+# Driftwood by Almagest: the amigascne lha lacks the seven
+# remapped_s08_glasssplitter assets, and the demo asserts on the first one.
+[zoo.202824]
+file = "agt-driftwood-rev19.zip"
+
+# The Mind: a multi-cart release; the main cart includes and reloads the rest
+[zoo.342339]
+boot = "the mind.p8"
+
+# The (Fucking) (Complex) Art Of Profanity: its floppy set stops at the TOS
+# logo; the hard drive build (which gets an STe with 4 MB) plays.
+[zoo.306979]
+boot = "profanit.prg"
