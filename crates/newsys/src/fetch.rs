@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::cache::FileCache;
+use crate::utils::read_at;
 
 /// Bytes still to arrive, across every download whose size is known.
 static BYTES_IN_PROGRESS: AtomicU64 = AtomicU64::new(0);
@@ -476,8 +477,15 @@ fn download_part(url: &str, path: &Path, on_progress: OnProgress<'_>) -> anyhow:
     let mut file = std::fs::File::create(path)?;
     download(url, &mut file, on_progress)?;
     file.flush()?;
+    if read_at(path, 0, MIRROR_BANNER.len())? == MIRROR_BANNER {
+        anyhow::bail!("mirror put its banner in front of the file");
+    }
     Ok(())
 }
+
+/// NetCologne (scene.org's `de-https`) serves an `.html` with its own welcome
+/// page in front of it.
+const MIRROR_BANNER: &[u8] = b"<h2>Welcome to the <a href=\"https://www.netcologne.de/\">";
 
 /// Download `url` (`http`, `https` or `ftp`) into `out`.
 ///
