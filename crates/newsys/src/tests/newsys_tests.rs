@@ -145,6 +145,44 @@ fn an_override_patches_the_release_and_picks_what_starts_it() {
     );
 }
 
+/// A name with a `/` picks one of two files of the same name.
+#[test]
+fn an_override_names_a_file_by_its_path_in_the_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("genesis");
+    for sub in ["server", "client/js"] {
+        fs::create_dir_all(release.join(sub)).unwrap();
+        fs::write(release.join(sub).join("app.js"), b"....").unwrap();
+    }
+    fs::write(release.join("client/index.html"), b"<html>").unwrap();
+
+    let over = Override {
+        boot_file: Some("client/index.html"),
+        patches: vec![Patch {
+            target: "client/js/app.js",
+            offset: Some(1),
+            data: "AAEC",
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let mut wf = WorkFile::new(release.clone());
+    apply_override(&mut wf, &over).unwrap();
+
+    assert!(
+        wf.path.ends_with("client/index.html"),
+        "started {:?}",
+        wf.path
+    );
+    let copy = Path::new(&wf.get_meta_or(RELEASE_DIR, "")).to_owned();
+    assert_eq!(
+        fs::read(copy.join("client/js/app.js")).unwrap(),
+        b".\0\x01\x02"
+    );
+    assert_eq!(fs::read(copy.join("server/app.js")).unwrap(), b"....");
+}
+
 /// `fast = true` writes the accelerated Amiga configuration, and does it
 /// first, so an entry that also names one of those options keeps it.
 #[test]

@@ -14,7 +14,7 @@ use crate::{
     workfile::WorkFile,
 };
 
-use super::System;
+use super::{RELEASE_DIR, System};
 
 const CORE_NAME_HATARI: &str = "hatari";
 const GEMDOS_MAGIC: [u8; 2] = [0x60, 0x1a];
@@ -357,7 +357,14 @@ impl System for AtariStSystem {
                 file.set_meta("hatari_memory_size", "4096");
             }
 
-            let wf = build_gemdos_drive(prg, &file.path)?;
+            // An override that picked the program left the release it is part of.
+            let release = file.get_meta_or(RELEASE_DIR, "");
+            let base = if release.is_empty() {
+                file.path.clone()
+            } else {
+                PathBuf::from(release)
+            };
+            let wf = build_gemdos_drive(prg, &base)?;
             file.path = wf.path;
             file.temp_dir = wf.temp_dir;
             return Ok(true);

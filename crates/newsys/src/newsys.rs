@@ -411,8 +411,14 @@ fn apply_bsdiff(target: &Path, patch: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// A name with a `/` is a path from the release directory, for a name the
+/// release has more than once.
 fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
     debug!("Finding {name} in {dir:?}");
+    if name.contains('/') {
+        let path = dir.join(name);
+        return Ok(path.is_file().then_some(path));
+    }
     walk_dir_find(dir, 0, |path, _ext, _header| {
         let found = path
             .file_name()
