@@ -170,6 +170,9 @@ setup_prefix() {
     cabextract -q -d "$wow64" -F msvcp60.dll "$WINETRICKS_CACHE/vcrun6/vcredist.exe"
     # Speech (for Zoom 3)
     winetricks --force speechsdk
+    # Native .NET in place of wine-mono, which resolves static field types before Main
+    # installs an AssemblyResolve handler (Return). Slow, so only once
+    [ -e "$WINEPREFIX/drive_c/windows/dotnet48.installed.workaround" ] || winetricks dotnet48
     # speechsdk leaves the prefix at winxp; UE4 then forces OpenGL (Dying Stars)
     wine reg add 'HKCU\Software\Wine\AppDefaults\ED3-Win64-Shipping.exe' /v Version /d win10 /f
     # UE4's stock game exe dies with an empty "Fatal error!" box (Variform 3)
