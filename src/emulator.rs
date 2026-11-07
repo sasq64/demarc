@@ -474,6 +474,10 @@ impl Emulator {
     }
 
     pub fn audio_active(&mut self, on: bool) {
+        if self.sink.failed() {
+            warn!("Audio output stopped, reopening it");
+            self.sink.deactivate();
+        }
         if on && self.sink.stream.is_none() {
             self.sink.activate();
         } else if !on && self.sink.stream.is_some() {
