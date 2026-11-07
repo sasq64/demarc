@@ -17,6 +17,11 @@ one wine's `wglChoosePixelFormat` picks for the same descriptor. Front-buffer
 drawing never reaches the session, and Alcatraz's "The Explorer" hard-codes
 format 8, single-buffered in wine's list.
 
+An app whose single-buffered format was swapped this way and that never swaps
+by itself draws to a back buffer nobody shows, so `glReadPixels`, `glFlush` and
+`glFinish` swap for it until its first own `wglSwapBuffers` (Pestis & mrange's
+"Cassini's Cosmic Conclusion" reads a pixel back once a frame instead).
+
 `wglSwapBuffers` empties the x87 register stack (`emms`) after the swap.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.

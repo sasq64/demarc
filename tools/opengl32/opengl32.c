@@ -826,6 +826,10 @@ static int __stdcall choose_pixel_format(void *hdc, const unsigned char *pfd)
 // wine's list, and front-buffer drawing never reaches the session.
 static int(__stdcall *wine_set_pixel_format)(void *hdc, int format, const void *pfd);
 
+// Set when a single-buffered format was swapped for a double-buffered one,
+// until the app swaps by itself.
+static int front_buffer_drawing;
+
 static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
 {
     int(__stdcall * describe)(void *, int, unsigned, unsigned char *) = lookup(wine, "wglDescribePixelFormat");
@@ -833,8 +837,10 @@ static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
     if (describe && describe(hdc, format, sizeof(desc), desc) && !(desc[4] & 1)) {
         desc[4] |= 1;
         int double_buffered = wine_choose_pixel_format(hdc, desc);
-        if (double_buffered && describe(hdc, double_buffered, sizeof(desc), desc) && (desc[4] & 1))
+        if (double_buffered && describe(hdc, double_buffered, sizeof(desc), desc) && (desc[4] & 1)) {
             format = double_buffered;
+            front_buffer_drawing = 1;
+        }
     }
     return wine_set_pixel_format(hdc, format, pfd);
 }
@@ -845,9 +851,51 @@ static int(__stdcall *wine_swap_buffers)(void *hdc);
 
 static int __stdcall swap_buffers(void *hdc)
 {
+    front_buffer_drawing = 0;
     int ret = wine_swap_buffers(hdc);
     __asm__ volatile("emms");
     return ret;
+}
+
+static int(__stdcall *wine_swap_layer_buffers)(void *hdc, unsigned planes);
+
+static int __stdcall swap_layer_buffers(void *hdc, unsigned planes)
+{
+    front_buffer_drawing = 0;
+    return wine_swap_layer_buffers(hdc, planes);
+}
+
+// An app that draws to the front buffer and never swaps (Pestis & mrange's
+// "Cassini's Cosmic Conclusion" reads a pixel back once a frame) now draws to
+// a back buffer, so the frame is swapped where it would have been complete.
+static void(__stdcall *wine_read_pixels)(int, int, int, int, unsigned, unsigned, void *);
+static void(__stdcall *wine_flush)(void);
+static void(__stdcall *wine_finish)(void);
+
+static void show_front_buffer(void)
+{
+    void *(__stdcall * current_dc)(void) = lookup(wine, "wglGetCurrentDC");
+    void *dc = current_dc ? current_dc() : 0;
+    if (front_buffer_drawing && dc)
+        wine_swap_buffers(dc);
+}
+
+static void __stdcall read_pixels(int x, int y, int w, int h, unsigned format, unsigned type, void *data)
+{
+    wine_read_pixels(x, y, w, h, format, type, data);
+    show_front_buffer();
+}
+
+static void __stdcall flush(void)
+{
+    wine_flush();
+    show_front_buffer();
+}
+
+static void __stdcall finish(void)
+{
+    wine_finish();
+    show_front_buffer();
 }
 
 // Horizon Machine's LOGFONT overlaps other data and is 0x8000000 wide; wine
@@ -1192,6 +1240,18 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;
+            } else if (address && equal(names[i], "wglSwapLayerBuffers")) {
+                wine_swap_layer_buffers = address;
+                address = swap_layer_buffers;
+            } else if (address && equal(names[i], "glReadPixels")) {
+                wine_read_pixels = address;
+                address = read_pixels;
+            } else if (address && equal(names[i], "glFlush")) {
+                wine_flush = address;
+                address = flush;
+            } else if (address && equal(names[i], "glFinish")) {
+                wine_finish = address;
+                address = finish;
             } else if (address && equal(names[i], "wglUseFontBitmapsA")) {
                 wine_use_font_bitmaps[0] = address;
                 address = use_font_bitmaps_a;
