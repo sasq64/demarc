@@ -122,8 +122,15 @@ Only some d3dx9 versions are native; others still hit wine's stubs. A msvcrt nam
 wine keeps only in ucrtbase is found there by the kernelbase proxy's
 `GetProcAddress` hook (Brainworm, `zoo.202448`); add other fallbacks there.
 
-**Crinkler / packed 4k.** Imports are resolved by walking export tables, so a
-wine export list that differs from Windows breaks silently. Existing proxies:
+**Crinkler / packed 4k.** demarc unpacks Crinkler exes (1.x to 3.x) into PEs
+that import by name (`crates/newsys/src/crinkler.rs`, docs/CRINKLER.md);
+`RUST_LOG=newsys=debug` lists each resolved import. Warnings say when one is
+left packed; `-x crinkler_unpack=false` compares with the packed exe. An
+override `patch` addresses the unpacked code: the `.crink` section's file
+offset plus address minus `0x420000`, in the rebuilt exe under
+`~/.cache/demarc/crinkler`. Packed, imports are resolved by walking export
+tables, so a wine export list that differs from Windows breaks silently.
+Existing proxies:
 `winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders, plus
 Windows-only names in `EXTRA`),
 `opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits, pbuffer
@@ -133,8 +140,12 @@ Windows-only names in `EXTRA`),
 name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
 frozen at 100% CPU: `perf record -p` shows the hot loop, and a scan of
 `/proc/<pid>/mem` (from gamescope's parent) for its stack frame shows the
-bad locals. The exe cannot be patched; an unpacked one can, with an
-override `patch`.
+bad locals. A kkrunchy exe can be patched through a cave that patches the
+code once unpacked (Tension, `zoo.269513`).
+
+**D3D11 intro exits at random while loading.** `vkAllocateMemory Exception
+0xc0000005 in Unix call`: a texture over 16384 that the D3D11 runtime would
+refuse reached the driver through DXVK (Tension, `zoo.269513`).
 
 **GLSL compile errors (white or black GL intro).** Read Mesa's errors at
 `RUST_LOG=retro=warn`; `MESA_DEBUG=1` shows "program not linked" when
@@ -229,7 +240,8 @@ enumerates every module through wineserver per new native (`zoo.202844`).
 single-buffered pixel format: front-buffer drawing never reaches the session
 (the opengl32 proxy remaps a single-buffered `wglSetPixelFormat`).
 wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos. SDL 1.2 demos (`SDL.DLL` beside the exe) are ddraw too: black and
-silent without it (Dose 2, `zoo.8540`).
+silent without it (Dose 2, `zoo.8540`). So are GL demos that also import DDRAW to present
+(Esocentrica, `zoo.167713`).
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
 extensions such as `glLoadProgramNV`. Black on NVIDIA only, first frame
 drawn: the window's depth is not kept across a swap, and a demo that cleared

@@ -1234,17 +1234,16 @@ meta = { wine_res = "640x480" }
 
 # Organix by rgba
 [zoo.51295]
-known_issue = """
-Black. The intro renders fine (the DIB dumped from memory holds the image) and
-blits it in a loop, but its window never reaches the session. It is created at
-0x0 with WS_MAXIMIZE (CreateWindowEx "static", 0x97000000, 0,0,0,0); Xwayland
-then makes one buffer-less commit on its surface and none after, so gamescope
-shows a stale square surface ("client covers 1024x1024"). A test exe that does
-the same reproduces it; the same window created at full size works. Hide/show,
-resizing after map and answering the buffer-less commit's frame callback in
-gamescope did not help. Also wants a 1280x1024 mode (letterboxed1024 exe), so
-wine_res = 1280x1024 is needed once the above is solved. See docs/LEARNINGS.md.
+fix_info = """
+Black. It renders fine (the DIB dumped from memory holds the image) and blits
+it in a loop, but its window is created at 0x0 with WS_MAXIMIZE
+(CreateWindowEx "static", 0x97000000, 0,0,0,0), and Xwayland then makes one
+buffer-less commit on its surface and none after, so gamescope never shows
+it. demarc unpacks Crinkler exes and wraps CreateWindowExA, giving such a
+window the screen's size as Windows does (docs/CRINKLER.md). The exe demarc
+picks is letterboxed for 1280x1024.
 """
+meta = { wine_res = "1280x1024" }
 
 # Slisesix by rgba: quits when its 1280x1024 mode switch fails in the 1280x720
 # session its file name gives
@@ -2167,3 +2166,32 @@ boot = "the mind.p8"
 # logo; the hard drive build (which gets an STe with 4 MB) plays.
 [zoo.306979]
 boot = "profanit.prg"
+
+[zoo.290113]
+boot = "4in1k.tap"
+
+# Eisenerz by Virgill & LJ
+[zoo.266556]
+fix_info = '''
+Died calling a user32 stub ("Call from 7BB8C557"). Its Crinkler tiny import
+hashes every user32 export into one table, and wine's user32 also has
+ShellHandwritingHandleDelegatedInput, whose slot is GetDC's and which sorts
+after it, so GetDC was the stub. demarc now unpacks Crinkler exes and imports
+by name (docs/CRINKLER.md). It draws at 1280x720 and only fills part of a
+larger screen.
+'''
+meta = { wine_res = "1280x720" }
+
+# Cassini's Cosmic Conclusion by Pestis & mrange
+[zoo.367582]
+fix_info = '''
+Died calling a user32 stub, like Eisenerz (a Crinkler tiny-import slot that a
+wine-only export also hashes to); fixed by demarc unpacking Crinkler exes and
+importing by name. Then black: its window is created at 0x0 with WS_MAXIMIZE
+(given the screen's size by the rebuilt exe's CreateWindowExA wrapper), and
+it sets single-buffered pixel format 8 through gdi32, draws to the front
+buffer and never swaps, reading a pixel back each frame. The rebuilt exe
+calls opengl32's wglSetPixelFormat instead, so the opengl32 proxy makes the
+format double-buffered and swaps after each glReadPixels (tools/opengl32,
+needs --setup-wine).
+'''

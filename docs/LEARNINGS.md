@@ -1328,3 +1328,101 @@
   treats that as a failed mirror.
 - `cargo fmt` reformats the whole workspace (it is not fmt-clean); format only
   the files you changed (`rustfmt <file>`).
+
+- A kkrunchy exe can be patched without unpacking it (Tension, `zoo.269513`).
+  The stub ends with `emms; mov esi,<imports>` before its import loader; a
+  jump from there into the zero padding after the import directory runs a
+  cave that retargets the untransform's final `je <OEP>` (decompressed by
+  then) at a second cave, which patches the unpacked code and jumps to the
+  OEP. Under winedbg, breakpoints on not-yet-unpacked code are lost; break
+  in the stub or the cave.
+- Tension went silent at random. I spent a long time on "NaN" in its audio
+  buffer, read as float; the source voice's WAVEFORMATEX said 16-bit PCM and
+  the music was fine. Read the format before the samples. The real fault was
+  a `vkAllocateMemory Exception 0xc0000005 in Unix call` in the log just
+  before exit: a size loop that never reset asked for 32768-wide RGBA16F
+  textures, which the D3D11 runtime refuses above 16384 and DXVK passes to
+  the driver. `audio_level` zero with a moving loading screen can be a demo
+  that already exited, leaving its last frame up.
+- Observatory (`zoo.109195`): native msvcr100/msvcp100 did not help (and
+  wine loads its builtins even with native ones beside the exe until
+  `msvcr100=n` is set). The use-after-free is a setter called with its own
+  member's `c_str()`: it reassigns the member, then reuses the argument.
+  Look for the stale pointer being reread after the `operator delete` in the
+  same function before blaming the CRT.
+- Esocentrica (`zoo.167713`) loads shaders from disk and compiles them
+  cleanly, yet stays black: its exe imports DDRAW as well as OPENGL32
+  (Satori's Circulation engine presents through DirectDraw). Check a GL
+  demo's import list for DDRAW before tracing GL; `wine_cnc_ddraw` fixed it.
+  An `+opengl` trace through demarc is useless for long runs: the wine log
+  keeps 4096 distinct lines, and pixel-format enumeration fills that first.
+- A web demo's "Click" text at the top left is usually an `<a>` with the
+  `onclick`, not the canvas ([Type] `zoo.153542`, Condition `zoo.292275`). Its
+  box is only ~18 px high at the 8 px body margin, so y=0.025 at 1080 already
+  misses it. Condition also shows the link only after a 20-40 s precalc;
+  clicks before it land on "Wait a moment..." and do nothing, so repeat the
+  click.
+- Holly (`zoo.104135`) was black because its first `AudioBufferSourceNode`
+  call was `noteOn`, which Chrome dropped years ago; the exception stopped the
+  start. Read the console before guessing at Leap Motion or clicks. When
+  re-testing a patched file in headless Chromium, use a fresh
+  `--user-data-dir`: the HTTP cache served the unpatched script.
+- Genesis (`zoo.267672`) had `boot = "client/index.html"`, which never
+  matched: `find_named` compared file names only, so the systems' own pick,
+  the node server exe, ran under wine. A name with a `/` is now a path from
+  the release directory (also for patch targets, needed for its two
+  `app.js`). Check the log's "launched" line before debugging the page.
+  Its music was loaded from `../../music/`, the demo's own server root; under
+  demarc's `/<n>/` prefix that leaves the release, and the timeline waits for
+  audio, so the page was black and silent. Grep a web demo for `../` and
+  root-relative URLs.
+- `rustfmt <file>` also formats every module the file declares (`mod x;`),
+  so formatting `newsys.rs` rewrote four untouched files. Check `git diff
+  --stat` after it, or pass `--config skip_children=true` (nightly) / revert.
+- Driftwood (`zoo.202824`) asserted at `common.c 1828`, which I had read as
+  1028 and taken for a CPU/FPU or memory problem; `fast = true`, no FPU
+  (Line-F trap, it needs one) and more chip RAM were all wasted runs. The
+  assert was an `fopen` of a chunk file: the amigascne lha is missing seven
+  assets the party zip has. When an Amiga demo dies loading, diff the asset
+  names in the exe against the archive before touching the machine config.
+  The exe's strings are inline in its code hunk; `pea #line; pea path(pc)`
+  finds an assert's site, and capstone (M68K) disassembles hunk 0.
+- Art Of Profanity (`zoo.306979`) ships floppies and a hard drive build; the
+  floppies (preferred by the ST system) stop at the TOS logo. With `boot`
+  naming the `.prg`, the picture came up but silent: the override narrows the
+  work file to the program, and `build_gemdos_drive` treats a lone file as
+  the whole release, so `zik.raw` beside it never reached the drive. It now
+  takes the release from `RELEASE_DIR`, as the Amiga system does. A system
+  that copies "the release" should check `RELEASE_DIR` when the path is a
+  file.
+- `pkill -f <name>` from a Bash call kills the call's own shell when the name
+  is in its command line (exit 144). Kill by `ps -eo pid,comm` instead, as the
+  skill already says for `pgrep -f`.
+- Return (`zoo.311793`) is not a missing runtime: wine-mono asserts in
+  `prepare_run_main` because `Program` has a static field typed from an
+  assembly that only the app's AssemblyResolve handler (embedded `FLPK`
+  resources) can supply, and mono resolves field types before `Main` runs.
+- Crinkler exes are now unpacked before running (docs/CRINKLER.md). The
+  depacker runs in `crates/newsys/src/x86.rs`; checking its output against a
+  winedbg dump at the depacker's final `ret` (`tools`-style script: break on
+  the header's `ret`, read `/proc/<pid>/mem` as a child subreaper, since wine's
+  launcher exits and orphans the exe) found it exact for 1.1, 2.2 and 2.3.
+  Gotchas on the way: the tiny-import DLL list has no terminator (it ends where
+  `LoadLibrary` fails, Eisenerz's at "vers/gm.dls"); today's Crinkler export
+  list has Win11 names that make 2.x slots ambiguous, so each version's own
+  list is used; 1.x headers overlap the hash list, so some hashes are dummies;
+  the tiny-import prologue pattern also matches the tail of the ordinary one.
+  Don't rely on `dd`'s skip into a dump that starts at 0x400000 as if it were
+  addresses (I read zeros at "0x420000" that way).
+- Two headless demarc sessions at once spoil each other: a sweep running while
+  I tested Organix in parallel reported every later demo silent, mostly
+  frameless, and four as `retro_load_game(...) failed`. Run one session at a
+  time, and treat a sweep that turns bad all at once as invalid.
+- The Crinkler regression sweep (`Test: Working`'s 37 Crinkler demos, packed
+  vs unpacked) found Horizon Machine calling
+  `gdi32.D3DKMTAddSurfaceToSwapChain` once unpacked: the 2.0a export list has
+  that name in `CreateThread`'s tiny-import slot, the 2.0 list doesn't, and a
+  header says `20` for both. Most of the sweep's "silent, 0-1 frames" were the
+  same packed: executable graphics show one still, and Oidos intros precalc
+  past a 20 s window. Always sweep the baseline too before calling a
+  difference a regression.
