@@ -694,6 +694,14 @@ impl NewSys {
     /// everything a [`System`] reaches for here has to be shareable — which is
     /// why [`NewSys`] holds its meta behind a lock.
     pub fn load_prepared(&self, mut wf: WorkFile, over: Option<&Override>) -> Result<LoadResult> {
+        // Crinkler exes are unpacked before an override patches them, so its
+        // offsets are into the unpacked code; its meta can turn that off.
+        if let Some(over) = over {
+            apply_override_meta(&mut wf, over);
+        }
+        self.apply_cmdline_meta(&mut wf);
+        crate::crinkler::unpack_release(&mut wf)?;
+
         // Now that the release is unpacked and its own meta is in place: an
         // override may write files into it, name the one to start and set meta
         // of its own, which beats what the release says about itself.
