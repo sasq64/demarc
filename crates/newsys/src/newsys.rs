@@ -707,6 +707,7 @@ impl NewSys {
             apply_override_meta(&mut wf, over);
         }
         self.apply_cmdline_meta(&mut wf);
+        crate::com_dropper::unpack_release(&mut wf)?;
         crate::crinkler::unpack_release(&mut wf)?;
         crate::boxedapp::unpack_release(&mut wf)?;
 

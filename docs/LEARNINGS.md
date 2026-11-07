@@ -1470,3 +1470,7 @@
   `glGenTextures`, which was the name the proxy's emulated accumulation buffer
   had got. Proxy objects now take high names. The intros take 10-20 s to
   accumulate under demarc, so wait at least 1200 frames before calling one black.
+
+- The crinkler tests run the x86 interpreter over real depackers and take ~90s
+  in release but well over 10 minutes in a debug build, which looks like a
+  hang. Run `cargo test --release -p newsys` when touching `x86.rs`.

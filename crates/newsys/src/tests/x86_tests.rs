@@ -87,3 +87,19 @@ fn unknown_opcode_stops_with_an_error() {
     cpu.eip = 0x1000;
     assert!(cpu.step().is_err());
 }
+
+#[test]
+fn real_mode_uses_segments_and_16_bit_operands() {
+    let mut cpu = Cpu::new();
+    cpu.real = true;
+    cpu.seg = [0x100, 0x100, 0x100, 0x200, 0, 0];
+    cpu.r[ESP] = 0xfffe;
+    // mov ax, 0x1234; mov [0x10], ax; call +0; pop bx
+    let code = [0xb8, 0x34, 0x12, 0xa3, 0x10, 0x00, 0xe8, 0, 0, 0x5b];
+    cpu.mem.load(0x1000, &code);
+    cpu.eip = 0x1000;
+    cpu.run_until(0x1000 + code.len() as u32, 100).unwrap();
+    assert_eq!(cpu.mem.read(0x2010, Size::W), 0x1234);
+    assert_eq!(cpu.r[EBX], 9);
+    assert_eq!(cpu.r[ESP], 0xfffe);
+}

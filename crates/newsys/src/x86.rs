@@ -1,8 +1,8 @@
-//! A small 32-bit x86 interpreter over flat, paged memory.
+//! A small x86 interpreter over paged memory, 32-bit flat or 16-bit real mode.
 //!
 //! Enough of the integer instruction set to run self-contained unpacker stubs
-//! (see [`crate::crinkler`]): no protected mode, no FPU, no I/O. An opcode it
-//! does not know stops it with an error rather than guessing.
+//! (see [`crate::crinkler`] and [`crate::com_dropper`]): no FPU, no I/O. An
+//! opcode it does not know stops it with an error rather than guessing.
 
 use anyhow::{Result, bail};
 
@@ -132,9 +132,15 @@ pub const EBP: usize = 5;
 pub const ESI: usize = 6;
 pub const EDI: usize = 7;
 
+pub const ES: usize = 0;
+pub const CS: usize = 1;
+pub const SS: usize = 2;
+pub const DS: usize = 3;
+
 #[derive(Default)]
 pub struct Cpu {
     pub r: [u32; 8],
+    /// A linear address, also in real mode.
     pub eip: u32,
     pub cf: bool,
     pub pf: bool,
@@ -143,11 +149,91 @@ pub struct Cpu {
     pub of: bool,
     pub df: bool,
     pub mem: Memory,
+    /// 16-bit real mode, with segments; otherwise 32-bit flat.
+    pub real: bool,
+    pub seg: [u16; 6],
+    /// Set by `int n`, for the caller to service.
+    pub int: Option<u8>,
+    seg_override: Option<usize>,
+    addr16: bool,
 }
 
 impl Cpu {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn base(&self, seg: usize) -> u32 {
+        if self.real {
+            (self.seg[seg] as u32) << 4
+        } else {
+            0
+        }
+    }
+
+    fn ip(&self) -> u32 {
+        self.eip.wrapping_sub(self.base(CS))
+    }
+
+    fn set_ip(&mut self, ip: u32) {
+        let ip = if self.real { ip & 0xffff } else { ip };
+        self.eip = self.base(CS).wrapping_add(ip);
+    }
+
+    fn far_jump(&mut self, cs: u32, ip: u32) {
+        self.seg[CS] = cs as u16;
+        self.set_ip(ip);
+    }
+
+    fn default_size(&self) -> Size {
+        if self.real { Size::W } else { Size::D }
+    }
+
+    fn addr_size(&self) -> Size {
+        if self.addr16 { Size::W } else { Size::D }
+    }
+
+    /// An address register (`si`, `di`, `cx`...) at the address size.
+    fn index(&self, n: usize) -> u32 {
+        self.reg(n as u8, self.addr_size())
+    }
+
+    fn add_index(&mut self, n: usize, v: u32) {
+        let sz = self.addr_size();
+        self.set_reg(n as u8, sz, self.index(n).wrapping_add(v));
+    }
+
+    fn stack_addr(&self) -> u32 {
+        let sp = if self.real { self.r[ESP] & 0xffff } else { self.r[ESP] };
+        self.base(SS).wrapping_add(sp)
+    }
+
+    fn add_sp(&mut self, v: u32) {
+        let sz = self.default_size();
+        self.set_reg(ESP as u8, sz, self.reg(ESP as u8, sz).wrapping_add(v));
+    }
+
+    fn flags(&self) -> u32 {
+        [
+            (self.cf, 0),
+            (true, 1),
+            (self.pf, 2),
+            (self.zf, 6),
+            (self.sf, 7),
+            (true, 9),
+            (self.df, 10),
+            (self.of, 11),
+        ]
+        .iter()
+        .fold(0, |f, &(set, bit)| f | (set as u32) << bit)
+    }
+
+    fn set_flags(&mut self, f: u32, size: Size) {
+        let bit = |n: u32| f & (1 << n) != 0;
+        (self.cf, self.pf, self.zf, self.sf) = (bit(0), bit(2), bit(6), bit(7));
+        if size != Size::B {
+            (self.df, self.of) = (bit(10), bit(11));
+        }
     }
 
     fn fetch8(&mut self) -> u8 {
@@ -201,24 +287,49 @@ impl Cpu {
     }
 
     pub fn push(&mut self, val: u32) {
-        self.r[ESP] = self.r[ESP].wrapping_sub(4);
-        self.mem.write(self.r[ESP], Size::D, val);
+        self.push_sz(val, self.default_size());
     }
 
     pub fn pop(&mut self) -> u32 {
-        let v = self.mem.read(self.r[ESP], Size::D);
-        self.r[ESP] = self.r[ESP].wrapping_add(4);
+        self.pop_sz(self.default_size())
+    }
+
+    fn push_sz(&mut self, val: u32, size: Size) {
+        self.add_sp(size.bytes().wrapping_neg());
+        self.mem.write(self.stack_addr(), size, val);
+    }
+
+    fn pop_sz(&mut self, size: Size) -> u32 {
+        let v = self.mem.read(self.stack_addr(), size);
+        self.add_sp(size.bytes());
         v
     }
 
-    /// Decode a ModRM byte (32-bit addressing): the `reg` field and the r/m operand.
-    fn modrm(&mut self) -> (u8, Loc) {
+    /// Decode a ModRM byte: the `reg` field and the r/m register, or the
+    /// segment and offset of a memory operand.
+    fn modrm_ea(&mut self) -> (u8, Result<(usize, u32), u8>) {
         let m = self.fetch8();
         let (md, reg, rm) = (m >> 6, (m >> 3) & 7, m & 7);
         if md == 3 {
-            return (reg, Loc::Reg(rm));
+            return (reg, Err(rm));
         }
-        let mut addr = if rm == 4 {
+        let (seg, off) = if self.addr16 {
+            self.ea16(md, rm)
+        } else {
+            self.ea32(md, rm)
+        };
+        (reg, Ok((self.seg_override.unwrap_or(seg), off)))
+    }
+
+    fn modrm(&mut self) -> (u8, Loc) {
+        match self.modrm_ea() {
+            (reg, Err(rm)) => (reg, Loc::Reg(rm)),
+            (reg, Ok((seg, off))) => (reg, Loc::Mem(self.base(seg).wrapping_add(off))),
+        }
+    }
+
+    fn ea32(&mut self, md: u8, rm: u8) -> (usize, u32) {
+        let (mut seg, mut addr) = if rm == 4 {
             let sib = self.fetch8();
             let (scale, index, base) = (sib >> 6, (sib >> 3) & 7, sib & 7);
             let mut a = if index == 4 {
@@ -231,18 +342,43 @@ impl Cpu {
             } else {
                 a = a.wrapping_add(self.r[base as usize]);
             }
-            a
+            let ss = base == ESP as u8 || (base == EBP as u8 && md != 0);
+            (if ss { SS } else { DS }, a)
         } else if rm == 5 && md == 0 {
-            self.fetch(Size::D)
+            (DS, self.fetch(Size::D))
         } else {
-            self.r[rm as usize]
+            (if rm == EBP as u8 { SS } else { DS }, self.r[rm as usize])
         };
         match md {
             1 => addr = addr.wrapping_add(self.fetch_s8()),
             2 => addr = addr.wrapping_add(self.fetch(Size::D)),
             _ => {}
         }
-        (reg, Loc::Mem(addr))
+        if !self.real {
+            seg = DS;
+        }
+        (seg, addr)
+    }
+
+    fn ea16(&mut self, md: u8, rm: u8) -> (usize, u32) {
+        let r = |n: usize| self.r[n] & 0xffff;
+        let (seg, base) = match rm {
+            0 => (DS, r(EBX) + r(ESI)),
+            1 => (DS, r(EBX) + r(EDI)),
+            2 => (SS, r(EBP) + r(ESI)),
+            3 => (SS, r(EBP) + r(EDI)),
+            4 => (DS, r(ESI)),
+            5 => (DS, r(EDI)),
+            6 if md == 0 => (DS, self.fetch(Size::W)),
+            6 => (SS, r(EBP)),
+            _ => (DS, r(EBX)),
+        };
+        let disp = match md {
+            1 => self.fetch_s8(),
+            2 => self.fetch(Size::W),
+            _ => 0,
+        };
+        (seg, base.wrapping_add(disp) & 0xffff)
     }
 
     fn set_szp(&mut self, res: u32, size: Size) {
@@ -378,18 +514,24 @@ impl Cpu {
     }
 
     fn jump(&mut self, offset: u32) {
-        self.eip = self.eip.wrapping_add(offset);
+        self.set_ip(self.ip().wrapping_add(offset));
     }
 
     /// Execute one instruction.
     pub fn step(&mut self) -> Result<()> {
         let start = self.eip;
-        let mut size = Size::D;
+        let mut size = self.default_size();
         let mut rep = 0u8;
+        self.seg_override = None;
+        self.addr16 = self.real;
         let mut op = self.fetch8();
         loop {
             match op {
-                0x66 => size = Size::W,
+                0x66 => size = if self.real { Size::D } else { Size::W },
+                0x67 => self.addr16 = !self.real,
+                0x26 | 0x2e | 0x36 | 0x3e => self.seg_override = Some((op as usize >> 3) & 3),
+                0x64 | 0x65 => self.seg_override = Some(op as usize - 0x60),
+                0xf0 => {}
                 0xf2 | 0xf3 => rep = op,
                 _ => break,
             }
@@ -428,32 +570,35 @@ impl Cpu {
                 let res = self.inc_dec(self.reg(n, size), size, op >= 0x48);
                 self.set_reg(n, size, res);
             }
-            0x50..=0x57 => self.push(self.r[(op & 7) as usize]),
+            0x06 | 0x0e | 0x16 | 0x1e => self.push_sz(self.seg[op as usize >> 3] as u32, size),
+            0x07 | 0x17 | 0x1f => self.seg[op as usize >> 3] = self.pop_sz(size) as u16,
+            0x50..=0x57 => self.push_sz(self.reg(op & 7, size), size),
             0x58..=0x5f => {
-                let v = self.pop();
-                self.r[(op & 7) as usize] = v;
+                let v = self.pop_sz(size);
+                self.set_reg(op & 7, size, v);
             }
             0x60 => {
-                let sp = self.r[ESP];
+                let sp = self.reg(ESP as u8, size);
                 for n in 0..8 {
-                    self.push(if n == ESP { sp } else { self.r[n] });
+                    let v = if n == ESP as u8 { sp } else { self.reg(n, size) };
+                    self.push_sz(v, size);
                 }
             }
             0x61 => {
                 for n in (0..8).rev() {
-                    let v = self.pop();
-                    if n != ESP {
-                        self.r[n] = v;
+                    let v = self.pop_sz(size);
+                    if n != ESP as u8 {
+                        self.set_reg(n, size, v);
                     }
                 }
             }
             0x68 => {
-                let v = self.fetch(Size::D);
-                self.push(v);
+                let v = self.fetch(size);
+                self.push_sz(v, size);
             }
             0x6a => {
                 let v = self.fetch_s8();
-                self.push(v);
+                self.push_sz(v, size);
             }
             0x69 | 0x6b => {
                 let (reg, loc) = self.modrm();
@@ -506,12 +651,29 @@ impl Cpu {
                     self.set_reg(reg, sz, v);
                 }
             }
-            0x8d => match self.modrm() {
-                (reg, Loc::Mem(a)) => self.set_reg(reg, size, a),
+            0x8c => {
+                let (reg, loc) = self.modrm();
+                self.set(loc, Size::W, self.seg[reg as usize % 6] as u32);
+            }
+            0x8e => {
+                let (reg, loc) = self.modrm();
+                let v = self.get(loc, Size::W) as u16;
+                if reg as usize == CS {
+                    self.far_jump(v as u32, self.ip());
+                } else {
+                    self.seg[reg as usize % 6] = v;
+                }
+            }
+            0x8d => match self.modrm_ea() {
+                (reg, Ok((_, off))) => self.set_reg(reg, size, off),
                 _ => bail!("lea with a register operand at {start:#x}"),
             },
             0x90 => {}
-            0x91..=0x97 => self.r.swap(EAX, (op & 7) as usize),
+            0x91..=0x97 => {
+                let (a, b) = (self.reg(0, size), self.reg(op & 7, size));
+                self.set_reg(0, size, b);
+                self.set_reg(op & 7, size, a);
+            }
             0x98 => {
                 if size == Size::W {
                     self.set_reg(0, Size::W, self.r[EAX] as u8 as i8 as u16 as u32);
@@ -519,7 +681,35 @@ impl Cpu {
                     self.r[EAX] = self.r[EAX] as u16 as i16 as u32;
                 }
             }
-            0x99 => self.r[EDX] = ((self.r[EAX] as i32) >> 31) as u32,
+            0x99 => {
+                let neg = self.reg(0, size) & size.sign() != 0;
+                self.set_reg(EDX as u8, size, if neg { size.mask() } else { 0 });
+            }
+            0x9a => {
+                let ip = self.fetch(size);
+                let cs = self.fetch(Size::W);
+                self.push_sz(self.seg[CS] as u32, size);
+                self.push_sz(self.ip(), size);
+                self.far_jump(cs, ip);
+            }
+            0x9c => self.push_sz(self.flags(), size),
+            0x9d => {
+                let f = self.pop_sz(size);
+                self.set_flags(f, size);
+            }
+            0x9e => self.set_flags(self.reg(4, Size::B), Size::B),
+            0x9f => self.set_reg(4, Size::B, self.flags()),
+            0xa0..=0xa3 => {
+                let sz = wide(op);
+                let off = self.fetch(self.addr_size());
+                let a = self.base(self.seg_override.unwrap_or(DS)).wrapping_add(off);
+                if op & 2 == 0 {
+                    let v = self.mem.read(a, sz);
+                    self.set_reg(0, sz, v);
+                } else {
+                    self.mem.write(a, sz, self.reg(0, sz));
+                }
+            }
             0xa8 | 0xa9 => {
                 let sz = wide(op);
                 let imm = self.fetch(sz);
@@ -545,12 +735,21 @@ impl Cpu {
                 let res = self.shift(sop, self.get(loc, sz), count, sz)?;
                 self.set(loc, sz, res);
             }
-            0xc2 => {
-                let n = self.fetch(Size::W);
-                self.eip = self.pop();
-                self.r[ESP] = self.r[ESP].wrapping_add(n);
+            0xc2 | 0xc3 => {
+                let n = if op == 0xc2 { self.fetch(Size::W) } else { 0 };
+                let ip = self.pop_sz(size);
+                self.set_ip(ip);
+                self.add_sp(n);
             }
-            0xc3 => self.eip = self.pop(),
+            0xc4 | 0xc5 => match self.modrm() {
+                (reg, Loc::Mem(a)) => {
+                    let off = self.mem.read(a, size);
+                    let seg = self.mem.read(a.wrapping_add(size.bytes()), Size::W);
+                    self.set_reg(reg, size, off);
+                    self.seg[if op == 0xc4 { ES } else { DS }] = seg as u16;
+                }
+                _ => bail!("les/lds with a register operand at {start:#x}"),
+            },
             0xc6 | 0xc7 => {
                 let sz = wide(op);
                 let (_, loc) = self.modrm();
@@ -558,19 +757,39 @@ impl Cpu {
                 self.set(loc, sz, v);
             }
             0xc9 => {
-                self.r[ESP] = self.r[EBP];
-                self.r[EBP] = self.pop();
+                let sz = self.default_size();
+                self.set_reg(ESP as u8, sz, self.reg(EBP as u8, sz));
+                let v = self.pop_sz(size);
+                self.set_reg(EBP as u8, size, v);
+            }
+            0xca | 0xcb => {
+                let n = if op == 0xca { self.fetch(Size::W) } else { 0 };
+                let ip = self.pop_sz(size);
+                let cs = self.pop_sz(size);
+                self.far_jump(cs, ip);
+                self.add_sp(n);
+            }
+            0xcc => self.int = Some(3),
+            0xcd => self.int = Some(self.fetch8()),
+            0xcf => {
+                let ip = self.pop_sz(size);
+                let cs = self.pop_sz(size);
+                let f = self.pop_sz(size);
+                self.far_jump(cs, ip);
+                self.set_flags(f, size);
             }
             0xd6 => self.set_reg(0, Size::B, if self.cf { 0xff } else { 0 }),
             0xd7 => {
-                let a = self.r[EBX].wrapping_add(self.r[EAX] & 0xff);
+                let off = self.index(EBX).wrapping_add(self.r[EAX] & 0xff);
+                let off = if self.addr16 { off & 0xffff } else { off };
+                let a = self.base(self.seg_override.unwrap_or(DS)).wrapping_add(off);
                 let v = self.mem.read8(a) as u32;
                 self.set_reg(0, Size::B, v);
             }
             0xe0..=0xe2 => {
                 let off = self.fetch_s8();
-                self.r[ECX] = self.r[ECX].wrapping_sub(1);
-                let go = self.r[ECX] != 0
+                self.add_index(ECX, u32::MAX);
+                let go = self.index(ECX) != 0
                     && match op {
                         0xe0 => !self.zf,
                         0xe1 => self.zf,
@@ -582,18 +801,23 @@ impl Cpu {
             }
             0xe3 => {
                 let off = self.fetch_s8();
-                if self.r[ECX] == 0 {
+                if self.index(ECX) == 0 {
                     self.jump(off);
                 }
             }
             0xe8 => {
-                let off = self.fetch(Size::D);
-                self.push(self.eip);
+                let off = self.fetch(size);
+                self.push_sz(self.ip(), size);
                 self.jump(off);
             }
             0xe9 => {
-                let off = self.fetch(Size::D);
+                let off = self.fetch(size);
                 self.jump(off);
+            }
+            0xea => {
+                let ip = self.fetch(size);
+                let cs = self.fetch(Size::W);
+                self.far_jump(cs, ip);
             }
             0xeb => {
                 let off = self.fetch_s8();
@@ -603,6 +827,7 @@ impl Cpu {
             0xf6 | 0xf7 => self.group3(wide(op))?,
             0xf8 => self.cf = false,
             0xf9 => self.cf = true,
+            0xfa | 0xfb => {}
             0xfc => self.df = false,
             0xfd => self.df = true,
             0xfe | 0xff => {
@@ -614,14 +839,29 @@ impl Cpu {
                         self.set(loc, sz, res);
                     }
                     2 => {
-                        let target = self.get(loc, Size::D);
-                        self.push(self.eip);
-                        self.eip = target;
+                        let target = self.get(loc, size);
+                        self.push_sz(self.ip(), size);
+                        self.set_ip(target);
                     }
-                    4 => self.eip = self.get(loc, Size::D),
+                    3 | 5 => {
+                        let Loc::Mem(a) = loc else {
+                            bail!("far call/jmp with a register operand at {start:#x}");
+                        };
+                        let ip = self.mem.read(a, size);
+                        let cs = self.mem.read(a.wrapping_add(size.bytes()), Size::W);
+                        if sub == 3 {
+                            self.push_sz(self.seg[CS] as u32, size);
+                            self.push_sz(self.ip(), size);
+                        }
+                        self.far_jump(cs, ip);
+                    }
+                    4 => {
+                        let target = self.get(loc, size);
+                        self.set_ip(target);
+                    }
                     6 => {
-                        let v = self.get(loc, Size::D);
-                        self.push(v);
+                        let v = self.get(loc, size);
+                        self.push_sz(v, size);
                     }
                     _ => bail!("opcode {op:#x}/{sub} at {start:#x}"),
                 }
@@ -732,45 +972,48 @@ impl Cpu {
         } else {
             size.bytes()
         };
+        let src = self.base(self.seg_override.unwrap_or(DS));
+        let dst = self.base(ES);
         loop {
-            if rep != 0 && self.r[ECX] == 0 {
+            if rep != 0 && self.index(ECX) == 0 {
                 break;
             }
+            let (si, di) = (
+                src.wrapping_add(self.index(ESI)),
+                dst.wrapping_add(self.index(EDI)),
+            );
             match op {
                 0xa4 | 0xa5 => {
-                    let v = self.mem.read(self.r[ESI], size);
-                    self.mem.write(self.r[EDI], size, v);
-                    self.r[ESI] = self.r[ESI].wrapping_add(step);
-                    self.r[EDI] = self.r[EDI].wrapping_add(step);
+                    let v = self.mem.read(si, size);
+                    self.mem.write(di, size, v);
+                    self.add_index(ESI, step);
+                    self.add_index(EDI, step);
                 }
                 0xa6 | 0xa7 => {
-                    let (a, b) = (
-                        self.mem.read(self.r[ESI], size),
-                        self.mem.read(self.r[EDI], size),
-                    );
+                    let (a, b) = (self.mem.read(si, size), self.mem.read(di, size));
                     self.alu(7, a, b, size);
-                    self.r[ESI] = self.r[ESI].wrapping_add(step);
-                    self.r[EDI] = self.r[EDI].wrapping_add(step);
+                    self.add_index(ESI, step);
+                    self.add_index(EDI, step);
                 }
                 0xaa | 0xab => {
-                    self.mem.write(self.r[EDI], size, self.reg(0, size));
-                    self.r[EDI] = self.r[EDI].wrapping_add(step);
+                    self.mem.write(di, size, self.reg(0, size));
+                    self.add_index(EDI, step);
                 }
                 0xac | 0xad => {
-                    let v = self.mem.read(self.r[ESI], size);
+                    let v = self.mem.read(si, size);
                     self.set_reg(0, size, v);
-                    self.r[ESI] = self.r[ESI].wrapping_add(step);
+                    self.add_index(ESI, step);
                 }
                 _ => {
-                    let b = self.mem.read(self.r[EDI], size);
+                    let b = self.mem.read(di, size);
                     self.alu(7, self.reg(0, size), b, size);
-                    self.r[EDI] = self.r[EDI].wrapping_add(step);
+                    self.add_index(EDI, step);
                 }
             }
             if rep == 0 {
                 break;
             }
-            self.r[ECX] = self.r[ECX].wrapping_sub(1);
+            self.add_index(ECX, u32::MAX);
             let compares = matches!(op, 0xa6 | 0xa7 | 0xae | 0xaf);
             if compares && ((rep == 0xf3 && !self.zf) || (rep == 0xf2 && self.zf)) {
                 break;
@@ -783,7 +1026,7 @@ impl Cpu {
         let op = self.fetch8();
         match op {
             0x80..=0x8f => {
-                let off = self.fetch(Size::D);
+                let off = self.fetch(size);
                 if self.cond(op & 15) {
                     self.jump(off);
                 }

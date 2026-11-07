@@ -12,6 +12,7 @@ pub use retro_core::{backend, libretro, pixels, retro_emu};
 pub mod boxedapp;
 pub mod cache;
 pub mod cbmconvert;
+pub mod com_dropper;
 pub mod crinkler;
 pub mod degas;
 pub mod fetch;

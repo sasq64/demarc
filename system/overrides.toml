@@ -1461,11 +1461,10 @@ events = [{ frame = 18, key = "4" }]
 [zoo.3286]
 fix_info = '''
 Each .com is a DOS dropper (aPACK stub) that writes t.exe and execs it through
-int 21h/4B00, which only NTVDM could do; DOSBox runs it to a black screen. The
-800x600 PE was depacked by hand (aPLib-style, translating the stub's loop) and
-cut out at its MZ, and is shipped as win/patches/mojodreams.exe with boot
-pointing at it. In it `mov cl,0Fh` before the gm.dls path's `rep movsb` is
-made a full `mov ecx`, since wine leaves ECX's upper bytes set.
+int 21h/4B00, which only NTVDM could do; com_dropper.rs unpacks them now.
+win/patches/mojodreams.exe is the 800x600 PE with `mov cl,0Fh` before the
+gm.dls path's `rep movsb` made a full `mov ecx`, since wine leaves ECX's upper
+bytes set.
 '''
 file = "mojodreams4k_final.zip"
 boot = "MojoDreams_final800x600.exe"
@@ -1473,20 +1472,6 @@ patch = {
   info = "PE from the COM dropper, ECX fix",
   target = "MojoDreams_final800x600.exe",
   source = "win/patches/mojodreams.exe",
-}
-
-[zoo.67463]
-fix_info = '''
-Both .coms are UPX-packed DOS droppers that write C:acidice.exe and exec it
-through int 21h/4B00 (NTVDM only). The PE from acidice4k_by_and.com, unpacked
-by porting UPX's COM stub and cut out at its MZ, is shipped as
-win/patches/acidice.exe.
-'''
-boot = "acidice.exe"
-patch = {
-  info = "PE from the COM dropper",
-  target = "acidice.exe",
-  source = "win/patches/acidice.exe",
 }
 
 [zoo.3288]
