@@ -2200,3 +2200,6 @@ patch = [
   { info = "ring size", target = "MWI-Fabula.exe", offset = 457237, contents = "ACChBw==" },
   { info = "ring size", target = "MWI-Fabula.exe", offset = 458360, contents = "ACChBw==" },
 ]
+
+[zoo.87036]
+file = "frq_metatunnel_win32.zip"
