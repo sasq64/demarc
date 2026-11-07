@@ -849,10 +849,95 @@ static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
 // frame and gets a NaN time once it overflows.
 static int(__stdcall *wine_swap_buffers)(void *hdc);
 
+// DEMARC_GL_KEEP_BACK: the back buffer survives a swap, as on Windows
+// drivers. Leviathan 2.0's "Bull" draws its scene twice, then only
+// post-processes the back buffer.
+static int keep_back = -1;
+static unsigned kept_fbo, kept_rb;
+static int kept_w, kept_h;
+
+static void keep_back_copy(void *hdc, int restore)
+{
+    if (keep_back < 0) {
+        WCHAR var[] = u"DEMARC_GL_KEEP_BACK";
+        UNICODE_STRING name = {sizeof(var) - 2, sizeof(var), var};
+        WCHAR buf[8];
+        UNICODE_STRING value = {0, sizeof(buf), buf};
+        keep_back = !RtlQueryEnvironmentVariable_U(0, &name, &value) && value.Length && buf[0] != u'0';
+    }
+    if (!keep_back)
+        return;
+    static void *(__stdcall * window_from_dc)(void *);
+    static int(__stdcall * client_rect)(void *, int *);
+    if (!window_from_dc) {
+        UNICODE_STRING name = {18, 20, u"user32.dll"};
+        HMODULE user32 = 0;
+        LdrLoadDll(0, 0, &name, &user32);
+        window_from_dc = lookup(user32, "WindowFromDC");
+        client_rect = lookup(user32, "GetClientRect");
+    }
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    unsigned char(__stdcall * is_enabled)(unsigned) = lookup(wine, "glIsEnabled");
+    void(__stdcall * enable)(unsigned) = lookup(wine, "glEnable");
+    void(__stdcall * disable)(unsigned) = lookup(wine, "glDisable");
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    void(__stdcall * blit)(int, int, int, int, int, int, int, int, unsigned, unsigned) =
+        wine_get_proc_address("glBlitFramebuffer");
+    int rect[4];
+    void *window = window_from_dc ? window_from_dc(hdc) : 0;
+    if (!bind_framebuffer || !blit || !window || !client_rect(window, rect))
+        return;
+    int w = rect[2] - rect[0], h = rect[3] - rect[1];
+    if (w <= 0 || h <= 0)
+        return;
+    if (restore && (!kept_fbo || w != kept_w || h != kept_h))
+        return;
+    int read, draw;
+    get_integerv(0x8CAA, &read); // GL_READ_FRAMEBUFFER_BINDING
+    get_integerv(0x8CA6, &draw); // GL_DRAW_FRAMEBUFFER_BINDING
+    if (!kept_fbo || w != kept_w || h != kept_h) {
+        void(__stdcall * gen_framebuffers)(int, unsigned *) = wine_get_proc_address("glGenFramebuffers");
+        void(__stdcall * gen_renderbuffers)(int, unsigned *) = wine_get_proc_address("glGenRenderbuffers");
+        void(__stdcall * bind_renderbuffer)(unsigned, unsigned) = wine_get_proc_address("glBindRenderbuffer");
+        void(__stdcall * renderbuffer_storage)(unsigned, unsigned, int, int) =
+            wine_get_proc_address("glRenderbufferStorage");
+        void(__stdcall * framebuffer_renderbuffer)(unsigned, unsigned, unsigned, unsigned) =
+            wine_get_proc_address("glFramebufferRenderbuffer");
+        if (!gen_framebuffers || !gen_renderbuffers || !bind_renderbuffer || !renderbuffer_storage ||
+            !framebuffer_renderbuffer)
+            return;
+        int rb;
+        get_integerv(0x8CA7, &rb); // GL_RENDERBUFFER_BINDING
+        if (!kept_fbo) {
+            gen_framebuffers(1, &kept_fbo);
+            gen_renderbuffers(1, &kept_rb);
+        }
+        bind_renderbuffer(0x8D41, kept_rb);                  // GL_RENDERBUFFER
+        renderbuffer_storage(0x8D41, 0x8058, w, h);          // GL_RGBA8
+        bind_framebuffer(0x8CA9, kept_fbo);                  // GL_DRAW_FRAMEBUFFER
+        framebuffer_renderbuffer(0x8CA9, 0x8CE0, 0x8D41, kept_rb); // GL_COLOR_ATTACHMENT0
+        bind_renderbuffer(0x8D41, rb);
+        kept_w = w;
+        kept_h = h;
+    }
+    int scissor = is_enabled(0x0C11); // GL_SCISSOR_TEST
+    if (scissor)
+        disable(0x0C11);
+    bind_framebuffer(0x8CA8, restore ? kept_fbo : 0); // GL_READ_FRAMEBUFFER
+    bind_framebuffer(0x8CA9, restore ? 0 : kept_fbo);
+    blit(0, 0, w, h, 0, 0, w, h, 0x4000, 0x2600); // GL_COLOR_BUFFER_BIT, GL_NEAREST
+    bind_framebuffer(0x8CA8, read);
+    bind_framebuffer(0x8CA9, draw);
+    if (scissor)
+        enable(0x0C11);
+}
+
 static int __stdcall swap_buffers(void *hdc)
 {
     front_buffer_drawing = 0;
+    keep_back_copy(hdc, 0);
     int ret = wine_swap_buffers(hdc);
+    keep_back_copy(hdc, 1);
     __asm__ volatile("emms");
     return ret;
 }

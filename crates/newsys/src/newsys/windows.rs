@@ -29,7 +29,7 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     D3D10_1_OVERRIDE, DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
-    META_D3D_CONFIG, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
+    META_D3D_CONFIG, META_GL_KEEP_BACK, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
     WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
     wine_prefix,
 };
@@ -600,6 +600,9 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
                     0..0,
                     ["env".to_string(), format!("WINE_D3D_CONFIG={config}")],
                 );
+            }
+            if meta.get(META_GL_KEEP_BACK).is_some_and(|v| is_yes(v)) {
+                argv.splice(0..0, ["env".to_string(), "DEMARC_GL_KEEP_BACK=1".to_string()]);
             }
             if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
                 && let Some(dir) = path.path.parent()

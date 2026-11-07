@@ -22,6 +22,11 @@ by itself draws to a back buffer nobody shows, so `glReadPixels`, `glFlush` and
 `glFinish` swap for it until its first own `wglSwapBuffers` (Pestis & mrange's
 "Cassini's Cosmic Conclusion" reads a pixel back once a frame instead).
 
+With `DEMARC_GL_KEEP_BACK` set (override meta `wine_gl_keep_back`),
+`wglSwapBuffers` copies the back buffer to an FBO before the swap and back
+after it, as Windows drivers keep it. Leviathan 2.0's "Bull" draws its scene
+in two frames and then only post-processes the back buffer.
+
 `wglSwapBuffers` empties the x87 register stack (`emms`) after the swap.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.

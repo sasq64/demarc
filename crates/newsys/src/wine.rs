@@ -91,6 +91,10 @@ pub const META_SHADER_READ: &str = "wine_shader_read";
 #[cfg(target_os = "linux")]
 pub const META_D3D_CONFIG: &str = "wine_d3d_config";
 
+/// Meta key: yes makes the opengl32 proxy keep the back buffer across swaps.
+#[cfg(target_os = "linux")]
+pub const META_GL_KEEP_BACK: &str = "wine_gl_keep_back";
+
 /// Meta key: the override's `glsl` patches, which the opengl32 proxy applies to
 /// shader sources (`tools/opengl32`). Patches are separated by
 /// [`GLSL_PATCH_SEP`], their fields by [`GLSL_FIELD_SEP`]: `h<hash>` or
