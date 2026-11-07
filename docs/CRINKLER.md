@@ -222,6 +222,9 @@ meta keeps one packed.
   (push the PEB, and `0x420000` for the call transform, then jump there), the
   import table, and a fill routine that copies each IAT entry to the address the
   code calls through. The import loop's first five bytes become a jump to it.
+  The fill routine leaves `edi` past the IAT as the ordinary loop does: some
+  intros `stosd` `wglGetProcAddress` results there (Final Stage, `zoo.170740`).
+  1.0's call transform (`mov edi, edx`) gets `edx = 0x420000` from the stub.
   The unpacked code is a `.crink` section at `0x420000` with the original
   virtual size. An override `patch` offset is that section's file offset
   (`objdump -h` on the rebuilt exe in the cache) plus the address minus
@@ -236,8 +239,7 @@ meta keeps one packed.
   as Windows does; under gamescope such a window never shows (Organix,
   Cassini).
 
-Not handled (left packed, with a warning): fallback DLL lists, the old
-call-transform encoding (`mov edi, edx`), 0.4's import code, DLLs with no
+Not handled (left packed, with a warning): fallback DLL lists, 0.4's import code, DLLs with no
 export list (`opencl`, `wmvcore`, `dx8vb`), and Yama's 3.0 header, which the
 interpreter never sees reach `0x420000`. Those still need the proxies above.
 

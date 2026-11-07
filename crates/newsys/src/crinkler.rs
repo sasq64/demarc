@@ -182,6 +182,8 @@ pub struct ImportCode {
     pub start: usize,
     pub end: usize,
     pub imports: Vec<Import>,
+    /// Where the ordinary loop leaves edi; some intros go on storing there.
+    pub iat_end: Option<u32>,
 }
 
 fn find(code: &[u8], pattern: &[Option<u8>]) -> Option<usize> {
@@ -333,6 +335,7 @@ pub fn find_imports(code: &[u8], header: &[u8], exports: &Exports) -> Result<Imp
             start,
             end,
             imports,
+            iat_end: None,
         });
     }
 
@@ -419,6 +422,7 @@ pub fn find_imports(code: &[u8], header: &[u8], exports: &Exports) -> Result<Imp
         start,
         end,
         imports,
+        iat_end: Some(iat + 4 * slots as u32),
     })
 }
 
@@ -485,6 +489,11 @@ pub fn rebuild(data: &[u8], exports: &Exports) -> Result<Vec<u8>> {
         sec.push(0x68);
         sec.extend(CODE_BASE.to_le_bytes());
     }
+    // 1.0's call transform takes it in edx.
+    if code.starts_with(&[0x89, 0xd7]) {
+        sec.push(0xba);
+        sec.extend(CODE_BASE.to_le_bytes());
+    }
     sec.push(0xe9);
     sec.extend(rel(here(&sec) + 4, CODE_BASE));
 
@@ -493,6 +502,10 @@ pub fn rebuild(data: &[u8], exports: &Exports) -> Result<Vec<u8>> {
     sec.push(0x58);
     let fill_at = sec.len();
     sec.resize(fill_at + 10 * found.imports.len(), 0);
+    if let Some(edi) = found.iat_end {
+        sec.push(0xbf);
+        sec.extend(edi.to_le_bytes());
+    }
     sec.extend([0x31, 0xc0, 0xe9]);
     sec.extend(rel(here(&sec) + 4, CODE_BASE + found.end as u32));
     sec.resize(align(sec.len() as u32, 16) as usize, 0);
@@ -688,7 +701,7 @@ static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("crinkler", 
 const MAX_SIZE: u64 = 1 << 20;
 
 /// Part of the cache key: bump it when [`rebuild`] writes something else.
-const REBUILD_FORMAT: &str = "4";
+const REBUILD_FORMAT: &str = "5";
 
 fn crinkler_exes(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut found = vec![];

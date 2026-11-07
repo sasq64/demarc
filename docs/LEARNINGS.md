@@ -1482,3 +1482,10 @@
   `top -H` and `/proc/<pid>/task/<tid>/io` (millions of 20-byte writes =
   `eprintln!("audio stream error: ")` to a stderr on /dev/null) found it.
   Check the cpal thread's CPU first when emulation stops without a log line.
+
+- Crinkler-unpacked exes that crash right after the import code but run with
+  `-x crinkler_unpack=false`: check which registers the code after the import
+  loop still reads. Final Stage (`zoo.170740`) `stosd`s into `edi` left at the
+  IAT end; 1.0 exes (Arancia `zoo.59650`, sprite-o-mat `zoo.4286`) run their
+  call transform from `edx`. The rebuilt stub set neither. Compare packed and
+  unpacked first — it isolates the unpacker in one run.
