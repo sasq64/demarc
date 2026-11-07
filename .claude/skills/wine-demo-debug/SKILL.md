@@ -143,6 +143,17 @@ frozen at 100% CPU: `perf record -p` shows the hot loop, and a scan of
 bad locals. A kkrunchy exe can be patched through a cave that patches the
 code once unpacked (Tension, `zoo.269513`).
 
+**Vulkan hang, GPU idle.** Run the Khronos validation layer before tracing:
+unpack Arch's `vulkan-validation-layers` package anywhere, point its JSON's
+`library_path` at the `.so`, set `VK_LAYER_PATH`,
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and
+`VK_KHRONOS_VALIDATION_LOG_FILENAME`. A present waiting on a semaphore with
+"no way to be signaled" deadlocks the queue (Fabula, `zoo.377071`). An Xid in
+`journalctl -k` is a GPU hang.
+
+**.NET demos.** The prefix has native .NET 4.8, not wine-mono (Return,
+`zoo.311793`, failed under mono's eager type loading).
+
 **D3D11 intro exits at random while loading.** `vkAllocateMemory Exception
 0xc0000005 in Unix call`: a texture over 16384 that the D3D11 runtime would
 refuse reached the driver through DXVK (Tension, `zoo.269513`).
@@ -243,7 +254,9 @@ wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos. SDL 1.
 silent without it (Dose 2, `zoo.8540`). So are GL demos that also import DDRAW to present
 (Esocentrica, `zoo.167713`).
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
-extensions such as `glLoadProgramNV`. Black on NVIDIA only, first frame
+extensions such as `glLoadProgramNV`. A demo that draws once and then post-processes the back buffer
+every frame expects it to survive the swap: `wine_gl_keep_back` (Bull,
+`zoo.292424`). Black on NVIDIA only, first frame
 drawn: the window's depth is not kept across a swap, and a demo that cleared
 it once fails its depth test (Axxelerate, `zoo.31450`, patched to clear it).
 

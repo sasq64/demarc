@@ -2195,3 +2195,18 @@ calls opengl32's wglSetPixelFormat instead, so the opengl32 proxy makes the
 format double-buffered and swaps after each glReadPixels (tools/opengl32,
 needs --setup-wine).
 '''
+
+# Bull: draws the scene in its first frames, then post-processes the back
+# buffer, which Xwayland does not keep across a swap
+[zoo.292424]
+meta = { wine_gl_keep_back = "true" }
+
+# Fabula: without -ui, the present waits on the next frame's render semaphore,
+# signalled only after it, and the queue deadlocks; take the -ui branch's. Its
+# 8 MB uniform rings then overflow (Xid 109); make them 128 MB
+[zoo.377071]
+patch = [
+  { info = "present semaphore", target = "MWI-Fabula.exe", offset = 822989, contents = "kJA=" },
+  { info = "ring size", target = "MWI-Fabula.exe", offset = 457237, contents = "ACChBw==" },
+  { info = "ring size", target = "MWI-Fabula.exe", offset = 458360, contents = "ACChBw==" },
+]

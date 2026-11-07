@@ -1426,3 +1426,21 @@
   same packed: executable graphics show one still, and Oidos intros precalc
   past a 20 s window. Always sweep the baseline too before calling a
   difference a regression.
+- The Crinkler unpacker was checked against 1.1, 2.x and 2.3 test exes and
+  called done for "1.x to 3.x", but every 1.2/1.3 exe (a third of those in the
+  download cache) fell back to packed: their import prologue reads the PEB as
+  `fs:[bx+30h]`. Sweep a decoder over every matching file in
+  `~/.cache/demarc/downloads` (an `#[ignore]` test over a directory is enough)
+  before claiming version coverage, and before removing the proxies it
+  replaces.
+- Fabula (`zoo.377071`) hung after its first present. The validation layer
+  (Arch's `vulkan-validation-layers` package unpacked to a scratch dir,
+  `VK_LAYER_PATH` + `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`) named it
+  at once: the present waited on a semaphore with "no way to be signaled". A
+  `+vulkan` trace and winedbg had only shown the symptom. Run the validation
+  layer first for a Vulkan hang. Once the hang was fixed, a GPU hang followed
+  (`journalctl -k | grep Xid`, 109): the same run's
+  `VkDescriptorBufferInfo-offset` errors showed the uniform ring overflowing.
+- Return (`zoo.311793`) runs on native .NET 4.8 (`winetricks dotnet48`). That
+  verb also moves the prefix from winxp to win7 and removes wine-mono. Test it
+  in a `cp -a` of the prefix under `gamescope --backend headless` first.
