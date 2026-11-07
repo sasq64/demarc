@@ -236,7 +236,8 @@ fn hash(name: &str) -> u32 {
 /// packed file, which holds the hash list of the ordinary import.
 pub fn find_imports(code: &[u8], header: &[u8], exports: &Exports) -> Result<ImportCode> {
     let at = |addr: u32| (addr - CODE_BASE) as usize;
-    // 1.x reads the PEB itself (xor eax, eax; mov eax, fs:[eax+30h]), later
+    // 1.x reads the PEB itself (xor eax, eax; mov eax, fs:[eax+30h], or
+    // mov eax, fs:[bx+30h] from 1.2), later
     // versions pop it from where the depacker pushed it.
     let ordinary = find(
         code,
@@ -251,6 +252,12 @@ pub fn find_imports(code: &[u8], header: &[u8], exports: &Exports) -> Result<Imp
                 0xbb, _, _, _, _, 0xbe, _, _, _, _, 0xbf, _, _, _, _, 0x31, 0xc0, 0x64, 0x8b, 0x40,
                 0x30
             ),
+        )
+    })
+    .or_else(|| {
+        find(
+            code,
+            &pat!(0xbb, _, _, _, _, 0xbe, _, _, _, _, 0xbf, _, _, _, _, 0x64, 0x67, 0x8b, 0x47, 0x30),
         )
     });
     // Tiny import: every export is hashed into a table of pointers.
@@ -462,6 +469,8 @@ pub fn rebuild(data: &[u8], exports: &Exports) -> Result<Vec<u8>> {
     let size_of_image = u32_at(data, pe + 0x50);
     let subsystem = u16::from_le_bytes([data[pe + 0x5c], data[pe + 0x5d]]);
     let large_address = u16::from_le_bytes([data[pe + 0x16], data[pe + 0x17]]) & 0x20;
+    // Stack and heap sizes; Crinkler's give the main thread tens of megabytes.
+    let sizes = |at: usize| u32_at(data, pe + 0x60 + at);
 
     const IDATA: u32 = 0x1000;
     let mut sec: Vec<u8> = vec![];
@@ -625,10 +634,10 @@ pub fn rebuild(data: &[u8], exports: &Exports) -> Result<Vec<u8>> {
         (56, align(code_rva + code_vsize, SECTION_ALIGN), 4),
         (60, HEADERS, 4),
         (68, subsystem as u32, 2),
-        (72, 0x10_0000, 4),
-        (76, 0x1000, 4),
-        (80, 0x10_0000, 4),
-        (84, 0x1000, 4),
+        (72, sizes(0), 4),
+        (76, sizes(4), 4),
+        (80, sizes(8), 4),
+        (84, sizes(12), 4),
         (92, 16, 4),
         (104, IDATA + desc_at as u32, 4),
         (108, 20 * (groups.len() as u32 + 1), 4),
@@ -679,7 +688,7 @@ static CACHE: LazyLock<FileCache> = LazyLock::new(|| FileCache::new("crinkler", 
 const MAX_SIZE: u64 = 1 << 20;
 
 /// Part of the cache key: bump it when [`rebuild`] writes something else.
-const REBUILD_FORMAT: &str = "3";
+const REBUILD_FORMAT: &str = "4";
 
 fn crinkler_exes(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut found = vec![];

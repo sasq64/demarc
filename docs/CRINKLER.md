@@ -236,7 +236,9 @@ meta keeps one packed.
   as Windows does; under gamescope such a window never shows (Organix,
   Cassini).
 
-Not handled (left packed, with a warning): fallback DLL lists, and the old
-call-transform encoding (`mov edi, edx`).
+Not handled (left packed, with a warning): fallback DLL lists, the old
+call-transform encoding (`mov edi, edx`), 0.4's import code, DLLs with no
+export list (`opencl`, `wmvcore`, `dx8vb`), and Yama's 3.0 header, which the
+interpreter never sees reach `0x420000`. Those still need the proxies above.
 
 [Crinkler]: https://www.crinkler.net
