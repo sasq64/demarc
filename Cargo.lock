@@ -2612,7 +2612,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "database"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -2650,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "demarc"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -3179,7 +3179,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flash-emu"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "image",
@@ -3395,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "frameconv"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "bytemuck",
  "naga 29.0.4",
@@ -5214,7 +5214,7 @@ dependencies = [
 
 [[package]]
 name = "newsys"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -6558,7 +6558,7 @@ dependencies = [
 
 [[package]]
 name = "retro-core"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "cc",
@@ -6582,7 +6582,7 @@ dependencies = [
 
 [[package]]
 name = "retro-ui"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "egui",
  "nucleo-matcher",
@@ -6593,7 +6593,7 @@ dependencies = [
 
 [[package]]
 name = "retroarc"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "librashader",
  "tracing",
@@ -6611,7 +6611,7 @@ dependencies = [
 
 [[package]]
 name = "rife"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "libloading 0.9.0",

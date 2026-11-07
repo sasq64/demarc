@@ -4,6 +4,40 @@ All notable changes to demarc will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
+## [1.8.3] - Unreleased
+
+### Added
+
+- **Video Playback**: Video files play through an ffmpeg backend with NVDEC hardware decoding, seeking, a running-time HUD and subtitle track cycling on `T` (external and embedded, text and picture) (`5e979bb`, `5db8f8c`, `9b1946f`, `16cbcd2`, `d0b46cb`).
+- **Frame Conversion**: `--frame-convert=simple|rife` converts 50 Hz sources to the display rate with motion-compensated or RIFE interpolation, with a dedicated latency level, audio rate matching and `K` to toggle it (`613cf7a`, `268a4d3`, `0195e92`, `7c00916`, `8b0d3ed`, `5f99c6d`, `36279d1`, `baf08de`, `0be92b1`).
+- **MicroW8**: Added through the uw8 core (`cc7e608`).
+- **Media Keys**: Arrow keys and `+`/`-` change subsong and seek in music, seek in video, and zoom/scroll images (`38982dd`).
+- **`--check`**: Replaces `--check-wine`, inspecting wine, bwrap, the prefix, cores, cache sizes and ffmpeg/RIFE, and saying what to fix (`f48fe59`, `54d0491`).
+- **Default Databases**: With no files given, dbs next to the binary, in `../../demodb` and `~/.config/demarc/demodb` are loaded (`6870fdc`).
+- **Unpacking**: Crinkler exes (including 1.2/1.3) are unpacked and rebuilt with imports by name, BoxedApp exes and WinRAR SFX releases are unpacked, and DOS COM droppers are run in an emulated real-mode x86 to extract their payload (`6505eb3`, `36774cb`, `41ba615`, `95746a6`).
+- **Downloads**: Google Drive share links, and Modland TFMX songs fetched together with their `smpl.*` files (`7e4e8ad`, `7fa4784`).
+- **C64 Tapes**: Raw `.tap` files are played as a fallback (`30e1708`).
+- **Remote Control**: Navigator, playlist, load status and video level queries, `load_demo` with `demozoo.N`/`csdb.N` ids, `log_to_file`, `print` and `collect_navigator` (`c057209`, `c90ea89`, `23d4ad5`).
+- **Wine Proxies**: d3d10_1 and d3dcompiler_47 proxies; opengl32 emulates `EXT_paletted_texture`, copies AUX buffers, exposes `EXT_geometry_shader4` on NVIDIA, keeps the back buffer with `wine_gl_keep_back` and swaps after readback for front-buffer-only apps; winmm plays MIDI streams through the synth (`21d0b7c`, `1124c3b`, `5a35868`, `a9b46b2`, `deff913`, `a3e734f`, `d3cdcb9`).
+- **Wine Prefix**: Indeo 3 codec, full Wingdings font and native .NET 4.8 instead of wine-mono (`b08a040`, `306875f`, `676b3ea`).
+- **Override Enhancements**: Files named by release path, TinyPTC demos run with cnc-ddraw at their own resolution, and many new per-release fixups (`a003b7f`, `b47a0c0`, `489a22d`, `b0d3118`, `32157fb`, `90393ea`, `9402144`, `b448dc0`).
+- **Playlists**: A failed load can be added to a playlist (`e98b320`).
+
+### Changed
+
+- **Windows Releases**: Started from their `.bat` when present (unpacking cabinet batch files), 1080p-style resolutions read from names, and a 4:3 session by default on non-widescreen displays (`476114b`, `3b3a823`, `74b0ed6`).
+- **Web Releases**: Served over a local HTTP server, self-serving python intros unpacked, and release directories loaded by their top-level page (`c4acb2e`, `bbffbb1`).
+- **Amiga**: Demos from 1995 onwards get 2 MB chip memory (`8e983b4`).
+- **autodlg**: Accepts INTRO, WATCH and TEST as start buttons and prefers earlier `--go` labels (`7f01efe`, `722553a`).
+- **Overrides**: Override and command-line meta are reapplied after a system loads (`9364f69`).
+- **Demozoo Import**: The Game category is allowed (`2cdf95d`).
+
+### Fixed
+
+- **Paused Cores**: A paused core no longer free-runs on a low audio ring (`f710674`).
+- **Downloads**: The NetCologne mirror banner prepended to downloads is rejected (`d7fe802`).
+- **Wine**: Loader lock released around the first waveOut/waveIn open, `HEAP_NO_SERIALIZE` stripped on the process heap, kernelbase falls back to ucrtbase, absurd `wglUseFontBitmaps` widths clamped, `glEdgeFlag` dropped on radeonsi, and frameless windows at the origin left decorated (`9b2244a`, `df38bc0`, `1bd0214`, `6105227`, `4507a46`, `427e42e`).
+
 ## [1.8.2] - 2026-10-27
 
 ### Added
