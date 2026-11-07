@@ -74,7 +74,9 @@ installs it, demarc sets `opengl32=n,b`.
 when the context has no accumulation buffer, which no GLX config on NVIDIA's
 Xwayland has: an RGBA32F texture behind an FBO, sized to the viewport at first
 use, and each operation one full-screen pass. Fizzer's "The Real Party Is In
-Your Pocket" accumulates 256 samples in it.
+Your Pocket" accumulates 256 samples in it. Its textures take names from
+0x7ac00000 up, as 4k intros bind texture 1 without generating it (Klos's
+"Quattro").
 
 `glEdgeFlag` and `glEdgeFlagv` do nothing when `GL_RENDERER` names radeonsi
 (checked in `wglMakeCurrent`). radeonsi (Mesa 26.2.5) faults and hangs the GPU

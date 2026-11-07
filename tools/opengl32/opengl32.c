@@ -1075,15 +1075,16 @@ static const char *const accum_vs = "#version 130\nvoid main(){gl_Position=gl_Ve
 static const char *const accum_fs = "#version 130\nuniform sampler2D t;uniform vec4 s,a;"
                                     "void main(){gl_FragColor=texelFetch(t,ivec2(gl_FragCoord.xy),0)*s+a;}";
 
+// High names, as 4k intros bind texture 1 without generating it (Klos's
+// "Quattro" copied each frame into the accumulation buffer).
 static unsigned accum_texture(int width, int height, int format, unsigned type)
 {
-    void(__stdcall * gen_textures)(int, unsigned *) = lookup(wine, "glGenTextures");
+    static unsigned next_texture = 0x7ac00000;
     void(__stdcall * bind_texture)(unsigned, unsigned) = lookup(wine, "glBindTexture");
     void(__stdcall * tex_parameteri)(unsigned, unsigned, int) = lookup(wine, "glTexParameteri");
     void(__stdcall * tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) =
         lookup(wine, "glTexImage2D");
-    unsigned texture = 0;
-    gen_textures(1, &texture);
+    unsigned texture = next_texture++;
     bind_texture(0x0DE1, texture);
     tex_parameteri(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2600 /* GL_NEAREST */);
     tex_image(0x0DE1, 0, format, width, height, 0, 0x1908 /* GL_RGBA */, type, 0);
