@@ -1978,9 +1978,12 @@ meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
 [zoo.3302]
 meta = { wine_cnc_ddraw = "true" }
 
-# Indie-Vibes: scene.org copy is gone, and the Google Drive link is a page
+# Indie-Vibes: scene.org copy is gone, and the Google Drive link is a page.
+# A WinRAR SFX around a BoxedApp-packed Unity player, which faults under wine;
+# unpacked, the player and its files run as they are.
 [zoo.143895]
 download = "https://ftp.untergrund.net/users/highsociety/dump/Kp-2015_Indie-vibes.exe"
+sfx = true
 
 # Small Matters Of The Heart: GL-drawn launcher
 [zoo.136152]
@@ -2155,8 +2158,10 @@ patch = [
 
 # Driftwood by Almagest: the amigascne lha lacks the seven
 # remapped_s08_glasssplitter assets, and the demo asserts on the first one.
+# Under the JIT it freezes on the first picture while the music plays.
 [zoo.202824]
 file = "agt-driftwood-rev19.zip"
+meta = { amiberry_jit = "disabled" }
 
 # The Mind: a multi-cart release; the main cart includes and reloads the rest
 [zoo.342339]
