@@ -15,7 +15,7 @@ use crate::workfile::WorkFile;
 use crate::{SysOpts, cache, fetch, libloader};
 
 use crate::utils::{get_ext, has_archive_filename, has_extension, read_at, sort_disks};
-use crate::utils::{is_archive, unpack_into};
+use crate::utils::{is_archive, unpack_into, unpack_sfx};
 
 use amiga::AmigaSystem;
 use amstrad::AmstradSystem;
@@ -209,7 +209,11 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
     debug!("Trying to load: {path:?}");
     let mut wf = WorkFile::new_with_meta(path, meta.clone());
     if path.is_file() {
-        if is_archive(path)? {
+        if meta.get(SFX).is_some_and(|v| crate::wine::is_yes(v)) {
+            wf = WorkFile::new_dir_with_meta(meta.clone())?;
+            debug!("Unpacking self-extracting {path:?} to {wf:?}");
+            unpack_sfx(path, &wf)?;
+        } else if is_archive(path)? {
             wf = WorkFile::new_dir_with_meta(meta.clone())?;
             if let Some(stem) = path.file_stem() {
                 wf.set_meta(ARCHIVE_NAME, stem.to_string_lossy());
@@ -266,6 +270,9 @@ pub fn unpack_release_writeback(
     info!("Wrote {path:?} back to the cache");
     Ok(WorkFile::new_in_place(path, wf.get_all_meta()))
 }
+
+/// Meta key set by an override's `sfx`: the release is a self-extracting RAR.
+pub const SFX: &str = "sfx";
 
 /// Meta key holding the name of the archive a release was unpacked from, which
 /// the temp dir it now sits in no longer carries.
@@ -701,6 +708,7 @@ impl NewSys {
         }
         self.apply_cmdline_meta(&mut wf);
         crate::crinkler::unpack_release(&mut wf)?;
+        crate::boxedapp::unpack_release(&mut wf)?;
 
         // Now that the release is unpacked and its own meta is in place: an
         // override may write files into it, name the one to start and set meta

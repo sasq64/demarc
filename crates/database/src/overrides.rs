@@ -46,6 +46,9 @@
 //! [zoo.9000]
 //! cache_writeback = true             # unpack into the download cache, run from there
 //!
+//! [zoo.143895]
+//! sfx = true                         # unpack a self-extracting RAR instead of running it
+//!
 //! [zoo.4701]
 //! glsl = { match = "pow\\(c,", search = "pow\\(c,([^;]*)\\);", replace = "pow(c,vec4($1));" }
 //! glsl = [{ hash = "1f2e3d4c5b6a7988", edits = [["1-c", "1.-c"], ["\\btc\\.z=1\\.;", ""]] }]
@@ -172,6 +175,9 @@ struct RawOverride {
     /// generates on first start is still there the next time.
     #[serde(default)]
     cache_writeback: bool,
+    /// Unpack the download as a RAR archive although it is a self-extracting exe.
+    #[serde(default)]
+    sfx: bool,
     /// Regex edits to the GLSL a Windows demo compiles, one table or an array.
     glsl: Option<GlslPatches>,
     /// What is known about a release that still does not work, for whoever
@@ -422,6 +428,7 @@ impl RawOverride {
             fast: self.fast,
             events,
             cache_writeback: self.cache_writeback,
+            sfx: self.sfx,
         })
     }
 }

@@ -85,4 +85,6 @@ pub struct Override {
     // Replace the download in the cache with the unpacked (and patched)
     // release and run it from there, keeping whatever it writes
     pub cache_writeback: bool,
+    // Unpack a self-extracting RAR exe instead of running it
+    pub sfx: bool,
 }

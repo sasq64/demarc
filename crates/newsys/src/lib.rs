@@ -9,6 +9,7 @@
 // `crate::backend` / `crate::retro_emu` paths.
 pub use retro_core::{backend, libretro, pixels, retro_emu};
 
+pub mod boxedapp;
 pub mod cache;
 pub mod cbmconvert;
 pub mod crinkler;

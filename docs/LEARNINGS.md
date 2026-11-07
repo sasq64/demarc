@@ -1444,3 +1444,29 @@
 - Return (`zoo.311793`) runs on native .NET 4.8 (`winetricks dotnet48`). That
   verb also moves the prefix from winxp to win7 and removes wine-mono. Test it
   in a `cp -a` of the prefix under `gamescope --backend headless` first.
+- Driftwood (`zoo.202824`) was marked fixed on "sound + moving frames", but
+  it froze on its first picture while the music (interrupt driven) played;
+  the frame count stopped at 12 after 10 s. `amiberry_jit = "disabled"`
+  fixed it. For a demo with sound, check that the unique-frame count keeps
+  rising and that screenshots show different scenes before calling it fixed.
+  Also: `system/overrides.toml` is copied to `~/.cache/demarc/system` by the
+  build, so an override edit needs a rebuild (the log's `JIT=` line shows
+  whether it took).
+- Indie-Vibes (`zoo.143895`) had been filed as "not fixable": BoxedApp-packed
+  Unity, faulting in BoxedApp's own loader. Look at the packer's sections before
+  debugging its loader: `.bxpck` held all 37 files uncompressed, and the
+  original PE (entry point, `.rdata` import table) was untouched apart from
+  the import/TLS directories. Unpacking it (`boxedapp.rs`) took far less time
+  than debugging the fault would have. Also, the release is a WinRAR SFX that
+  demarc ran as is, so an unpack step on the release never saw the inner exe
+  (`sfx = true` override). Never run `cargo fmt` here: stock rustfmt reflows
+  ~45 untouched files (the tree is formatted wider); format only the files you
+  edit (`rustfmt --edition 2024 <file>`) and check `git diff` for stray hunks.
+- Klos's 4k gfx (Quattro `zoo.371225`, the Fast & Fouriers series) flashed
+  one frame, then went black or saturated. `wine_gl_keep_back` was a wrong
+  first guess. The demarc `+opengl` log hid the cause: it drops repeated lines
+  and shows the proxy's emulation calls mixed in with the intro's own. A plain
+  wine trace showed `glAccum`, and the intro binds texture 1 without
+  `glGenTextures`, which was the name the proxy's emulated accumulation buffer
+  had got. Proxy objects now take high names. The intros take 10-20 s to
+  accumulate under demarc, so wait at least 1200 frames before calling one black.

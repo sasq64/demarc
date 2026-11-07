@@ -267,6 +267,12 @@ texgen. Dump the vertices and states at the draw (winedbg breakpoint on the
 device vtable). Fix in the unpacked exe; Nature v2.0 (`zoo.8340`) routes each
 `SetVertexShader(XYZRHW)` through a stub that zeroes both.
 
+**First frame right, then black or saturating.** A plain wine `+opengl` trace
+(demarc's drops repeats) for `glAccum` or other emulated calls: the opengl32
+proxy's objects must not collide with names the intro binds without
+generating them (Klos's Quattro, `zoo.371225`). These intros take 10-20 s to
+accumulate.
+
 **NaN uniforms, frames slowing to seconds.** `+opengl` shows a
 `glUniform*` value of `-nan(ind)`: the intro leaks x87 stack slots per frame
 and `fild` overflows. The opengl32 proxy's `emms` after `wglSwapBuffers`
@@ -316,6 +322,13 @@ Bomb, `zoo.878`).
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
 invalid API use.
+
+**BoxedApp-packed exe (`.bxpck` and `.main` sections).** demarc writes the
+virtual files next to the exe and puts back the exe's own imports
+(`crates/newsys/src/boxedapp.rs`); BoxedApp's loader faults under wine.
+A WinRAR SFX around a release needs `sfx = true` in its override, or it is
+run as is and the unpack step never sees what is inside (Indie-Vibes,
+`zoo.143895`).
 
 **Crash at an ntdll address before the demo runs.** `c0000005` with `+loaddll`
 stopping after kernel32 is wine's import walk on an overlapping 1k header;
