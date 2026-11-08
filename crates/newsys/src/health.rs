@@ -475,10 +475,29 @@ mod linux {
         }
     }
 
+    fn missing_libs(ldd_output: &str) -> Vec<String> {
+        ldd_output
+            .lines()
+            .filter_map(|line| line.trim().strip_suffix("=> not found"))
+            .map(|lib| lib.trim().to_string())
+            .collect()
+    }
+
     fn gamescope_core_line() -> Line {
         const NAME: &str = "gamescope core";
         if libloader::has_core("gamescope") {
-            Line::new(Status::Ok, NAME, "downloaded")
+            let missing = retro_core::find_core("gamescope")
+                .and_then(|core| core.with_file_name("gamescope").canonicalize().ok())
+                .and_then(|bin| output_of(Path::new("ldd"), &[bin.to_str()?]))
+                .map(|out| missing_libs(&out))
+                .unwrap_or_default();
+            if missing.is_empty() {
+                Line::new(Status::Ok, NAME, "downloaded")
+            } else {
+                let detail = format!("cannot run, missing {}", missing.join(", "));
+                Line::new(Status::Missing, NAME, detail)
+                    .fix("Install the package providing it (Arch: libxres)")
+            }
         } else {
             Line::new(Status::Info, NAME, "downloaded with the first Windows demo")
         }

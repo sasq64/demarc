@@ -1508,3 +1508,8 @@
   renderer: 1-3 render fps. Remote-control `wait_frames` counts *render*
   frames, so scripts take minutes there while the emulator runs far ahead.
   SSH programs get no desktop; `winvm.sh gui` runs in the RDP session.
+
+- Every wine demo failing with "load failed" while `--check` said ok: the
+  downloaded gamescope binary needed a system library (`libXRes.so.1`) that was
+  not installed, and `--check` only looked for the file. The cause was one line
+  of the child's stderr, shown with `--no-silence`; `--check` now runs `ldd` on it.
