@@ -305,6 +305,7 @@ meta = { wine_cnc_ddraw = "true" }
 # Clone Meets Clone: TinyPTC, black at its own 320x200 under wined3d's ddraw
 [zoo.41197]
 meta = { wine_cnc_ddraw = "true", wine_res = "320x200" }
+file = "acme_cln.zip"
 
 # Antimoney: 8 bit flip chain, wined3d makes no P8 primary and it crashes
 [zoo.49452]
@@ -1780,13 +1781,18 @@ and its search for a negative position never ends. bass.dll is packed, so the
 unpacker's last jump goes through a cave that makes the search unsigned.
 The click picks "watch fullscreen"; the menu ignores keys. It sits low because
 the window is 637x451, not the 640x480 the click is scaled over.
+After the menu it froze on the headphones screen until cnc-ddraw.
 '''
-meta = { wine_res = "640x480" }
-events = [{ frame = 392, click = [0.5120000243186951, 0.953000009059906] }]
+meta = { wine_res = "640x480", wine_cnc_ddraw = "true" }
+events = [{ frame = 1303, click = [0.5080000162124634, 0.9480000138282776] }]
 patch = [
   { info = "unpacker exit jumps to the cave", target = "bass.dll", offset = 602, contents = "0gsAAA==" },
   { info = "jle/jg to jbe/ja in the position search", target = "bass.dll", offset = 3632, contents = "xgXsiwEQdsYFBIwBEHfpoXz+/w==" },
 ]
+
+# Solaris - Kiss Our Assembler: ddraw, black with music under wined3d
+[zoo.2672]
+meta = { wine_cnc_ddraw = "true" }
 
 [zoo.61983]
 meta = { wine_res = "640x480" }
@@ -2203,3 +2209,11 @@ patch = [
 
 [zoo.87036]
 file = "frq_metatunnel_win32.zip"
+
+# Nevada by Loonies: renders at the session size with a 4:3 projection
+[zoo.2619]
+meta = { wine_narrow = "true" }
+
+# synchroplastikum by Calodox: renders at the session size with a 4:3 projection
+[zoo.55453]
+meta = { wine_narrow = "true" }
