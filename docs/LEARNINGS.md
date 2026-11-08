@@ -1513,3 +1513,17 @@
   downloaded gamescope binary needed a system library (`libXRes.so.1`) that was
   not installed, and `--check` only looked for the file. The cause was one line
   of the child's stderr, shown with `--no-silence`; `--check` now runs `ldd` on it.
+
+- Skips in wine audio 20s+ into a demo were wine's own pulse stream underflowing
+  (`warn:pulse:pulse_underflow_callback`), which drops what it had queued. demarc
+  only logs wine's errors: run with `WINEDEBUG=+timestamp,warn+pulse,fixme-all`
+  and `RUST_LOG=retro=debug` to see them. The cause was a fresh install without
+  the `ntsync` module loaded: every wine wait went through wineserver, and a
+  demo keeping wineserver busy for 150ms starved wine's audio timer. Sampling
+  `/proc/<pid>/task/*/{stat,wchan}` showed wineserver running and the audio
+  threads in `anon_pipe_read`. Installing rtkit first then got demarc SIGKILLed
+  at start: xdg-desktop-portal, started before rtkit, served `RTTimeUSecMax` 0,
+  so PipeWire's module-rt set RLIMIT_RTTIME to 0. Restart the portal after
+  installing rtkit.
+  A first "fix" for a separate 100ms gap at sound start was mistaken for it;
+  ask when in the demo a glitch is heard before chasing the first one found.
