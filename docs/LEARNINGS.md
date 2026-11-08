@@ -1527,3 +1527,15 @@
   installing rtkit.
   A first "fix" for a separate 100ms gap at sound start was mistaken for it;
   ask when in the demo a glitch is heard before chasing the first one found.
+
+- A wine audio skip ~30 s into every session (Observatory: FMOD Ex, 40 ms
+  WASAPI buffer) was wineserver's periodic registry save: the registry is always
+  dirty (font registration, MMDevices props) and writing the 7.6 MB system.reg
+  blocks the single-threaded server ~70 ms. Three detours first: demarc's
+  `Audio drop` log line is a different thing (it fires on every exit); `--headless`
+  opens no cpal stream, so its ring fill is a constant 6000; and the wine log
+  relay stops after `MAX_DISTINCT` (4096) lines, which silently cut off a
+  `+pulse` trace. Watching the sandboxed `system.reg` via
+  `/proc/<wineserver>/root$WINEPREFIX` pinned it to the millisecond.
+  Fixed by ro-binding the prefix's top level in the sandbox (folders get their
+  own tmp overlays): `save_branch` then fails before serializing anything.
