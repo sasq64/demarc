@@ -259,3 +259,16 @@ wine-prefix:
 wine32-fix:
     # Needed for fullscreen switch with 32bit wine
     sudo pacman -S lib32-libxrandr lib32-libxi
+
+# Native Windows build in the Omarchy Windows VM over SSH (scripts/winvm.sh).
+# One-time VM setup: run \\host.lan\Data\setup-dev.ps1 there as administrator.
+winvm-build *args="":
+    scripts/winvm.sh build {{args}}
+
+# Headless run in the VM; files the run writes land in winvm-out/.
+winvm-run file *args="":
+    scripts/winvm.sh run --headless {{args}} {{file}}
+
+# Windowed run in the VM's RDP session, with audio.
+winvm-gui file *args="":
+    scripts/winvm.sh gui {{args}} {{file}}
