@@ -1503,3 +1503,8 @@
 - An override's `meta` is applied *before* the global meta (`apply_cmdline_meta`
   in `load_prepared`), so an override can't change a key the frontend always
   sets, like `widescreen`: add a key of its own for the system to read instead.
+
+- In the Windows VM (`scripts/winvm.sh`) wgpu only gets WARP, the CPU DX12
+  renderer: 1-3 render fps. Remote-control `wait_frames` counts *render*
+  frames, so scripts take minutes there while the emulator runs far ahead.
+  SSH programs get no desktop; `winvm.sh gui` runs in the RDP session.

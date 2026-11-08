@@ -755,6 +755,9 @@ fn main() {
             std::time::Duration::from_secs_f64(1.0 / 60.0)
         };
         app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(wait));
+        if !speed_test {
+            headless::wait_for_gpu_each_frame(&mut app);
+        }
         let target = {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             headless::HeadlessTarget::new(&mut images)
