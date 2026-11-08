@@ -1494,3 +1494,12 @@
   on-screen footprint, not the visible part, so anything that scales
   `uv_scale` up (view zoom) grows it quadratically; `max_texture_dimension_2d`
   alone still allows a GPU-OOM-sized texture. It is capped by a pixel budget.
+
+- Two systems claiming the same extension: the first one in `NewSys`'s list
+  wins silently. `SpectrumNextSystem` listed `trd` ahead of `SinclairSystem`,
+  so every TR-DOS demo booted the Next loader ROM ("Error initializing SD
+  card!"). Grep the other systems' `extensions()` before adding one.
+
+- An override's `meta` is applied *before* the global meta (`apply_cmdline_meta`
+  in `load_prepared`), so an override can't change a key the frontend always
+  sets, like `widescreen`: add a key of its own for the system to read instead.

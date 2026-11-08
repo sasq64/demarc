@@ -23,7 +23,11 @@ pub const DEFAULT_RES: &str = "1920x1080";
 
 /// The session on a screen that is not a widescreen, 4:3 like the modes its
 /// dialog is asked for: a 4:3 mode in a 16:9 session ends up stretched.
-pub const NARROW_RES: &str = "1600x1200";
+pub const NARROW_RES: &str = "1440x1080";
+
+/// Meta key: yes runs the demo as on a 4:3 screen, for one that draws at the
+/// session size with a 4:3 projection.
+pub const META_NARROW: &str = "wine_narrow";
 
 /// Meta key holding the resolutions to ask the setup dialog for, best first,
 /// comma separated. Unset means "whatever [`META_RES`] says".

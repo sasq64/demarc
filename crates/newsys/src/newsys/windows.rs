@@ -35,8 +35,8 @@ use crate::wine::{
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
-    META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
-    NARROW_RES, default_dialog_res, fitting_modes, is_yes, on_steam_deck,
+    META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_NARROW,
+    META_RES, NARROW_RES, default_dialog_res, fitting_modes, is_yes, on_steam_deck,
 };
 #[cfg(target_os = "linux")]
 use crate::wine_sandbox::{self, Sandbox};
@@ -354,6 +354,9 @@ impl System for WindowsSystem {
         // Which modes to ask the dialog for depends on the shape of the screen,
         // which only the frontend knows; set here rather than in `default_meta`
         // because that one can only hand back a fixed string.
+        if is_yes(&file.get_meta_or(META_NARROW, "")) {
+            file.set_meta(META_WIDESCREEN, "false");
+        }
         let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
         if !widescreen && !file.has_meta(META_RES) {
             file.set_meta(META_RES, NARROW_RES);
