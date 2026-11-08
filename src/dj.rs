@@ -104,6 +104,8 @@ fn setup_dj(mut commands: Commands, mut egui: ResMut<EguiGlobalSettings>) {
             alpha: 1.0,
             raw: true,
             no_crt: false,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
         },
         DjView,
     ));

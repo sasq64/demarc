@@ -1489,3 +1489,8 @@
   IAT end; 1.0 exes (Arancia `zoo.59650`, sprite-o-mat `zoo.4286`) run their
   call transform from `edx`. The rebuilt stub set neither. Compare packed and
   unpacked first — it isolates the unpacker in one run.
+
+- The slangp intermediate in `composite.rs` is sized to the picture's whole
+  on-screen footprint, not the visible part, so anything that scales
+  `uv_scale` up (view zoom) grows it quadratically; `max_texture_dimension_2d`
+  alone still allows a GPU-OOM-sized texture. It is capped by a pixel budget.

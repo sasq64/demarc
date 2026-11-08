@@ -6,7 +6,7 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
     image::Image,
-    input::mouse::AccumulatedMouseMotion,
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -191,6 +191,8 @@ pub(crate) fn spawn_emulator(
             alpha: 1.0,
             raw: false,
             no_crt: false,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
         },
         EmuView { index },
     ));
@@ -262,6 +264,73 @@ fn update_view_rects(
             size: vp_size,
             active,
         };
+    }
+}
+
+/// Right Ctrl + wheel zooms the view under the cursor, Right Ctrl + mouse move pans it.
+fn zoom_pan(
+    input: Res<ButtonInput<KeyCode>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    scroll: Res<AccumulatedMouseScroll>,
+    mut settings: ResMut<AppSettings>,
+    render: Res<RenderSettings>,
+    images: Res<Assets<Image>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    mut views: Query<(&EmuView, &Emulator, &mut PostProcess)>,
+) {
+    if !input.pressed(KeyCode::ControlRight) {
+        return;
+    }
+    let wheel = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
+    };
+    let motion = mouse_motion.delta;
+    if wheel == 0.0 && motion == Vec2::ZERO {
+        return;
+    }
+    let index = settings
+        .mouse_index
+        .filter(|&i| i < 999)
+        .unwrap_or(settings.current_emu);
+    let Some(mut pp) = views
+        .iter_mut()
+        .find(|(v, emu, _)| v.index == index && !emu.is_crossfade)
+        .map(|(_, _, pp)| pp)
+    else {
+        return;
+    };
+    let Some(rect) = pp.view.rect() else {
+        return;
+    };
+    // Using the mouse means right Ctrl was not tapped for the command list.
+    settings.hotkey_pressed_at = f32::NEG_INFINITY;
+    let size = rect.size().as_vec2();
+    if wheel != 0.0 {
+        let src = images
+            .get(&pp.source)
+            .map(|i| i.size())
+            .unwrap_or(UVec2::ONE);
+        let zoom = (pp.zoom * 1.1f32.powf(wheel)).clamp(1.0, 32.0);
+        if zoom == 1.0 {
+            pp.pan = Vec2::ZERO;
+        } else {
+            // Keep the point under the cursor where it is.
+            let cursor = cursor_pos(window.as_deref().copied())
+                .map(|p| (p - rect.min.as_vec2()) / size)
+                .unwrap_or(Vec2::splat(0.5));
+            let (_, offset) = pp.transform(rect.size(), src, render.scale_mode);
+            let ratio = zoom / pp.zoom;
+            pp.pan = Vec2::ZERO;
+            pp.zoom = zoom;
+            let (_, base) = pp.transform(rect.size(), src, render.scale_mode);
+            pp.pan = cursor - (cursor - offset) * ratio - base;
+        }
+        pp.zoom = zoom;
+    }
+    if motion != Vec2::ZERO && pp.zoom > 1.0 {
+        let scale = window.as_deref().map_or(1.0, |w| w.scale_factor());
+        pp.pan += motion * scale / size;
     }
 }
 
@@ -413,14 +482,7 @@ fn cursor_frame_uv(
         .get(&pp.source)
         .map(|i| i.size())
         .unwrap_or(UVec2::ONE);
-    let (uv_scale, uv_offset) = crate::post_process::view_transform(
-        rect.size(),
-        src,
-        pp.used,
-        pp.aspect,
-        pp.aspect_tweak,
-        scale_mode,
-    );
+    let (uv_scale, uv_offset) = pp.transform(rect.size(), src, scale_mode);
     let frame_uv = (screen_uv - uv_offset) / uv_scale;
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
 }
@@ -668,7 +730,7 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (run_frontend, update_view_rects, draw_current_emu_outline),
+            (run_frontend, update_view_rects, zoom_pan, draw_current_emu_outline),
         );
         app.add_systems(PostStartup, detect_screen);
         app.add_plugins((LoadingPlugin, FrameUploadPlugin, FrameConvPlugin));
