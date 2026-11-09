@@ -79,7 +79,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use qbsdiff::Bspatch;
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
 use url::Url;
 
 use newsys::backend::InputEvent;
@@ -301,33 +301,23 @@ struct RawPatch {
 
 /// Parse the contents of an overrides file — see the module docs for the shape.
 ///
-/// An entry that doesn't make sense (an id that isn't a number, base64 that
-/// doesn't decode) is reported and dropped on its own; the rest of the file
-/// still applies, since one bad entry says nothing about the others.
+/// The file ships with demarc, so anything wrong in it is an error naming the
+/// line or the `[db.id]` it is in.
 pub fn parse(text: &str, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
-    let file: toml::Table = toml::from_str(text).context("Not a valid overrides file")?;
+    let file: HashMap<String, HashMap<String, RawOverride>> = toml::from_str(text)?;
     let mut overrides = HashMap::new();
-    for (db, table) in file {
-        // A mistyped `[zoo_57849]` is a table of its own as far as toml is
-        // concerned, and silently doing nothing about it is the least helpful.
+    for (db, entries) in file {
         if DemoId::new(&db, 0).is_none() {
-            warn!("Ignoring unknown section [{db}] — overrides go under [zoo.<id>] or [csdb.<id>]");
-            continue;
+            bail!("unknown section [{db}]: overrides go under [zoo.<id>] or [csdb.<id>]");
         }
-        let entries: HashMap<String, RawOverride> = table
-            .try_into()
-            .with_context(|| format!("Bad overrides in [{db}]"))?;
         for (id, raw) in entries {
-            let Some(demo_id) = id.parse::<u32>().ok().and_then(|n| DemoId::new(&db, n)) else {
-                warn!("Ignoring [{db}.{id}]: not an id");
-                continue;
-            };
-            match raw.build(resolve_key) {
-                Ok(over) => {
-                    overrides.insert(demo_id, over);
-                }
-                Err(err) => warn!("Ignoring [{db}.{id}]: {err:#}"),
-            }
+            let demo_id = id
+                .parse::<u32>()
+                .ok()
+                .and_then(|n| DemoId::new(&db, n))
+                .with_context(|| format!("[{db}.{id}]: not an id"))?;
+            let over = raw.build(resolve_key).with_context(|| format!("[{db}.{id}]"))?;
+            overrides.insert(demo_id, over);
         }
     }
     Ok(overrides)

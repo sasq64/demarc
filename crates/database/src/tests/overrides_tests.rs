@@ -131,35 +131,21 @@ fn parses_several_patches() {
     assert_eq!(patches[1].offset, Some(1024));
 }
 
-/// One unusable entry is dropped on its own — the rest of the file is
-/// still worth having.
-#[test]
-fn drops_only_the_bad_entry() {
-    let overrides = parse(
-        r#"
-        [zoo.not-an-id]
-        file = "a.zip"
-
-        [zoo.2]
-        patch = { target = "A.CFG", contents = "not base64!" }
-
-        [zoo.3]
-        file = "c.zip"
-        "#,
-    )
-    .unwrap();
-    assert_eq!(overrides.len(), 1);
-    assert_eq!(overrides[&zoo(3)].download, Some("c.zip"));
-}
-
-/// A section outside `zoo` is a typo rather than a feature, so it is
-/// ignored — while a misspelled *key* inside an entry is an error, since
-/// there is nowhere else it could have been meant to go.
 #[test]
 fn rejects_what_it_cannot_apply() {
-    assert!(parse("[zoo_57849]\nfile = \"a.zip\"\n").unwrap().is_empty());
-    assert!(parse("[zoo.1]\nfil = \"a.zip\"\n").is_err());
+    let err = |text: &str| format!("{:#}", parse(text).unwrap_err());
+    assert!(err("[zoo_57849]\nfile = \"a.zip\"\n").contains("line 2"));
+    assert!(err("[zoo.not-an-id]\nfile = \"a.zip\"\n").contains("[zoo.not-an-id]"));
+    assert!(err("[zoo.2]\npatch = { target = \"A\", contents = \"not base64!\" }\n").contains("[zoo.2]"));
+    assert!(err("[zoo.1]\nfil = \"a.zip\"\n").contains("line 2"));
     assert!(parse("[zoo.1] file =").is_err());
+}
+
+/// Key names are resolved by demarc itself, so any is taken here.
+#[test]
+fn shipped_file_parses() {
+    let path = Path::new(env!("DEMARC_ROOT")).join("system").join(FILE_NAME);
+    load(&path, |_| Some(RETROK_a)).unwrap();
 }
 
 #[test]
@@ -168,22 +154,20 @@ fn patch_from_system_dir_source() {
         r#"
         [zoo.1]
         patch = { target = "overrides.toml", source = "overrides.toml" }
-
-        [zoo.2]
-        patch = { target = "A.DLL", source = "no/such/file.dll" }
-
-        [zoo.3]
-        patch = { target = "A.CFG", contents = "AAEC", source = "overrides.toml" }
         "#,
     )
     .unwrap();
-    assert_eq!(overrides.len(), 1);
+    assert!(parse("[zoo.2]\npatch = { target = \"A.DLL\", source = \"no/such/file.dll\" }").is_err());
+    assert!(
+        parse("[zoo.3]\npatch = { target = \"A\", contents = \"AAEC\", source = \"overrides.toml\" }")
+            .is_err()
+    );
     let patch = &overrides[&zoo(1)].patches[0];
     assert_eq!(patch.source, Some("overrides.toml"));
     assert!(!patch.bytes().unwrap().is_empty());
 }
 
-/// `events` keys go through the resolver, and an unknown one drops the entry.
+/// `events` keys go through the resolver, and an unknown one is an error.
 #[test]
 fn parses_key_events() {
     use newsys::backend::InputEvent::Key;
@@ -191,9 +175,6 @@ fn parses_key_events() {
         r#"
         [zoo.108]
         events = [{ frame = 50, key = "Enter" }, { frame = 60, key = "a" }]
-
-        [zoo.2]
-        events = [{ frame = 1, key = "NoSuchKey" }]
         "#,
     )
     .unwrap();
@@ -201,7 +182,7 @@ fn parses_key_events() {
         overrides[&zoo(108)].events,
         [(50, Key(RETROK_RETURN)), (60, Key(RETROK_a))]
     );
-    assert!(!overrides.contains_key(&zoo(2)));
+    assert!(parse("[zoo.2]\nevents = [{ frame = 1, key = \"NoSuchKey\" }]").is_err());
 }
 
 /// `click` is a position over the frame, and an event is a key or a click.
@@ -212,18 +193,12 @@ fn parses_click_events() {
         r#"
         [zoo.108]
         events = [{ frame = 400, click = [0.25, 0.75] }]
-
-        [zoo.2]
-        events = [{ frame = 1, key = "Enter", click = [0.5, 0.5] }]
-
-        [zoo.3]
-        events = [{ frame = 1 }]
         "#,
     )
     .unwrap();
     assert_eq!(overrides[&zoo(108)].events, [(400, Click(0.25, 0.75))]);
-    assert!(!overrides.contains_key(&zoo(2)));
-    assert!(!overrides.contains_key(&zoo(3)));
+    assert!(parse("[zoo.2]\nevents = [{ frame = 1, key = \"Enter\", click = [0.5, 0.5] }]").is_err());
+    assert!(parse("[zoo.3]\nevents = [{ frame = 1 }]").is_err());
 }
 
 /// `download` replaces the release's own links, and has to be a URL.
@@ -246,9 +221,8 @@ fn download_overrides_the_url() {
         [zoo.1]
         download = "area5150.zip"
         "#,
-    )
-    .unwrap();
-    assert!(overrides.is_empty());
+    );
+    assert!(overrides.is_err());
 }
 
 /// A bsdiff patch is written as `format = "bsdiff"` and the delta under
@@ -272,7 +246,7 @@ fn parses_a_bsdiff_patch() {
     assert!(patch.data.contains('\n') && patch.bytes().unwrap().starts_with(b"BSDIFF40"));
 
     // Not a delta at all, an unknown format, and an offset that means nothing
-    // for a delta — each one drops its entry.
+    // for a delta — each one is an error.
     for entry in [
         r#"patch = { target = "a", format = "bsdiff", patch = "AAEC" }"#.to_string(),
         format!(r#"patch = {{ target = "a", format = "xdelta", patch = """{delta}""" }}"#),
@@ -281,7 +255,7 @@ fn parses_a_bsdiff_patch() {
         ),
     ] {
         assert!(
-            parse(&format!("[zoo.1]\n{entry}\n")).unwrap().is_empty(),
+            parse(&format!("[zoo.1]\n{entry}\n")).is_err(),
             "{entry}"
         );
     }
@@ -356,7 +330,7 @@ fn folds_glsl_patches_into_one_meta_value() {
         "mpow\\(\u{1e}a\u{1e}b\u{1d}h00112233445566aa\u{1e}c\u{1e}d\u{1e}e\u{1e}"
     );
     let bad = parse("[zoo.2]\nglsl = { hash = \"12\", search = \"a\", replace = \"b\" }\n");
-    assert!(bad.unwrap().is_empty());
+    assert!(bad.is_err());
     let bad = parse("[zoo.3]\nglsl = { match = \"a\" }\n");
-    assert!(bad.unwrap().is_empty());
+    assert!(bad.is_err());
 }

@@ -241,6 +241,29 @@ fn an_override_can_name_the_directory_too() {
     );
 }
 
+/// The name has to match whole path components, not just a string tail.
+#[test]
+fn an_override_name_matches_at_a_path_boundary() {
+    let mut source = FileSource::Url(
+        vec![
+            "https://files.scene.org/get/outside.zip",
+            "https://files.scene.org/get/inside.zip",
+        ]
+        .into(),
+    );
+    source.pick_download("side.zip");
+    let FileSource::Url(urls) = &source else {
+        panic!("still a URL list, {source:?}")
+    };
+    assert_eq!(urls.as_slice().len(), 2);
+
+    source.pick_download("inside.zip");
+    let FileSource::Url(urls) = &source else {
+        panic!("still a URL list, {source:?}")
+    };
+    assert_eq!(urls.as_slice(), ["https://files.scene.org/get/inside.zip"]);
+}
+
 /// Nothing to try is an error rather than a panic — an entry whose URLs all
 /// got filtered away shouldn't take the process down.
 #[test]
@@ -255,11 +278,30 @@ fn no_urls_is_an_error() {
 /// all has no field, so neither gets a rank to sort on.
 #[test]
 fn pouet_rank_comes_from_the_third_item() {
-    assert_eq!(parse_pouet_rank("17,828,1,8,1 5 11"), Some(1));
-    assert_eq!(parse_pouet_rank("0,146,382,,"), Some(382));
-    assert_eq!(parse_pouet_rank("0,1,,,"), None);
-    assert_eq!(parse_pouet_rank("0,1"), None);
-    assert_eq!(parse_pouet_rank(""), None);
+    let rank = |pouet: &'static str| GameInfo::new(&[("pouet", pouet)].into(), &[]).rank;
+    assert_eq!(rank("17,828,1,8,1 5 11"), 1);
+    assert_eq!(rank("0,146,382,,"), 382);
+    assert_eq!(rank("0,1,,,"), 0);
+    assert_eq!(rank("0,1"), 0);
+    assert_eq!(rank(""), 0);
+}
+
+#[test]
+fn pouet_field_gives_cdc_and_viewing_tip() {
+    let info = GameInfo::new(&[("pouet", "17,828,1,8 15,1 5 11")].into(), &[]);
+    assert_eq!(info.awards, Awards::new(17, true));
+    let file = EmuFile {
+        meta: [("pouet", "17,828,1,8 15 999,1 5 11")].into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        file.get_wins().collect::<Vec<_>>(),
+        [Award::BestDirection, Award::ViewingTip]
+    );
+    assert_eq!(
+        file.get_nominees().collect::<Vec<_>>(),
+        [Award::BestDemo, Award::BestEffects, Award::PublicsChoice]
+    );
 }
 
 #[test]
@@ -267,6 +309,24 @@ fn compact_date_parses_partial_dates() {
     assert_eq!(CompactDate::parse("1995").unwrap().year(), 1995);
     assert_eq!(CompactDate::parse("2011-12").unwrap().year(), 2011);
     assert_eq!(CompactDate::parse("2011-12-31").unwrap().year(), 2011);
+}
+
+#[test]
+fn compact_date_keeps_the_year_of_a_bad_month_or_day() {
+    assert_eq!(CompactDate::parse("1995-??").unwrap(), CompactDate::new(1995, 0, 0).unwrap());
+    assert_eq!(CompactDate::parse("1995-13-01").unwrap(), CompactDate::new(1995, 0, 0).unwrap());
+    assert_eq!(CompactDate::parse("1995-03-xx").unwrap(), CompactDate::new(1995, 3, 0).unwrap());
+    assert!(CompactDate::parse("??").is_err());
+}
+
+#[test]
+fn award_ids_round_trip() {
+    for id in 0..100 {
+        if let Some(award) = Award::from_id(id) {
+            assert_eq!(award as u32, id);
+        }
+    }
+    assert_eq!(Award::from_id(16), None);
 }
 
 #[test]

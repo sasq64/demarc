@@ -624,7 +624,7 @@ fn main() {
         overrides: overrides::load_default(emulator::Emulator::resolve_key_name).unwrap_or_else(
             |err| {
                 println(format!("** Error: {err:#}"));
-                Default::default()
+                std::process::exit(1);
             },
         ),
         boot_file: args.boot_file.clone().map(files::leak),
