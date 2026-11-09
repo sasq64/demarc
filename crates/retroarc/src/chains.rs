@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -17,7 +18,7 @@ use wgpu::{
 
 use librashader::presets::ShaderFeatures;
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
-use librashader::runtime::{Size, Viewport};
+use librashader::runtime::{FilterChainParameters, Size, Viewport};
 
 use crate::TARGET_FORMAT;
 
@@ -138,18 +139,26 @@ impl Build {
                     let outcome = if cancelled.load(Ordering::Relaxed) {
                         BuildResult::Cancelled
                     } else {
+                        // A panic would leave the slot empty and the source
+                        // waiting on this build forever.
                         #[allow(clippy::result_large_err)]
-                        let loaded = FilterChain::load_from_path(
-                            &path,
-                            ShaderFeatures::NONE,
-                            &device,
-                            &queue,
-                            None,
-                        );
+                        let loaded = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            FilterChain::load_from_path(
+                                &path,
+                                ShaderFeatures::NONE,
+                                &device,
+                                &queue,
+                                None,
+                            )
+                        }));
                         match loaded {
-                            Ok(chain) => BuildResult::Built(Box::new(chain)),
-                            Err(err) => {
+                            Ok(Ok(chain)) => BuildResult::Built(Box::new(chain)),
+                            Ok(Err(err)) => {
                                 error!("failed to load preset {}: {err}", path.display());
+                                BuildResult::Failed
+                            }
+                            Err(_) => {
+                                error!("building preset {} panicked", path.display());
                                 BuildResult::Failed
                             }
                         }
@@ -168,6 +177,14 @@ impl Build {
     }
 }
 
+struct ReadyChain {
+    path: PathBuf,
+    chain: Box<FilterChain>,
+    /// The preset's own `mask_triad_size_desired`, which [`nudge_triad`]
+    /// overwrites every frame.
+    triad: Option<f32>,
+}
+
 /// A filter chain, built off the render thread and swapped in when it is ready.
 ///
 /// Building one is expensive and unbudgeted: a Mega Bezel preset is 42 GLSL
@@ -184,7 +201,7 @@ struct AsyncChain {
     /// and kept rendering — while a build for a *newer* preset is in flight, so
     /// picking a preset in the shader dialog swaps looks in a single frame
     /// instead of falling back to an unshaded image for two seconds.
-    ready: Option<(PathBuf, Box<FilterChain>)>,
+    ready: Option<ReadyChain>,
     /// The build in flight, at most one per source. Cycling through the dialog
     /// therefore coalesces: the running build is flagged cancelled and dropped
     /// on arrival, and only the selection current *at that point* is compiled
@@ -205,7 +222,7 @@ impl AsyncChain {
         device: &Device,
         queue: &Queue,
         failed: &mut HashSet<PathBuf>,
-    ) -> Option<&mut FilterChain> {
+    ) -> Option<(&mut FilterChain, Option<f32>)> {
         // Superseded: tell the task to skip the compile if it has not started.
         if let Some(build) = &self.building
             && build.path.as_path() != want
@@ -234,7 +251,12 @@ impl AsyncChain {
                         build.started.elapsed(),
                         build.frames
                     );
-                    self.ready = Some((build.path.clone(), chain));
+                    let triad = chain.parameters().parameter_value(TRIAD_PARAM);
+                    self.ready = Some(ReadyChain {
+                        path: build.path,
+                        chain,
+                        triad,
+                    });
                 }
                 // Built something the user has already switched away from, or
                 // skipped because the selection moved on before it started:
@@ -255,14 +277,16 @@ impl AsyncChain {
             self.ready = None;
         }
         if should_start(
-            self.ready.as_ref().map(|(path, _)| path.as_path()),
+            self.ready.as_ref().map(|ready| ready.path.as_path()),
             self.building.as_ref().map(|build| build.path.as_path()),
             want,
             known_bad,
         ) {
             self.building = Some(Build::spawn(want.to_path_buf(), device, queue));
         }
-        self.ready.as_mut().map(|(_, chain)| &mut **chain)
+        self.ready
+            .as_mut()
+            .map(|ready| (&mut *ready.chain, ready.triad))
     }
 }
 
@@ -365,16 +389,18 @@ impl<K: Eq + Hash> Chains<K> {
         kind: ChainKind,
         params: &HashMap<String, f32>,
     ) -> ChainOutput {
-        let Some((chain, target, frame_count)) = self.chain(device, queue, source, size, kind)
+        let Some((chain, triad, target, frame_count)) =
+            self.chain(device, queue, source, size, kind)
         else {
             return ChainOutput::Unfiltered;
         };
         if kind == ChainKind::Effect {
-            nudge_triad(chain, size.0 as f32);
+            if let Some(triad) = triad {
+                nudge_triad(chain, size.0 as f32, triad);
+            }
             // What the shader dialog has changed, applied after the nudge so an
             // explicit triad size still wins.
             if !params.is_empty() {
-                use librashader::runtime::FilterChainParameters;
                 chain.parameters().update_parameters(|values| {
                     for (name, value) in params.iter() {
                         if let Some(slot) = values.get_mut::<str>(name) {
@@ -412,7 +438,7 @@ impl<K: Eq + Hash> Chains<K> {
         source: K,
         size: (u32, u32),
         kind: ChainKind,
-    ) -> Option<(&mut FilterChain, &IntermediateTarget, &mut usize)> {
+    ) -> Option<(&mut FilterChain, Option<f32>, &IntermediateTarget, &mut usize)> {
         // Destructured so the preset paths stay readable while `sources` is
         // borrowed mutably.
         let Self {
@@ -427,7 +453,7 @@ impl<K: Eq + Hash> Chains<K> {
             ChainKind::Effect => (&mut sc.effect, effect_path.as_deref()?),
             ChainKind::Downsample => (&mut sc.downsample, downsample_path.as_path()),
         };
-        let chain = slot.get(path, device, queue, failed)?;
+        let (chain, triad) = slot.get(path, device, queue, failed)?;
         // Only now that there is something to render with is the intermediate
         // worth creating (or resizing, after a window resize or a video mode
         // change).
@@ -435,7 +461,7 @@ impl<K: Eq + Hash> Chains<K> {
             sc.target = Some(build_target(device, size));
         }
         let target = sc.target.as_ref().expect("just created");
-        Some((chain, target, &mut sc.frame_count))
+        Some((chain, triad, target, &mut sc.frame_count))
     }
 
     /// Point the effect chains at a different preset. Nothing is dropped and
@@ -454,22 +480,22 @@ impl<K: Eq + Hash> Chains<K> {
     }
 }
 
-/// crt-royale tiles its phosphor mask at a fixed triad size (default 3px => 24px
-/// tiles). When render_width / tile_size is an even integer, a tile boundary
+const TRIAD_PARAM: &str = "mask_triad_size_desired";
+
+/// crt-royale tiles its phosphor mask at a fixed triad size (`triad` px, 8
+/// triads per tile). When render_width / tile_size is an even integer, a tile boundary
 /// lands exactly on the screen center, where the mask's manual frac() tiling has
 /// a coordinate discontinuity that duplicates a subpixel (a visible red vertical
 /// line). crt-royale's own fix (FIX_DISCONTINUITIES) uses ddx/ddy in a
 /// vertex-shared header and won't compile on the slang/glslang path. Instead,
 /// nudge the triad size a fraction so the center falls as far as possible from
-/// any tile boundary: pick the integer tile size near 24px whose center offset is
-/// furthest from a boundary. This keeps triads ~3px (visually identical, mask
-/// stays pixel-sharp) and moves the seam off-center. No-op on presets without
-/// this parameter.
-fn nudge_triad(chain: &mut FilterChain, width: f32) {
-    use librashader::runtime::FilterChainParameters;
-    let mut best_tile = 24i32;
+/// any tile boundary: pick the integer tile size within 2px of the preset's
+/// whose center offset is furthest from a boundary.
+fn nudge_triad(chain: &mut FilterChain, width: f32, triad: f32) {
+    let base = (triad * 8.0).round() as i32;
+    let mut best_tile = base;
     let mut best_dist = -1.0f32;
-    for tile in 22..=26 {
+    for tile in (base - 2).max(1)..=base + 2 {
         let center_coord = width / (2.0 * tile as f32);
         let dist = (center_coord - center_coord.round()).abs(); // 0..=0.5
         if dist > best_dist {
@@ -477,7 +503,9 @@ fn nudge_triad(chain: &mut FilterChain, width: f32) {
             best_tile = tile;
         }
     }
-    chain
-        .parameters()
-        .set_parameter_value("mask_triad_size_desired", best_tile as f32 / 8.0);
+    let value = best_tile as f32 / 8.0;
+    // Setting clones the chain's whole parameter map.
+    if chain.parameters().parameter_value(TRIAD_PARAM) != Some(value) {
+        chain.parameters().set_parameter_value(TRIAD_PARAM, value);
+    }
 }
