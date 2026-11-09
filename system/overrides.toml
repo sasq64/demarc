@@ -269,6 +269,18 @@ glsl = {
 # [zoo.4767]
 # boot = "final.png"
 
+# Off The Shelf / Psycho: GeForce 8 era GLSL path tracer.
+[zoo.4768]
+fix_info = '''
+Stayed black: its #version 120 shader uses atan2 (a Cg name) and round
+(GLSL 1.30), which old NVIDIA accepted. The failed link left the uniforms
+at -1. glsl edits replace atan2 and round.
+'''
+glsl = {
+  match = "atan2",
+  edits = [['atan2\(', "atan("], ['round\(', "floor(.5+"]],
+}
+
 # fr-065: Euphotic / Farbrausch. Its 3D text in Georgia crashes the mesh code
 # under wine.
 [zoo.5151]
@@ -1543,15 +1555,15 @@ multisampling off.
 boot = "spilled_qc_1024.exe"
 meta = { wine_dll_overrides = "d3d9=b", wine_d3d_config = "SampleCount=0" }
 
-# Night Time by Loonies: D3D11 compute, presented once. Black under DXVK (no
-# HUD either), right with wined3d
+# Night Time by Loonies: D3D11 compute, presented once. Black under DXVK and
+# wined3d's GL renderer, right with its Vulkan one
 [zoo.155141]
 fix_info = '''
-It presents a D3D11 compute image once and then only polls Esc. Under DXVK
-nothing reaches the session, not even DXVK_HUD. wine_dll_overrides
-d3d11=b;dxgi=b uses wined3d instead, which works.
+It presents a D3D11 compute image once, after ~17 s of rendering, and then
+only polls Esc. DXVK and wined3d's GL renderer present black; wined3d with
+renderer=vulkan works.
 '''
-meta = { wine_dll_overrides = "d3d11=b;dxgi=b" }
+meta = { wine_dll_overrides = "d3d11=b;dxgi=b", wine_d3d_config = "renderer=vulkan" }
 
 [zoo.155002]
 meta = { wine_res = "640x480" }
@@ -1956,6 +1968,10 @@ autodlg's undecorate step and hide the first ten seconds.
 '''
 meta = { wine_dll_overrides = "d3d9=b" }
 
+# Black Lines by Minas: only the cream background under DXVK, like polystreptikum
+[zoo.58998]
+meta = { wine_dll_overrides = "d3d9=b" }
+
 # Mescaline Synesthesia by deMarche: ships Unreal Speccy, which was started
 # instead and quits on "wrong ini-file version"
 [zoo.70380]
@@ -2246,3 +2262,6 @@ NVIDIA only. Prints "Necessary extensions are not supported" and quits
 without NV_register_combiners, NV_texture_shader and NV_vertex_program, none
 of which Mesa has.
 """
+
+[zoo.57055]
+meta = { wine_res = "1024x768" }

@@ -596,9 +596,12 @@
   out tinted with the clear colour. wined3d's `SampleCount=0` (env
   `WINE_D3D_CONFIG`, now the `wine_d3d_config` meta key) turns multisampling off.
 
-- Night Time (`zoo.155141`) presents a D3D11 compute image once and then only
-  polls Esc. Under DXVK nothing reaches the session, not even `DXVK_HUD`;
-  `d3d11=b;dxgi=b` works. Undecorating was not the cause:
+- Night Time (`zoo.155141`) presents a D3D11 compute image once, ~17 s in,
+  and then only polls Esc. Under DXVK nothing reaches the session, not even
+  `DXVK_HUD`. `d3d11=b;dxgi=b` was wrongly recorded as working: wined3d's GL
+  renderer shows the white window until the present, then black. Watch a
+  draw-once intro for 30 s or more before calling a fix good. wined3d with
+  `wine_d3d_config=renderer=vulkan` draws it. Undecorating was not the cause:
   `-x wine_dialog_res=pick` (autodlg `--no-fill`) was still black.
 
 - On (`zoo.136151`) asserts with `int3` (`0x80000003`) when
@@ -1572,3 +1575,17 @@
   `x86.rs` unpack spends its time, step the `Cpu` from a throwaway example and
   sum `_rdtsc()` deltas per `eip`: that found a 1 GB `rep stosw` costing more
   than all the other instructions together.
+
+- `strings` splits a shader at its newlines, so a `#version 120` line printed
+  above the source looks unrelated; check the bytes before a patch adds a
+  version. An `^(.)` edit then also matches after that newline and inserts it
+  twice (Off The Shelf, `zoo.4768`).
+
+- A first fix for an early cross fade made the activity measure ignore the
+  load bar, but the default run had no activity check at all
+  (`--cross-fade-activity` was unset). Reproduce the reported case headless
+  with `DEMARC_FRAME_STATS` before changing a measure.
+
+- Minas' D3D9 intros (polystreptikum `zoo.66322`, Black Lines `zoo.58998`)
+  show only their background colour under DXVK and draw correctly with
+  `wine_dll_overrides=d3d9=b`. For another Minas release, try that first.

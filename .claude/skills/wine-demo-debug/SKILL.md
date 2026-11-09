@@ -292,8 +292,9 @@ was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
 **D3D9 `CreateDevice` fails, then a NULL fault.** Check the present
 parameters for `D3DMULTISAMPLE_NONMASKABLE`: DXVK makes quality q into `1 << q`
 samples. wined3d with `wine_d3d_config = "SampleCount=0"` (Spilled,
-`zoo.51354`). A draw-once D3D11 intro black under DXVK: try
-`wine_dll_overrides=d3d11=b;dxgi=b` (Night Time, `zoo.155141`).
+`zoo.51354`). A draw-once D3D11 compute intro black under DXVK and
+wined3d GL: `wine_dll_overrides=d3d11=b;dxgi=b` with
+`wine_d3d_config=renderer=vulkan` (Night Time, `zoo.155141`, ~17 s to draw).
 
 **D3D9 scene with far too few objects, same on DXVK and wined3d.** A timer
 that multiplies QPC by 1/freq on the x87 loses it under the single-precision
