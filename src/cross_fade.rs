@@ -223,19 +223,20 @@ fn run_fade(mut state: ResMut<CrossFade>, mut views: Views, time: Res<Time>, arg
         swap_roles(&mut state, &mut views);
         return;
     }
-    let level = fading / FADE_TIME;
+    let t = fading / FADE_TIME;
+    let level = t * t * (3.0 - 2.0 * t);
+    let angle = level * std::f32::consts::FRAC_PI_2;
     if let Ok((_, mut emu, _, mut pp, _)) = views.get_mut(spare) {
         // `--max-time` counts from the fade, not from the hidden load.
         emu.start_time = started_at;
         pp.alpha = level;
-        // Equal power, so the pair keeps a steady loudness across the fade
-        // where a linear one would dip in the middle.
-        emu.set_volume(level.sqrt());
+        // Equal power, so the pair keeps a steady loudness across the fade.
+        emu.set_volume(angle.sin());
     }
     if let Some(origin) = state.origin
         && let Ok((_, emu, ..)) = views.get(origin)
     {
-        emu.set_volume((1.0 - level).sqrt());
+        emu.set_volume(angle.cos());
     }
 }
 
