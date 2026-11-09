@@ -1589,3 +1589,9 @@
 - Minas' D3D9 intros (polystreptikum `zoo.66322`, Black Lines `zoo.58998`)
   show only their background colour under DXVK and draw correctly with
   `wine_dll_overrides=d3d9=b`. For another Minas release, try that first.
+
+- Converting core frames straight into mapped wgpu buffers, to skip
+  `write_texture`'s staging copy, does not fit: `VideoFrame.pixels` must stay
+  CPU-readable while it waits in `frame_queue` (frame diff, RIFE, `frame_conv`),
+  and a wgpu buffer must be unmapped before the GPU can copy from it. Measure
+  first: `upload_frames` is ~75 µs per 704x576 frame (`--features hotpath`).

@@ -2265,3 +2265,12 @@ of which Mesa has.
 
 [zoo.57055]
 meta = { wine_res = "1024x768" }
+
+# Luma by Mercury
+[zoo.99227]
+fix_info = '''
+Zoomed in. It sets 1280x720 and makes a 1280x720 window, but sizes some passes
+from the 1920x1080 session.
+'''
+meta = { wine_res = "1280x720" }
+file = "hg-luma-final.zip"

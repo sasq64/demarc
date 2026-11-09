@@ -284,7 +284,10 @@ than the session cannot be set. A `returned -2` with a mode that fits is the
 refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
 640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
 in a corner, needs `wine_res` set to its own resolution, and so does a
-demo's own "surface with wrong size" box (Panjabmoore, `zoo.3620`). TinyPTC demos also need
+demo's own "surface with wrong size" box (Panjabmoore, `zoo.3620`). A
+zoomed-in GL picture with no dialog: `+relay` the `ChangeDisplaySettingsA`
+and `CreateWindowExA` sizes against the `glViewport`s (Luma, `zoo.99227`,
+1280x720). TinyPTC demos also need
 `wine_cnc_ddraw=true`, or `wine_res` turns them black (Bakkslide 7, `zoo.45277`). `wine_desktop=true`
 is for demos that do not survive a mode switch. A letterbox that is too wide
 was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
