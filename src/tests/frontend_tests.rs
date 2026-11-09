@@ -21,6 +21,7 @@ fn world() -> World {
     world.init_resource::<Messages<SetHudText>>();
     world.init_resource::<UiState>();
     world.init_resource::<HideMouse>();
+    world.init_resource::<ScreenDetection>();
     world.insert_resource(HeadlessTarget {
         image: Handle::default(),
         size: TARGET,
@@ -373,6 +374,28 @@ fn the_primary_monitor_wins_over_the_first() {
 
     assert_eq!(meta(&world, META_WIDESCREEN).as_deref(), Some("true"));
     assert_eq!(meta(&world, META_REFRESH).as_deref(), Some("144"));
+}
+
+#[test]
+fn the_monitor_the_window_is_on_wins_over_the_primary() {
+    let mut world = world();
+    world.remove_resource::<HeadlessTarget>();
+    world.spawn((monitor(2880, 1920, Some(120_000)), PrimaryMonitor));
+    let external = world.spawn(monitor(2560, 1440, Some(74_971))).id();
+    world.spawn((Window::default(), PrimaryWindow));
+
+    world.run_system_once(detect_screen).unwrap();
+    assert_eq!(meta(&world, META_WIDESCREEN).as_deref(), Some("false"));
+
+    let window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(window).insert(OnMonitor(external));
+    world.run_system_once(detect_screen).unwrap();
+
+    assert_eq!(meta(&world, META_WIDESCREEN).as_deref(), Some("true"));
+    assert_eq!(meta(&world, META_REFRESH).as_deref(), Some("75"));
 }
 
 #[test]

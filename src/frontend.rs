@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowMode};
+use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
@@ -413,38 +413,57 @@ const fn config_line_width() -> f32 {
 /// do, 3:2, 4:3 and 5:4 don't.
 const WIDE_ASPECT: f32 = 1.55;
 
-// TODO:
-//  * Use Current Monitor
-//  * Update if window moves to new monitor
+/// The monitor [`detect_screen`] last answered for, and which answers the
+/// command line gave instead.
+#[derive(Resource, Default)]
+pub(crate) struct ScreenDetection {
+    checked: bool,
+    given_widescreen: bool,
+    given_refresh: bool,
+    monitor: Option<Entity>,
+}
+
 fn detect_screen(
-    monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+    monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>,
+    window: Query<&OnMonitor, With<PrimaryWindow>>,
     headless: Option<Res<HeadlessTarget>>,
     settings: Res<AppSettings>,
+    mut detection: ResMut<ScreenDetection>,
 ) {
-    // Whichever monitor is the primary one, or the first there is: Wayland
-    // has no notion of a primary display, so waiting for one marked that
-    // way would be waiting forever.
-    let monitor = monitors
-        .iter()
-        .find(|(_, primary)| *primary)
-        .or_else(|| monitors.iter().next())
-        .map(|(monitor, _)| monitor);
+    // The monitor the window is on. Until winit says, the primary one or the
+    // first: Wayland has no notion of a primary display.
+    let monitor = window
+        .single()
+        .ok()
+        .and_then(|on| monitors.get(on.0).ok())
+        .or_else(|| monitors.iter().find(|(_, _, primary)| *primary))
+        .or_else(|| monitors.iter().next());
+    let entity = monitor.map(|(entity, _, _)| entity);
+    if !detection.checked {
+        detection.checked = true;
+        detection.given_widescreen = settings.system.has_meta(META_WIDESCREEN);
+        detection.given_refresh = settings.system.has_meta(META_REFRESH);
+    } else if detection.monitor == entity {
+        return;
+    }
+    detection.monitor = entity;
+    let monitor = monitor.map(|(_, monitor, _)| monitor);
     let size = match headless.as_deref() {
         Some(headless) => headless.size,
         None => match monitor {
             Some(monitor) => monitor.physical_size(),
-            None => panic!("No monitor!"),
+            None => return,
         },
     };
     debug!("MONITOR SIZE: {}x{}", size.x, size.y);
-    if !settings.system.has_meta(META_WIDESCREEN) && size.x != 0 && size.y != 0 {
+    if !detection.given_widescreen && size.x != 0 && size.y != 0 {
         let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
         debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
         settings.system.set_meta(META_WIDESCREEN, wide.to_string());
     }
     // Nothing to answer with when headless, and nothing that wants an answer
     // either: there is no display to be out of step with.
-    if !settings.system.has_meta(META_REFRESH)
+    if !detection.given_refresh
         && let Some(mhz) = monitor.and_then(|monitor| monitor.refresh_rate_millihertz)
         && mhz > 0
     {
@@ -730,8 +749,15 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (run_frontend, update_view_rects, zoom_pan, draw_current_emu_outline),
+            (
+                run_frontend,
+                update_view_rects,
+                zoom_pan,
+                draw_current_emu_outline,
+                detect_screen,
+            ),
         );
+        app.init_resource::<ScreenDetection>();
         app.add_systems(PostStartup, detect_screen);
         app.add_plugins((LoadingPlugin, FrameUploadPlugin, FrameConvPlugin));
     }

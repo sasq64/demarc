@@ -1545,3 +1545,15 @@
   while costing more than any hot loop. Time the run as well as counting it.
   `perf` may be unavailable (`kernel.perf_event_paranoid`), so a temporary
   per-`eip` histogram in `crinkler::decompress` is the fallback.
+
+- A 4k exe graphics whose one shader draw takes seconds (Hoody, `zoo.277165`)
+  stalls demarc's own loop on the shared GPU: the gamescope core's `retro_run`
+  is not called for 2-3 s at a time, so nothing the core draws can show then.
+  Log `retro_run` gaps before blaming core-side drawing code. Orders of
+  Magnitude keeps the GPU at 100% but in short draws, and demarc runs fine.
+
+- Headless runs are taken as a 16:9 screen and get a 1920x1080 wine session;
+  the 2880x1920 laptop panel is 3:2, so windowed runs on it get the narrow
+  1440x1080 one. Hoody then fails its 1920x1080 mode switch (`returned -2`)
+  and never shows. Pass `widescreen=false` to reproduce a windowed failure
+  headless before concluding that a demo works.
