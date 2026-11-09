@@ -1626,3 +1626,13 @@
 - When merging, list conflicts with `git diff --name-only --diff-filter=U`,
   not from a truncated `git merge` output: a `| tail` hid four of nine
   conflicted files, found only when the build failed.
+
+- An egui `Area` that skips even one frame fades back in (`visible_last_frame`
+  is false), which shows as a blink. `Picker::show` returning before drawing on
+  a pick caused it; to find such blinks, screenshot consecutive frames headless
+  and compare the brightness of the region.
+
+- A demo that "used to work" and now quits after loading can be the host, not
+  demarc: Tempus' `winegstreamer error: typefind` was there in the first log,
+  and the FLAC plugin had gone with an OS reinstall. `+relay` through demarc
+  was tried first and is too slow for a .NET launcher to come up at all.

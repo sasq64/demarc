@@ -451,6 +451,11 @@ stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synt
 (`gm.dls`), and so does `midiStream*` (Anorgatronikum, `zoo.32482`). Odd ACM
 codecs need installing in the prefix (`docs/WINE.md`).
 
+**Exit right after loading, `winegstreamer error: typefind`.** BASS hands
+formats it lacks (FLAC, AAC) to Media Foundation, i.e. host gstreamer. Try
+`gst-launch-1.0 filesrc location=<file> ! decodebin ! fakesink`; Arch needs
+`gst-plugins-good` for FLAC (Tempus, `zoo.301363`).
+
 **Web demo stops on its loading bar.** Read the console over CDP
 (`--remote-debugging-port`) with `--ozone-platform=headless
 --use-angle=gl-egl`, since headless SwiftShader hides driver failures. A

@@ -362,6 +362,7 @@ mod linux {
         wine_lines.push(rtkit_line());
         wine_lines.push(gamescope_core_line());
         wine_lines.push(gstreamer_line());
+        wine_lines.push(flac_line());
         wine_lines.push(chrome_line());
 
         let bundled = system_dir().join("win/prefix");
@@ -576,20 +577,39 @@ mod linux {
         }) {
             return Line::new(Status::Ok, NAME, "gstreamer plugins installed");
         }
-        const FIX: &str = "Install gst-plugins-ugly and gst-libav \
-                           (Debian: gstreamer1.0-plugins-ugly gstreamer1.0-libav)";
+        gst_plugins_line(
+            NAME,
+            &["asfdemux", "avdec_wmav2"],
+            "demos with WMA music are silent",
+            "Install gst-plugins-ugly and gst-libav \
+             (Debian: gstreamer1.0-plugins-ugly gstreamer1.0-libav)",
+        )
+    }
+
+    fn flac_line() -> Line {
+        gst_plugins_line(
+            "FLAC music",
+            &["flacparse", "flacdec"],
+            "demos playing FLAC through BASS exit after loading",
+            "Install gst-plugins-good (Arch: `sudo pacman -S gst-plugins-good`, \
+             Debian: gstreamer1.0-plugins-good)",
+        )
+    }
+
+    fn gst_plugins_line(name: &'static str, plugins: &[&str], effect: &str, fix: &str) -> Line {
         let Some(inspect) = find_tool("gst-inspect-1.0") else {
-            return Line::new(Status::Warn, NAME, "gstreamer not found").fix(FIX);
+            return Line::new(Status::Warn, name, "gstreamer not found").fix(fix);
         };
-        let missing: Vec<_> = ["asfdemux", "avdec_wmav2"]
-            .into_iter()
+        let missing: Vec<_> = plugins
+            .iter()
             .filter(|plugin| output_of(&inspect, &["--exists", plugin]).is_none())
+            .copied()
             .collect();
         if missing.is_empty() {
-            return Line::new(Status::Ok, NAME, "gstreamer plugins installed");
+            return Line::new(Status::Ok, name, "gstreamer plugins installed");
         }
-        let detail = format!("no {}: demos with WMA music are silent", missing.join(", "));
-        Line::new(Status::Warn, NAME, detail).fix(FIX)
+        let detail = format!("no {}: {effect}", missing.join(", "));
+        Line::new(Status::Warn, name, detail).fix(fix)
     }
 
     fn chrome_line() -> Line {
