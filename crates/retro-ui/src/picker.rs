@@ -200,6 +200,9 @@ pub struct Picker<T> {
     /// so [`Picker::show`] can steer it when the selection moves out of view
     /// while leaving the wheel free otherwise.
     list_scroll: f32,
+    /// The selection last scrolled into view, so the wheel is only overruled
+    /// when the selection moves.
+    list_followed: Option<usize>,
     /// Set when the list is (re-)opened: forces one re-query of the source and
     /// one scroll back to the restored selection.
     list_reopened: bool,
@@ -230,6 +233,7 @@ impl<T> Default for Picker<T> {
             list_selected: 0,
             list_pending_select: None,
             list_scroll: 0.0,
+            list_followed: None,
             list_reopened: false,
             list_title: (-1, Vec::new()),
             list_title_depth: 0,
@@ -502,10 +506,13 @@ impl<T: 'static> Picker<T> {
                     }
                 });
 
+                let follow = self.list_reopened || self.list_followed != Some(selected);
+                self.list_followed = Some(selected);
                 let scrolled = scroll_area(
                     ui,
                     selected,
                     self.list_scroll,
+                    follow,
                     &self.list_items,
                     |ui, rect, &id| {
                         let row = self.rows.entry(id).or_insert_with(|| {
@@ -576,9 +583,10 @@ fn visible_rows(ctx: &egui::Context) -> f32 {
 }
 
 /// Draws the scrollable, fixed-row-height list of `items`, highlighting row
-/// `selected` and scrolling the least that keeps it in view. Each visible row is
-/// handed to `render` along with the rect it was allocated, so the items can be
-/// anything at all -- only their painting is the caller's business.
+/// `selected` and, when `follow`, scrolling the least that brings it into view.
+/// Each visible row is handed to `render` along with the rect it was allocated,
+/// so the items can be anything at all -- only their painting is the caller's
+/// business.
 ///
 /// Sizes itself: as wide as `ui` leaves room for, and [`visible_rows`] rows tall.
 /// Returns the row clicked, if any, and whether it was a double click.
@@ -586,6 +594,7 @@ fn scroll_area<T>(
     ui: &mut Ui,
     selected: usize,
     list_scroll: f32,
+    follow: bool,
     items: &[T],
     mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
@@ -609,10 +618,12 @@ fn scroll_area<T>(
             // Clamped to the end of the content as well, the same way egui
             // clamps whatever offset it is handed.
             let max_offset = (items.len() as f32 * ROW_HEIGHT - view_height).max(0.0);
-            let offset = list_scroll
-                .min(top)
-                .max(top + ROW_HEIGHT - view_height)
-                .clamp(0.0, max_offset);
+            let offset = if follow {
+                list_scroll.min(top).max(top + ROW_HEIGHT - view_height)
+            } else {
+                list_scroll
+            };
+            let offset = offset.clamp(0.0, max_offset);
             scroll = scroll.vertical_scroll_offset(offset);
             ui.set_width(ui.available_width());
             // Manual text rendering below, spacing > 0 will make it incorrect

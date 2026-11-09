@@ -1636,3 +1636,8 @@
   demarc: Tempus' `winegstreamer error: typefind` was there in the first log,
   and the FLAC plugin had gone with an OS reinstall. `+relay` through demarc
   was tried first and is too slow for a .NET launcher to come up at all.
+
+- "The wheel doesn't scroll" in the picker was the picker re-clamping its
+  offset to the selection every frame, not bevy_egui input. A `MouseWheel`
+  test in the `Harness` (next to a plain `ScrollArea` as control) settles which
+  side is at fault before reading bevy_egui's input path.

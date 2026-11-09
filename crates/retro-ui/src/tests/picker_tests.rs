@@ -23,7 +23,7 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                     crate::show_panel(ui, |ui| {
                         ui.label(egui::RichText::new("query").size(QUERY_SIZE));
                     });
-                    let out = scroll_area(ui, items.saturating_sub(1), 0.0, &ids, |_, _, _| {});
+                    let out = scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, |_, _, _| {});
                     height = out.inner_rect.height();
                 });
         }
@@ -325,4 +325,30 @@ fn click_selects_and_double_click_picks() {
     let picked = step(&mut h, &mut picker, vec![button(false)]).expect("a pick");
     assert_eq!(picked.text, "cherry");
     assert!(!picker.is_open());
+}
+
+/// The wheel scrolls the list away from the selection, and an arrow key brings
+/// it back.
+#[test]
+fn wheel_scrolls_past_the_selection() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
+    let pos = h.find("row 3").center();
+    step(&mut h, &mut picker, vec![egui::Event::PointerMoved(pos)]);
+    let wheel = egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, -5.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    };
+    for _ in 0..10 {
+        step(&mut h, &mut picker, vec![wheel.clone()]);
+    }
+    step(&mut h, &mut picker, vec![]);
+    assert!(!h.has("row 0"));
+    assert_eq!(picker.selected_item(1), Some(0));
+
+    step(&mut h, &mut picker, vec![key(egui::Key::ArrowDown)]);
+    step(&mut h, &mut picker, vec![]);
+    assert!(h.has("row 1"));
 }
