@@ -1622,3 +1622,7 @@
   CPU-readable while it waits in `frame_queue` (frame diff, RIFE, `frame_conv`),
   and a wgpu buffer must be unmapped before the GPU can copy from it. Measure
   first: `upload_frames` is ~75 µs per 704x576 frame (`--features hotpath`).
+
+- When merging, list conflicts with `git diff --name-only --diff-filter=U`,
+  not from a truncated `git merge` output: a `| tail` hid four of nine
+  conflicted files, found only when the build failed.
