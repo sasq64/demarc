@@ -436,12 +436,12 @@ fn worker_loop(
 
             let frame_diff;
             if let Some(log) = &mut stats_log {
-                let stats = get_frame_stats(&frame, &last_frame, aggregated_diff);
+                let stats = get_frame_stats(&frame, &last_frame, width, aggregated_diff);
                 (frame_diff, aggregated_diff) = (stats.frame_diff, stats.aggregated_diff);
                 log.log(frames.load(Ordering::Relaxed), width, height, &stats);
             } else {
                 (frame_diff, aggregated_diff) =
-                    get_frame_diff(&frame, &last_frame, aggregated_diff);
+                    get_frame_diff(&frame, &last_frame, width, aggregated_diff);
             }
             last_frame = Arc::clone(&frame);
 

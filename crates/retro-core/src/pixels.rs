@@ -88,9 +88,9 @@ pub struct FrameStats {
     pub frame_diff: f32,
 
     // Moving average of "did anything move", 0.0 to 1.0. A frame counts as
-    // active as soon as a handful of pixels changed, so a moving starfield and
-    // a full black-to-white flash both drive it towards 1.0; it only falls
-    // while frames are identical.
+    // active as soon as a handful of pixels changed, and weighs in by the share
+    // of the screen that changed, so a picture drawn in one frame lifts it at
+    // once; it only falls while frames are identical.
     pub aggregated_diff: f32,
 }
 
@@ -259,15 +259,29 @@ fn diff_pixels(frame: &[u32], last_frame: &[u32], skip: usize) -> (u64, u64, usi
     diff_pixels_scalar(frame, last_frame, skip)
 }
 
+/// Fraction of the rows at the top that motion is not measured in, so an
+/// overlay drawn there (gamescope's load bar) does not count as activity.
+const SKIP_TOP: usize = 16;
+
 /// Motion only: `(frame_diff, aggregated_diff)` as [`get_frame_stats`] would
 /// compute them, without the two extra passes the average colour costs, and
 /// from a [`SAMPLE_TARGET`]-pixel sample rather than the whole frame.
 /// `last_frame` of a different length than `frame` counts as no change.
-pub fn get_frame_diff(frame: &[u32], last_frame: &[u32], prev_aggregated: f32) -> (f32, f32) {
+pub fn get_frame_diff(
+    frame: &[u32],
+    last_frame: &[u32],
+    width: usize,
+    prev_aggregated: f32,
+) -> (f32, f32) {
     let decayed = prev_aggregated - prev_aggregated * AGG_ALPHA;
     if frame.is_empty() || last_frame.len() != frame.len() {
         return (0.0, decayed);
     }
+    let top = match width {
+        0 => 0,
+        w => frame.len() / w / SKIP_TOP * w,
+    };
+    let (frame, last_frame) = (&frame[top..], &last_frame[top..]);
 
     let (mut changed, mut moved, mut sampled) = (0, 0, 0);
     let runs = frame.chunks(SAMPLE_RUN).zip(last_frame.chunks(SAMPLE_RUN));
@@ -284,9 +298,10 @@ pub fn get_frame_diff(frame: &[u32], last_frame: &[u32], prev_aggregated: f32) -
     // swing is 1.0.
     let fraction = moved as f32 / sampled as f32;
     let activity = 1.0 - (-fraction / ACTIVE_FRACTION).exp();
+    let weight = fraction.max(AGG_ALPHA);
     (
         changed as f32 / (sampled as f32 * 3.0 * 255.0),
-        prev_aggregated + (activity - prev_aggregated) * AGG_ALPHA,
+        prev_aggregated + (activity - prev_aggregated) * weight,
     )
 }
 
@@ -294,8 +309,13 @@ pub fn get_frame_diff(frame: &[u32], last_frame: &[u32], prev_aggregated: f32) -
 /// `aggregated_diff` of the previous frame (`0.0` to start); `last_frame` of a
 /// different length than `frame` counts as no change. Only [`FrameStatsLog`]
 /// wants the average colour; everything else takes [`get_frame_diff`].
-pub fn get_frame_stats(frame: &[u32], last_frame: &[u32], prev_aggregated: f32) -> FrameStats {
-    let (frame_diff, aggregated_diff) = get_frame_diff(frame, last_frame, prev_aggregated);
+pub fn get_frame_stats(
+    frame: &[u32],
+    last_frame: &[u32],
+    width: usize,
+    prev_aggregated: f32,
+) -> FrameStats {
+    let (frame_diff, aggregated_diff) = get_frame_diff(frame, last_frame, width, prev_aggregated);
     let count = frame.len();
     if count == 0 {
         return FrameStats {

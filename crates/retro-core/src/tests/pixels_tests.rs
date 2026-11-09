@@ -36,7 +36,7 @@ fn frame_stats_hit_their_reference_values() {
     let black = u32::from_ne_bytes([0, 0, 0, 255]);
 
     let flat = vec![white; 64];
-    let stats = get_frame_stats(&flat, &[], 0.0);
+    let stats = get_frame_stats(&flat, &[], 64, 0.0);
     assert_eq!(stats.avg_color, white);
     assert!(stats.color_diff < 0.001, "{}", stats.color_diff);
     assert_eq!(stats.frame_diff, 0.0);
@@ -44,7 +44,7 @@ fn frame_stats_hit_their_reference_values() {
     let checker: Vec<u32> = (0..64)
         .map(|i| if i % 2 == 0 { white } else { black })
         .collect();
-    let stats = get_frame_stats(&checker, &flat, 0.0);
+    let stats = get_frame_stats(&checker, &flat, 64, 0.0);
     assert!(
         (stats.color_diff - 0.5).abs() < 0.002,
         "{}",
@@ -56,20 +56,20 @@ fn frame_stats_hit_their_reference_values() {
         stats.frame_diff
     );
 
-    let stats = get_frame_stats(&vec![white; 64], &vec![black; 64], 0.0);
+    let stats = get_frame_stats(&vec![white; 64], &vec![black; 64], 64, 0.0);
     assert!(
         (stats.frame_diff - 1.0).abs() < 0.001,
         "{}",
         stats.frame_diff
     );
-    // One frame of a moving average, from a standing start.
-    assert!((stats.aggregated_diff - AGG_ALPHA).abs() < 0.001);
+    // The whole screen changed, so it counts in full at once.
+    assert!((stats.aggregated_diff - 1.0).abs() < 0.001);
 }
 
-/// A moving starfield has to read as "something is happening" just as much as a
-/// screen-wide flash does, and an unchanged screen has to decay.
+/// A moving starfield has to read as "something is happening", a screen-wide
+/// change weighs more, and an unchanged screen has to decay.
 #[test]
-fn aggregated_diff_ignores_how_much_moved() {
+fn aggregated_diff_weighs_big_changes_more() {
     let white = u32::from_ne_bytes([255, 255, 255, 255]);
     let black = u32::from_ne_bytes([0, 0, 0, 255]);
     let count = 320 * 240;
@@ -80,12 +80,25 @@ fn aggregated_diff_ignores_how_much_moved() {
         stars[i * 371 % count] = white;
     }
 
-    let starfield = get_frame_stats(&stars, &dark, 0.0).aggregated_diff;
-    let flash = get_frame_stats(&vec![white; count], &dark, 0.0).aggregated_diff;
-    assert!(starfield > flash * 0.9, "{starfield} vs {flash}");
+    let starfield = get_frame_stats(&stars, &dark, 320, 0.0).aggregated_diff;
+    let flash = get_frame_stats(&vec![white; count], &dark, 320, 0.0).aggregated_diff;
+    assert!(starfield > AGG_ALPHA * 0.9, "{starfield}");
+    assert!(flash > 0.99, "{flash}");
 
-    let still = get_frame_stats(&stars, &stars, flash).aggregated_diff;
+    let still = get_frame_stats(&stars, &stars, 320, flash).aggregated_diff;
     assert!(still < flash, "{still} vs {flash}");
+}
+
+/// gamescope's load bar in the top corner changing is not activity.
+#[test]
+fn frame_diff_ignores_top_rows() {
+    let (width, height) = (640, 480);
+    let dark = vec![0u32; width * height];
+    let mut bar = dark.clone();
+    for y in 8..20 {
+        bar[y * width..y * width + 40].fill(0x00c0_c0c0);
+    }
+    assert_eq!(get_frame_diff(&bar, &dark, width, 0.0), (0.0, 0.0));
 }
 
 /// Micro-benchmark of the per-frame statistics, which run on the emulator
@@ -124,11 +137,11 @@ fn frame_stats_bench() {
         };
         bench(
             "get_frame_stats",
-            Box::new(|a, b, agg| get_frame_stats(a, b, agg).aggregated_diff),
+            Box::new(move |a, b, agg| get_frame_stats(a, b, width, agg).aggregated_diff),
         );
         bench(
             "get_frame_diff",
-            Box::new(|a, b, agg| get_frame_diff(a, b, agg).1),
+            Box::new(move |a, b, agg| get_frame_diff(a, b, width, agg).1),
         );
         bench(
             "diff (scalar)",

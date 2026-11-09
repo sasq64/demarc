@@ -258,8 +258,8 @@ pub struct Args {
 
     /// Hold the cross fade back until the hidden emulator's screen activity
     /// rises above this threshold (0-1).
-    #[arg(long)]
-    pub cross_fade_activity: Option<f32>,
+    #[arg(long, default_value_t = 0.02)]
+    pub cross_fade_activity: f32,
 
     /// Open a second window showing the cross fade emulator, and fade it in
     /// only when asked to (RightAlt+Shift+O). Implies `--cross-fade`.

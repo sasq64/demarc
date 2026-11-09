@@ -846,7 +846,7 @@ fn worker_loop(
         }
         let pixels = unsafe { std::slice::from_raw_parts(shm.pixels(slot), len) };
         let frame_diff;
-        (frame_diff, aggregated_diff) = get_frame_diff(pixels, &last_frame, aggregated_diff);
+        (frame_diff, aggregated_diff) = get_frame_diff(pixels, &last_frame, width, aggregated_diff);
         last_frame.clear();
         last_frame.extend_from_slice(pixels);
 

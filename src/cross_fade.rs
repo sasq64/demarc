@@ -206,15 +206,13 @@ fn run_fade(mut state: ResMut<CrossFade>, mut views: Views, time: Res<Time>, arg
             if ((now - loaded_at) as f32) < DELAY_TIME {
                 return;
             }
-            if let Some(threshold) = args.cross_fade_activity {
-                let activity = views
-                    .get(spare)
-                    .ok()
-                    .and_then(|(_, emu, ..)| emu.core.as_ref().map(|c| c.screen_activity()))
-                    .unwrap_or(1.0);
-                if activity < threshold {
-                    return;
-                }
+            let activity = views
+                .get(spare)
+                .ok()
+                .and_then(|(_, emu, ..)| emu.core.as_ref().map(|c| c.screen_activity()))
+                .unwrap_or(1.0);
+            if activity < args.cross_fade_activity {
+                return;
             }
             state.fade_at = Some(now);
             now
