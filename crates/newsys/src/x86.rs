@@ -66,8 +66,8 @@ impl Memory {
         }
     }
 
-    /// Repeat `pattern` over `len` bytes from `addr`. Zeros leave pages that
-    /// were never written alone, as they read as zero already.
+    /// Repeat `pattern` over `len` bytes from `addr`. Zeros free whole pages
+    /// rather than allocate or write them.
     pub fn fill(&mut self, addr: u32, len: u64, pattern: &[u8]) {
         let zero = pattern.iter().all(|b| *b == 0);
         let mut done = 0u64;
@@ -76,7 +76,13 @@ impl Memory {
             let off = (at % PAGE) as usize;
             let chunk = (PAGE as usize - off).min((len - done) as usize);
             let slot = &mut self.pages[(at / PAGE) as usize];
-            if !(zero && slot.is_none()) {
+            if zero {
+                match slot {
+                    Some(_) if chunk == PAGE as usize => *slot = None,
+                    Some(page) => page[off..off + chunk].fill(0),
+                    None => {}
+                }
+            } else {
                 let page = slot.get_or_insert_with(|| Box::new([0; PAGE as usize]));
                 for (i, b) in page[off..off + chunk].iter_mut().enumerate() {
                     *b = pattern[(done as usize + i) % pattern.len()];

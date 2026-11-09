@@ -1567,3 +1567,8 @@
 
 - Luau in `--remote-control` has no `os.getenv`: the script dies silently
   with no output at all. Bake values into the script instead.
+
+- perf can't open events on this machine (even unsandboxed). To find where an
+  `x86.rs` unpack spends its time, step the `Cpu` from a throwaway example and
+  sum `_rdtsc()` deltas per `eip`: that found a 1 GB `rep stosw` costing more
+  than all the other instructions together.
