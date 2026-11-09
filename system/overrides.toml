@@ -1244,7 +1244,7 @@ it. demarc unpacks Crinkler exes and wraps CreateWindowExA, giving such a
 window the screen's size as Windows does (docs/CRINKLER.md). The exe demarc
 picks is letterboxed for 1280x1024.
 """
-meta = { wine_res = "1280x1024" }
+meta = { wine_res = "1024x768" }
 
 # Slisesix by rgba: quits when its 1280x1024 mode switch fails in the 1280x720
 # session its file name gives
