@@ -50,6 +50,8 @@ const ICON_SIZE: f32 = ROW_SIZE;
 const ICON_GAP: f32 = 8.0;
 
 const TITLE_SIZE: f32 = 30.0;
+/// Extra room under the title, so a panel glow doesn't run into it.
+const TITLE_GAP: f32 = 12.0;
 
 const INFO_SIZE: f32 = 22.0;
 /// How many lines of info the field below the list reserves room for. Fixed, so
@@ -414,15 +416,20 @@ impl<T: 'static> Picker<T> {
         };
         self.list_selected = selected;
 
+        let mut picked = None;
         if pick && let Some(&item) = self.list_items.get(selected) {
-            self.show_list = self.keep_open;
-            return Some(Picked {
+            picked = Some(Picked {
                 id: self.list_id,
                 item: source.get_item(item),
                 text: source.get_text(item),
                 alt,
                 data: source.get_data(item),
             });
+            // Still drawn this frame when kept open, or egui fades it back in.
+            if !self.keep_open {
+                self.show_list = false;
+                return picked;
+            }
         }
 
         // Describe the highlighted item, asking the source only when it changes
@@ -471,6 +478,7 @@ impl<T: 'static> Picker<T> {
                             }
                         }
                     });
+                    ui.add_space(TITLE_GAP);
                 }
                 theme.panel.show(ui, |ui| {
                     let inner_width = ui.available_width();
@@ -554,7 +562,7 @@ impl<T: 'static> Picker<T> {
                 });
             }
         }
-        None
+        picked
     }
 }
 
