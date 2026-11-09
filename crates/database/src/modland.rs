@@ -9,7 +9,7 @@ use newsys::{NewSys, SongName};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo, Meta},
+    emu_file::{EmuFile, FileSource, GameInfo, Meta, split_values},
     files::{DbFilter, leak},
 };
 
@@ -245,17 +245,16 @@ pub fn collect(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     for (platform, url, title, author) in songs {
         let url = &buf[url];
         let mut meta = vec![("download", url), ("title", &buf[title])];
-        if !platform.is_empty() {
-            meta.push(("platform", platform));
-        }
         if !author.is_empty() {
             meta.push(("author", &buf[author]));
         }
         let meta = Meta::from(meta);
         out.push(EmuFile {
-            game_info: GameInfo::new(&meta),
+            game_info: GameInfo::new(&meta, &[]),
             path: FileSource::Url(url.split(';').collect::<Vec<_>>().into()),
             meta,
+            platforms: split_values(platform),
+            ..Default::default()
         });
     }
 }

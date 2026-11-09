@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow, bail};
 use newsys::SongName;
 use newsys::fetch::is_download_cached;
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::HashSet,
     path::{Path, PathBuf},
@@ -860,10 +861,10 @@ impl<const N: usize> From<[(&'static str, &'static str); N]> for Meta {
 }
 
 impl GameInfo {
-    pub fn new(meta: &Meta) -> Self {
+    pub fn new(meta: &Meta, categories: &[&'static str]) -> Self {
         let title = meta.get("title").unwrap_or("");
         let author = meta.get("author").unwrap_or("");
-        let category = meta.get("category").unwrap_or("");
+        let category = categories.first().copied().unwrap_or("");
 
         let date = CompactDate::parse(meta.get("date").unwrap_or("")).unwrap_or_default();
 
@@ -931,9 +932,28 @@ pub struct EmuFile {
     pub path: FileSource,
     pub meta: Meta,
     pub game_info: GameInfo,
+    pub platforms: Box<[&'static str]>,
+    pub categories: Box<[&'static str]>,
+}
+
+/// Split a `;`-separated `platform`/`category` value into its parts.
+pub fn split_values(val: &'static str) -> Box<[&'static str]> {
+    val.split(';').map(str::trim).filter(|v| !v.is_empty()).collect()
 }
 
 impl EmuFile {
+    /// The meta plus `platform` and `category`, joined with `;`.
+    pub fn meta_strings(&self) -> impl Iterator<Item = (&'static str, Cow<'static, str>)> + '_ {
+        let lists = [("platform", &self.platforms), ("category", &self.categories)]
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| match **v {
+                [one] => (k, Cow::Borrowed(one)),
+                _ => (k, Cow::Owned(v.join(";"))),
+            });
+        self.meta.iter().map(|(k, v)| (k, Cow::Borrowed(v))).chain(lists)
+    }
+
     pub fn is_cached(&self) -> bool {
         self.path.is_cached()
     }

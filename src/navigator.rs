@@ -519,8 +519,10 @@ pub fn setup_navigator(
         Some(AllWordsSource::new(
             files
                 .iter()
-                .map(|f| f.get_meta("platform"))
-                .filter(|p| !p.is_empty() && !p.contains(";"))
+                .filter_map(|f| match *f.platforms {
+                    [one] => Some(one),
+                    _ => None,
+                })
                 .collect::<IndexSet<_>>()
                 .into_iter()
                 .map(String::from)
@@ -530,8 +532,10 @@ pub fn setup_navigator(
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
         let mut cats: Vec<String> = files
             .iter()
-            .map(|f| f.get_meta("category"))
-            .filter(|p| !p.is_empty() && !p.contains(";"))
+            .filter_map(|f| match *f.categories {
+                [one] => Some(one),
+                _ => None,
+            })
             .collect::<IndexSet<_>>()
             .into_iter()
             .map(String::from)
@@ -573,7 +577,7 @@ pub fn setup_navigator(
             let subset: Vec<u32> = files
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| f.get_meta("platform") == path[1])
+                .filter(|(_, f)| *f.platforms == [path[1]])
                 .map(|(i, _)| i as u32)
                 .collect();
             Some(PickerSource::new(
@@ -590,7 +594,7 @@ pub fn setup_navigator(
             let subset: Vec<u32> = files
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| f.get_meta("category") == path[1])
+                .filter(|(_, f)| *f.categories == [path[1]])
                 .map(|(i, _)| i as u32)
                 .collect();
             Some(PickerSource::new(

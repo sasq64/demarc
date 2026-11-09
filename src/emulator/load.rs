@@ -87,9 +87,8 @@ pub fn load_async(
     // builds own their meta, so the entry's borrowed pairs are copied into
     // `String`s here, at the one boundary where the file list hands work off.
     let mut meta: HashMap<String, String> = emu_file
-        .meta
-        .iter()
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .meta_strings()
+        .map(|(k, v)| (k.to_owned(), v.into_owned()))
         .chain(global.0.iter().map(|(k, v)| ((*k).to_owned(), v.clone())))
         .collect();
     if over.is_some_and(|o| o.sfx) {
@@ -362,9 +361,8 @@ impl Emulator {
         // borrowed pairs are copied into `String`s here, at the one boundary
         // where the file list hands work off.
         let meta: HashMap<String, String> = emu_file
-            .meta
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .meta_strings()
+            .map(|(k, v)| (k.to_owned(), v.into_owned()))
             .collect();
 
         let work_file = newsys::unpack_release(path, &meta)?;

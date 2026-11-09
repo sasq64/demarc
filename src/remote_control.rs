@@ -350,8 +350,8 @@ fn process_memory() -> Option<(u64, u64)> {
 
 fn file_table(lua: &Lua, file: &EmuFile) -> mlua::Result<mlua::Table> {
     let table = lua.create_table()?;
-    for (key, value) in file.meta.iter() {
-        table.set(key, value)?;
+    for (key, value) in file.meta_strings() {
+        table.set(key, value.as_ref())?;
     }
     table.set("id", script_id(file))?;
     Ok(table)

@@ -82,7 +82,7 @@ fn collect_db_parses_named_fields() {
     assert_eq!(zentro.game_info.title, "Zentro 4");
     assert_eq!(zentro.game_info.group, "Zenith");
     assert_eq!(zentro.game_info.year(), 1992);
-    assert_eq!(zentro.get_meta("category"), "Demo");
+    assert_eq!(*zentro.categories, ["Demo"]);
     assert_eq!(zentro.get_meta("party"), "The Party 1992");
     assert_eq!(zentro.get_meta("tags"), "has effects");
 
@@ -110,8 +110,8 @@ fn collect_db_reads_packed_dbs() {
         assert_eq!(eod.game_info.group, "Booze Design", "{packed}");
         assert_eq!(eod.game_info.year(), 2008, "{packed}");
         // The `# Platform:C64` header applies just as it does unpacked.
-        assert_eq!(eod.get_meta("platform"), "C64", "{packed}");
-        assert_eq!(eod.get_meta("category"), "demo", "{packed}");
+        assert_eq!(*eod.platforms, ["C64"], "{packed}");
+        assert_eq!(*eod.categories, ["demo"], "{packed}");
         let FileSource::Url(urls) = &eod.path else {
             panic!("db entries stay URLs until loaded, got {:?}", eod.path)
         };
@@ -133,11 +133,8 @@ fn collect_db_parses_filtered_lines() {
     );
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].game_info.title, "Speedball Demo");
-    assert_eq!(out[0].get_meta("category"), "Demo");
-    assert!(
-        !out[0].meta.contains_key("platform"),
-        "no header, no platform"
-    );
+    assert_eq!(*out[0].categories, ["Demo"]);
+    assert!(out[0].platforms.is_empty(), "no header, no platform");
 }
 
 /// `--include`/`--exclude` drop non-matching lines while collecting, but
@@ -167,7 +164,7 @@ fn collect_db_applies_filter() {
         ..Default::default()
     });
     assert_eq!(kept, ["Zentro 4", "Nexus 7"]);
-    assert_eq!(out[0].get_meta("platform"), "Amiga", "header still applies");
+    assert_eq!(*out[0].platforms, ["Amiga"], "header still applies");
 
     let exclude = re("category:Musicdisk");
     let (kept, _) = titles(&DbFilter {
@@ -270,9 +267,9 @@ fn collect_db_platform_tags_lines() {
 
     let mut out = vec![];
     collect_db(&db, &DbFilter::default(), &mut out).unwrap();
-    assert_eq!(out[0].get_meta("platform"), "Amiga", "header applies");
-    assert_eq!(out[0].get_meta("category"), "Demo");
-    assert_eq!(out[1].get_meta("platform"), "C64", "line overrides header");
+    assert_eq!(*out[0].platforms, ["Amiga"], "header applies");
+    assert_eq!(*out[0].categories, ["Demo"]);
+    assert_eq!(*out[1].platforms, ["C64"], "line overrides header");
 }
 
 /// The other pairs of a header line become meta on every entry below it,
@@ -290,7 +287,7 @@ fn collect_db_applies_header_tags() {
         &mut out,
     );
 
-    assert_eq!(out[0].get_meta("platform"), "Amiga");
+    assert_eq!(*out[0].platforms, ["Amiga"]);
     assert_eq!(out[0].get_meta("puae_model"), "A500");
     assert!(!out[0].meta.contains_key("Just"));
     assert!(!out[0].meta.contains_key("comment"));
@@ -299,7 +296,7 @@ fn collect_db_applies_header_tags() {
     // applies.
     assert_eq!(out[1].get_meta("puae_model"), "A1200");
     assert_eq!(out[1].get_meta("tags"), "aga");
-    assert_eq!(out[1].get_meta("platform"), "Amiga");
+    assert_eq!(*out[1].platforms, ["Amiga"]);
 }
 
 /// A song and its secondary file land in one directory, and neither is any
@@ -454,4 +451,38 @@ fn collect_db_unless_skips_by_name() {
     let name = collect_db_unless(&db, &DbFilter::default(), &mut out, |_| false).unwrap();
     assert_eq!(name.as_deref(), Some("CSDb"));
     assert_eq!(out.len(), 1);
+}
+
+const CODED_DB: &str = "# Demozoo\n\
+     # PLATFORMS A:Amiga AGA,B:Windows\n\
+     # CATEGORIES A:Demo,B:4K Intro\n\
+     id:1\ttitle:One\tpAB\tcA\tdownload:http://example.com/one\n\
+     id:2\ttitle:Two\tpB\tcB\tdownload:http://example.com/two\n\
+     id:3\ttitle:Three\tpA\tcA\tdownload:http://example.com/three\n";
+
+/// `p`/`c` fields are codes into the header tables, one per value.
+#[test]
+fn collect_db_decodes_coded_fields() {
+    let mut out = vec![];
+    collect_db_text(CODED_DB, &DbFilter::default(), &mut out);
+    assert_eq!(*out[0].platforms, ["Amiga AGA", "Windows"]);
+    assert_eq!(*out[0].categories, ["Demo"]);
+    assert_eq!(out[0].game_info.category, "Demo");
+    assert_eq!(*out[1].categories, ["4K Intro"]);
+    assert!(std::ptr::eq(out[0].platforms[0], out[2].platforms[0]));
+    let meta: Vec<_> = out[0].meta_strings().collect();
+    assert!(meta.contains(&("platform", "Amiga AGA;Windows".into())));
+}
+
+/// Filters see coded fields in their `key:value` form.
+#[test]
+fn collect_db_filters_coded_fields() {
+    let titles = |include: &[Regex], exclude: &[Regex]| {
+        let mut out = vec![];
+        collect_db_text(CODED_DB, &DbFilter { include, exclude }, &mut out);
+        out.iter().map(|f| f.game_info.title).collect::<Vec<_>>()
+    };
+    let re = |p: &str| [Regex::new(p).unwrap()];
+    assert_eq!(titles(&re("^category:Demo$"), &[]), ["One", "Three"]);
+    assert_eq!(titles(&[], &re("platform:.*Windows")), ["Three"]);
 }

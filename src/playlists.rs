@@ -7,7 +7,7 @@ use anyhow::Result;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::emu_file::{EmuFile, FileSource, GameInfo, Meta, UrlList};
+use crate::emu_file::{EmuFile, FileSource, GameInfo, Meta, UrlList, split_values};
 use crate::files::leak;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 
@@ -32,9 +32,8 @@ impl PlaylistEntry {
                 FileSource::Url(_) => None,
             },
             meta: file
-                .meta
-                .iter()
-                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .meta_strings()
+                .map(|(k, v)| (k.to_owned(), v.into_owned()))
                 .collect(),
         };
         if let Some(download) = entry.meta.get_mut("download") {
@@ -48,9 +47,13 @@ impl PlaylistEntry {
     }
 
     pub fn to_emu_file(&self) -> EmuFile {
+        let list = |key| self.meta.get(key).map(|v| split_values(leak(v.clone())));
+        let platforms = list("platform").unwrap_or_default();
+        let categories = list("category").unwrap_or_default();
         let meta: Meta = self
             .meta
             .iter()
+            .filter(|(k, _)| *k != "platform" && *k != "category")
             .map(|(k, v)| (leak(k.clone()), leak(v.clone())))
             .collect();
         let path = match &self.path {
@@ -60,9 +63,11 @@ impl PlaylistEntry {
             )),
         };
         EmuFile {
-            game_info: GameInfo::new(&meta),
+            game_info: GameInfo::new(&meta, &categories),
             path,
             meta,
+            platforms,
+            categories,
         }
     }
 }

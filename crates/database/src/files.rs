@@ -6,10 +6,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
-    emu_file::{CompactDate, EmuFile, FileSource, GameInfo, Meta, UrlList, set_pair},
+    emu_file::{CompactDate, EmuFile, FileSource, GameInfo, Meta, UrlList, set_pair, split_values},
     m3u::M3u,
     modland,
     utils::{is_disk_image, unpack_if_packed},
@@ -20,6 +20,8 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut group: &'static str = "";
     let mut date = CompactDate::default();
     let mut meta = Vec::new();
+    let mut platforms = Box::default();
+    let mut categories = Box::default();
 
     let m3u = M3u::from_file(in_path)?;
 
@@ -39,6 +41,10 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
         } else if key == "year" {
             let year = val.parse::<u32>().unwrap_or(0);
             date = CompactDate::new(year, 0, 0)?;
+        } else if key == "platform" {
+            platforms = split_values(leak(val));
+        } else if key == "category" {
+            categories = split_values(leak(val));
         } else {
             set_pair(&mut meta, leak(key), leak(val));
         }
@@ -53,28 +59,13 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             category: "???",
             ..Default::default()
         },
+        platforms,
+        categories,
     })
 }
 
 // Lives beside `Override`, whose fields are what wants the `'static`.
 pub use newsys::leak;
-
-/// Parse a `key:value`-per-field line, e.g.
-/// `id:1\ttitle:Zentro 4\tauthor:Zenith\t…`, into its pairs. Fields without a
-/// `:` are skipped.
-///
-/// Only the first `:` splits a field, leaving values (URLs above all) intact,
-/// and fields may appear in any order.
-fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
-    let mut result = vec![];
-    for field in line.split('\t') {
-        let Some((key, val)) = field.split_once(':') else {
-            continue;
-        };
-        result.push((key, val));
-    }
-    result
-}
 
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
@@ -92,6 +83,9 @@ fn parse_named_db_line(line: &str) -> Vec<(&str, &str)> {
 /// `platform` meta on each entry that doesn't name one itself. A header line
 /// may carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
 /// likewise become meta on every entry below it — see [`parse_db_header`].
+///
+/// `# PLATFORMS A:Amiga,B:Windows` and `# CATEGORIES A:Demo,…` headers let a
+/// line write `pAB` for `platform:Amiga;Windows`, one code per value.
 ///
 /// A db packed with gzip, bzip2 or Unix compress (`csdb.txt.gz`) is unpacked
 /// first, so it can be loaded exactly like the plain text file.
@@ -193,8 +187,15 @@ pub struct DbFilter<'a> {
 
 impl DbFilter<'_> {
     pub(crate) fn keeps(&self, line: &str) -> bool {
-        self.include.iter().all(|re| matches_field(re, line))
-            && !self.exclude.iter().any(|re| matches_field(re, line))
+        self.keeps_by(|re| matches_field(re, line))
+    }
+
+    fn keeps_by(&self, matches: impl Fn(&Regex) -> bool) -> bool {
+        self.include.iter().all(&matches) && !self.exclude.iter().any(&matches)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.include.is_empty() && self.exclude.is_empty()
     }
 }
 
@@ -264,12 +265,55 @@ fn parse_db_header(
     }
 }
 
+/// Code characters of the `# PLATFORMS` / `# CATEGORIES` tables, in order.
+fn code_index(c: u8) -> Option<usize> {
+    match c {
+        b'A'..=b'Z' => Some((c - b'A') as usize),
+        b'a'..=b'z' => Some((c - b'a') as usize + 26),
+        b'0'..=b'9' => Some((c - b'0') as usize + 52),
+        _ => None,
+    }
+}
+
+/// Parse `A:Amiga,B:Windows` into a table indexed by [`code_index`].
+fn parse_code_table(list: &'static str) -> Vec<&'static str> {
+    let mut table = Vec::new();
+    for (code, name) in list.split(',').filter_map(|e| e.split_once(':')) {
+        let Some(i) = code.bytes().next().and_then(code_index) else {
+            continue;
+        };
+        if table.len() <= i {
+            table.resize(i + 1, "");
+        }
+        table[i] = name;
+    }
+    table
+}
+
+fn decode(table: &[&'static str], codes: &str) -> Box<[&'static str]> {
+    codes
+        .bytes()
+        .filter_map(|c| {
+            let name = code_index(c)
+                .and_then(|i| table.get(i))
+                .filter(|n| !n.is_empty());
+            if name.is_none() {
+                warn!("Unknown db code {:?}", c as char);
+            }
+            name.copied()
+        })
+        .collect()
+}
+
 /// Parse the contents of a db file — see [`collect_db`] for the format.
 pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     let mut file_platform: Option<&'static str> = None;
 
     // Meta from header comments, applied to every entry below them.
     let mut file_meta = Vec::<(&'static str, &'static str)>::new();
+
+    let mut platform_table = Vec::new();
+    let mut category_table = Vec::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -278,34 +322,70 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
             continue;
         }
         if let Some(comment) = line.strip_prefix('#') {
-            parse_db_header(comment, &mut file_platform, &mut file_meta);
+            let comment = comment.trim_start();
+            if let Some(list) = comment.strip_prefix("PLATFORMS ") {
+                platform_table = parse_code_table(list);
+            } else if let Some(list) = comment.strip_prefix("CATEGORIES ") {
+                category_table = parse_code_table(list);
+            } else {
+                parse_db_header(comment, &mut file_platform, &mut file_meta);
+            }
             continue;
         }
-        if !filter.keeps(line) {
+        let coded = !platform_table.is_empty() || !category_table.is_empty();
+        if !coded && !filter.keeps(line) {
             continue;
         }
-        let fields = parse_named_db_line(line);
 
         let mut meta = Vec::with_capacity(file_meta.len() + 12);
         meta.extend_from_slice(&file_meta);
-        if let Some(platform) = file_platform.filter(|p| !p.is_empty()) {
-            // A `platform` field on the line itself is set below and wins.
-            set_pair(&mut meta, "platform", platform);
-        }
+        // A `platform` field on the line itself is set below and wins.
+        let mut platforms = file_platform.map(split_values).unwrap_or_default();
+        let mut categories = Box::default();
         let mut urls = UrlList::default();
-        for (key, val) in fields {
+        for field in line.split('\t') {
+            let Some((key, val)) = field.split_once(':') else {
+                match field.split_at_checked(1) {
+                    Some(("p", codes)) => platforms = decode(&platform_table, codes),
+                    Some(("c", codes)) => categories = decode(&category_table, codes),
+                    _ => {}
+                }
+                continue;
+            };
             // An empty field says nothing, so it means the same as one that
             // isn't there — and doesn't override the header meta.
             if val.trim().is_empty() {
                 continue;
             }
-            if key == "download" {
-                urls = UrlList::parse_field(val);
+            match key {
+                "platform" => platforms = split_values(val),
+                "category" => categories = split_values(val),
+                _ => {
+                    if key == "download" {
+                        urls = UrlList::parse_field(val);
+                    }
+                    set_pair(&mut meta, key, val);
+                }
             }
-            set_pair(&mut meta, key, val);
         }
         if urls.is_empty() {
             continue;
+        }
+        if coded && !filter.is_empty() {
+            let lists = [("platform", &platforms), ("category", &categories)]
+                .into_iter()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(k, v)| format!("{k}:{}", v.join(";")))
+                .collect::<Vec<_>>();
+            let keep = filter.keeps_by(|re| {
+                line.split('\t')
+                    .filter(|f| f.contains(':'))
+                    .chain(lists.iter().map(String::as_str))
+                    .any(|f| re.is_match(f))
+            });
+            if !keep {
+                continue;
+            }
         }
 
         let date = meta.iter().find(|(k, _)| *k == "date").map_or("", |(_, v)| *v);
@@ -315,12 +395,14 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
         }
         let meta = Meta::from(meta);
 
-        let game_info = GameInfo::new(&meta);
+        let game_info = GameInfo::new(&meta, &categories);
 
         out.push(EmuFile {
             game_info,
             path: FileSource::Url(urls),
             meta,
+            platforms,
+            categories,
         });
     }
 }

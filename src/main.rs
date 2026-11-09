@@ -243,11 +243,11 @@ fn wine_enabled() -> bool {
 /// Does this db entry name Windows and nothing else? Such a release needs wine,
 /// so without it there is nothing left that could run it.
 fn is_windows_only(file: &emu_file::EmuFile) -> bool {
-    let platform = file.get_meta("platform");
-    !platform.is_empty()
-        && platform
-            .split(';')
-            .all(|name| name.trim().eq_ignore_ascii_case("windows"))
+    !file.platforms.is_empty()
+        && file
+            .platforms
+            .iter()
+            .all(|name| name.eq_ignore_ascii_case("windows"))
 }
 
 pub(crate) fn on_steam_deck() -> bool {

@@ -122,7 +122,7 @@ fn collect_builds_encoded_urls() {
     );
     assert_eq!(out[0].game_info.title, "Noisy pillars 99%");
     assert_eq!(out[0].game_info.group, "MJK");
-    assert_eq!(out[0].get_meta("platform"), "AHX");
+    assert_eq!(*out[0].platforms, ["AHX"]);
     assert!(out[1].get_meta("download").ends_with("tune%20%231.MOD"));
 }
 
@@ -153,7 +153,7 @@ fn a_song_brings_its_secondary_file() {
             format!("{base}/smpl.apidya%20%28end%29"),
         ]
     );
-    assert_eq!(out[0].get_meta("platform"), "TFMX");
+    assert_eq!(*out[0].platforms, ["TFMX"]);
 }
 
 #[test]
