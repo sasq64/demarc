@@ -74,6 +74,7 @@ impl NavList {
             selected: self.selected,
             title,
             title_select: pos,
+            keep_open: true,
         });
     }
 }
@@ -768,6 +769,7 @@ fn handle_selection(
     mut list_writer: MessageWriter<ShowFuzzyList>,
     mut settings: ResMut<AppSettings>,
     mut playlists: ResMut<Playlists>,
+    mut hud: ResMut<HudState>,
 ) {
     let current = &navigator.stack[navigator.pos as usize];
     let id = current.id;
@@ -824,6 +826,7 @@ fn handle_selection(
                         index: index as isize,
                     });
                 }
+                hud.close_list();
                 load_writer.write(LoadFile {
                     emu_file,
                     target_emulator: None,

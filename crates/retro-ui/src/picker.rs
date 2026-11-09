@@ -178,6 +178,7 @@ pub enum TitleClick {
 
 pub struct Picker<T> {
     pub show_list: bool,
+    keep_open: bool,
     /// Caller-chosen id of the open list, echoed back in [`Picked`].
     list_id: usize,
     /// The search box text. Owned by the [`egui::TextEdit`] in [`Picker::show`],
@@ -219,6 +220,7 @@ impl<T> Default for Picker<T> {
     fn default() -> Self {
         Self {
             show_list: false,
+            keep_open: false,
             list_id: 0,
             list_query: String::new(),
             list_last_query: None,
@@ -273,7 +275,9 @@ impl<T: 'static> Picker<T> {
         selected: Option<usize>,
         title: &str,
         title_select: i32,
+        keep_open: bool,
     ) {
+        self.keep_open = keep_open;
         // A different picker starts fresh; the same one comes back with the
         // search text and the row the user left it on.
         if self.list_id != id {
@@ -411,7 +415,7 @@ impl<T: 'static> Picker<T> {
         self.list_selected = selected;
 
         if pick && let Some(&item) = self.list_items.get(selected) {
-            self.show_list = false;
+            self.show_list = self.keep_open;
             return Some(Picked {
                 id: self.list_id,
                 item: source.get_item(item),
@@ -519,21 +523,19 @@ impl<T: 'static> Picker<T> {
                 self.list_scroll = scrolled.state.offset.y;
                 let clicked = scrolled.inner;
 
-                // The info box stays hidden while there is nothing to say.
-                if !self.list_info.is_empty() {
-                    theme.panel.show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.set_min_height(INFO_LINES * INFO_SIZE * 1.3);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&self.list_info)
-                                    .font(picker_font(ctx, INFO_SIZE))
-                                    .color(theme.picker.info),
-                            )
-                            .wrap(),
-                        );
-                    });
-                }
+                theme.panel.show(ui, |ui| {
+                    let size = egui::vec2(ui.available_width(), INFO_LINES * INFO_SIZE * 1.3);
+                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    let galley = ui.painter().layout(
+                        self.list_info.clone(),
+                        picker_font(ctx, INFO_SIZE),
+                        theme.picker.info,
+                        rect.width(),
+                    );
+                    ui.painter()
+                        .with_clip_rect(rect.intersect(ui.clip_rect()))
+                        .galley(rect.min, galley, theme.picker.info);
+                });
                 clicked
             })
             .inner;
@@ -542,7 +544,7 @@ impl<T: 'static> Picker<T> {
         if let Some((row, double)) = clicked {
             self.list_selected = row;
             if double && let Some(&item) = self.list_items.get(row) {
-                self.show_list = false;
+                self.show_list = self.keep_open;
                 return Some(Picked {
                     id: self.list_id,
                     item: source.get_item(item),

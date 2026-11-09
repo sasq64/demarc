@@ -91,7 +91,7 @@ fn step<T: 'static>(
 /// An opened picker, two frames in so the search box has its focus.
 fn opened<T: 'static>(h: &mut Harness, source: ListSource<T>) -> Picker<T> {
     let mut picker = Picker::default();
-    picker.open(1, source, None, None, "Title", -1);
+    picker.open(1, source, None, None, "Title", -1, false);
     step(h, &mut picker, vec![]);
     step(h, &mut picker, vec![]);
     picker
@@ -243,19 +243,19 @@ fn reopening_restores_or_resets() {
     step(&mut h, &mut picker, vec![egui::Event::Text("e".to_owned())]);
     step(&mut h, &mut picker, vec![key(egui::Key::Escape)]);
 
-    picker.open(1, fruit(), None, Some(3), "", -1);
+    picker.open(1, fruit(), None, Some(3), "", -1, false);
     step(&mut h, &mut picker, vec![]);
     assert_eq!(picker.query(1), Some("e"));
     assert_eq!(picker.selected_item(1), Some(3), "date, among the matches");
     step(&mut h, &mut picker, vec![]);
     assert!(!h.has("Title"), "an empty title is no line at all");
 
-    picker.open(1, fruit(), Some("ban"), None, "", -1);
+    picker.open(1, fruit(), Some("ban"), None, "", -1, false);
     step(&mut h, &mut picker, vec![]);
     assert_eq!(picker.query(1), Some("ban"));
     assert_eq!(picker.selected_item(1), Some(1));
 
-    picker.open(2, fruit(), None, Some(99), "", -1);
+    picker.open(2, fruit(), None, Some(99), "", -1, false);
     step(&mut h, &mut picker, vec![]);
     assert_eq!(picker.query(2), Some(""));
     assert_eq!(picker.selected_item(2), Some(0), "an absent row is ignored");

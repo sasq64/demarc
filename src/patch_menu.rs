@@ -76,6 +76,7 @@ fn open_menu(
         selected: None,
         title: "Patch overrides".into(),
         title_select: -1,
+        keep_open: false,
     });
 }
 

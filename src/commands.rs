@@ -643,6 +643,7 @@ fn handle_textlist(
                 selected: None,
                 title: String::new(),
                 title_select: -1,
+                keep_open: false,
             });
         }
     }
@@ -974,6 +975,7 @@ pub(crate) fn handle_cmd(
                                 selected: None,
                                 title: "Add to playlist".into(),
                                 title_select: -1,
+                                keep_open: false,
                             });
                             commands.insert_resource(PlaylistPick {
                                 file,

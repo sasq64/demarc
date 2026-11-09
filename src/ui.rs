@@ -32,6 +32,8 @@ pub struct ShowFuzzyList {
     pub title: String,
     // Highlight this part of the title
     pub title_select: i32,
+    /// Stay open after a pick; the caller closes it.
+    pub keep_open: bool,
 }
 
 /// Emitted when the user picks a row (Enter, or Shift+Enter — see

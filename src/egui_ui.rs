@@ -203,7 +203,6 @@ impl HudState {
         self.picker.take_title_click()
     }
 
-    #[allow(dead_code)]
     pub fn close_list(&mut self) {
         self.picker.show_list = false;
     }
@@ -407,6 +406,7 @@ fn open_fuzzy_list(mut state: ResMut<HudState>, mut reader: MessageReader<ShowFu
             msg.selected,
             &msg.title,
             msg.title_select,
+            msg.keep_open,
         );
     }
 }
