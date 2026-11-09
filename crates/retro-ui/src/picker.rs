@@ -167,6 +167,15 @@ pub struct Picked<T> {
     pub data: Option<T>,
 }
 
+/// A click on part of the title line, taken with [`Picker::take_title_click`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitleClick {
+    /// Path depth clicked; 0 is the home icon.
+    Depth(usize),
+    Back,
+    Forward,
+}
+
 pub struct Picker<T> {
     pub show_list: bool,
     /// Caller-chosen id of the open list, echoed back in [`Picked`].
@@ -193,6 +202,9 @@ pub struct Picker<T> {
     list_reopened: bool,
     /// Text of the line above the search box.
     list_title: (i32, Vec<String>),
+    /// Number of path parts in `list_title`, after the home icon.
+    list_title_depth: usize,
+    title_click: Option<TitleClick>,
     list_info: String,
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
@@ -216,6 +228,8 @@ impl<T> Default for Picker<T> {
             list_scroll: 0.0,
             list_reopened: false,
             list_title: (-1, Vec::new()),
+            list_title_depth: 0,
+            title_click: None,
             list_info: String::new(),
             list_info_item: None,
             list_source: None,
@@ -241,6 +255,10 @@ impl<T: 'static> Picker<T> {
             return None;
         }
         self.list_items.get(self.list_selected).copied()
+    }
+
+    pub fn take_title_click(&mut self) -> Option<TitleClick> {
+        self.title_click.take()
     }
 
     /// Opens the list over `source`. Re-opening the same `id` restores the
@@ -284,6 +302,7 @@ impl<T: 'static> Picker<T> {
         }
 
         self.list_title = (title_select - 1, parts);
+        self.list_title_depth = len as usize;
 
         self.list_source = Some(source);
         self.rows.clear();
@@ -428,12 +447,24 @@ impl<T: 'static> Picker<T> {
                             } else {
                                 egui::Color32::TRANSPARENT
                             };
-                            ui.add(egui::Label::new(
-                                egui::RichText::new(part)
-                                    .font(picker_font(ctx, TITLE_SIZE))
-                                    .background_color(bg)
-                                    .color(theme.picker.title),
-                            ));
+                            let response = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(part)
+                                        .font(picker_font(ctx, TITLE_SIZE))
+                                        .background_color(bg)
+                                        .color(theme.picker.title),
+                                )
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                            );
+                            if response.clicked() {
+                                let depth = self.list_title_depth;
+                                self.title_click = Some(match i {
+                                    i if i <= depth => TitleClick::Depth(i),
+                                    i if i == depth + 1 => TitleClick::Back,
+                                    _ => TitleClick::Forward,
+                                });
+                            }
                         }
                     });
                 }

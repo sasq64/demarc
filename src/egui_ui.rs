@@ -199,6 +199,10 @@ impl HudState {
         };
     }
 
+    pub fn take_title_click(&mut self) -> Option<retro_ui::TitleClick> {
+        self.picker.take_title_click()
+    }
+
     #[allow(dead_code)]
     pub fn close_list(&mut self) {
         self.picker.show_list = false;

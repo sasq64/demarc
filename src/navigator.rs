@@ -15,6 +15,7 @@ use crate::loading::LoadFile;
 use crate::picker_sources::{DownloadSource, IconMode, PickerSource};
 use crate::playlists::{FAVORITES, Playlists};
 use crate::ui::{FuzzyListSelect, ListSource, ShowFuzzyList};
+use retro_ui::TitleClick;
 
 /// Icons for the root list, as nerd font glyphs: the favorites playlist, the
 /// other playlists, and the databases.
@@ -144,6 +145,15 @@ impl Navigator {
     fn forward(&mut self) -> &mut Self {
         if self.pos < self.stack.len() as isize - 1 {
             self.pos += 1;
+        }
+        self
+    }
+
+    /// Go to the deepest list in the stack whose path has at most `depth` parts.
+    fn to_depth(&mut self, depth: usize) -> &mut Self {
+        let parts = |path: &str| if path.is_empty() { 0 } else { path.split('/').count() };
+        if let Some(i) = self.stack.iter().rposition(|l| parts(&l.path) <= depth) {
+            self.pos = i as isize;
         }
         self
     }
@@ -725,14 +735,21 @@ fn update_navigator(
     input: Res<ButtonInput<KeyCode>>,
     mut navigator: ResMut<Navigator>,
     mut list_writer: MessageWriter<ShowFuzzyList>,
-    hud: ResMut<HudState>,
+    mut hud: ResMut<HudState>,
 ) {
     navigator.remember_state(&hud);
     let id = navigator.stack[navigator.pos as usize].id;
     if hud.list_query(id).is_none() {
         return;
     }
-    if input.just_pressed(KeyCode::ArrowLeft) {
+    if let Some(click) = hud.take_title_click() {
+        match click {
+            TitleClick::Depth(depth) => navigator.to_depth(depth),
+            TitleClick::Back => navigator.back(),
+            TitleClick::Forward => navigator.forward(),
+        }
+        .show(&mut list_writer);
+    } else if input.just_pressed(KeyCode::ArrowLeft) {
         navigator.back().show(&mut list_writer);
     } else if input.just_pressed(KeyCode::ArrowRight) {
         navigator.forward().show(&mut list_writer);

@@ -13,7 +13,7 @@ pub mod shader_dialog;
 pub mod theme;
 
 pub use hud::{Hud, HudLocation};
-pub use picker::{Picked, Picker};
+pub use picker::{Picked, Picker, TitleClick};
 pub use theme::{ShaderBg, ShaderPainter, Theme, paint_screen, set_shader_painter, set_theme, theme};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
