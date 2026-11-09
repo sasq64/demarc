@@ -18,6 +18,7 @@
 -- a hash that tells frames apart.
 -- screenshot(path) lands a few frames later; quit() waits for it. It shows
 -- everything on screen, the picker and dialogs too, headless or not.
+-- memory() is the resident and peak resident size of the process in KB.
 
 function Main()
     wait_frames(300)

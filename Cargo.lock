@@ -139,6 +139,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloc-no-stdlib"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e76a019e91224d279006ff972f1e984179a6e9feb050adba6ce8274aef23195"
+dependencies = [
+ "alloc-no-stdlib",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1687,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "brotli-decompressor"
+version = "5.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a32acac15fe1967bc3986b2a6347dffc965602354ea6f450ad07e8bfd253583"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+]
+
+[[package]]
 name = "bstr"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2587,7 +2612,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "database"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -2625,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "demarc"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -3154,7 +3179,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flash-emu"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "image",
@@ -3370,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "frameconv"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "bytemuck",
  "naga 29.0.4",
@@ -5189,10 +5214,11 @@ dependencies = [
 
 [[package]]
 name = "newsys"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "base64",
+ "brotli-decompressor",
  "cab",
  "cc",
  "dirs",
@@ -5214,6 +5240,7 @@ dependencies = [
  "suppaftp",
  "symphonia",
  "tempfile",
+ "tiny_http",
  "tracing",
  "tracing-subscriber",
  "unarc-rs",
@@ -6531,7 +6558,7 @@ dependencies = [
 
 [[package]]
 name = "retro-core"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "cc",
@@ -6555,7 +6582,7 @@ dependencies = [
 
 [[package]]
 name = "retro-ui"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "egui",
  "nucleo-matcher",
@@ -6567,7 +6594,7 @@ dependencies = [
 
 [[package]]
 name = "retroarc"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "librashader",
  "tracing",
@@ -6585,7 +6612,7 @@ dependencies = [
 
 [[package]]
 name = "rife"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "libloading 0.9.0",

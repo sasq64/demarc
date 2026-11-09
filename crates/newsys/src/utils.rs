@@ -158,9 +158,22 @@ pub fn is_archive(path: &Path) -> Result<bool> {
 /// makes a temp directory of its own. Returns `false`, having written nothing,
 /// when `path` is not a recognised archive.
 pub fn unpack_into(path: &Path, target_dir: &Path) -> Result<bool> {
+    unpack_as(path, target_dir, None)
+}
+
+/// [`unpack_into`] for a self-extracting RAR exe.
+pub fn unpack_sfx(path: &Path, target_dir: &Path) -> Result<bool> {
+    unpack_as(path, target_dir, Some(ArchiveFormat::Rar))
+}
+
+fn unpack_as(path: &Path, target_dir: &Path, format: Option<ArchiveFormat>) -> Result<bool> {
     let mut file = BufReader::new(fs::File::open(path)?);
-    let Some(format) = ArchiveFormat::detect(&mut file, Some(path))? else {
-        return Ok(false);
+    let format = match format {
+        Some(format) => format,
+        None => match ArchiveFormat::detect(&mut file, Some(path))? {
+            Some(format) => format,
+            None => return Ok(false),
+        },
     };
     if !is_supported_archive(format) {
         return Ok(false);

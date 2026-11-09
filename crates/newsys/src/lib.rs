@@ -9,8 +9,11 @@
 // `crate::backend` / `crate::retro_emu` paths.
 pub use retro_core::{backend, libretro, pixels, retro_emu};
 
+pub mod boxedapp;
 pub mod cache;
 pub mod cbmconvert;
+pub mod com_dropper;
+pub mod crinkler;
 pub mod degas;
 pub mod fetch;
 pub mod ffmpeg_emu;
@@ -35,6 +38,7 @@ pub mod wine_log;
 #[cfg(target_os = "linux")]
 pub mod wine_sandbox;
 pub mod workfile;
+pub mod x86;
 pub mod zx_scr;
 
 pub use newsys::*;

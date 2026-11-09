@@ -17,6 +17,16 @@ one wine's `wglChoosePixelFormat` picks for the same descriptor. Front-buffer
 drawing never reaches the session, and Alcatraz's "The Explorer" hard-codes
 format 8, single-buffered in wine's list.
 
+An app whose single-buffered format was swapped this way and that never swaps
+by itself draws to a back buffer nobody shows, so `glReadPixels`, `glFlush` and
+`glFinish` swap for it until its first own `wglSwapBuffers` (Pestis & mrange's
+"Cassini's Cosmic Conclusion" reads a pixel back once a frame instead).
+
+With `DEMARC_GL_KEEP_BACK` set (override meta `wine_gl_keep_back`),
+`wglSwapBuffers` copies the back buffer to an FBO before the swap and back
+after it, as Windows drivers keep it. Leviathan 2.0's "Bull" draws its scene
+in two frames and then only post-processes the back buffer.
+
 `wglSwapBuffers` empties the x87 register stack (`emms`) after the swap.
 Gopher & LJ's "Yama" leaves one value on it per frame; on Windows that never
 overflows, under wine the time turns NaN after a few frames.
@@ -64,7 +74,9 @@ installs it, demarc sets `opengl32=n,b`.
 when the context has no accumulation buffer, which no GLX config on NVIDIA's
 Xwayland has: an RGBA32F texture behind an FBO, sized to the viewport at first
 use, and each operation one full-screen pass. Fizzer's "The Real Party Is In
-Your Pocket" accumulates 256 samples in it.
+Your Pocket" accumulates 256 samples in it. Its textures take names from
+0x7ac00000 up, as 4k intros bind texture 1 without generating it (Klos's
+"Quattro").
 
 `glEdgeFlag` and `glEdgeFlagv` do nothing when `GL_RENDERER` names radeonsi
 (checked in `wglMakeCurrent`). radeonsi (Mesa 26.2.5) faults and hangs the GPU

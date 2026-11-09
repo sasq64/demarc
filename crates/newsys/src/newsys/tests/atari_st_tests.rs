@@ -146,6 +146,26 @@ fn tt_ram_flags_are_read_from_the_header() {
     assert!(!wants_tt_ram(&short));
 }
 
+/// A program an override picked out of its release still gets the files
+/// beside it on the drive, not the floppy images elsewhere in the release.
+#[test]
+fn program_picked_by_an_override_brings_its_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("release");
+    let prg = exe(&base.join("hdd"), "DEMO.PRG", 64);
+    write(&base.join("hdd").join("zik.raw"), b"tune");
+    write(&base.join("floppy").join("d1.msa"), b"disk");
+
+    let mut file = WorkFile::new(prg);
+    file.set_meta(RELEASE_DIR, base.to_str().unwrap());
+    assert!(AtariStSystem { falcon: false }.load(&mut file).unwrap());
+    let drive = file.path.parent().unwrap().join("harddrive");
+
+    assert!(drive.join("zik.raw").exists());
+    assert!(drive.join("AUTO").join(AUTO_PROGRAM).exists());
+    assert!(!drive.join("d1.msa").exists());
+}
+
 /// Only a release for the Falcon alone is run as one.
 #[test]
 fn falcon_platform_must_be_the_only_one() {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -11,14 +12,17 @@ use crate::libloader;
 use crate::retro_emu;
 #[cfg(target_os = "linux")]
 use crate::system_dir;
+use crate::workfile::WorkFile;
 #[cfg(target_os = "linux")]
 use crate::{
     newsys::META_WIDESCREEN,
     wine::{DEFAULT_WIDESCREEN, is_yes},
 };
-use crate::workfile::WorkFile;
 #[cfg(target_os = "linux")]
 use anyhow::Context;
+
+#[cfg(target_os = "linux")]
+mod server;
 
 /// HTML/JS releases, shown in an undecorated Chrome inside a gamescope session.
 ///
@@ -55,6 +59,49 @@ fn pick_page(pages: &[PathBuf]) -> Option<&PathBuf> {
     })
 }
 
+/// The page in a script that serves itself: a size-coded intro's `.sh` that
+/// pipes a python web server into `python3`, sending the rest of the script
+/// from `seek(<offset>)` as `Content-Encoding: br`.
+fn self_served_page(script: &[u8]) -> Option<Vec<u8>> {
+    let text = String::from_utf8_lossy(script.get(..1024.min(script.len()))?);
+    if !text.contains("'Content-Encoding','br'") {
+        return None;
+    }
+    let start = text.find("seek(")? + 5;
+    let digits: String = text[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let payload = script.get(digits.parse::<usize>().ok()?..)?;
+    let mut page = Vec::new();
+    brotli_decompressor::Decompressor::new(payload, 4096)
+        .read_to_end(&mut page)
+        .ok()?;
+    Some(page)
+}
+
+/// Write out the page of the first self-serving script in the release, and
+/// point `file` at it.
+fn unpack_self_served(file: &mut WorkFile) -> Result<bool> {
+    let mut found = None;
+    walk_dir(file, 0, |path, ext, _| {
+        if found.is_none() && ext == "sh" {
+            if let Some(page) = self_served_page(&std::fs::read(path)?) {
+                found = Some((path.strip_prefix(&file.path)?.with_extension("html"), page));
+            }
+        }
+        Ok(())
+    })?;
+    let Some((rel, page)) = found else {
+        return Ok(false);
+    };
+    file.make_temp()?;
+    let path = file.path.join(rel);
+    std::fs::write(&path, page)?;
+    file.path = path;
+    Ok(true)
+}
+
 #[cfg(target_os = "linux")]
 fn page_resolution(widescreen: bool) -> &'static str {
     if widescreen { "1280x720" } else { "800x600" }
@@ -85,6 +132,7 @@ impl System for WebSystem {
                 file.path = page.clone();
                 Ok(true)
             }
+            None if CAN_RUN_WEB => unpack_self_served(file),
             None => Ok(false),
         }
     }
@@ -112,7 +160,14 @@ impl System for WebSystem {
                 .map_or(DEFAULT_WIDESCREEN, |v| is_yes(v));
             meta.entry("gamescope_resolution".into())
                 .or_insert_with(|| page_resolution(wide).into());
-            retro_emu::create_core(&core, system_dir(), Some(path), meta, false)
+            let url = server::url_for(&path.path)?;
+            retro_emu::create_core(
+                &core,
+                system_dir(),
+                Some(std::path::Path::new(&url)),
+                meta,
+                false,
+            )
         }
         // `can_load` said no everywhere else, so this is only reachable by
         // asking for a page by hand.

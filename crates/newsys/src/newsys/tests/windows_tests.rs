@@ -178,6 +178,13 @@ fn the_dialog_list_follows_the_shape_of_the_screen() {
     assert!(narrow.contains("1024x768"), "{narrow}");
     assert_eq!(narrow_res, NARROW_RES);
 
+    // A 4:3 demo on a widescreen.
+    let forced = load(HashMap::from([
+        (META_WIDESCREEN.to_string(), "true".to_string()),
+        (META_NARROW.to_string(), "true".to_string()),
+    ]));
+    assert_eq!(forced, (narrow, narrow_res));
+
     // An entry's own size is kept.
     let (_, res) = load(HashMap::from([
         (META_WIDESCREEN.to_string(), "false".to_string()),

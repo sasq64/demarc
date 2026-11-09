@@ -6,6 +6,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
+use bevy::render::{Render, RenderApp, RenderSystems, renderer::RenderDevice};
 use bevy::{image::Image, prelude::*};
 
 use wgpu::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -42,6 +43,21 @@ impl HeadlessTarget {
             image: images.add(image),
             size: SIZE,
         }
+    }
+}
+
+/// Without a present to block on, nothing stops frames being submitted faster
+/// than a slow GPU (such as WARP) finishes them, and they pile up until the
+/// device runs out of memory.
+pub fn wait_for_gpu_each_frame(app: &mut App) {
+    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+        render_app.add_systems(Render, wait_for_gpu.in_set(RenderSystems::Cleanup));
+    }
+}
+
+fn wait_for_gpu(device: Res<RenderDevice>) {
+    if let Err(e) = device.poll(wgpu::PollType::wait_indefinitely()) {
+        warn!("Waiting for the GPU failed: {e}");
     }
 }
 

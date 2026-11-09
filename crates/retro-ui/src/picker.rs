@@ -27,6 +27,14 @@ const ROW_IMAGE_SIZE: f32 = 32.0;
 /// end of the text it starts.
 pub type RowImage = (egui::TextureId, f32);
 
+/// A row as built for drawing, kept so the source and `render` are asked once
+/// per item rather than every frame.
+struct Row {
+    job: egui::text::LayoutJob,
+    icons: (Option<ListIcon>, Option<ListIcon>),
+    images: Vec<RowImage>,
+}
+
 /// Vertical gap between the list box and the info box below it.
 const PANEL_GAP: f32 = 6.0;
 
@@ -190,6 +198,8 @@ pub struct Picker<T> {
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
     list_source: Option<ListSource<T>>,
+    /// Built rows by item id, for the current `list_source`.
+    rows: HashMap<usize, Row>,
     edit_id: egui::Id,
 }
 
@@ -209,6 +219,7 @@ impl<T> Default for Picker<T> {
             list_info: String::new(),
             list_info_item: None,
             list_source: None,
+            rows: HashMap::new(),
             edit_id: egui::Id::new("edit_id"),
         }
     }
@@ -275,6 +286,7 @@ impl<T: 'static> Picker<T> {
         self.list_title = (title_select - 1, parts);
 
         self.list_source = Some(source);
+        self.rows.clear();
         // The source may be a different instance than last time (rebuilt, or
         // just re-measured for the info field), so re-query and re-describe.
         self.list_reopened = true;
@@ -453,17 +465,24 @@ impl<T: 'static> Picker<T> {
                     self.list_scroll,
                     &self.list_items,
                     |ui, rect, &id| {
-                        let mut job = egui::text::LayoutJob::default();
-                        job.append(
-                            &source.get_text(id),
-                            0.0,
-                            egui::TextFormat::simple(
-                                picker_font(ctx, ROW_SIZE),
-                                theme.picker.text,
-                            ),
-                        );
-                        let images = render(&mut job, source.as_ref(), id);
-                        draw_row(ui, rect, job, source.get_icon(id), &images);
+                        let row = self.rows.entry(id).or_insert_with(|| {
+                            let mut job = egui::text::LayoutJob::default();
+                            job.append(
+                                &source.get_text(id),
+                                0.0,
+                                egui::TextFormat::simple(
+                                    picker_font(ctx, ROW_SIZE),
+                                    theme.picker.text,
+                                ),
+                            );
+                            let images = render(&mut job, source.as_ref(), id);
+                            Row {
+                                job,
+                                icons: source.get_icon(id),
+                                images,
+                            }
+                        });
+                        draw_row(ui, rect, row.job.clone(), row.icons, &row.images);
                     },
                 );
                 self.list_scroll = scrolled.state.offset.y;
@@ -527,7 +546,7 @@ fn scroll_area<T>(
     selected: usize,
     list_scroll: f32,
     items: &[T],
-    render: impl Fn(&mut Ui, egui::Rect, &T),
+    mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
     let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
     let id = ui.id();

@@ -23,11 +23,28 @@ fn follows(args: &[String], flag: &str, value: &str) -> bool {
 /// installed — which is the whole thing this exists to prevent.
 #[test]
 fn overlays_the_real_prefix_onto_the_session_one() {
-    let args = args("/home/me/.wine-demarc", "/run/user/1000/x/0", None);
-    assert!(follows(&args, "--overlay-src", "/home/me/.wine-demarc"));
-    assert!(follows(&args, "--tmp-overlay", "/run/user/1000/x/0"));
+    let base = tempfile::tempdir().unwrap();
+    fs::create_dir(base.path().join("drive_c")).unwrap();
+    fs::write(base.path().join("system.reg"), "").unwrap();
+    let base_str = base.path().to_string_lossy().into_owned();
+    let args = args(&base_str, "/run/user/1000/x/0", None);
+    assert!(follows(&args, "--overlay-src", &format!("{base_str}/drive_c")));
+    assert!(follows(&args, "--tmp-overlay", "/run/user/1000/x/0/drive_c"));
     // And never the other way round.
-    assert!(!follows(&args, "--tmp-overlay", "/home/me/.wine-demarc"));
+    assert!(!follows(&args, "--tmp-overlay", &format!("{base_str}/drive_c")));
+    // Files are not overlaid, only folders.
+    assert!(!follows(&args, "--overlay-src", &format!("{base_str}/system.reg")));
+}
+
+/// Read-only, so wineserver's periodic registry save fails before it
+/// serializes system.reg and stalls every wine thread for ~70 ms.
+#[test]
+fn the_prefix_top_level_is_read_only() {
+    let args = args("/home/me/.wine-demarc", "/run/user/1000/x/0", None);
+    let bind = args.iter().position(|a| a == "--ro-bind").expect("a ro bind");
+    assert_eq!(args[bind + 1], "/home/me/.wine-demarc");
+    assert_eq!(args[bind + 2], "/run/user/1000/x/0");
+    assert!(!follows(&args, "--tmp-overlay", "/run/user/1000/x/0"));
 }
 
 /// wine names its server socket after the prefix's device and inode, under
@@ -146,7 +163,7 @@ fn binds_the_cpu_count_over_sysfs() {
     assert!(
         !self::args("/base", "/session", None)
             .iter()
-            .any(|a| a == "--ro-bind")
+            .any(|a| CPU_FILES.contains(&a.as_str()))
     );
 }
 

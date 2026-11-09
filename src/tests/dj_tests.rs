@@ -48,6 +48,8 @@ fn spawn_emu(world: &mut World, crossfade: bool, aspect: f32) -> Handle<Image> {
             alpha: 0.0,
             raw: false,
             no_crt: false,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
         },
     ));
     image

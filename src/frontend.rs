@@ -1,17 +1,16 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowMode};
+use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow, WindowMode};
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::RenderLayers,
     image::Image,
-    input::mouse::AccumulatedMouseMotion,
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use crate::backend::{VideoFrame, ViewFocus};
+use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, FrameConvMethod, LatencySetting, RenderSettings};
 use crate::emulator::{Emulator, FrameConvert};
 use crate::frame_conv::FrameConvPlugin;
@@ -191,6 +190,8 @@ pub(crate) fn spawn_emulator(
             alpha: 1.0,
             raw: false,
             no_crt: false,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
         },
         EmuView { index },
     ));
@@ -262,6 +263,73 @@ fn update_view_rects(
             size: vp_size,
             active,
         };
+    }
+}
+
+/// Right Ctrl + wheel zooms the view under the cursor, Right Ctrl + mouse move pans it.
+fn zoom_pan(
+    input: Res<ButtonInput<KeyCode>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    scroll: Res<AccumulatedMouseScroll>,
+    mut settings: ResMut<AppSettings>,
+    render: Res<RenderSettings>,
+    images: Res<Assets<Image>>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    mut views: Query<(&EmuView, &Emulator, &mut PostProcess)>,
+) {
+    if !input.pressed(KeyCode::ControlRight) {
+        return;
+    }
+    let wheel = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
+    };
+    let motion = mouse_motion.delta;
+    if wheel == 0.0 && motion == Vec2::ZERO {
+        return;
+    }
+    let index = settings
+        .mouse_index
+        .filter(|&i| i < 999)
+        .unwrap_or(settings.current_emu);
+    let Some(mut pp) = views
+        .iter_mut()
+        .find(|(v, emu, _)| v.index == index && !emu.is_crossfade)
+        .map(|(_, _, pp)| pp)
+    else {
+        return;
+    };
+    let Some(rect) = pp.view.rect() else {
+        return;
+    };
+    // Using the mouse means right Ctrl was not tapped for the command list.
+    settings.hotkey_pressed_at = f32::NEG_INFINITY;
+    let size = rect.size().as_vec2();
+    if wheel != 0.0 {
+        let src = images
+            .get(&pp.source)
+            .map(|i| i.size())
+            .unwrap_or(UVec2::ONE);
+        let zoom = (pp.zoom * 1.1f32.powf(wheel)).clamp(1.0, 32.0);
+        if zoom == 1.0 {
+            pp.pan = Vec2::ZERO;
+        } else {
+            // Keep the point under the cursor where it is.
+            let cursor = cursor_pos(window.as_deref().copied())
+                .map(|p| (p - rect.min.as_vec2()) / size)
+                .unwrap_or(Vec2::splat(0.5));
+            let (_, offset) = pp.transform(rect.size(), src, render.scale_mode);
+            let ratio = zoom / pp.zoom;
+            pp.pan = Vec2::ZERO;
+            pp.zoom = zoom;
+            let (_, base) = pp.transform(rect.size(), src, render.scale_mode);
+            pp.pan = cursor - (cursor - offset) * ratio - base;
+        }
+        pp.zoom = zoom;
+    }
+    if motion != Vec2::ZERO && pp.zoom > 1.0 {
+        let scale = window.as_deref().map_or(1.0, |w| w.scale_factor());
+        pp.pan += motion * scale / size;
     }
 }
 
@@ -344,38 +412,57 @@ const fn config_line_width() -> f32 {
 /// do, 3:2, 4:3 and 5:4 don't.
 const WIDE_ASPECT: f32 = 1.55;
 
-// TODO:
-//  * Use Current Monitor
-//  * Update if window moves to new monitor
+/// The monitor [`detect_screen`] last answered for, and which answers the
+/// command line gave instead.
+#[derive(Resource, Default)]
+pub(crate) struct ScreenDetection {
+    checked: bool,
+    given_widescreen: bool,
+    given_refresh: bool,
+    monitor: Option<Entity>,
+}
+
 fn detect_screen(
-    monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+    monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>,
+    window: Query<&OnMonitor, With<PrimaryWindow>>,
     headless: Option<Res<HeadlessTarget>>,
     settings: Res<AppSettings>,
+    mut detection: ResMut<ScreenDetection>,
 ) {
-    // Whichever monitor is the primary one, or the first there is: Wayland
-    // has no notion of a primary display, so waiting for one marked that
-    // way would be waiting forever.
-    let monitor = monitors
-        .iter()
-        .find(|(_, primary)| *primary)
-        .or_else(|| monitors.iter().next())
-        .map(|(monitor, _)| monitor);
+    // The monitor the window is on. Until winit says, the primary one or the
+    // first: Wayland has no notion of a primary display.
+    let monitor = window
+        .single()
+        .ok()
+        .and_then(|on| monitors.get(on.0).ok())
+        .or_else(|| monitors.iter().find(|(_, _, primary)| *primary))
+        .or_else(|| monitors.iter().next());
+    let entity = monitor.map(|(entity, _, _)| entity);
+    if !detection.checked {
+        detection.checked = true;
+        detection.given_widescreen = settings.system.has_meta(META_WIDESCREEN);
+        detection.given_refresh = settings.system.has_meta(META_REFRESH);
+    } else if detection.monitor == entity {
+        return;
+    }
+    detection.monitor = entity;
+    let monitor = monitor.map(|(_, monitor, _)| monitor);
     let size = match headless.as_deref() {
         Some(headless) => headless.size,
         None => match monitor {
             Some(monitor) => monitor.physical_size(),
-            None => panic!("No monitor!"),
+            None => return,
         },
     };
     debug!("MONITOR SIZE: {}x{}", size.x, size.y);
-    if !settings.system.has_meta(META_WIDESCREEN) && size.x != 0 && size.y != 0 {
+    if !detection.given_widescreen && size.x != 0 && size.y != 0 {
         let wide = size.x as f32 / size.y as f32 >= WIDE_ASPECT;
         debug!("Screen is {}x{}, widescreen={wide}", size.x, size.y);
         settings.system.set_meta(META_WIDESCREEN, wide.to_string());
     }
     // Nothing to answer with when headless, and nothing that wants an answer
     // either: there is no display to be out of step with.
-    if !settings.system.has_meta(META_REFRESH)
+    if !detection.given_refresh
         && let Some(mhz) = monitor.and_then(|monitor| monitor.refresh_rate_millihertz)
         && mhz > 0
     {
@@ -413,31 +500,9 @@ fn cursor_frame_uv(
         .get(&pp.source)
         .map(|i| i.size())
         .unwrap_or(UVec2::ONE);
-    let (uv_scale, uv_offset) = crate::post_process::view_transform(
-        rect.size(),
-        src,
-        pp.used,
-        pp.aspect,
-        pp.aspect_tweak,
-        scale_mode,
-    );
+    let (uv_scale, uv_offset) = pp.transform(rect.size(), src, scale_mode);
     let frame_uv = (screen_uv - uv_offset) / uv_scale;
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
-}
-
-/// Copy `frame` into the top-left of a `dst_w`x`dst_h` RGBA texture, clipping
-/// whatever does not fit.
-#[hotpath::measure]
-fn blit_frame(dst: &mut [u8], dst_w: usize, dst_h: usize, frame: &VideoFrame) {
-    let w = frame.width;
-    let src = crate::backend::frame_bytes(&frame.pixels);
-    let copy_w = w.min(dst_w);
-    let copy_h = frame.height.min(dst_h);
-    for y in 0..copy_h {
-        let src_off = y * w * 4;
-        let dst_off = y * dst_w * 4;
-        dst[dst_off..dst_off + copy_w * 4].copy_from_slice(&src[src_off..src_off + copy_w * 4]);
-    }
 }
 
 #[hotpath::measure]
@@ -597,20 +662,6 @@ pub(crate) fn run_frontend(
         }
         let frame = emu.frame_queue.front().cloned().unwrap_or(frame);
 
-        // The display refreshes faster than a core produces frames, so copying
-        // the same pixels again would only make Bevy re-upload the texture.
-        let fresh = emu
-            .shown_frame
-            .as_ref()
-            .is_none_or(|shown| !Arc::ptr_eq(shown, &frame.pixels));
-        if fresh
-            && let Some(mut image) = images.get_mut(&emu.image)
-            && let Some(dst) = image.data.as_mut()
-        {
-            blit_frame(dst, bg_w, bg_h, &frame);
-            emu.shown_frame = Some(Arc::clone(&frame.pixels));
-        }
-
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
@@ -633,7 +684,6 @@ pub(crate) fn run_frontend(
             debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
-            emu.shown_frame = None;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(
@@ -668,8 +718,15 @@ impl Plugin for FrontendPlugin {
         app.add_systems(Startup, (setup_frontend, fix_window, setup_gizmos));
         app.add_systems(
             Update,
-            (run_frontend, update_view_rects, draw_current_emu_outline),
+            (
+                run_frontend,
+                update_view_rects,
+                zoom_pan,
+                draw_current_emu_outline,
+                detect_screen,
+            ),
         );
+        app.init_resource::<ScreenDetection>();
         app.add_systems(PostStartup, detect_screen);
         app.add_plugins((LoadingPlugin, FrameUploadPlugin, FrameConvPlugin));
     }

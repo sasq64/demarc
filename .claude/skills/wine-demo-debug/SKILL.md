@@ -122,8 +122,15 @@ Only some d3dx9 versions are native; others still hit wine's stubs. A msvcrt nam
 wine keeps only in ucrtbase is found there by the kernelbase proxy's
 `GetProcAddress` hook (Brainworm, `zoo.202448`); add other fallbacks there.
 
-**Crinkler / packed 4k.** Imports are resolved by walking export tables, so a
-wine export list that differs from Windows breaks silently. Existing proxies:
+**Crinkler / packed 4k.** demarc unpacks Crinkler exes (1.x to 3.x) into PEs
+that import by name (`crates/newsys/src/crinkler.rs`, docs/CRINKLER.md);
+`RUST_LOG=newsys=debug` lists each resolved import. Warnings say when one is
+left packed; `-x crinkler_unpack=false` compares with the packed exe. An
+override `patch` addresses the unpacked code: the `.crink` section's file
+offset plus address minus `0x420000`, in the rebuilt exe under
+`~/.cache/demarc/crinkler`. Packed, imports are resolved by walking export
+tables, so a wine export list that differs from Windows breaks silently.
+Existing proxies:
 `winmm` (ordinal layout, WAVEHDR copies), `kernelbase` (no forwarders, plus
 Windows-only names in `EXTRA`),
 `opengl32` (GL 1.1 names from `wglGetProcAddress`, alpha bits, pbuffer
@@ -133,8 +140,23 @@ Windows-only names in `EXTRA`),
 name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
 frozen at 100% CPU: `perf record -p` shows the hot loop, and a scan of
 `/proc/<pid>/mem` (from gamescope's parent) for its stack frame shows the
-bad locals. The exe cannot be patched; an unpacked one can, with an
-override `patch`.
+bad locals. A kkrunchy exe can be patched through a cave that patches the
+code once unpacked (Tension, `zoo.269513`).
+
+**Vulkan hang, GPU idle.** Run the Khronos validation layer before tracing:
+unpack Arch's `vulkan-validation-layers` package anywhere, point its JSON's
+`library_path` at the `.so`, set `VK_LAYER_PATH`,
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` and
+`VK_KHRONOS_VALIDATION_LOG_FILENAME`. A present waiting on a semaphore with
+"no way to be signaled" deadlocks the queue (Fabula, `zoo.377071`). An Xid in
+`journalctl -k` is a GPU hang.
+
+**.NET demos.** The prefix has native .NET 4.8, not wine-mono (Return,
+`zoo.311793`, failed under mono's eager type loading).
+
+**D3D11 intro exits at random while loading.** `vkAllocateMemory Exception
+0xc0000005 in Unix call`: a texture over 16384 that the D3D11 runtime would
+refuse reached the driver through DXVK (Tension, `zoo.269513`).
 
 **GLSL compile errors (white or black GL intro).** Read Mesa's errors at
 `RUST_LOG=retro=warn`; `MESA_DEBUG=1` shows "program not linked" when
@@ -154,7 +176,7 @@ right after `glGetShaderiv` is an assert: the info log is in winedbg at the
 fault, the source in the unpacked image; glslang over every string in it finds
 the rest (On, `zoo.136151`). When the sources are not plain strings, iterate
 under software Mesa with dumps, one patch per error (Hologram, `zoo.119170`).
-A `match` is a regex. `gl_FragColor` under `#version 420`+ compiles on Mesa
+A `match` is a regex; an edit's `^` matches every line start. A "preprocessor error: unexpected HASH_TOKEN" can be Mesa's macro lookahead: a function-like macro named like a swizzle (`z`); rename it (Optical Circuit, `zoo.133196`). `gl_FragColor` under `#version 420`+ compiles on Mesa
 and fails on NVIDIA: run `glslangValidator` on the Mesa dump, and rename it
 to an `out vec4` (Apex `zoo.274554`, Horizon Machine `zoo.170744`).
 
@@ -229,9 +251,12 @@ enumerates every module through wineserver per new native (`zoo.202844`).
 single-buffered pixel format: front-buffer drawing never reaches the session
 (the opengl32 proxy remaps a single-buffered `wglSetPixelFormat`).
 wined3d's ddraw draws that way; `wine_cnc_ddraw=true` for 2D ddraw demos. SDL 1.2 demos (`SDL.DLL` beside the exe) are ddraw too: black and
-silent without it (Dose 2, `zoo.8540`).
+silent without it (Dose 2, `zoo.8540`). So are GL demos that also import DDRAW to present
+(Esocentrica, `zoo.167713`).
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
-extensions such as `glLoadProgramNV`. Black on NVIDIA only, first frame
+extensions such as `glLoadProgramNV`. A demo that draws once and then post-processes the back buffer
+every frame expects it to survive the swap: `wine_gl_keep_back` (Bull,
+`zoo.292424`). Black on NVIDIA only, first frame
 drawn: the window's depth is not kept across a swap, and a demo that cleared
 it once fails its depth test (Axxelerate, `zoo.31450`, patched to clear it).
 
@@ -241,6 +266,12 @@ with texgen (`TEXCOORDINDEX` camera-space) or a texture matrix left on from a
 texgen. Dump the vertices and states at the draw (winedbg breakpoint on the
 device vtable). Fix in the unpacked exe; Nature v2.0 (`zoo.8340`) routes each
 `SetVertexShader(XYZRHW)` through a stub that zeroes both.
+
+**First frame right, then black or saturating.** A plain wine `+opengl` trace
+(demarc's drops repeats) for `glAccum` or other emulated calls: the opengl32
+proxy's objects must not collide with names the intro binds without
+generating them (Klos's Quattro, `zoo.371225`). These intros take 10-20 s to
+accumulate.
 
 **NaN uniforms, frames slowing to seconds.** `+opengl` shows a
 `glUniform*` value of `-nan(ind)`: the intro leaks x87 stack slots per frame
@@ -253,7 +284,10 @@ than the session cannot be set. A `returned -2` with a mode that fits is the
 refresh rate (`WINEDEBUG=+system` shows `dmDisplayFrequency`): the session has
 640x480 at 59 Hz only, so patch the demo's config to rate 0 (`zoo.46672`). A demo that never calls `glViewport`, or draws
 in a corner, needs `wine_res` set to its own resolution, and so does a
-demo's own "surface with wrong size" box (Panjabmoore, `zoo.3620`). TinyPTC demos also need
+demo's own "surface with wrong size" box (Panjabmoore, `zoo.3620`). A
+zoomed-in GL picture with no dialog: `+relay` the `ChangeDisplaySettingsA`
+and `CreateWindowExA` sizes against the `glViewport`s (Luma, `zoo.99227`,
+1280x720). TinyPTC demos also need
 `wine_cnc_ddraw=true`, or `wine_res` turns them black (Bakkslide 7, `zoo.45277`). `wine_desktop=true`
 is for demos that do not survive a mode switch. A letterbox that is too wide
 was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
@@ -261,8 +295,9 @@ was sized for a 4:3 screen: `wine_res=1024x768` (Chimera, `zoo.72965`).
 **D3D9 `CreateDevice` fails, then a NULL fault.** Check the present
 parameters for `D3DMULTISAMPLE_NONMASKABLE`: DXVK makes quality q into `1 << q`
 samples. wined3d with `wine_d3d_config = "SampleCount=0"` (Spilled,
-`zoo.51354`). A draw-once D3D11 intro black under DXVK: try
-`wine_dll_overrides=d3d11=b;dxgi=b` (Night Time, `zoo.155141`).
+`zoo.51354`). A draw-once D3D11 compute intro black under DXVK and
+wined3d GL: `wine_dll_overrides=d3d11=b;dxgi=b` with
+`wine_d3d_config=renderer=vulkan` (Night Time, `zoo.155141`, ~17 s to draw).
 
 **D3D9 scene with far too few objects, same on DXVK and wined3d.** A timer
 that multiplies QPC by 1/freq on the x87 loses it under the single-precision
@@ -291,6 +326,13 @@ Bomb, `zoo.878`).
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
 invalid API use.
+
+**BoxedApp-packed exe (`.bxpck` and `.main` sections).** demarc writes the
+virtual files next to the exe and puts back the exe's own imports
+(`crates/newsys/src/boxedapp.rs`); BoxedApp's loader faults under wine.
+A WinRAR SFX around a release needs `sfx = true` in its override, or it is
+run as is and the unpack step never sees what is inside (Indie-Vibes,
+`zoo.143895`).
 
 **Crash at an ntdll address before the demo runs.** `c0000005` with `+loaddll`
 stopping after kernel32 is wine's import walk on an overlapping 1k header;

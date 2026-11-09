@@ -269,6 +269,18 @@ glsl = {
 # [zoo.4767]
 # boot = "final.png"
 
+# Off The Shelf / Psycho: GeForce 8 era GLSL path tracer.
+[zoo.4768]
+fix_info = '''
+Stayed black: its #version 120 shader uses atan2 (a Cg name) and round
+(GLSL 1.30), which old NVIDIA accepted. The failed link left the uniforms
+at -1. glsl edits replace atan2 and round.
+'''
+glsl = {
+  match = "atan2",
+  edits = [['atan2\(', "atan("], ['round\(', "floor(.5+"]],
+}
+
 # fr-065: Euphotic / Farbrausch. Its 3D text in Georgia crashes the mesh code
 # under wine.
 [zoo.5151]
@@ -305,6 +317,7 @@ meta = { wine_cnc_ddraw = "true" }
 # Clone Meets Clone: TinyPTC, black at its own 320x200 under wined3d's ddraw
 [zoo.41197]
 meta = { wine_cnc_ddraw = "true", wine_res = "320x200" }
+file = "acme_cln.zip"
 
 # Antimoney: 8 bit flip chain, wined3d makes no P8 primary and it crashes
 [zoo.49452]
@@ -1234,17 +1247,16 @@ meta = { wine_res = "640x480" }
 
 # Organix by rgba
 [zoo.51295]
-known_issue = """
-Black. The intro renders fine (the DIB dumped from memory holds the image) and
-blits it in a loop, but its window never reaches the session. It is created at
-0x0 with WS_MAXIMIZE (CreateWindowEx "static", 0x97000000, 0,0,0,0); Xwayland
-then makes one buffer-less commit on its surface and none after, so gamescope
-shows a stale square surface ("client covers 1024x1024"). A test exe that does
-the same reproduces it; the same window created at full size works. Hide/show,
-resizing after map and answering the buffer-less commit's frame callback in
-gamescope did not help. Also wants a 1280x1024 mode (letterboxed1024 exe), so
-wine_res = 1280x1024 is needed once the above is solved. See docs/LEARNINGS.md.
+fix_info = """
+Black. It renders fine (the DIB dumped from memory holds the image) and blits
+it in a loop, but its window is created at 0x0 with WS_MAXIMIZE
+(CreateWindowEx "static", 0x97000000, 0,0,0,0), and Xwayland then makes one
+buffer-less commit on its surface and none after, so gamescope never shows
+it. demarc unpacks Crinkler exes and wraps CreateWindowExA, giving such a
+window the screen's size as Windows does (docs/CRINKLER.md). The exe demarc
+picks is letterboxed for 1280x1024.
 """
+meta = { wine_res = "1024x768" }
 
 # Slisesix by rgba: quits when its 1280x1024 mode switch fails in the 1280x720
 # session its file name gives
@@ -1462,11 +1474,10 @@ events = [{ frame = 18, key = "4" }]
 [zoo.3286]
 fix_info = '''
 Each .com is a DOS dropper (aPACK stub) that writes t.exe and execs it through
-int 21h/4B00, which only NTVDM could do; DOSBox runs it to a black screen. The
-800x600 PE was depacked by hand (aPLib-style, translating the stub's loop) and
-cut out at its MZ, and is shipped as win/patches/mojodreams.exe with boot
-pointing at it. In it `mov cl,0Fh` before the gm.dls path's `rep movsb` is
-made a full `mov ecx`, since wine leaves ECX's upper bytes set.
+int 21h/4B00, which only NTVDM could do; com_dropper.rs unpacks them now.
+win/patches/mojodreams.exe is the 800x600 PE with `mov cl,0Fh` before the
+gm.dls path's `rep movsb` made a full `mov ecx`, since wine leaves ECX's upper
+bytes set.
 '''
 file = "mojodreams4k_final.zip"
 boot = "MojoDreams_final800x600.exe"
@@ -1474,20 +1485,6 @@ patch = {
   info = "PE from the COM dropper, ECX fix",
   target = "MojoDreams_final800x600.exe",
   source = "win/patches/mojodreams.exe",
-}
-
-[zoo.67463]
-fix_info = '''
-Both .coms are UPX-packed DOS droppers that write C:acidice.exe and exec it
-through int 21h/4B00 (NTVDM only). The PE from acidice4k_by_and.com, unpacked
-by porting UPX's COM stub and cut out at its MZ, is shipped as
-win/patches/acidice.exe.
-'''
-boot = "acidice.exe"
-patch = {
-  info = "PE from the COM dropper",
-  target = "acidice.exe",
-  source = "win/patches/acidice.exe",
 }
 
 [zoo.3288]
@@ -1558,15 +1555,15 @@ multisampling off.
 boot = "spilled_qc_1024.exe"
 meta = { wine_dll_overrides = "d3d9=b", wine_d3d_config = "SampleCount=0" }
 
-# Night Time by Loonies: D3D11 compute, presented once. Black under DXVK (no
-# HUD either), right with wined3d
+# Night Time by Loonies: D3D11 compute, presented once. Black under DXVK and
+# wined3d's GL renderer, right with its Vulkan one
 [zoo.155141]
 fix_info = '''
-It presents a D3D11 compute image once and then only polls Esc. Under DXVK
-nothing reaches the session, not even DXVK_HUD. wine_dll_overrides
-d3d11=b;dxgi=b uses wined3d instead, which works.
+It presents a D3D11 compute image once, after ~17 s of rendering, and then
+only polls Esc. DXVK and wined3d's GL renderer present black; wined3d with
+renderer=vulkan works.
 '''
-meta = { wine_dll_overrides = "d3d11=b;dxgi=b" }
+meta = { wine_dll_overrides = "d3d11=b;dxgi=b", wine_d3d_config = "renderer=vulkan" }
 
 [zoo.155002]
 meta = { wine_res = "640x480" }
@@ -1796,13 +1793,18 @@ and its search for a negative position never ends. bass.dll is packed, so the
 unpacker's last jump goes through a cave that makes the search unsigned.
 The click picks "watch fullscreen"; the menu ignores keys. It sits low because
 the window is 637x451, not the 640x480 the click is scaled over.
+After the menu it froze on the headphones screen until cnc-ddraw.
 '''
-meta = { wine_res = "640x480" }
-events = [{ frame = 392, click = [0.5120000243186951, 0.953000009059906] }]
+meta = { wine_res = "640x480", wine_cnc_ddraw = "true" }
+events = [{ frame = 1303, click = [0.5080000162124634, 0.9480000138282776] }]
 patch = [
   { info = "unpacker exit jumps to the cave", target = "bass.dll", offset = 602, contents = "0gsAAA==" },
   { info = "jle/jg to jbe/ja in the position search", target = "bass.dll", offset = 3632, contents = "xgXsiwEQdsYFBIwBEHfpoXz+/w==" },
 ]
+
+# Solaris - Kiss Our Assembler: ddraw, black with music under wined3d
+[zoo.2672]
+meta = { wine_cnc_ddraw = "true" }
 
 [zoo.61983]
 meta = { wine_res = "640x480" }
@@ -1966,6 +1968,10 @@ autodlg's undecorate step and hide the first ten seconds.
 '''
 meta = { wine_dll_overrides = "d3d9=b" }
 
+# Black Lines by Minas: only the cream background under DXVK, like polystreptikum
+[zoo.58998]
+meta = { wine_dll_overrides = "d3d9=b" }
+
 # Mescaline Synesthesia by deMarche: ships Unreal Speccy, which was started
 # instead and quits on "wrong ini-file version"
 [zoo.70380]
@@ -1979,17 +1985,23 @@ meta = { wine_cnc_ddraw = "true", wine_res = "640x480" }
 [zoo.3302]
 meta = { wine_cnc_ddraw = "true" }
 
-# Indie-Vibes: scene.org copy is gone, and the Google Drive link is a page
+# Indie-Vibes: scene.org copy is gone, and the Google Drive link is a page.
+# A WinRAR SFX around a BoxedApp-packed Unity player, which faults under wine;
+# unpacked, the player and its files run as they are.
 [zoo.143895]
 download = "https://ftp.untergrund.net/users/highsociety/dump/Kp-2015_Indie-vibes.exe"
+sfx = true
 
 # Small Matters Of The Heart: GL-drawn launcher
 [zoo.136152]
 events = [{ frame = 600, key = "Enter" }]
 
 # Esocentrica: launcher waits on "Watch"
+# Esocentrica: Satori's Circulation engine renders in GL and presents
+# through DirectDraw, which wined3d leaves black on NVIDIA.
 [zoo.167713]
 events = [{ frame = 600, key = "Enter" }]
+meta = { wine_cnc_ddraw = true }
 
 # Emergency: IMS sound setup screen
 [zoo.333681]
@@ -1999,9 +2011,9 @@ events = [{ frame = 600, key = "Enter" }, { frame = 700, key = "Enter" }]
 [zoo.160458]
 events = [{ frame = 600, key = "2" }]
 
-# [ Type ]: "Click" to start
+# [ Type ]: the "Click" link at the top left starts it
 [zoo.153542]
-events = [{ frame = 600, click = [0.5, 0.5] }]
+events = [{ frame = 600, click = [0.012, 0.016] }]
 
 # Artifact: quality buttons
 [zoo.196630]
@@ -2019,9 +2031,14 @@ events = [{ frame = 600, click = [0.51, 0.54] }]
 [zoo.284919]
 events = [{ frame = 600, click = [0.41, 0.5] }]
 
-# Condition: "click me!"
+# Felid: play button; draws one still picture, no sound
+[zoo.342293]
+events = [{ frame = 600, click = [0.5, 0.43] }]
+
+# Condition: "click me!" at the top left, after a precalc of 20-40 s; a
+# click once it has started lands on the canvas and does nothing.
 [zoo.292275]
-events = [{ frame = 600, click = [0.03, 0.025] }]
+events = [{ frame = 1200, click = [0.016, 0.015] }, { frame = 1800, click = [0.016, 0.015] }, { frame = 2400, click = [0.016, 0.015] }, { frame = 3600, click = [0.016, 0.015] }]
 
 # Seven Days: "Full Screen" button
 [zoo.307633]
@@ -2031,13 +2048,18 @@ events = [{ frame = 600, click = [0.5, 0.72] }]
 [zoo.322650]
 events = [{ frame = 600, click = [0.023, 0.081] }]
 
-# Decompress of Empty: the .html download comes back as a mirror's page
+# Decompress of Empty: the party zip's PNG lost its CR bytes
 [zoo.323526]
-file = "decompress_of_empty_party.zip"
+file = "2023_04_22_21_03_54_decompress_of_empty.html"
+events = [{ frame = 900, click = [0.5, 0.525] }]  # "2. Play!" after precompiling
 
-# Genesis: the exe is a node server for the page
+# Genesis: the exe is a node server for the page; Space starts it. The music
+# was fetched from ../../music, the server's root, which under demarc's
+# /<n>/ prefix is outside the release; the timeline waits for the music.
 [zoo.267672]
 boot = "client/index.html"
+events = [{ frame = 600, key = "Space" }]
+patch = { info = "music from the page's own directory", target = "client/js/app.js", offset = 33148, contents = "Jy4vLi8uL211c2ljL2Z1bmN0aW9uMjAxOS0zLm1wMyc=" }
 
 # Horizon Machine: NVIDIA rejects gl_FragColor at #version 430
 [zoo.170744]
@@ -2075,6 +2097,183 @@ boot = "run.bat"
 # sandbox also maps the release directory to a drive letter of its own
 [zoo.181204]
 meta = { wine_sandbox = "false" }
+
+# Newton Protocol
+[zoo.202470]
+fix_info = '''
+PNG-packed page. Its packer aliases WebGL methods as name[0]+name[6], and
+Chrome now has more methods per alias (ge = getInternalformatParameter), so
+the ambiguous ones are pinned. It also set drawBuffers after each draw and
+samples its own colour attachment 2, which ANGLE now refuses; draw buffers
+are set before the draw and attachment 2 is detached around it. The patch
+rewrites the bootstrap's eval(_) at the end of the file to edit the script.
+'''
+patch = {
+  info = "WebGL aliases pinned, draw buffers and feedback loop fixed",
+  target = "hbc-00017-newton_protocol.html",
+  offset = 4082,
+  contents = """
+KDEsZXZhbCkoXy5yZXBsYWNlKCc9R1thXTsnLCc9R1thXTtHLmJhPUcuYmluZEZyYW1lYnVmZmVy
+O0cuYmY9Ry5iaW5kQnVmZmVyO0cuY1M9Ry5jcmVhdGVTaGFkZXI7Ry5jVD1HLmNyZWF0ZVRleHR1
+cmU7Ry5jZT1HLmNvbXBpbGVTaGFkZXI7Ry5kcj1HLmRyYXdBcnJheXM7Ry5mdT1HLmZyYW1lYnVm
+ZmVyVGV4dHVyZTJEO0cuZ2U9Ry5nZXRFeHRlbnNpb247Ry5nZj1HLmdldFVuaWZvcm1Mb2NhdGlv
+bjtHLnRhPUcudGV4UGFyYW1ldGVyaTtHLnRnPUcudGV4SW1hZ2UyRDtHLnZBPUcudmVydGV4QXR0
+cmliUG9pbnRlcjsnKS5yZXBsYWNlKCdkcig0LDAsMyk7MT09cCYmZGYoWzM2MDY0LDM2MDY1XSk7
+Mj09cCYmZGYoWzM2MDY0LDM2MDY1LDM2MDY2XSknLCdPW3ldJiZkZihwPT0xP1szNjA2NCwzNjA2
+NV06cD09Mj9bMzYwNjQsMzYwNjUsMzYwNjZdOlszNjA2NF0pO3B8fCFPW3ldfHxmdSgzNjE2MCwz
+NjA2NiwzNTUzLG51bGwsMCk7ZHIoNCwwLDMpO3B8fCFPW3ldfHxmdSgzNjE2MCwzNjA2NiwzNTUz
+LFBbeSozKzJdLDApJykpPg==
+"""
+}
+
+# Tension by x0f
+[zoo.269513]
+fix_info = '''
+Crashed at the first frame or, at random, exited silently while loading. One
+op calls GenerateMips with its texture index still -1, passing a texture as
+the SRV: DXVK reads NULL from it and wined3d asserts. Its render targets are
+made in a loop that never resets the size between formats, so it asks for
+textures up to 33554432 wide; the D3D11 runtime refuses anything over 16384,
+but DXVK hands the 32768 ones to the driver, which sometimes faults in
+vkAllocateMemory. The exe is kkrunchy packed, so the depacker jumps through a
+cave that, once unpacked, skips GenerateMips for index -1 and fails
+CreateTexture2D above 16384.
+'''
+patch = [
+  { info = "depacker exit jumps to the cave", target = "tension_partyversion.exe", offset = 22075, contents = "6SAEAAA=" },
+  { info = "cave: skip GenerateMips for index -1, no textures over 16384", target = "tension_partyversion.exe", offset = 23136, contents = "D3e+nJo/AMcFzpc/AKTC///pzPv//8YF2GJAAOnHBdliQADA9/7/xgUBIEAA6ccFAiBAAK46///pJhYBAIXAeA7/NIWQpEAAUf+S2AAAAOkyCAEAiwhSUIH/AEAAAHcI/1EU6UDFAACDxBC4VwAHgOkzxQAA" },
+]
+
+# Observatory by Cocoon
+[zoo.109195]
+fix_info = '''
+A "File <" box at start. A material's texture setter assigns its member
+string from a copy of the name it was passed, which is the member's own
+buffer, then loads the .png through that now-freed pointer. Windows' heap
+left the freed text in place; wine's writes over it. The patch loads from
+the member string instead.
+'''
+patch = { info = "load the texture by the live name", target = "EngineRelease.dll", offset = 207727, contents = "i9g=" }
+
+# Holly by Cabbibo: uses the pre-standard Web Audio noteOn/noteOff, which
+# Chrome no longer has; the first throws and nothing starts.
+[zoo.104135]
+patch = [
+  { info = "noteOff to stop", target = "Audio.js", offset = 4022, contents = "c3RvcCAgICgwKQ==" },
+  { info = "noteOn to start", target = "Audio.js", offset = 4204, contents = "c3RhcnQgKDAp" },
+]
+
+# Driftwood by Almagest: the amigascne lha lacks the seven
+# remapped_s08_glasssplitter assets, and the demo asserts on the first one.
+# Under the JIT it freezes on the first picture while the music plays.
+[zoo.202824]
+file = "agt-driftwood-rev19.zip"
+meta = { amiberry_jit = "disabled" }
+
+# The Mind: a multi-cart release; the main cart includes and reloads the rest
+[zoo.342339]
+boot = "the mind.p8"
+
+# The (Fucking) (Complex) Art Of Profanity: its floppy set stops at the TOS
+# logo; the hard drive build (which gets an STe with 4 MB) plays.
+[zoo.306979]
+boot = "profanit.prg"
+
+[zoo.290113]
+boot = "4in1k.tap"
+
+# Eisenerz by Virgill & LJ
+[zoo.266556]
+fix_info = '''
+Died calling a user32 stub ("Call from 7BB8C557"). Its Crinkler tiny import
+hashes every user32 export into one table, and wine's user32 also has
+ShellHandwritingHandleDelegatedInput, whose slot is GetDC's and which sorts
+after it, so GetDC was the stub. demarc now unpacks Crinkler exes and imports
+by name (docs/CRINKLER.md). It draws at 1280x720 and only fills part of a
+larger screen.
+'''
+meta = { wine_res = "1280x720" }
+
+# Cassini's Cosmic Conclusion by Pestis & mrange
+[zoo.367582]
+fix_info = '''
+Died calling a user32 stub, like Eisenerz (a Crinkler tiny-import slot that a
+wine-only export also hashes to); fixed by demarc unpacking Crinkler exes and
+importing by name. Then black: its window is created at 0x0 with WS_MAXIMIZE
+(given the screen's size by the rebuilt exe's CreateWindowExA wrapper), and
+it sets single-buffered pixel format 8 through gdi32, draws to the front
+buffer and never swaps, reading a pixel back each frame. The rebuilt exe
+calls opengl32's wglSetPixelFormat instead, so the opengl32 proxy makes the
+format double-buffered and swaps after each glReadPixels (tools/opengl32,
+needs --setup-wine).
+'''
+
+# Bull: draws the scene in its first frames, then post-processes the back
+# buffer, which Xwayland does not keep across a swap
+[zoo.292424]
+meta = { wine_gl_keep_back = "true" }
+
+# Fabula: without -ui, the present waits on the next frame's render semaphore,
+# signalled only after it, and the queue deadlocks; take the -ui branch's. Its
+# 8 MB uniform rings then overflow (Xid 109); make them 128 MB
+[zoo.377071]
+patch = [
+  { info = "present semaphore", target = "MWI-Fabula.exe", offset = 822989, contents = "kJA=" },
+  { info = "ring size", target = "MWI-Fabula.exe", offset = 457237, contents = "ACChBw==" },
+  { info = "ring size", target = "MWI-Fabula.exe", offset = 458360, contents = "ACChBw==" },
+]
+
+[zoo.87036]
+file = "frq_metatunnel_win32.zip"
+
+# Nevada by Loonies: renders at the session size with a 4:3 projection
+[zoo.2619]
+meta = { wine_narrow = "true" }
+
+# synchroplastikum by Calodox: renders at the session size with a 4:3 projection
+[zoo.55453]
+meta = { wine_narrow = "true" }
+
+# Waillee by Prismbeings: NVIDIA-lax GLSL, white screen with music
+[zoo.178895]
+fix_info = '''
+Mesa refused both shaders, so only the clear colour showed. The scene returns
+an int from a float function and uses ! on an int; the blur pass has no
+#version but calls texture() and textureLod().
+'''
+glsl = [
+  { match = 'if\(!c\)', edits = [['if\(!c\)', "if(c==0)"], ['return 0;', "return 0.;"]] },
+  { match = "textureLod", edits = [["^(.)", "#version 130\n$1"]] },
+]
+
+# Optical Circuit by 0x4015: black screen with music
+[zoo.133196]
+fix_info = '''
+Mesa's preprocessor fails on the scene shaders: after a .z swizzle, with a
+function-like macro also named z, the next directive is a syntax error. The
+glsl edit renames the macro, and adds #version 130 for its bit operations.
+'''
+glsl = { match = '#define z\(a\)', edits = [['\bz\(', "zz("], ['^#define', "#version 130\n#define"]] }
+
+# K-wak by K-Rad Productions & The Dennis Courtney 5
+[zoo.74934]
+known_issue = """
+NVIDIA only. Prints "Necessary extensions are not supported" and quits
+without NV_register_combiners, NV_texture_shader and NV_vertex_program, none
+of which Mesa has.
+"""
+
+[zoo.57055]
+meta = { wine_res = "1024x768" }
+
+# Luma by Mercury
+[zoo.99227]
+fix_info = '''
+Zoomed in. It sets 1280x720 and makes a 1280x720 window, but sizes some passes
+from the 1920x1080 session.
+'''
+meta = { wine_res = "1280x720" }
+file = "hg-luma-final.zip"
 
 [zoo.59676]
 meta = { fast = "true", amiberry_cpu_model = "68030" }

@@ -826,6 +826,10 @@ static int __stdcall choose_pixel_format(void *hdc, const unsigned char *pfd)
 // wine's list, and front-buffer drawing never reaches the session.
 static int(__stdcall *wine_set_pixel_format)(void *hdc, int format, const void *pfd);
 
+// Set when a single-buffered format was swapped for a double-buffered one,
+// until the app swaps by itself.
+static int front_buffer_drawing;
+
 static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
 {
     int(__stdcall * describe)(void *, int, unsigned, unsigned char *) = lookup(wine, "wglDescribePixelFormat");
@@ -833,8 +837,10 @@ static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
     if (describe && describe(hdc, format, sizeof(desc), desc) && !(desc[4] & 1)) {
         desc[4] |= 1;
         int double_buffered = wine_choose_pixel_format(hdc, desc);
-        if (double_buffered && describe(hdc, double_buffered, sizeof(desc), desc) && (desc[4] & 1))
+        if (double_buffered && describe(hdc, double_buffered, sizeof(desc), desc) && (desc[4] & 1)) {
             format = double_buffered;
+            front_buffer_drawing = 1;
+        }
     }
     return wine_set_pixel_format(hdc, format, pfd);
 }
@@ -843,11 +849,138 @@ static int __stdcall set_pixel_format(void *hdc, int format, const void *pfd)
 // frame and gets a NaN time once it overflows.
 static int(__stdcall *wine_swap_buffers)(void *hdc);
 
+// DEMARC_GL_KEEP_BACK: the back buffer survives a swap, as on Windows
+// drivers. Leviathan 2.0's "Bull" draws its scene twice, then only
+// post-processes the back buffer.
+static int keep_back = -1;
+static unsigned kept_fbo, kept_rb;
+static int kept_w, kept_h;
+
+static void keep_back_copy(void *hdc, int restore)
+{
+    if (keep_back < 0) {
+        WCHAR var[] = u"DEMARC_GL_KEEP_BACK";
+        UNICODE_STRING name = {sizeof(var) - 2, sizeof(var), var};
+        WCHAR buf[8];
+        UNICODE_STRING value = {0, sizeof(buf), buf};
+        keep_back = !RtlQueryEnvironmentVariable_U(0, &name, &value) && value.Length && buf[0] != u'0';
+    }
+    if (!keep_back)
+        return;
+    static void *(__stdcall * window_from_dc)(void *);
+    static int(__stdcall * client_rect)(void *, int *);
+    if (!window_from_dc) {
+        UNICODE_STRING name = {18, 20, u"user32.dll"};
+        HMODULE user32 = 0;
+        LdrLoadDll(0, 0, &name, &user32);
+        window_from_dc = lookup(user32, "WindowFromDC");
+        client_rect = lookup(user32, "GetClientRect");
+    }
+    void(__stdcall * get_integerv)(unsigned, int *) = lookup(wine, "glGetIntegerv");
+    unsigned char(__stdcall * is_enabled)(unsigned) = lookup(wine, "glIsEnabled");
+    void(__stdcall * enable)(unsigned) = lookup(wine, "glEnable");
+    void(__stdcall * disable)(unsigned) = lookup(wine, "glDisable");
+    void(__stdcall * bind_framebuffer)(unsigned, unsigned) = wine_get_proc_address("glBindFramebuffer");
+    void(__stdcall * blit)(int, int, int, int, int, int, int, int, unsigned, unsigned) =
+        wine_get_proc_address("glBlitFramebuffer");
+    int rect[4];
+    void *window = window_from_dc ? window_from_dc(hdc) : 0;
+    if (!bind_framebuffer || !blit || !window || !client_rect(window, rect))
+        return;
+    int w = rect[2] - rect[0], h = rect[3] - rect[1];
+    if (w <= 0 || h <= 0)
+        return;
+    if (restore && (!kept_fbo || w != kept_w || h != kept_h))
+        return;
+    int read, draw;
+    get_integerv(0x8CAA, &read); // GL_READ_FRAMEBUFFER_BINDING
+    get_integerv(0x8CA6, &draw); // GL_DRAW_FRAMEBUFFER_BINDING
+    if (!kept_fbo || w != kept_w || h != kept_h) {
+        void(__stdcall * gen_framebuffers)(int, unsigned *) = wine_get_proc_address("glGenFramebuffers");
+        void(__stdcall * gen_renderbuffers)(int, unsigned *) = wine_get_proc_address("glGenRenderbuffers");
+        void(__stdcall * bind_renderbuffer)(unsigned, unsigned) = wine_get_proc_address("glBindRenderbuffer");
+        void(__stdcall * renderbuffer_storage)(unsigned, unsigned, int, int) =
+            wine_get_proc_address("glRenderbufferStorage");
+        void(__stdcall * framebuffer_renderbuffer)(unsigned, unsigned, unsigned, unsigned) =
+            wine_get_proc_address("glFramebufferRenderbuffer");
+        if (!gen_framebuffers || !gen_renderbuffers || !bind_renderbuffer || !renderbuffer_storage ||
+            !framebuffer_renderbuffer)
+            return;
+        int rb;
+        get_integerv(0x8CA7, &rb); // GL_RENDERBUFFER_BINDING
+        if (!kept_fbo) {
+            gen_framebuffers(1, &kept_fbo);
+            gen_renderbuffers(1, &kept_rb);
+        }
+        bind_renderbuffer(0x8D41, kept_rb);                  // GL_RENDERBUFFER
+        renderbuffer_storage(0x8D41, 0x8058, w, h);          // GL_RGBA8
+        bind_framebuffer(0x8CA9, kept_fbo);                  // GL_DRAW_FRAMEBUFFER
+        framebuffer_renderbuffer(0x8CA9, 0x8CE0, 0x8D41, kept_rb); // GL_COLOR_ATTACHMENT0
+        bind_renderbuffer(0x8D41, rb);
+        kept_w = w;
+        kept_h = h;
+    }
+    int scissor = is_enabled(0x0C11); // GL_SCISSOR_TEST
+    if (scissor)
+        disable(0x0C11);
+    bind_framebuffer(0x8CA8, restore ? kept_fbo : 0); // GL_READ_FRAMEBUFFER
+    bind_framebuffer(0x8CA9, restore ? 0 : kept_fbo);
+    blit(0, 0, w, h, 0, 0, w, h, 0x4000, 0x2600); // GL_COLOR_BUFFER_BIT, GL_NEAREST
+    bind_framebuffer(0x8CA8, read);
+    bind_framebuffer(0x8CA9, draw);
+    if (scissor)
+        enable(0x0C11);
+}
+
 static int __stdcall swap_buffers(void *hdc)
 {
+    front_buffer_drawing = 0;
+    keep_back_copy(hdc, 0);
     int ret = wine_swap_buffers(hdc);
+    keep_back_copy(hdc, 1);
     __asm__ volatile("emms");
     return ret;
+}
+
+static int(__stdcall *wine_swap_layer_buffers)(void *hdc, unsigned planes);
+
+static int __stdcall swap_layer_buffers(void *hdc, unsigned planes)
+{
+    front_buffer_drawing = 0;
+    return wine_swap_layer_buffers(hdc, planes);
+}
+
+// An app that draws to the front buffer and never swaps (Pestis & mrange's
+// "Cassini's Cosmic Conclusion" reads a pixel back once a frame) now draws to
+// a back buffer, so the frame is swapped where it would have been complete.
+static void(__stdcall *wine_read_pixels)(int, int, int, int, unsigned, unsigned, void *);
+static void(__stdcall *wine_flush)(void);
+static void(__stdcall *wine_finish)(void);
+
+static void show_front_buffer(void)
+{
+    void *(__stdcall * current_dc)(void) = lookup(wine, "wglGetCurrentDC");
+    void *dc = current_dc ? current_dc() : 0;
+    if (front_buffer_drawing && dc)
+        wine_swap_buffers(dc);
+}
+
+static void __stdcall read_pixels(int x, int y, int w, int h, unsigned format, unsigned type, void *data)
+{
+    wine_read_pixels(x, y, w, h, format, type, data);
+    show_front_buffer();
+}
+
+static void __stdcall flush(void)
+{
+    wine_flush();
+    show_front_buffer();
+}
+
+static void __stdcall finish(void)
+{
+    wine_finish();
+    show_front_buffer();
 }
 
 // Horizon Machine's LOGFONT overlaps other data and is 0x8000000 wide; wine
@@ -942,15 +1075,16 @@ static const char *const accum_vs = "#version 130\nvoid main(){gl_Position=gl_Ve
 static const char *const accum_fs = "#version 130\nuniform sampler2D t;uniform vec4 s,a;"
                                     "void main(){gl_FragColor=texelFetch(t,ivec2(gl_FragCoord.xy),0)*s+a;}";
 
+// High names, as 4k intros bind texture 1 without generating it (Klos's
+// "Quattro" copied each frame into the accumulation buffer).
 static unsigned accum_texture(int width, int height, int format, unsigned type)
 {
-    void(__stdcall * gen_textures)(int, unsigned *) = lookup(wine, "glGenTextures");
+    static unsigned next_texture = 0x7ac00000;
     void(__stdcall * bind_texture)(unsigned, unsigned) = lookup(wine, "glBindTexture");
     void(__stdcall * tex_parameteri)(unsigned, unsigned, int) = lookup(wine, "glTexParameteri");
     void(__stdcall * tex_image)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) =
         lookup(wine, "glTexImage2D");
-    unsigned texture = 0;
-    gen_textures(1, &texture);
+    unsigned texture = next_texture++;
     bind_texture(0x0DE1, texture);
     tex_parameteri(0x0DE1, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2600 /* GL_NEAREST */);
     tex_image(0x0DE1, 0, format, width, height, 0, 0x1908 /* GL_RGBA */, type, 0);
@@ -1192,6 +1326,18 @@ int __stdcall DllMain(HMODULE self, ULONG reason, void *reserved)
             } else if (address && equal(names[i], "wglSwapBuffers")) {
                 wine_swap_buffers = address;
                 address = swap_buffers;
+            } else if (address && equal(names[i], "wglSwapLayerBuffers")) {
+                wine_swap_layer_buffers = address;
+                address = swap_layer_buffers;
+            } else if (address && equal(names[i], "glReadPixels")) {
+                wine_read_pixels = address;
+                address = read_pixels;
+            } else if (address && equal(names[i], "glFlush")) {
+                wine_flush = address;
+                address = flush;
+            } else if (address && equal(names[i], "glFinish")) {
+                wine_finish = address;
+                address = finish;
             } else if (address && equal(names[i], "wglUseFontBitmapsA")) {
                 wine_use_font_bitmaps[0] = address;
                 address = use_font_bitmaps_a;

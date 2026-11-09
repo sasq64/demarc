@@ -22,6 +22,10 @@ install-path = "~/.local/bin/"
 # Whether to install an updater program
 install-updater = false
 
+# dist's default runner for this target (macos-14) has been retired by GitHub.
+[dist.github-custom-runners]
+aarch64-apple-darwin = { runner = "macos-15", host = "aarch64-apple-darwin" }
+
 # Bevy's Linux build needs ALSA and udev headers; the runner image doesn't have
 # them. Everything else the build needs (a C/C++ compiler for retro_log_shim.c,
 # cbmconvert and the unrar shim) is already on the GitHub images.

@@ -23,7 +23,11 @@ pub const DEFAULT_RES: &str = "1920x1080";
 
 /// The session on a screen that is not a widescreen, 4:3 like the modes its
 /// dialog is asked for: a 4:3 mode in a 16:9 session ends up stretched.
-pub const NARROW_RES: &str = "1600x1200";
+pub const NARROW_RES: &str = "1440x1080";
+
+/// Meta key: yes runs the demo as on a 4:3 screen, for one that draws at the
+/// session size with a 4:3 projection.
+pub const META_NARROW: &str = "wine_narrow";
 
 /// Meta key holding the resolutions to ask the setup dialog for, best first,
 /// comma separated. Unset means "whatever [`META_RES`] says".
@@ -90,6 +94,10 @@ pub const META_SHADER_READ: &str = "wine_shader_read";
 /// Meta key holding wined3d's `WINE_D3D_CONFIG`, e.g. `SampleCount=0`.
 #[cfg(target_os = "linux")]
 pub const META_D3D_CONFIG: &str = "wine_d3d_config";
+
+/// Meta key: yes makes the opengl32 proxy keep the back buffer across swaps.
+#[cfg(target_os = "linux")]
+pub const META_GL_KEEP_BACK: &str = "wine_gl_keep_back";
 
 /// Meta key: the override's `glsl` patches, which the opengl32 proxy applies to
 /// shader sources (`tools/opengl32`). Patches are separated by

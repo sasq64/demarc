@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -239,12 +240,20 @@ fn finish_buffer(output: &mut [f32], count: usize, level: f32) {
     output[count..].fill(0.0);
 }
 
+/// Errors in a row, with no data callback between them, after which a stream
+/// counts as dead. cpal's ALSA worker can loop on an error forever without
+/// asking for data again (e.g. after a PipeWire hiccup).
+const STREAM_DEAD_ERRORS: u32 = 100;
+
 pub fn init_audio_stream(
     mut consumer: HeapCons<f32>,
     volume: Volume,
+    errors: Arc<AtomicU32>,
 ) -> Result<(f32, cpal::Stream)> {
     let host = cpal::default_host();
-    let device = host.default_output_device().unwrap();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| anyhow::anyhow!("no audio output device"))?;
 
     // Run at whatever rate the device itself runs at. Nothing we play is
     // sourced above 44.1 kHz, so there is nothing to gain from asking for a
@@ -256,7 +265,7 @@ pub fn init_audio_stream(
         .unwrap_or(48000);
 
     let (supported, sample_rate) = pick_output_config(device.supported_output_configs()?, target)
-        .expect("no supported config");
+        .ok_or_else(|| anyhow::anyhow!("no supported audio config"))?;
 
     // A small buffer keeps latency down and lets the ring run near empty. Clamp
     // into the device's advertised range: cpal's CoreAudio backend rejects
@@ -278,16 +287,30 @@ pub fn init_audio_stream(
         config.sample_rate, config.channels, config.buffer_size
     );
 
+    let data_errors = Arc::clone(&errors);
     let stream = device.build_output_stream(
         &config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            data_errors.store(0, Ordering::Relaxed);
             let count = consumer.pop_slice(output);
             if count > 0 && count < output.len() {
                 debug!("Audio drop");
             }
             finish_buffer(output, count, volume.get());
         },
-        |err| eprintln!("audio stream error: {err}"),
+        move |err| {
+            if matches!(err, cpal::StreamError::BufferUnderrun) {
+                debug!("audio stream error: {err}");
+                return;
+            }
+            let n = errors.fetch_add(1, Ordering::Relaxed) + 1;
+            if n == 1 || n == STREAM_DEAD_ERRORS {
+                warn!("audio stream error: {err}");
+            }
+            if n >= STREAM_DEAD_ERRORS {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        },
         None,
     )?;
 
@@ -384,6 +407,7 @@ pub struct AudioSink {
     /// closed is still in force when it opens again.
     volume: Volume,
     state: Arc<Mutex<SinkState>>,
+    errors: Arc<AtomicU32>,
 }
 
 impl AudioSink {
@@ -397,7 +421,10 @@ impl AudioSink {
 
     pub fn activate(&mut self) {
         let (producer, consumer) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
-        let Ok((sample_rate, stream)) = init_audio_stream(consumer, self.volume.clone()) else {
+        self.errors = Arc::default();
+        let Ok((sample_rate, stream)) =
+            init_audio_stream(consumer, self.volume.clone(), Arc::clone(&self.errors))
+        else {
             error!("Could not init audio");
             return;
         };
@@ -413,10 +440,21 @@ impl AudioSink {
     }
 
     pub fn deactivate(&mut self) {
-        self.stream = None;
+        let failed = self.failed();
+        if let Some(stream) = self.stream.take()
+            && failed
+        {
+            // Dropping joins cpal's worker, which may never return.
+            std::thread::spawn(move || drop(stream));
+        }
         let mut state = self.state();
         state.producer = None;
         state.resampler = None;
+    }
+
+    /// Whether the output stream has stopped asking for data.
+    pub fn failed(&self) -> bool {
+        self.stream.is_some() && self.errors.load(Ordering::Relaxed) >= STREAM_DEAD_ERRORS
     }
 
     pub fn set_low_water(&self, samples: usize) {

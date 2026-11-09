@@ -598,9 +598,12 @@
   out tinted with the clear colour. wined3d's `SampleCount=0` (env
   `WINE_D3D_CONFIG`, now the `wine_d3d_config` meta key) turns multisampling off.
 
-- Night Time (`zoo.155141`) presents a D3D11 compute image once and then only
-  polls Esc. Under DXVK nothing reaches the session, not even `DXVK_HUD`;
-  `d3d11=b;dxgi=b` works. Undecorating was not the cause:
+- Night Time (`zoo.155141`) presents a D3D11 compute image once, ~17 s in,
+  and then only polls Esc. Under DXVK nothing reaches the session, not even
+  `DXVK_HUD`. `d3d11=b;dxgi=b` was wrongly recorded as working: wined3d's GL
+  renderer shows the white window until the present, then black. Watch a
+  draw-once intro for 30 s or more before calling a fix good. wined3d with
+  `wine_d3d_config=renderer=vulkan` draws it. Undecorating was not the cause:
   `-x wine_dialog_res=pick` (autodlg `--no-fill`) was still black.
 
 - On (`zoo.136151`) asserts with `int3` (`0x80000003`) when
@@ -732,7 +735,6 @@
   `could not open working directory E:\` was in the good runs as well, which
   made it look harmless. The Deck has bwrap 0.12 now and *is* sandboxed.
 
-
 - Trimming Bevy features: without `bevy_post_process` the frame renders black
   with no error in the log, even though demarc's `PostProcess` is its own code.
   Check a headless screenshot after every feature change, and put a few
@@ -751,7 +753,7 @@
   `w_set_winver winxp`. UE4 checks `VerifyWindowsVersion(6, 0)` and silently
   picks OpenGL, so a D3D-only cook fails with "GlobalShaderCache-GLSL_150.bin
   is missing" (Dying Stars). Shipping UE4 builds log nothing; the launcher's
-  `ED3 ` argument and `+process` ruled out `-opengl` before the version.
+  `ED3` argument and `+process` ruled out `-opengl` before the version.
 
 - A ddraw demo frozen on its first frame with the music playing need not be a
   presentation bug: Lasse Reinbong '96 (`zoo.198069`) polls `MCI_STATUS` from
@@ -1338,3 +1340,285 @@
 - The egui test `Harness` runs frames 0.1 s apart, so a `Harness::click`
   followed straight away by another press is already a double click (egui's
   limit is 0.3 s). Idle a few frames between clicks that should stay single.
+
+- Web releases now load over a local HTTP server, not `file://`. A PNG-packed
+  page (`<img src=#>` decoding itself) still "showed raw text" over HTTP; the
+  text is the PNG rendered as HTML, and stays visible when the script fails
+  behind a transparent canvas. Read the console over CDP before blaming the
+  transport: Newton Protocol (`zoo.202470`) threw on a renamed WebGL method,
+  and the party zip of Decompress of Empty had a PNG with its CR bytes lost. A `--remote-debugging-port`
+  passed through `gamescope_chrome_args` was not reachable from outside the
+  session; reproduce in plain headless Chromium against `python3 -m http.server`.
+- Edits to `system/overrides.toml` only reach a release build after
+  rebuilding (it is read from the embedded `system.zip`). Three Decompress of
+  Empty runs tested an old override and blamed the click; the "Found override"
+  debug line shows what was actually loaded.
+- scene.org's `de-https` mirror (NetCologne) puts a welcome page in front of
+  every `.html` it serves, so a web release read as text. The fetcher now
+  treats that as a failed mirror.
+- `cargo fmt` reformats the whole workspace (it is not fmt-clean); format only
+  the files you changed (`rustfmt <file>`).
+
+- A kkrunchy exe can be patched without unpacking it (Tension, `zoo.269513`).
+  The stub ends with `emms; mov esi,<imports>` before its import loader; a
+  jump from there into the zero padding after the import directory runs a
+  cave that retargets the untransform's final `je <OEP>` (decompressed by
+  then) at a second cave, which patches the unpacked code and jumps to the
+  OEP. Under winedbg, breakpoints on not-yet-unpacked code are lost; break
+  in the stub or the cave.
+- Tension went silent at random. I spent a long time on "NaN" in its audio
+  buffer, read as float; the source voice's WAVEFORMATEX said 16-bit PCM and
+  the music was fine. Read the format before the samples. The real fault was
+  a `vkAllocateMemory Exception 0xc0000005 in Unix call` in the log just
+  before exit: a size loop that never reset asked for 32768-wide RGBA16F
+  textures, which the D3D11 runtime refuses above 16384 and DXVK passes to
+  the driver. `audio_level` zero with a moving loading screen can be a demo
+  that already exited, leaving its last frame up.
+- Observatory (`zoo.109195`): native msvcr100/msvcp100 did not help (and
+  wine loads its builtins even with native ones beside the exe until
+  `msvcr100=n` is set). The use-after-free is a setter called with its own
+  member's `c_str()`: it reassigns the member, then reuses the argument.
+  Look for the stale pointer being reread after the `operator delete` in the
+  same function before blaming the CRT.
+- Esocentrica (`zoo.167713`) loads shaders from disk and compiles them
+  cleanly, yet stays black: its exe imports DDRAW as well as OPENGL32
+  (Satori's Circulation engine presents through DirectDraw). Check a GL
+  demo's import list for DDRAW before tracing GL; `wine_cnc_ddraw` fixed it.
+  An `+opengl` trace through demarc is useless for long runs: the wine log
+  keeps 4096 distinct lines, and pixel-format enumeration fills that first.
+- A web demo's "Click" text at the top left is usually an `<a>` with the
+  `onclick`, not the canvas ([Type] `zoo.153542`, Condition `zoo.292275`). Its
+  box is only ~18 px high at the 8 px body margin, so y=0.025 at 1080 already
+  misses it. Condition also shows the link only after a 20-40 s precalc;
+  clicks before it land on "Wait a moment..." and do nothing, so repeat the
+  click.
+- Holly (`zoo.104135`) was black because its first `AudioBufferSourceNode`
+  call was `noteOn`, which Chrome dropped years ago; the exception stopped the
+  start. Read the console before guessing at Leap Motion or clicks. When
+  re-testing a patched file in headless Chromium, use a fresh
+  `--user-data-dir`: the HTTP cache served the unpatched script.
+- Genesis (`zoo.267672`) had `boot = "client/index.html"`, which never
+  matched: `find_named` compared file names only, so the systems' own pick,
+  the node server exe, ran under wine. A name with a `/` is now a path from
+  the release directory (also for patch targets, needed for its two
+  `app.js`). Check the log's "launched" line before debugging the page.
+  Its music was loaded from `../../music/`, the demo's own server root; under
+  demarc's `/<n>/` prefix that leaves the release, and the timeline waits for
+  audio, so the page was black and silent. Grep a web demo for `../` and
+  root-relative URLs.
+- `rustfmt <file>` also formats every module the file declares (`mod x;`),
+  so formatting `newsys.rs` rewrote four untouched files. Check `git diff
+  --stat` after it, or pass `--config skip_children=true` (nightly) / revert.
+- Driftwood (`zoo.202824`) asserted at `common.c 1828`, which I had read as
+  1028 and taken for a CPU/FPU or memory problem; `fast = true`, no FPU
+  (Line-F trap, it needs one) and more chip RAM were all wasted runs. The
+  assert was an `fopen` of a chunk file: the amigascne lha is missing seven
+  assets the party zip has. When an Amiga demo dies loading, diff the asset
+  names in the exe against the archive before touching the machine config.
+  The exe's strings are inline in its code hunk; `pea #line; pea path(pc)`
+  finds an assert's site, and capstone (M68K) disassembles hunk 0.
+- Art Of Profanity (`zoo.306979`) ships floppies and a hard drive build; the
+  floppies (preferred by the ST system) stop at the TOS logo. With `boot`
+  naming the `.prg`, the picture came up but silent: the override narrows the
+  work file to the program, and `build_gemdos_drive` treats a lone file as
+  the whole release, so `zik.raw` beside it never reached the drive. It now
+  takes the release from `RELEASE_DIR`, as the Amiga system does. A system
+  that copies "the release" should check `RELEASE_DIR` when the path is a
+  file.
+- `pkill -f <name>` from a Bash call kills the call's own shell when the name
+  is in its command line (exit 144). Kill by `ps -eo pid,comm` instead, as the
+  skill already says for `pgrep -f`.
+- Return (`zoo.311793`) is not a missing runtime: wine-mono asserts in
+  `prepare_run_main` because `Program` has a static field typed from an
+  assembly that only the app's AssemblyResolve handler (embedded `FLPK`
+  resources) can supply, and mono resolves field types before `Main` runs.
+- Crinkler exes are now unpacked before running (docs/CRINKLER.md). The
+  depacker runs in `crates/newsys/src/x86.rs`; checking its output against a
+  winedbg dump at the depacker's final `ret` (`tools`-style script: break on
+  the header's `ret`, read `/proc/<pid>/mem` as a child subreaper, since wine's
+  launcher exits and orphans the exe) found it exact for 1.1, 2.2 and 2.3.
+  Gotchas on the way: the tiny-import DLL list has no terminator (it ends where
+  `LoadLibrary` fails, Eisenerz's at "vers/gm.dls"); today's Crinkler export
+  list has Win11 names that make 2.x slots ambiguous, so each version's own
+  list is used; 1.x headers overlap the hash list, so some hashes are dummies;
+  the tiny-import prologue pattern also matches the tail of the ordinary one.
+  Don't rely on `dd`'s skip into a dump that starts at 0x400000 as if it were
+  addresses (I read zeros at "0x420000" that way).
+- Two headless demarc sessions at once spoil each other: a sweep running while
+  I tested Organix in parallel reported every later demo silent, mostly
+  frameless, and four as `retro_load_game(...) failed`. Run one session at a
+  time, and treat a sweep that turns bad all at once as invalid.
+- The Crinkler regression sweep (`Test: Working`'s 37 Crinkler demos, packed
+  vs unpacked) found Horizon Machine calling
+  `gdi32.D3DKMTAddSurfaceToSwapChain` once unpacked: the 2.0a export list has
+  that name in `CreateThread`'s tiny-import slot, the 2.0 list doesn't, and a
+  header says `20` for both. Most of the sweep's "silent, 0-1 frames" were the
+  same packed: executable graphics show one still, and Oidos intros precalc
+  past a 20 s window. Always sweep the baseline too before calling a
+  difference a regression.
+- The Crinkler unpacker was checked against 1.1, 2.x and 2.3 test exes and
+  called done for "1.x to 3.x", but every 1.2/1.3 exe (a third of those in the
+  download cache) fell back to packed: their import prologue reads the PEB as
+  `fs:[bx+30h]`. Sweep a decoder over every matching file in
+  `~/.cache/demarc/downloads` (an `#[ignore]` test over a directory is enough)
+  before claiming version coverage, and before removing the proxies it
+  replaces.
+- Fabula (`zoo.377071`) hung after its first present. The validation layer
+  (Arch's `vulkan-validation-layers` package unpacked to a scratch dir,
+  `VK_LAYER_PATH` + `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`) named it
+  at once: the present waited on a semaphore with "no way to be signaled". A
+  `+vulkan` trace and winedbg had only shown the symptom. Run the validation
+  layer first for a Vulkan hang. Once the hang was fixed, a GPU hang followed
+  (`journalctl -k | grep Xid`, 109): the same run's
+  `VkDescriptorBufferInfo-offset` errors showed the uniform ring overflowing.
+- Return (`zoo.311793`) runs on native .NET 4.8 (`winetricks dotnet48`). That
+  verb also moves the prefix from winxp to win7 and removes wine-mono. Test it
+  in a `cp -a` of the prefix under `gamescope --backend headless` first.
+- Driftwood (`zoo.202824`) was marked fixed on "sound + moving frames", but
+  it froze on its first picture while the music (interrupt driven) played;
+  the frame count stopped at 12 after 10 s. `amiberry_jit = "disabled"`
+  fixed it. For a demo with sound, check that the unique-frame count keeps
+  rising and that screenshots show different scenes before calling it fixed.
+  Also: `system/overrides.toml` is copied to `~/.cache/demarc/system` by the
+  build, so an override edit needs a rebuild (the log's `JIT=` line shows
+  whether it took).
+- Indie-Vibes (`zoo.143895`) had been filed as "not fixable": BoxedApp-packed
+  Unity, faulting in BoxedApp's own loader. Look at the packer's sections before
+  debugging its loader: `.bxpck` held all 37 files uncompressed, and the
+  original PE (entry point, `.rdata` import table) was untouched apart from
+  the import/TLS directories. Unpacking it (`boxedapp.rs`) took far less time
+  than debugging the fault would have. Also, the release is a WinRAR SFX that
+  demarc ran as is, so an unpack step on the release never saw the inner exe
+  (`sfx = true` override). Never run `cargo fmt` here: stock rustfmt reflows
+  ~45 untouched files (the tree is formatted wider); format only the files you
+  edit (`rustfmt --edition 2024 <file>`) and check `git diff` for stray hunks.
+- Klos's 4k gfx (Quattro `zoo.371225`, the Fast & Fouriers series) flashed
+  one frame, then went black or saturated. `wine_gl_keep_back` was a wrong
+  first guess. The demarc `+opengl` log hid the cause: it drops repeated lines
+  and shows the proxy's emulation calls mixed in with the intro's own. A plain
+  wine trace showed `glAccum`, and the intro binds texture 1 without
+  `glGenTextures`, which was the name the proxy's emulated accumulation buffer
+  had got. Proxy objects now take high names. The intros take 10-20 s to
+  accumulate under demarc, so wait at least 1200 frames before calling one black.
+
+- The crinkler tests run the x86 interpreter over real depackers and take ~90s
+  in release but well over 10 minutes in a debug build, which looks like a
+  hang. Run `cargo test --release -p newsys` when touching `x86.rs`.
+
+- "Stops playing new demos" with the window alive and the gamescope core
+  SIGSTOPped by its own pauser: cpal's ALSA thread was at 100% CPU in a loop
+  that only calls the error callback, so the ring stayed full and
+  `Emulator::run` dropped every frame. ptrace and perf are closed here, but
+  `top -H` and `/proc/<pid>/task/<tid>/io` (millions of 20-byte writes =
+  `eprintln!("audio stream error: ")` to a stderr on /dev/null) found it.
+  Check the cpal thread's CPU first when emulation stops without a log line.
+
+- Crinkler-unpacked exes that crash right after the import code but run with
+  `-x crinkler_unpack=false`: check which registers the code after the import
+  loop still reads. Final Stage (`zoo.170740`) `stosd`s into `edi` left at the
+  IAT end; 1.0 exes (Arancia `zoo.59650`, sprite-o-mat `zoo.4286`) run their
+  call transform from `edx`. The rebuilt stub set neither. Compare packed and
+  unpacked first — it isolates the unpacker in one run.
+
+- The slangp intermediate in `composite.rs` is sized to the picture's whole
+  on-screen footprint, not the visible part, so anything that scales
+  `uv_scale` up (view zoom) grows it quadratically; `max_texture_dimension_2d`
+  alone still allows a GPU-OOM-sized texture. It is capped by a pixel budget.
+
+- Two systems claiming the same extension: the first one in `NewSys`'s list
+  wins silently. `SpectrumNextSystem` listed `trd` ahead of `SinclairSystem`,
+  so every TR-DOS demo booted the Next loader ROM ("Error initializing SD
+  card!"). Grep the other systems' `extensions()` before adding one.
+
+- An override's `meta` is applied *before* the global meta (`apply_cmdline_meta`
+  in `load_prepared`), so an override can't change a key the frontend always
+  sets, like `widescreen`: add a key of its own for the system to read instead.
+
+- In the Windows VM (`scripts/winvm.sh`) wgpu only gets WARP, the CPU DX12
+  renderer: 1-3 render fps. Remote-control `wait_frames` counts *render*
+  frames, so scripts take minutes there while the emulator runs far ahead.
+  SSH programs get no desktop; `winvm.sh gui` runs in the RDP session.
+
+- Every wine demo failing with "load failed" while `--check` said ok: the
+  downloaded gamescope binary needed a system library (`libXRes.so.1`) that was
+  not installed, and `--check` only looked for the file. The cause was one line
+  of the child's stderr, shown with `--no-silence`; `--check` now runs `ldd` on it.
+
+- Skips in wine audio 20s+ into a demo were wine's own pulse stream underflowing
+  (`warn:pulse:pulse_underflow_callback`), which drops what it had queued. demarc
+  only logs wine's errors: run with `WINEDEBUG=+timestamp,warn+pulse,fixme-all`
+  and `RUST_LOG=retro=debug` to see them. The cause was a fresh install without
+  the `ntsync` module loaded: every wine wait went through wineserver, and a
+  demo keeping wineserver busy for 150ms starved wine's audio timer. Sampling
+  `/proc/<pid>/task/*/{stat,wchan}` showed wineserver running and the audio
+  threads in `anon_pipe_read`. Installing rtkit first then got demarc SIGKILLed
+  at start: xdg-desktop-portal, started before rtkit, served `RTTimeUSecMax` 0,
+  so PipeWire's module-rt set RLIMIT_RTTIME to 0. Restart the portal after
+  installing rtkit.
+  A first "fix" for a separate 100ms gap at sound start was mistaken for it;
+  ask when in the demo a glitch is heard before chasing the first one found.
+
+- A wine audio skip ~30 s into every session (Observatory: FMOD Ex, 40 ms
+  WASAPI buffer) was wineserver's periodic registry save: the registry is always
+  dirty (font registration, MMDevices props) and writing the 7.6 MB system.reg
+  blocks the single-threaded server ~70 ms. Three detours first: demarc's
+  `Audio drop` log line is a different thing (it fires on every exit); `--headless`
+  opens no cpal stream, so its ring fill is a constant 6000; and the wine log
+  relay stops after `MAX_DISTINCT` (4096) lines, which silently cut off a
+  `+pulse` trace. Watching the sandboxed `system.reg` via
+  `/proc/<wineserver>/root$WINEPREFIX` pinned it to the millisecond.
+  Fixed by ro-binding the prefix's top level in the sandbox (folders get their
+  own tmp overlays): `save_branch` then fails before serializing anything.
+
+- An instruction histogram of the x86 interpreter counts a `rep stos` as one
+  step, so the 4k Crinkler headers' 256 MB table clear never showed up in it
+  while costing more than any hot loop. Time the run as well as counting it.
+  `perf` may be unavailable (`kernel.perf_event_paranoid`), so a temporary
+  per-`eip` histogram in `crinkler::decompress` is the fallback.
+
+- A 4k exe graphics whose one shader draw takes seconds (Hoody, `zoo.277165`)
+  stalls demarc's own loop on the shared GPU: the gamescope core's `retro_run`
+  is not called for 2-3 s at a time, so nothing the core draws can show then.
+  Log `retro_run` gaps before blaming core-side drawing code. Orders of
+  Magnitude keeps the GPU at 100% but in short draws, and demarc runs fine.
+
+- Headless runs are taken as a 16:9 screen and get a 1920x1080 wine session;
+  the 2880x1920 laptop panel is 3:2, so windowed runs on it get the narrow
+  1440x1080 one. Hoody then fails its 1920x1080 mode switch (`returned -2`)
+  and never shows. Pass `widescreen=false` to reproduce a windowed failure
+  headless before concluding that a demo works.
+
+- Mesa's preprocessor breaks on a function-like macro that shares its name
+  with a swizzle: after `b.z` with `#define z(a)` in force, the next directive
+  is "unexpected HASH_TOKEN" (Optical Circuit, `zoo.133196`; rename the macro
+  in a `glsl` edit). A `MESA_SHADER_DUMP_PATH` dump compiled by a 30-line
+  surfaceless EGL program reproduces Mesa's errors in milliseconds, which made
+  bisecting the source practical; a demarc run per attempt would not.
+
+- Luau in `--remote-control` has no `os.getenv`: the script dies silently
+  with no output at all. Bake values into the script instead.
+
+- perf can't open events on this machine (even unsandboxed). To find where an
+  `x86.rs` unpack spends its time, step the `Cpu` from a throwaway example and
+  sum `_rdtsc()` deltas per `eip`: that found a 1 GB `rep stosw` costing more
+  than all the other instructions together.
+
+- `strings` splits a shader at its newlines, so a `#version 120` line printed
+  above the source looks unrelated; check the bytes before a patch adds a
+  version. An `^(.)` edit then also matches after that newline and inserts it
+  twice (Off The Shelf, `zoo.4768`).
+
+- A first fix for an early cross fade made the activity measure ignore the
+  load bar, but the default run had no activity check at all
+  (`--cross-fade-activity` was unset). Reproduce the reported case headless
+  with `DEMARC_FRAME_STATS` before changing a measure.
+
+- Minas' D3D9 intros (polystreptikum `zoo.66322`, Black Lines `zoo.58998`)
+  show only their background colour under DXVK and draw correctly with
+  `wine_dll_overrides=d3d9=b`. For another Minas release, try that first.
+
+- Converting core frames straight into mapped wgpu buffers, to skip
+  `write_texture`'s staging copy, does not fit: `VideoFrame.pixels` must stay
+  CPU-readable while it waits in `frame_queue` (frame diff, RIFE, `frame_conv`),
+  and a wgpu buffer must be unmapped before the GPU can copy from it. Measure
+  first: `upload_frames` is ~75 µs per 704x576 frame (`--features hotpath`).

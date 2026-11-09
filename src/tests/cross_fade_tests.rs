@@ -191,9 +191,11 @@ fn the_fade_waits_out_the_delay_then_ramps_and_hands_over() {
     advance(&mut world, FADE_TIME / 4.0);
     fade(&mut world);
     let elapsed = world.resource::<Time>().elapsed_secs_f64();
-    assert!((alpha(&world, spare) - 0.25).abs() < 1e-3);
-    assert!((emu(&world, spare).volume() - 0.5).abs() < 1e-3);
-    assert!((emu(&world, view).volume() - 0.75f32.sqrt()).abs() < 1e-3);
+    let level = 0.15625f32;
+    let angle = level * std::f32::consts::FRAC_PI_2;
+    assert!((alpha(&world, spare) - level).abs() < 1e-3);
+    assert!((emu(&world, spare).volume() - angle.sin()).abs() < 1e-3);
+    assert!((emu(&world, view).volume() - angle.cos()).abs() < 1e-3);
     assert!((emu(&world, spare).start_time - (elapsed - (FADE_TIME / 4.0) as f64)).abs() < 1e-3);
 
     advance(&mut world, FADE_TIME);

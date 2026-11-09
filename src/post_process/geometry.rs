@@ -91,14 +91,7 @@ fn compute_uniform(
     let viewport = pp.view.rect().map(|r| r.size());
     let src = images.get(&pp.source).map(|source| source.size());
     let (mut uv_scale, mut uv_offset) = match (viewport, src) {
-        (Some(target), Some(src)) => view_transform(
-            target,
-            src,
-            pp.used,
-            pp.aspect,
-            pp.aspect_tweak,
-            settings.scale_mode,
-        ),
+        (Some(target), Some(src)) => pp.transform(target, src, settings.scale_mode),
         _ => (Vec2::ONE, Vec2::ZERO),
     };
     // Snap the composite transform to the intermediate's integer pixel grid so

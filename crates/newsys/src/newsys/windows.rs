@@ -29,14 +29,14 @@ use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
     D3D10_1_OVERRIDE, DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
-    META_D3D_CONFIG, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
+    META_D3D_CONFIG, META_GL_KEEP_BACK, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
     WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
     wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
-    META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_RES,
-    NARROW_RES, default_dialog_res, fitting_modes, is_yes, on_steam_deck,
+    META_DESKTOP, META_DIALOG_RES, META_FILTER, META_GL_COMPAT, META_GLSL_120_SUBSET, META_NARROW,
+    META_RES, NARROW_RES, default_dialog_res, fitting_modes, is_yes, on_steam_deck,
 };
 #[cfg(target_os = "linux")]
 use crate::wine_sandbox::{self, Sandbox};
@@ -354,6 +354,9 @@ impl System for WindowsSystem {
         // Which modes to ask the dialog for depends on the shape of the screen,
         // which only the frontend knows; set here rather than in `default_meta`
         // because that one can only hand back a fixed string.
+        if is_yes(&file.get_meta_or(META_NARROW, "")) {
+            file.set_meta(META_WIDESCREEN, "false");
+        }
         let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
         if !widescreen && !file.has_meta(META_RES) {
             file.set_meta(META_RES, NARROW_RES);
@@ -600,6 +603,9 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
                     0..0,
                     ["env".to_string(), format!("WINE_D3D_CONFIG={config}")],
                 );
+            }
+            if meta.get(META_GL_KEEP_BACK).is_some_and(|v| is_yes(v)) {
+                argv.splice(0..0, ["env".to_string(), "DEMARC_GL_KEEP_BACK=1".to_string()]);
             }
             if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
                 && let Some(dir) = path.path.parent()

@@ -111,13 +111,16 @@ impl System for C64System {
         })?;
 
         let mut reus = vec![];
-        walk_dir(file, 4, |path, ext, header| {
+        let mut tapes = vec![];
+        walk_dir(file, 12, |path, ext, header| {
             if ext == "reu" {
                 reus.push(path.to_owned());
             } else if ["d64", "d81"].contains(&ext) {
                 images.push(path.to_owned());
             } else if is_c64_prg(path, ext, header) || ext == "crt" {
                 prgs.push(path.to_owned());
+            } else if ext == "tap" && header.starts_with(b"C64-TAPE-RAW") {
+                tapes.push(path.to_owned());
             }
             Ok(())
         })?;
@@ -130,6 +133,9 @@ impl System for C64System {
             collect_disk_images(file, &mut images)?;
         } else if !prgs.is_empty() {
             file.path = prgs[0].clone();
+        } else if !tapes.is_empty() {
+            tapes.sort();
+            file.path = tapes[0].clone();
         } else {
             return Ok(false);
         }

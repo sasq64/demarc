@@ -62,6 +62,13 @@ fn hyprland_option() {
 }
 
 #[test]
+fn busctl_int_property() {
+    assert_eq!(parse_busctl_int("x 200000"), Some(200000));
+    assert_eq!(parse_busctl_int("i -15"), Some(-15));
+    assert_eq!(parse_busctl_int(""), None);
+}
+
+#[test]
 fn wine_stubs_do_not_count_as_native() {
     let dir = tempfile::tempdir().unwrap();
     let stub = dir.path().join("stub.dll");

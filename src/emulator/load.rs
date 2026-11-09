@@ -86,12 +86,14 @@ pub fn load_async(
     // `load_prepared` on the main thread. `NewSys` and the `WorkFile` it
     // builds own their meta, so the entry's borrowed pairs are copied into
     // `String`s here, at the one boundary where the file list hands work off.
-    let meta: HashMap<String, String> = emu_file
-        .meta
-        .iter()
-        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+    let mut meta: HashMap<String, String> = emu_file
+        .meta_strings()
+        .map(|(k, v)| (k.to_owned(), v.into_owned()))
         .chain(global.0.iter().map(|(k, v)| ((*k).to_owned(), v.clone())))
         .collect();
+    if over.is_some_and(|o| o.sfx) {
+        meta.insert(newsys::SFX.into(), "true".into());
+    }
     let mut source = emu_file.path.clone();
     // The one part of an override that has to happen before the transfer:
     // where the release comes from, or which of its downloads is the demo.
@@ -359,9 +361,8 @@ impl Emulator {
         // borrowed pairs are copied into `String`s here, at the one boundary
         // where the file list hands work off.
         let meta: HashMap<String, String> = emu_file
-            .meta
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .meta_strings()
+            .map(|(k, v)| (k.to_owned(), v.into_owned()))
             .collect();
 
         let work_file = newsys::unpack_release(path, &meta)?;
@@ -393,7 +394,6 @@ impl Emulator {
         self.frame_queue.clear();
         self.conversion = None;
         self.convert_frames = 0;
-        self.shown_frame = None;
         self.work_file = res.work_file;
 
         self.run_next = false;

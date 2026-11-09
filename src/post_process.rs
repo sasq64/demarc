@@ -183,6 +183,10 @@ pub struct PostProcess {
     pub raw: bool,
     /// Leave the CRT effect off for this view whatever the global toggle says.
     pub no_crt: bool,
+    /// Manual magnification on top of the scale mode (1.0 = none).
+    pub zoom: f32,
+    /// Offset of the zoomed picture, in screen-uv.
+    pub pan: Vec2,
     // How the border (outside the source image) is sampled.
     // pub border_mode: BorderMode,
 }
@@ -228,6 +232,27 @@ pub struct ViewRect {
     /// `false` while a *different* view is maximized over the window: the quad
     /// is skipped entirely, exactly as an inactive camera used to be.
     pub active: bool,
+}
+
+impl PostProcess {
+    /// [`view_transform`] with this view's zoom and pan applied.
+    pub fn transform(&self, target: UVec2, src: UVec2, scale_mode: ScaleMode) -> (Vec2, Vec2) {
+        let (scale, offset) = view_transform(
+            target,
+            src,
+            self.used,
+            self.aspect,
+            self.aspect_tweak,
+            scale_mode,
+        );
+        apply_zoom(scale, offset, self.zoom, self.pan)
+    }
+}
+
+/// Magnify a `(uv_scale, uv_offset)` transform by `zoom` about the view centre,
+/// then shift it by `pan`.
+pub fn apply_zoom(scale: Vec2, offset: Vec2, zoom: f32, pan: Vec2) -> (Vec2, Vec2) {
+    (scale * zoom, (offset - 0.5) * zoom + 0.5 + pan)
 }
 
 impl ViewRect {

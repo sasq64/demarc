@@ -358,6 +358,8 @@ mod linux {
         for (tool, package) in [("cabextract", "cabextract"), ("unzip", "unzip")] {
             wine_lines.push(setup_tool_line(tool, package));
         }
+        wine_lines.push(ntsync_line());
+        wine_lines.push(rtkit_line());
         wine_lines.push(gamescope_core_line());
         wine_lines.push(gstreamer_line());
         wine_lines.push(chrome_line());
@@ -475,10 +477,91 @@ mod linux {
         }
     }
 
+    fn ntsync_line() -> Line {
+        const NAME: &str = "ntsync";
+        if Path::new("/dev/ntsync").exists() {
+            return Line::new(Status::Ok, NAME, "/dev/ntsync");
+        }
+        Line::new(
+            Status::Warn,
+            NAME,
+            "no /dev/ntsync: a busy wineserver makes wine audio skip",
+        )
+        .fix(
+            "Load the ntsync kernel module at boot \
+             (Arch: `sudo pacman -S ntsync-autoload && sudo modprobe ntsync`)",
+        )
+    }
+
+    /// `busctl` reads a RealtimeKit property as `x 200000`.
+    pub(super) fn parse_busctl_int(text: &str) -> Option<i64> {
+        text.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    fn rt_time_max(busctl: &Path, bus: &str, service: &str, path: &str, interface: &str) -> Option<i64> {
+        let args = [bus, "get-property", service, path, interface, "RTTimeUSecMax"];
+        output_of(busctl, &args).as_deref().and_then(parse_busctl_int)
+    }
+
+    fn rtkit_line() -> Line {
+        const NAME: &str = "rtkit";
+        const FIX: &str = "Install rtkit (Arch: `sudo pacman -S rtkit`), then log in again";
+        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: `limit` is a valid rlimit for the call to fill in.
+        let rtprio = unsafe { libc::getrlimit(libc::RLIMIT_RTPRIO, &mut limit) } == 0
+            && limit.rlim_max > 0;
+        if rtprio {
+            return Line::new(Status::Ok, NAME, "realtime allowed without it");
+        }
+        let Some(busctl) = find_tool("busctl") else {
+            return Line::new(Status::Info, NAME, "not checked, no busctl");
+        };
+        let rtkit = "org.freedesktop.RealtimeKit1";
+        if rt_time_max(&busctl, "--system", rtkit, "/org/freedesktop/RealtimeKit1", rtkit).is_none() {
+            return Line::new(Status::Warn, NAME, "not running: audio threads get no realtime priority")
+                .fix(FIX);
+        }
+        let portal = rt_time_max(
+            &busctl,
+            "--user",
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Realtime",
+        );
+        if portal == Some(0) {
+            return Line::new(
+                Status::Missing,
+                NAME,
+                "the desktop portal predates rtkit and grants no realtime time: demarc gets killed",
+            )
+            .fix("Run `systemctl --user restart xdg-desktop-portal`, or log in again");
+        }
+        Line::new(Status::Ok, NAME, "running")
+    }
+
+    fn missing_libs(ldd_output: &str) -> Vec<String> {
+        ldd_output
+            .lines()
+            .filter_map(|line| line.trim().strip_suffix("=> not found"))
+            .map(|lib| lib.trim().to_string())
+            .collect()
+    }
+
     fn gamescope_core_line() -> Line {
         const NAME: &str = "gamescope core";
         if libloader::has_core("gamescope") {
-            Line::new(Status::Ok, NAME, "downloaded")
+            let missing = retro_core::find_core("gamescope")
+                .and_then(|core| core.with_file_name("gamescope").canonicalize().ok())
+                .and_then(|bin| output_of(Path::new("ldd"), &[bin.to_str()?]))
+                .map(|out| missing_libs(&out))
+                .unwrap_or_default();
+            if missing.is_empty() {
+                Line::new(Status::Ok, NAME, "downloaded")
+            } else {
+                let detail = format!("cannot run, missing {}", missing.join(", "));
+                Line::new(Status::Missing, NAME, detail)
+                    .fix("Install the package providing it (Arch: libxres)")
+            }
         } else {
             Line::new(Status::Info, NAME, "downloaded with the first Windows demo")
         }

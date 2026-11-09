@@ -27,8 +27,9 @@
 //!       --proc /proc --unshare-pid           # a pid namespace of its own
 //!       --die-with-parent
 //!       --perms 0700 --tmpfs /tmp/.wine-1000 # wine's socket directory, private
-//!       --overlay-src ~/.wine-demarc
-//!       --tmp-overlay /run/user/1000/demarc-wine-1000/4711/0
+//!       --ro-bind ~/.wine-demarc /run/user/1000/demarc-wine-1000/4711/0
+//!       --overlay-src ~/.wine-demarc/drive_c   # and each other folder
+//!       --tmp-overlay /run/user/1000/demarc-wine-1000/4711/0/drive_c
 //!       --setenv WINEPREFIX /run/user/1000/demarc-wine-1000/4711/0
 //!       -- wine demarc-autodlg.exe --launch demo.exe ...
 //! ```
@@ -242,17 +243,29 @@ fn bwrap_args(
         "0700".into(),
         "--tmpfs".into(),
         format!("/tmp/.wine-{}", uid()),
-        // The prefix itself: the real one underneath, an invisible tmpfs on top.
-        "--overlay-src".into(),
+        // The prefix's top level read-only: wineserver's 30 s registry save
+        // then fails before it serializes system.reg, which stalls the server
+        // (and every wine thread waiting on it) for ~70 ms.
+        "--ro-bind".into(),
         base.to_string_lossy().into_owned(),
-        "--tmp-overlay".into(),
         prefix.to_string_lossy().into_owned(),
+    ];
+    // Each folder in it: the real one underneath, an invisible tmpfs on top.
+    for dir in prefix_dirs(base) {
+        args.extend([
+            "--overlay-src".into(),
+            base.join(&dir).to_string_lossy().into_owned(),
+            "--tmp-overlay".into(),
+            prefix.join(&dir).to_string_lossy().into_owned(),
+        ]);
+    }
+    args.extend([
         // Said here as well as by whoever spawns us, so the sandbox describes
         // itself and the two cannot disagree about which prefix this is.
         "--setenv".into(),
         "WINEPREFIX".into(),
         prefix.to_string_lossy().into_owned(),
-    ];
+    ]);
     if let Some(file) = hide_ntsync {
         args.extend([
             "--ro-bind".into(),
@@ -302,6 +315,19 @@ fn bwrap_args(
     }
     args.push("--".into());
     args
+}
+
+/// The folders at the top of the prefix (`drive_c`, `dosdevices`), sorted.
+fn prefix_dirs(base: &Path) -> Vec<std::ffi::OsString> {
+    let mut dirs: Vec<_> = fs::read_dir(base)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|entry| entry.file_name())
+        .collect();
+    dirs.sort();
+    dirs
 }
 
 /// The first drive letter from `d:` up that the prefix does not map.

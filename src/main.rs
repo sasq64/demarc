@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::path::Path;
 
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -243,11 +244,11 @@ fn wine_enabled() -> bool {
 /// Does this db entry name Windows and nothing else? Such a release needs wine,
 /// so without it there is nothing left that could run it.
 fn is_windows_only(file: &emu_file::EmuFile) -> bool {
-    let platform = file.get_meta("platform");
-    !platform.is_empty()
-        && platform
-            .split(';')
-            .all(|name| name.trim().eq_ignore_ascii_case("windows"))
+    !file.platforms.is_empty()
+        && file
+            .platforms
+            .iter()
+            .all(|name| name.eq_ignore_ascii_case("windows"))
 }
 
 pub(crate) fn on_steam_deck() -> bool {
@@ -504,11 +505,18 @@ fn main() {
         args.select = true;
     }
 
+    // `csdb.txt` and `csdb.txt.gz` are the same db; only the first is read.
+    let mut db_stems = HashSet::new();
     // Expand any directory in `games` into the `.m3u` files found within it.
     for file in std::mem::take(&mut args.files) {
         let name = file.to_string_lossy().to_lowercase();
         let mut files = vec![];
         let db_name = if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
+            let stem = name.trim_end_matches(".gz").trim_end_matches(".txt");
+            let stem = Path::new(stem).file_name().map(|s| s.to_os_string());
+            if !db_stems.insert(stem) {
+                continue;
+            }
             let db = collect_db_unless(&file, &filter, &mut files, |name| dbs.contains_key(name));
             let Some(db_name) = db.unwrap() else {
                 continue;
@@ -617,7 +625,7 @@ fn main() {
         overrides: overrides::load_default(emulator::Emulator::resolve_key_name).unwrap_or_else(
             |err| {
                 println(format!("** Error: {err:#}"));
-                Default::default()
+                std::process::exit(1);
             },
         ),
         boot_file: args.boot_file.clone().map(files::leak),
@@ -756,6 +764,9 @@ fn main() {
             std::time::Duration::from_secs_f64(1.0 / 60.0)
         };
         app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(wait));
+        if !speed_test {
+            headless::wait_for_gpu_each_frame(&mut app);
+        }
         let target = {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             headless::HeadlessTarget::new(&mut images)

@@ -52,6 +52,11 @@ mlua.workspace = true
 notify = "8"
 realfft = "3.5"
 
+# Web releases: a local server for pages that refuse `file://`, and the
+# brotli pages size-coded intros serve themselves.
+tiny_http = "0.12.0"
+brotli-decompressor = "5"
+
 # CD audio tracks on a PlayStation disc image (src/newsys/disc.rs).
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 

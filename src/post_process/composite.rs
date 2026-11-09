@@ -30,7 +30,7 @@ use wgpu::SamplerBorderColor;
 use retroarc::{ChainKind, ChainOutput};
 
 use super::SlangChains;
-use super::geometry::{view_transform, wants_downsample};
+use super::geometry::wants_downsample;
 use super::{
     BorderMode, BorderScissor, DjCamera, DjView, EmuCamera, PostProcess, PostProcessUniform, ShaderEffect,
     ShaderPath, TARGET_FORMAT,
@@ -195,21 +195,19 @@ pub(super) fn post_process_pass(
             ShaderEffect::Slangp(_) => 'slangp: {
                 let src_size =
                     UVec2::new(source_image.texture.width(), source_image.texture.height());
-                let (image_scale, _) = view_transform(
-                    rect.size(),
-                    src_size,
-                    post_process.used,
-                    post_process.aspect,
-                    post_process.aspect_tweak,
-                    settings.scale_mode,
-                );
+                let (image_scale, _) =
+                    post_process.transform(rect.size(), src_size, settings.scale_mode);
                 // A tiny used area (a demo's 3x3 first window) scales the whole
                 // frame far past what a texture may be.
                 let max_side = render_context
                     .render_device()
                     .limits()
                     .max_texture_dimension_2d;
-                let inter_size = (rect.size().as_vec2() * image_scale)
+                // A zoomed view is magnified from a bounded intermediate.
+                let full = rect.size().as_vec2() * image_scale;
+                let budget = 4.0 * rect.size().as_vec2().element_product();
+                let shrink = (budget / full.element_product()).sqrt().min(1.0);
+                let inter_size = (full * shrink)
                     .round()
                     .as_uvec2()
                     .clamp(UVec2::ONE, UVec2::splat(max_side));

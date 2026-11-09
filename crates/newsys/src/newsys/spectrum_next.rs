@@ -8,7 +8,7 @@ pub struct SpectrumNextSystem {}
 
 impl System for SpectrumNextSystem {
     fn extensions(&self) -> &'static [&'static str] {
-        &["nex", "snx", "trd"]
+        &["nex", "snx"]
     }
     fn core_name(&self) -> &'static str {
         CORE_NAME_ZESARUX

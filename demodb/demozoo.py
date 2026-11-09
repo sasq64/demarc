@@ -4,7 +4,11 @@ export all releases in the named-field db format read by src/files.rs, the same
 one bitworld.txt and csdb.txt use:
 
     id:1<TAB>title:Zentro 4<TAB>author:Zenith<TAB>date:1992-12-27<TAB>party:The
-    Party 1992;Amiga Demo;3<TAB>platform:Amiga<TAB>category:Demo<TAB>download:http://...
+    Party 1992;Amiga Demo;3<TAB>pA<TAB>cA<TAB>download:http://...
+
+Platforms and categories are written as one code character per value after a
+`p` or `c`, translated by `# PLATFORMS A:Amiga,...` and `# CATEGORIES A:Demo,...`
+header lines (see CODE_CHARS).
 
 A field with nothing after its colon says nothing, so it is left out of the
 line altogether -- an absent field and an empty one mean the same thing, and
@@ -1013,6 +1017,27 @@ def platform_stats(cur, exported=None):
         )
 
 
+CODE_CHARS = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+
+
+def encode(codes, names):
+    """The code characters for `names`, allocating new ones in `codes`."""
+    out = ""
+    for name in names:
+        if name not in codes:
+            if len(codes) == len(CODE_CHARS):
+                raise SystemExit(f"error: out of code characters at {name!r}")
+            codes[name] = CODE_CHARS[len(codes)]
+        out += codes[name]
+    return out
+
+
+def code_table(codes):
+    return ",".join(f"{c}:{clean(name)}" for name, c in codes.items())
+
+
 def export(conn, out_path, pouet_data=None, pouet_lookup=None):
     """Write the export.  `pouet_data` is the toplist map from load_pouetdata;
     `pouet_lookup` (--pouet-prods) replaces it with a per-prod callable that
@@ -1192,72 +1217,87 @@ def export(conn, out_path, pouet_data=None, pouet_lookup=None):
     # cannot replace a good export with an empty file for `just demozoo` to
     # gzip over the previous one.
     tmp_path = out_path + ".tmp"
+    platform_codes = {}
+    category_codes = {}
+    lines = []
+    for prod_id, title, date, precision, supertype in cur.execute(
+        "SELECT id, title, release_date_date, release_date_precision, "
+        "supertype FROM productions_production ORDER BY id"
+    ):
+        tags = sorted(
+            tag_name[t] for t in prod_tags.get(prod_id, []) if tag_name.get(t)
+        )
+        if any(t in TAG_BLACKLIST for t in tags):
+            skipped_tag += 1
+            continue
+        categories = [
+            ptype_name[t] for t in prod_types.get(prod_id, []) if ptype_name.get(t)
+        ]
+        if any(c in CATEGORY_BLACKLIST for c in categories):
+            skipped_category += 1
+            continue
+        raw_platforms = prod_platforms.get(prod_id, [])
+        platforms = [platform_name[p] for p in raw_platforms if p in platform_name]
+        if not platforms:
+            # No platform *at all* is Demozoo not recording one (normal for
+            # graphics and music); a platform we filtered out is a machine
+            # we deliberately do not export, so that one still goes.  The
+            # url check keeps out the platformless entries demarc could not
+            # do anything with anyway.
+            if (
+                raw_platforms
+                or supertype not in PLATFORMLESS_SUPERTYPES
+                or prod_id not in prod_urls
+            ):
+                skipped_platform += 1
+                continue
+            platformless += 1
+        if prod_id in unusable:
+            skipped_download += 1
+            continue
+        fields = [
+            ("id", str(prod_id)),
+            ("title", title or ""),
+            ("author", author_string(prod_id, supertype)),
+            ("date", fmt_date(date, precision)),
+            ("party", prod_party.get(prod_id, "")),
+            ("p", encode(platform_codes, platforms)),
+            ("c", encode(category_codes, categories)),
+            ("tags", ";".join(tags)),
+            ("download", prod_urls.get(prod_id, "")),
+            ("dlname", prod_dlnames.get(prod_id, "")),
+        ]
+        # Not every release has this field -- in toplist mode only the
+        # few that made a list do -- so its absence, not an empty value,
+        # means "no pouet numbers for this one".
+        pd = pouet_lookup(prod_pouet_id.get(prod_id))
+        if pd is not None:
+            fields.append(("pouet", pd.field_value()))
+            n_pouet += 1
+        # A field with nothing after its colon carries no information, so
+        # leave it out rather than write it empty.
+        # The coded fields are the only ones without a colon.
+        fields = [(key, clean(val)) for key, val in fields]
+        lines.append(
+            "\t".join(
+                f"{key}{'' if key in ('p', 'c') else ':'}{val}"
+                for key, val in fields
+                if val
+            )
+            + "\n"
+        )
+        n += 1
+        for p in platforms:
+            exported_platforms[p] = exported_platforms.get(p, 0) + 1
+
     with open(tmp_path, "w", encoding="utf-8") as out:
         # Prose comments, not a `key:value` header: Demozoo is multi-platform,
         # so the platform is per line rather than set once for the whole file.
         out.write("# Demozoo release database (https://demozoo.org/)\n")
         out.write("# puae_model:date hatari_machinetype:date\n")
-        for prod_id, title, date, precision, supertype in cur.execute(
-            "SELECT id, title, release_date_date, release_date_precision, "
-            "supertype FROM productions_production ORDER BY id"
-        ):
-            tags = sorted(
-                tag_name[t] for t in prod_tags.get(prod_id, []) if tag_name.get(t)
-            )
-            if any(t in TAG_BLACKLIST for t in tags):
-                skipped_tag += 1
-                continue
-            categories = [
-                ptype_name[t] for t in prod_types.get(prod_id, []) if ptype_name.get(t)
-            ]
-            if any(c in CATEGORY_BLACKLIST for c in categories):
-                skipped_category += 1
-                continue
-            raw_platforms = prod_platforms.get(prod_id, [])
-            platforms = [platform_name[p] for p in raw_platforms if p in platform_name]
-            if not platforms:
-                # No platform *at all* is Demozoo not recording one (normal for
-                # graphics and music); a platform we filtered out is a machine
-                # we deliberately do not export, so that one still goes.  The
-                # url check keeps out the platformless entries demarc could not
-                # do anything with anyway.
-                if (
-                    raw_platforms
-                    or supertype not in PLATFORMLESS_SUPERTYPES
-                    or prod_id not in prod_urls
-                ):
-                    skipped_platform += 1
-                    continue
-                platformless += 1
-            if prod_id in unusable:
-                skipped_download += 1
-                continue
-            fields = [
-                ("id", str(prod_id)),
-                ("title", title or ""),
-                ("author", author_string(prod_id, supertype)),
-                ("date", fmt_date(date, precision)),
-                ("party", prod_party.get(prod_id, "")),
-                ("platform", ";".join(platforms)),
-                ("category", ";".join(categories)),
-                ("tags", ";".join(tags)),
-                ("download", prod_urls.get(prod_id, "")),
-                ("dlname", prod_dlnames.get(prod_id, "")),
-            ]
-            # Not every release has this field -- in toplist mode only the
-            # few that made a list do -- so its absence, not an empty value,
-            # means "no pouet numbers for this one".
-            pd = pouet_lookup(prod_pouet_id.get(prod_id))
-            if pd is not None:
-                fields.append(("pouet", pd.field_value()))
-                n_pouet += 1
-            # A field with nothing after its colon carries no information, so
-            # leave it out rather than write it empty.
-            fields = [(key, clean(val)) for key, val in fields]
-            out.write("\t".join(f"{key}:{val}" for key, val in fields if val) + "\n")
-            n += 1
-            for p in platforms:
-                exported_platforms[p] = exported_platforms.get(p, 0) + 1
+        out.write(f"# PLATFORMS {code_table(platform_codes)}\n")
+        out.write(f"# CATEGORIES {code_table(category_codes)}\n")
+        out.writelines(lines)
 
     if n == 0:
         os.remove(tmp_path)

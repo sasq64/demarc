@@ -2,8 +2,9 @@ use anyhow::{Result, anyhow, bail};
 use newsys::SongName;
 use newsys::fetch::is_download_cached;
 use std::{
+    borrow::Cow,
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -178,15 +179,16 @@ pub fn url_file_name(url: &str) -> Option<String> {
     )
 }
 
-/// Whether `url` ends with `name`, matched on the percent-decoded URL and
-/// ignoring case, so an override can name a file plainly (`inside.zip`) or with
-/// as much of the path before it as it takes to be unambiguous
-/// (`mekka/inside.zip`).
+/// Whether `url` ends with `name` at a path boundary, matched on the
+/// percent-decoded URL and ignoring case, so an override can name a file
+/// plainly (`inside.zip`) or with as much of the path before it as it takes to
+/// be unambiguous (`mekka/inside.zip`).
 fn url_ends_with(url: &str, name: &str) -> bool {
     let url = percent_encoding::percent_decode_str(url)
         .decode_utf8_lossy()
         .to_ascii_lowercase();
-    url.ends_with(&name.to_ascii_lowercase())
+    url.strip_suffix(&name.to_ascii_lowercase())
+        .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
 }
 
 fn is_disk_image_url(url: &str) -> bool {
@@ -555,8 +557,9 @@ impl CompactDate {
         let date_s: Vec<&str> = date.split(['-', '/', '.']).collect();
         let year_s = date_s[0];
         let year = year_s.parse::<u32>()?;
-        let month = date_s.get(1).unwrap_or(&"0").parse::<u32>()?;
-        let day = date_s.get(2).unwrap_or(&"0").parse::<u32>()?;
+        let part = |i: usize| date_s.get(i).and_then(|s| s.parse::<u32>().ok());
+        let month = part(1).filter(|m| *m <= 12).unwrap_or(0);
+        let day = part(2).filter(|d| *d <= 31 && month != 0).unwrap_or(0);
         Self::new(year, month, day)
     }
     pub fn year(&self) -> u32 {
@@ -578,12 +581,30 @@ impl Awards {
     }
 }
 
-/// Every award a release can carry, as the numeric ids the db writes them as
-/// (see `docs/AWARDS.md`). The ids are one flat space shared by several
-/// competitions, so the few names that collide between them are qualified.
-#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
-#[repr(u32)]
-pub enum Award {
+macro_rules! awards {
+    ($($name:ident = $id:literal,)*) => {
+        /// Every award a release can carry, as the numeric ids the db writes them as
+        /// (see `docs/AWARDS.md`). The ids are one flat space shared by several
+        /// competitions, so the few names that collide between them are qualified.
+        #[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+        #[repr(u32)]
+        pub enum Award {
+            $($name = $id,)*
+        }
+
+        impl Award {
+            /// `None` for an id no competition has handed out.
+            pub fn from_id(id: u32) -> Option<Self> {
+                match id {
+                    $($id => Some(Award::$name),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+awards! {
     // scene.org Awards
     BestDemo = 1,
     BestIntro = 2,
@@ -639,68 +660,9 @@ pub enum Award {
     AssemblyGameDev = 52,
     AssemblyRestricted = 53,
     AssemblyGroundBreakingProduction = 54,
-    AssemblyDemo = 55,
-}
+    AssemblyDemo = 55,}
 
 impl Award {
-    /// `None` for an id no competition has handed out.
-    #[allow(dead_code)]
-    pub fn from_id(id: u32) -> Option<Self> {
-        use Award::*;
-        Some(match id {
-            1 => BestDemo,
-            2 => BestIntro,
-            3 => Best64kIntro,
-            4 => Best4kIntro,
-            5 => BestEffects,
-            6 => BestGraphics,
-            7 => BestSoundtrack,
-            8 => BestDirection,
-            9 => MostOriginalConcept,
-            10 => BestBreakthroughPerformance,
-            11 => PublicsChoice,
-            12 => BestOldschoolDemo,
-            13 => BestAnimation,
-            14 => BestTechnicalAchievement,
-            15 => ViewingTip,
-            18 => MeteoriksPublicsChoice,
-            19 => BestHighEndDemo,
-            20 => BestHighEndIntro,
-            21 => BestHighEndGraphics,
-            22 => BestHighEndSoundtrack,
-            23 => BestLowEndDemo,
-            24 => BestLowEndIntro,
-            25 => BestLowEndGraphics,
-            26 => BestLowEndSoundtrack,
-            27 => NewTalent,
-            28 => Interactive,
-            29 => BestTinyIntro,
-            30 => AlternativePlatforms,
-            31 => BestArtDirection,
-            32 => BestLowEndPixelGraphics,
-            33 => BestStorytelling,
-            38 => NotPossibleOnThisPlatform,
-            40 => BestLowEndProduction,
-            41 => BestSmallHighEndIntro,
-            42 => BestHighEnd64kIntro,
-            43 => BestVisuals,
-            44 => OutstandingTechnicalAchievement,
-            45 => OutstandingConcept,
-            46 => BestOldschoolTinyIntro,
-            47 => NanoBestHighEndIntro,
-            48 => BestExecutableGraphics,
-            49 => SceneSpirit,
-            50 => BestOldschoolProduction,
-            51 => BestMidschoolProduction,
-            52 => AssemblyGameDev,
-            53 => AssemblyRestricted,
-            54 => AssemblyGroundBreakingProduction,
-            55 => AssemblyDemo,
-            56 => BestFantasyConsoleTinyIntro,
-            _ => return None,
-        })
-    }
-
     /// The competition handing out this award, and whether it is held yearly.
     pub fn series(&self) -> (&'static str, bool) {
         match *self as u32 {
@@ -783,37 +745,102 @@ pub struct GameInfo {
     // awards: u32,
 }
 
-pub(crate) fn parse_pouet_rank(field: &str) -> Option<u32> {
-    field.split(',').nth(2)?.trim().parse().ok()
+/// An entry's `key=value` fields. Entries have a dozen keys at most, so a
+/// linear scan beats hashing, and a boxed slice costs a single exact-size
+/// allocation per entry instead of a hash table.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct Meta(Box<[(&'static str, &'static str)]>);
+
+impl Meta {
+    pub fn get(&self, key: &str) -> Option<&'static str> {
+        self.0.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn insert(&mut self, key: &'static str, val: &'static str) {
+        let mut pairs = std::mem::take(&mut self.0).into_vec();
+        set_pair(&mut pairs, key, val);
+        self.0 = pairs.into_boxed_slice();
+    }
+
+    pub fn insert_if_absent(&mut self, key: &'static str, val: &'static str) {
+        if !self.contains_key(key) {
+            self.insert(key, val);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Insert or replace `key` in a list of pairs being built into a [`Meta`].
+pub fn set_pair(pairs: &mut Vec<(&'static str, &'static str)>, key: &'static str, val: &'static str) {
+    match pairs.iter_mut().find(|(k, _)| *k == key) {
+        Some(pair) => pair.1 = val,
+        None => pairs.push((key, val)),
+    }
+}
+
+/// The keys must already be unique (built with [`set_pair`]).
+impl From<Vec<(&'static str, &'static str)>> for Meta {
+    fn from(pairs: Vec<(&'static str, &'static str)>) -> Self {
+        Meta(pairs.into_boxed_slice())
+    }
+}
+
+/// Later duplicates replace earlier ones.
+impl FromIterator<(&'static str, &'static str)> for Meta {
+    fn from_iter<I: IntoIterator<Item = (&'static str, &'static str)>>(iter: I) -> Self {
+        let mut pairs = Vec::new();
+        for (k, v) in iter {
+            set_pair(&mut pairs, k, v);
+        }
+        Meta(pairs.into_boxed_slice())
+    }
+}
+
+impl<const N: usize> From<[(&'static str, &'static str); N]> for Meta {
+    fn from(pairs: [(&'static str, &'static str); N]) -> Self {
+        pairs.into_iter().collect()
+    }
 }
 
 impl GameInfo {
-    pub fn new(meta: &HashMap<&'static str, &'static str>) -> Self {
-        let title = meta.get("title").copied().unwrap_or("");
-        let author = meta.get("author").copied().unwrap_or("");
-        let category = meta.get("category").copied().unwrap_or("");
+    pub fn new(meta: &Meta, categories: &[&'static str]) -> Self {
+        let title = meta.get("title").unwrap_or("");
+        let author = meta.get("author").unwrap_or("");
+        let category = categories.first().copied().unwrap_or("");
 
-        let date = CompactDate::parse(meta.get("date").unwrap_or(&"")).unwrap_or_default();
+        let date = CompactDate::parse(meta.get("date").unwrap_or("")).unwrap_or_default();
 
         let mut rank = 0;
+        let mut cdc = 0;
+        let mut vt = false;
         if let Some(pouet) = meta.get("pouet") {
-            rank = parse_pouet_rank(pouet).unwrap_or(0);
+            let fields: Vec<&str> = pouet.split(',').collect();
+            let field = |i: usize| fields.get(i).copied().unwrap_or("");
+            cdc = field(0).parse::<u32>().unwrap_or(0);
+            rank = field(2).trim().parse().unwrap_or(0);
+            vt = field(3).split(' ').any(|s| s == "15");
         } else if let Some(rating) = meta.get("rating") {
+            // A 0-10 rating mapped onto pouet's rank, where lower is better:
+            // 10 → 10, 0 → 1010. Ratings above 10.1 saturate to 0.
             let rating = rating.parse::<f32>().unwrap_or(0.0);
             rank = ((10.1 - rating) * 100.0) as u32;
         }
 
-        let mut cdc = 0;
-        let mut vt = false;
-        if let Some(pouet) = meta.get("pouet") {
-            for (i, s) in pouet.split(",").enumerate() {
-                if i == 0 {
-                    cdc = s.parse::<u32>().unwrap_or(0);
-                } else if i == 3 {
-                    vt = s.split(" ").any(|s| s == "15");
-                }
-            }
-        }
         GameInfo {
             title,
             group: author,
@@ -821,7 +848,6 @@ impl GameInfo {
             rank,
             date,
             awards: Awards::new(cdc, vt),
-            ..Default::default()
         }
     }
 
@@ -857,17 +883,36 @@ impl StripFirst for str {
 #[derive(Default, Clone, Debug)]
 pub struct EmuFile {
     pub path: FileSource,
-    pub meta: HashMap<&'static str, &'static str>,
+    pub meta: Meta,
     pub game_info: GameInfo,
+    pub platforms: Box<[&'static str]>,
+    pub categories: Box<[&'static str]>,
+}
+
+/// Split a `;`-separated `platform`/`category` value into its parts.
+pub fn split_values(val: &'static str) -> Box<[&'static str]> {
+    val.split(';').map(str::trim).filter(|v| !v.is_empty()).collect()
 }
 
 impl EmuFile {
+    /// The meta plus `platform` and `category`, joined with `;`.
+    pub fn meta_strings(&self) -> impl Iterator<Item = (&'static str, Cow<'static, str>)> + '_ {
+        let lists = [("platform", &self.platforms), ("category", &self.categories)]
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| match **v {
+                [one] => (k, Cow::Borrowed(one)),
+                _ => (k, Cow::Owned(v.join(";"))),
+            });
+        self.meta.iter().map(|(k, v)| (k, Cow::Borrowed(v))).chain(lists)
+    }
+
     pub fn is_cached(&self) -> bool {
         self.path.is_cached()
     }
 
     pub fn get_meta(&self, name: &str) -> &'static str {
-        self.meta.get(name).copied().unwrap_or("")
+        self.meta.get(name).unwrap_or("")
     }
 
     pub fn demo_id(&self) -> Option<DemoId> {
@@ -913,23 +958,18 @@ impl EmuFile {
     pub fn cdc(&self) -> usize {
         self.game_info.awards.cdc()
     }
-    fn get_awards(&self, index: usize) -> Vec<Award> {
-        let mut result = vec![];
-        if let Some(pouet) = self.meta.get("pouet") {
-            if let Some(awards) = pouet.split(",").nth(index) {
-                for a in awards.split(" ") {
-                    if let Some(award) = Award::from_id(a.parse::<u32>().unwrap_or_default()) {
-                        result.push(award);
-                    }
-                }
-            }
-        }
-        result
+    fn get_awards(&self, index: usize) -> impl Iterator<Item = Award> + use<> {
+        self.meta
+            .get("pouet")
+            .and_then(|pouet| pouet.split(',').nth(index))
+            .unwrap_or("")
+            .split(' ')
+            .filter_map(|a| Award::from_id(a.parse().ok()?))
     }
-    pub fn get_wins(&self) -> Vec<Award> {
+    pub fn get_wins(&self) -> impl Iterator<Item = Award> + use<> {
         self.get_awards(3)
     }
-    pub fn get_nominees(&self) -> Vec<Award> {
+    pub fn get_nominees(&self) -> impl Iterator<Item = Award> + use<> {
         self.get_awards(4)
     }
 }

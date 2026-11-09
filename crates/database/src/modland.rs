@@ -1,7 +1,7 @@
 //! The modland index (`allmods.txt`): one `<size>\t<path>` line per music file.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     ops::Range,
 };
 
@@ -9,7 +9,7 @@ use newsys::{NewSys, SongName};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::{
-    emu_file::{EmuFile, FileSource, GameInfo},
+    emu_file::{EmuFile, FileSource, GameInfo, Meta, split_values},
     files::{DbFilter, leak},
 };
 
@@ -244,19 +244,17 @@ pub fn collect(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuFile>) {
     out.reserve(songs.len());
     for (platform, url, title, author) in songs {
         let url = &buf[url];
-        let mut meta = HashMap::new();
-        meta.insert("download", url);
-        meta.insert("title", &buf[title]);
-        if !platform.is_empty() {
-            meta.insert("platform", platform);
-        }
+        let mut meta = vec![("download", url), ("title", &buf[title])];
         if !author.is_empty() {
-            meta.insert("author", &buf[author]);
+            meta.push(("author", &buf[author]));
         }
+        let meta = Meta::from(meta);
         out.push(EmuFile {
-            game_info: GameInfo::new(&meta),
+            game_info: GameInfo::new(&meta, &[]),
             path: FileSource::Url(url.split(';').collect::<Vec<_>>().into()),
             meta,
+            platforms: split_values(platform),
+            ..Default::default()
         });
     }
 }

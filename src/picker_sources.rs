@@ -92,8 +92,8 @@ impl FuzzySource<EmuFile> for PickerSource {
         let Some(file) = self.file(id) else {
             return (None, None);
         };
-        let p = file.get_meta("platform").split(';').next().unwrap_or("");
-        let c = file.get_meta("category").split(';').next().unwrap_or("");
+        let p = file.platforms.first().copied().unwrap_or("");
+        let c = file.categories.first().copied().unwrap_or("");
         let category = ListIcon::Glyph(category_icon(c), category_color(c));
         let platform = ListIcon::Glyph(platform_icon(p), platform_color(p));
         match self.mode {
@@ -324,8 +324,8 @@ fn entry_name(file: &EmuFile) -> String {
 /// where it comes from. Empty fields are left out rather than shown blank.
 fn entry_info(file: &EmuFile, width: usize) -> String {
     let mut lines = Vec::new();
-    let platform = file.get_meta("platform");
-    let category = file.get_meta("category");
+    let platform = file.platforms.join(";");
+    let category = file.categories.join(";");
     let id = file.get_meta("id");
     let year = file.game_info.year();
     let year = if year == 0 {

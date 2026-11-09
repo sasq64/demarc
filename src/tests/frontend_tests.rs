@@ -21,6 +21,7 @@ fn world() -> World {
     world.init_resource::<Messages<SetHudText>>();
     world.init_resource::<UiState>();
     world.init_resource::<HideMouse>();
+    world.init_resource::<ScreenDetection>();
     world.insert_resource(HeadlessTarget {
         image: Handle::default(),
         size: TARGET,
@@ -92,11 +93,10 @@ fn hud(world: &mut World) -> Vec<SetHudText> {
         .collect()
 }
 
-/// The bytes of the texture `entity` draws from.
+/// The bytes `frame_upload` writes into the texture `entity` draws from.
 fn texture(world: &World, entity: Entity) -> Vec<u8> {
-    let handle = &emu(world, entity).image;
-    let image = world.resource::<Assets<Image>>().get(handle).unwrap();
-    image.data.clone().unwrap()
+    let frame = emu(world, entity).frame_queue.front().unwrap();
+    crate::backend::frame_bytes(&frame.pixels).to_vec()
 }
 
 fn meta(world: &World, key: &str) -> Option<String> {
@@ -139,6 +139,8 @@ fn post_process(source: Handle<Image>, position: UVec2, size: UVec2) -> PostProc
         alpha: 1.0,
         raw: false,
         no_crt: false,
+        zoom: 1.0,
+        pan: Vec2::ZERO,
     }
 }
 
@@ -374,6 +376,28 @@ fn the_primary_monitor_wins_over_the_first() {
 }
 
 #[test]
+fn the_monitor_the_window_is_on_wins_over_the_primary() {
+    let mut world = world();
+    world.remove_resource::<HeadlessTarget>();
+    world.spawn((monitor(2880, 1920, Some(120_000)), PrimaryMonitor));
+    let external = world.spawn(monitor(2560, 1440, Some(74_971))).id();
+    world.spawn((Window::default(), PrimaryWindow));
+
+    world.run_system_once(detect_screen).unwrap();
+    assert_eq!(meta(&world, META_WIDESCREEN).as_deref(), Some("false"));
+
+    let window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(window).insert(OnMonitor(external));
+    world.run_system_once(detect_screen).unwrap();
+
+    assert_eq!(meta(&world, META_WIDESCREEN).as_deref(), Some("true"));
+    assert_eq!(meta(&world, META_REFRESH).as_deref(), Some("75"));
+}
+
+#[test]
 fn screen_meta_given_on_the_command_line_is_kept() {
     let mut world = world();
     world.remove_resource::<HeadlessTarget>();
@@ -437,43 +461,6 @@ fn a_view_without_a_rectangle_has_no_cursor() {
 }
 
 #[test]
-fn blit_copies_a_frame_into_the_top_left() {
-    let frame = VideoFrame {
-        width: 2,
-        height: 2,
-        pixels: Arc::new(vec![1, 2, 3, 4]),
-    };
-    let mut dst = vec![0u8; 3 * 3 * 4];
-
-    blit_frame(&mut dst, 3, 3, &frame);
-
-    let pixels: Vec<u32> = dst
-        .chunks_exact(4)
-        .map(|p| u32::from_ne_bytes(p.try_into().unwrap()))
-        .collect();
-    assert_eq!(pixels, [1, 2, 0, 3, 4, 0, 0, 0, 0]);
-}
-
-#[test]
-fn blit_clips_a_frame_larger_than_the_texture() {
-    let frame = VideoFrame {
-        width: 3,
-        height: 3,
-        pixels: Arc::new((1..=9).collect()),
-    };
-    let mut dst = vec![0u8; 2 * 2 * 4];
-
-    blit_frame(&mut dst, 2, 2, &frame);
-
-    let pixels: Vec<u32> = dst
-        .chunks_exact(4)
-        .map(|p| u32::from_ne_bytes(p.try_into().unwrap()))
-        .collect();
-    assert_eq!(pixels, [1, 2, 4, 5]);
-}
-
-/// The first frame of a new size only resizes the texture; the next fills it.
-#[test]
 fn the_texture_follows_the_cores_frame_size() {
     let mut world = world();
     let (entity, core) = spawn(&mut world, 0, None);
@@ -484,9 +471,6 @@ fn the_texture_follows_the_cores_frame_size() {
         (emu(&world, entity).width, emu(&world, entity).height),
         (4, 2)
     );
-    assert_eq!(texture(&world, entity), vec![0u8; 4 * 2 * 4]);
-
-    run(&mut world);
     assert_eq!(
         texture(&world, entity),
         crate::backend::frame_bytes(&[0x11223344; 8])
@@ -495,28 +479,6 @@ fn the_texture_follows_the_cores_frame_size() {
         emu(&world, entity).sink.stream.is_none(),
         "headless is silent"
     );
-}
-
-#[test]
-fn an_unchanged_frame_is_not_copied_again() {
-    let mut world = world();
-    let (entity, core) = spawn(&mut world, 0, None);
-    core.lock().frame = solid_frame(4, 2, 0x11223344);
-    run(&mut world);
-    run(&mut world);
-
-    let handle = emu(&world, entity).image.clone();
-    let mut images = world.resource_mut::<Assets<Image>>();
-    images
-        .get_mut(&handle)
-        .unwrap()
-        .data
-        .as_mut()
-        .unwrap()
-        .fill(0);
-    run(&mut world);
-
-    assert_eq!(texture(&world, entity), vec![0u8; 4 * 2 * 4]);
 }
 
 #[test]
