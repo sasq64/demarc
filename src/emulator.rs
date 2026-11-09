@@ -209,9 +209,6 @@ pub struct Emulator {
     pub failed_file: Option<EmuFile>,
     /// Frames waiting to be shown, oldest first.
     pub frame_queue: VecDeque<VideoFrame>,
-    /// Pixels last copied into [`Self::image`], so an unchanged frame is not
-    /// copied and re-uploaded again.
-    pub shown_frame: Option<Arc<Vec<u32>>>,
     pub latency: LatencySetting,
     pub frame_convert: FrameConvert,
     /// Display frames in a row that suited [`Self::frame_convert`].

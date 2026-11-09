@@ -93,11 +93,10 @@ fn hud(world: &mut World) -> Vec<SetHudText> {
         .collect()
 }
 
-/// The bytes of the texture `entity` draws from.
+/// The bytes `frame_upload` writes into the texture `entity` draws from.
 fn texture(world: &World, entity: Entity) -> Vec<u8> {
-    let handle = &emu(world, entity).image;
-    let image = world.resource::<Assets<Image>>().get(handle).unwrap();
-    image.data.clone().unwrap()
+    let frame = emu(world, entity).frame_queue.front().unwrap();
+    crate::backend::frame_bytes(&frame.pixels).to_vec()
 }
 
 fn meta(world: &World, key: &str) -> Option<String> {
@@ -462,43 +461,6 @@ fn a_view_without_a_rectangle_has_no_cursor() {
 }
 
 #[test]
-fn blit_copies_a_frame_into_the_top_left() {
-    let frame = VideoFrame {
-        width: 2,
-        height: 2,
-        pixels: Arc::new(vec![1, 2, 3, 4]),
-    };
-    let mut dst = vec![0u8; 3 * 3 * 4];
-
-    blit_frame(&mut dst, 3, 3, &frame);
-
-    let pixels: Vec<u32> = dst
-        .chunks_exact(4)
-        .map(|p| u32::from_ne_bytes(p.try_into().unwrap()))
-        .collect();
-    assert_eq!(pixels, [1, 2, 0, 3, 4, 0, 0, 0, 0]);
-}
-
-#[test]
-fn blit_clips_a_frame_larger_than_the_texture() {
-    let frame = VideoFrame {
-        width: 3,
-        height: 3,
-        pixels: Arc::new((1..=9).collect()),
-    };
-    let mut dst = vec![0u8; 2 * 2 * 4];
-
-    blit_frame(&mut dst, 2, 2, &frame);
-
-    let pixels: Vec<u32> = dst
-        .chunks_exact(4)
-        .map(|p| u32::from_ne_bytes(p.try_into().unwrap()))
-        .collect();
-    assert_eq!(pixels, [1, 2, 4, 5]);
-}
-
-/// The first frame of a new size only resizes the texture; the next fills it.
-#[test]
 fn the_texture_follows_the_cores_frame_size() {
     let mut world = world();
     let (entity, core) = spawn(&mut world, 0, None);
@@ -509,9 +471,6 @@ fn the_texture_follows_the_cores_frame_size() {
         (emu(&world, entity).width, emu(&world, entity).height),
         (4, 2)
     );
-    assert_eq!(texture(&world, entity), vec![0u8; 4 * 2 * 4]);
-
-    run(&mut world);
     assert_eq!(
         texture(&world, entity),
         crate::backend::frame_bytes(&[0x11223344; 8])
@@ -520,28 +479,6 @@ fn the_texture_follows_the_cores_frame_size() {
         emu(&world, entity).sink.stream.is_none(),
         "headless is silent"
     );
-}
-
-#[test]
-fn an_unchanged_frame_is_not_copied_again() {
-    let mut world = world();
-    let (entity, core) = spawn(&mut world, 0, None);
-    core.lock().frame = solid_frame(4, 2, 0x11223344);
-    run(&mut world);
-    run(&mut world);
-
-    let handle = emu(&world, entity).image.clone();
-    let mut images = world.resource_mut::<Assets<Image>>();
-    images
-        .get_mut(&handle)
-        .unwrap()
-        .data
-        .as_mut()
-        .unwrap()
-        .fill(0);
-    run(&mut world);
-
-    assert_eq!(texture(&world, entity), vec![0u8; 4 * 2 * 4]);
 }
 
 #[test]

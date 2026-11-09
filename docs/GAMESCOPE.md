@@ -114,12 +114,14 @@ a slot number.
 
 So the chain is: the compositor writes the composite into host-visible memory (that is the
 composite, not a copy), demarc's `convert_xrgb8888` reads that mapping straight into its
-`frame: Vec<u32>`, `RetroCoreThreaded` moves it down its channel, and wgpu uploads it.
-Exactly what an in-process design would do. `src/pipewire.cpp` has one `memcpy` at this
-point only because pipewire allocates its shm separately from the texture.
+`frame: Vec<u32>`, `RetroCoreThreaded` moves it down its channel, and `frame_upload`'s
+`write_texture` copies it into wgpu's staging buffer for the GPU to upload. Exactly what an
+in-process design would do. `src/pipewire.cpp` has one `memcpy` at this point only because
+pipewire allocates its shm separately from the texture.
 
-`DRM_FORMAT_XRGB8888` *is* `RETRO_PIXEL_FORMAT_XRGB8888` on a little-endian machine, so no
-pixel conversion happens anywhere.
+`DRM_FORMAT_XRGB8888` *is* `RETRO_PIXEL_FORMAT_XRGB8888` on a little-endian machine, so the
+core hands the mapping over as is; `convert_xrgb8888` swaps it to RGBA and sets alpha on
+the way into the `Vec`, which costs no extra pass.
 
 ### What the client covers
 

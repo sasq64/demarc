@@ -394,7 +394,6 @@ impl Emulator {
         self.frame_queue.clear();
         self.conversion = None;
         self.convert_frames = 0;
-        self.shown_frame = None;
         self.work_file = res.work_file;
 
         self.run_next = false;

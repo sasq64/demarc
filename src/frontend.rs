@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow, WindowMode};
@@ -11,7 +10,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-use crate::backend::{VideoFrame, ViewFocus};
+use crate::backend::ViewFocus;
 use crate::config::{AppSettings, Args, FrameConvMethod, LatencySetting, RenderSettings};
 use crate::emulator::{Emulator, FrameConvert};
 use crate::frame_conv::FrameConvPlugin;
@@ -506,21 +505,6 @@ fn cursor_frame_uv(
     ((0.0..=1.0).contains(&frame_uv.x) && (0.0..=1.0).contains(&frame_uv.y)).then_some(frame_uv)
 }
 
-/// Copy `frame` into the top-left of a `dst_w`x`dst_h` RGBA texture, clipping
-/// whatever does not fit.
-#[hotpath::measure]
-fn blit_frame(dst: &mut [u8], dst_w: usize, dst_h: usize, frame: &VideoFrame) {
-    let w = frame.width;
-    let src = crate::backend::frame_bytes(&frame.pixels);
-    let copy_w = w.min(dst_w);
-    let copy_h = frame.height.min(dst_h);
-    for y in 0..copy_h {
-        let src_off = y * w * 4;
-        let dst_off = y * dst_w * 4;
-        dst[dst_off..dst_off + copy_w * 4].copy_from_slice(&src[src_off..src_off + copy_w * 4]);
-    }
-}
-
 #[hotpath::measure]
 pub(crate) fn run_frontend(
     mut emus: Query<(&mut Emulator, &EmuView, &mut PostProcess)>,
@@ -678,20 +662,6 @@ pub(crate) fn run_frontend(
         }
         let frame = emu.frame_queue.front().cloned().unwrap_or(frame);
 
-        // The display refreshes faster than a core produces frames, so copying
-        // the same pixels again would only make Bevy re-upload the texture.
-        let fresh = emu
-            .shown_frame
-            .as_ref()
-            .is_none_or(|shown| !Arc::ptr_eq(shown, &frame.pixels));
-        if fresh
-            && let Some(mut image) = images.get_mut(&emu.image)
-            && let Some(dst) = image.data.as_mut()
-        {
-            blit_frame(dst, bg_w, bg_h, &frame);
-            emu.shown_frame = Some(Arc::clone(&frame.pixels));
-        }
-
         let aspect = emu.core.as_mut().unwrap().aspect_ratio();
         if pp.aspect != aspect {
             pp.aspect = aspect;
@@ -714,7 +684,6 @@ pub(crate) fn run_frontend(
             debug!("Emulator size changed to {w}x{h}");
             emu.width = w as u32;
             emu.height = h as u32;
-            emu.shown_frame = None;
             if let Some(mut image) = images.get_mut(&emu.image) {
                 // Recreate with new dimensions
                 *image = Image::new(
