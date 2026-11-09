@@ -6,6 +6,8 @@
 
 use anyhow::{Result, bail};
 
+mod fused;
+
 const PAGE: u32 = 4096;
 
 /// 4 GB in 4 KB pages, each allocated on first write.
@@ -61,6 +63,26 @@ impl Memory {
         }
         for i in 0..size.bytes() {
             self.write8(addr.wrapping_add(i), (val >> (8 * i)) as u8);
+        }
+    }
+
+    /// Repeat `pattern` over `len` bytes from `addr`. Zeros leave pages that
+    /// were never written alone, as they read as zero already.
+    pub fn fill(&mut self, addr: u32, len: u64, pattern: &[u8]) {
+        let zero = pattern.iter().all(|b| *b == 0);
+        let mut done = 0u64;
+        while done < len {
+            let at = addr.wrapping_add(done as u32);
+            let off = (at % PAGE) as usize;
+            let chunk = (PAGE as usize - off).min((len - done) as usize);
+            let slot = &mut self.pages[(at / PAGE) as usize];
+            if !(zero && slot.is_none()) {
+                let page = slot.get_or_insert_with(|| Box::new([0; PAGE as usize]));
+                for (i, b) in page[off..off + chunk].iter_mut().enumerate() {
+                    *b = pattern[(done as usize + i) % pattern.len()];
+                }
+            }
+            done += chunk as u64;
         }
     }
 
@@ -303,6 +325,23 @@ impl Cpu {
         let v = self.mem.read(self.stack_addr(), size);
         self.add_sp(size.bytes());
         v
+    }
+
+    fn pusha(&mut self, size: Size) {
+        let sp = self.reg(ESP as u8, size);
+        for n in 0..8 {
+            let v = if n == ESP as u8 { sp } else { self.reg(n, size) };
+            self.push_sz(v, size);
+        }
+    }
+
+    fn popa(&mut self, size: Size) {
+        for n in (0..8).rev() {
+            let v = self.pop_sz(size);
+            if n != ESP as u8 {
+                self.set_reg(n, size, v);
+            }
+        }
     }
 
     /// Decode a ModRM byte: the `reg` field and the r/m register, or the
@@ -577,21 +616,8 @@ impl Cpu {
                 let v = self.pop_sz(size);
                 self.set_reg(op & 7, size, v);
             }
-            0x60 => {
-                let sp = self.reg(ESP as u8, size);
-                for n in 0..8 {
-                    let v = if n == ESP as u8 { sp } else { self.reg(n, size) };
-                    self.push_sz(v, size);
-                }
-            }
-            0x61 => {
-                for n in (0..8).rev() {
-                    let v = self.pop_sz(size);
-                    if n != ESP as u8 {
-                        self.set_reg(n, size, v);
-                    }
-                }
-            }
+            0x60 => self.pusha(size),
+            0x61 => self.popa(size),
             0x68 => {
                 let v = self.fetch(size);
                 self.push_sz(v, size);
@@ -974,6 +1000,15 @@ impl Cpu {
         };
         let src = self.base(self.seg_override.unwrap_or(DS));
         let dst = self.base(ES);
+        if matches!(op, 0xaa | 0xab) && rep != 0 && !self.real && !self.addr16 && !self.df {
+            let count = self.r[ECX] as u64;
+            let bytes = self.reg(0, size).to_le_bytes();
+            let len = count * size.bytes() as u64;
+            self.mem.fill(self.r[EDI], len, &bytes[..size.bytes() as usize]);
+            self.r[EDI] = self.r[EDI].wrapping_add(len as u32);
+            self.r[ECX] = 0;
+            return Ok(());
+        }
         loop {
             if rep != 0 && self.index(ECX) == 0 {
                 break;
@@ -1109,11 +1144,18 @@ impl Cpu {
 
     /// Run until `eip` reaches `stop`, or fail after `max_steps` instructions.
     pub fn run_until(&mut self, stop: u32, max_steps: u64) -> Result<u64> {
-        for n in 0..max_steps {
+        let mut n = 0;
+        while n < max_steps {
             if self.eip == stop {
                 return Ok(n);
             }
-            self.step()?;
+            n += match self.fused(max_steps - n)? {
+                Some(steps) => steps,
+                None => {
+                    self.step()?;
+                    1
+                }
+            };
         }
         bail!(
             "still running at {:#x} after {max_steps} instructions",

@@ -1539,3 +1539,9 @@
   `/proc/<wineserver>/root$WINEPREFIX` pinned it to the millisecond.
   Fixed by ro-binding the prefix's top level in the sandbox (folders get their
   own tmp overlays): `save_branch` then fails before serializing anything.
+
+- An instruction histogram of the x86 interpreter counts a `rep stos` as one
+  step, so the 4k Crinkler headers' 256 MB table clear never showed up in it
+  while costing more than any hot loop. Time the run as well as counting it.
+  `perf` may be unavailable (`kernel.perf_event_paranoid`), so a temporary
+  per-`eip` histogram in `crinkler::decompress` is the fallback.
