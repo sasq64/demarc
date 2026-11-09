@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::path::Path;
 
 use bevy::window::{PrimaryWindow, WindowMode};
@@ -503,11 +504,18 @@ fn main() {
         args.select = true;
     }
 
+    // `csdb.txt` and `csdb.txt.gz` are the same db; only the first is read.
+    let mut db_stems = HashSet::new();
     // Expand any directory in `games` into the `.m3u` files found within it.
     for file in std::mem::take(&mut args.files) {
         let name = file.to_string_lossy().to_lowercase();
         let mut files = vec![];
         let db_name = if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
+            let stem = name.trim_end_matches(".gz").trim_end_matches(".txt");
+            let stem = Path::new(stem).file_name().map(|s| s.to_os_string());
+            if !db_stems.insert(stem) {
+                continue;
+            }
             let db = collect_db_unless(&file, &filter, &mut files, |name| dbs.contains_key(name));
             let Some(db_name) = db.unwrap() else {
                 continue;
