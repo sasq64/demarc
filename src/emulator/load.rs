@@ -89,7 +89,7 @@ pub fn load_async(
     let mut meta: HashMap<String, String> = emu_file
         .meta
         .iter()
-        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .chain(global.0.iter().map(|(k, v)| ((*k).to_owned(), v.clone())))
         .collect();
     if over.is_some_and(|o| o.sfx) {

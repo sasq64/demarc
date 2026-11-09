@@ -268,3 +268,15 @@ fn compact_date_parses_partial_dates() {
     assert_eq!(CompactDate::parse("2011-12").unwrap().year(), 2011);
     assert_eq!(CompactDate::parse("2011-12-31").unwrap().year(), 2011);
 }
+
+#[test]
+fn meta_later_keys_replace_earlier() {
+    let mut meta: Meta = [("a", "1"), ("b", "2"), ("a", "3")].into();
+    assert_eq!(meta.len(), 2);
+    assert_eq!(meta.get("a"), Some("3"));
+    meta.insert("b", "4");
+    meta.insert_if_absent("b", "5");
+    meta.insert_if_absent("c", "6");
+    assert_eq!(meta.iter().collect::<Vec<_>>(), [("a", "3"), ("b", "4"), ("c", "6")]);
+    assert!(!meta.contains_key("d"));
+}

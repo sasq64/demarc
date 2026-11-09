@@ -338,10 +338,20 @@ fn frame_stats(pixels: &[u32]) -> (f64, u32) {
     (lit as f64 / pixels.len().max(1) as f64, hasher.finish() as u32)
 }
 
+/// Resident and peak resident size in KB, from `/proc/self/status`.
+fn process_memory() -> Option<(u64, u64)> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let field = |name: &str| {
+        let line = status.lines().find(|l| l.starts_with(name))?;
+        line[name.len()..].trim().trim_end_matches("kB").trim().parse().ok()
+    };
+    Some((field("VmRSS:")?, field("VmHWM:")?))
+}
+
 fn file_table(lua: &Lua, file: &EmuFile) -> mlua::Result<mlua::Table> {
     let table = lua.create_table()?;
-    for (key, value) in &file.meta {
-        table.set(*key, *value)?;
+    for (key, value) in file.meta.iter() {
+        table.set(key, value)?;
     }
     table.set("id", script_id(file))?;
     Ok(table)
@@ -423,6 +433,8 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
             Ok(audio.lock().unwrap_or_else(|e| e.into_inner()).level())
         })?,
     )?;
+
+    globals.set("memory", lua.create_function(|_, ()| Ok(process_memory().unzip()))?)?;
 
     let audio = tap.clone();
     globals.set(

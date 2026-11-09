@@ -17,6 +17,7 @@
 -- video_level() is the share (0..1) of the current frame that isn't black, plus
 -- a hash that tells frames apart.
 -- screenshot(path) lands a few frames later; quit() waits for it.
+-- memory() is the resident and peak resident size of the process in KB.
 
 function Main()
     wait_frames(300)

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -7,7 +7,7 @@ use anyhow::Result;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::emu_file::{EmuFile, FileSource, GameInfo, UrlList};
+use crate::emu_file::{EmuFile, FileSource, GameInfo, Meta, UrlList};
 use crate::files::leak;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 
@@ -34,7 +34,7 @@ impl PlaylistEntry {
             meta: file
                 .meta
                 .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
                 .collect(),
         };
         if let Some(download) = entry.meta.get_mut("download") {
@@ -48,7 +48,7 @@ impl PlaylistEntry {
     }
 
     pub fn to_emu_file(&self) -> EmuFile {
-        let meta: HashMap<&'static str, &'static str> = self
+        let meta: Meta = self
             .meta
             .iter()
             .map(|(k, v)| (leak(k.clone()), leak(v.clone())))
@@ -56,7 +56,7 @@ impl PlaylistEntry {
         let path = match &self.path {
             Some(p) => FileSource::Path(p.into()),
             None => FileSource::Url(UrlList::parse_field(
-                meta.get("download").copied().unwrap_or(""),
+                meta.get("download").unwrap_or(""),
             )),
         };
         EmuFile {

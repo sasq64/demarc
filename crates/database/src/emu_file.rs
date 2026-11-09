@@ -3,7 +3,7 @@ use newsys::SongName;
 use newsys::fetch::is_download_cached;
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -787,13 +787,85 @@ pub(crate) fn parse_pouet_rank(field: &str) -> Option<u32> {
     field.split(',').nth(2)?.trim().parse().ok()
 }
 
-impl GameInfo {
-    pub fn new(meta: &HashMap<&'static str, &'static str>) -> Self {
-        let title = meta.get("title").copied().unwrap_or("");
-        let author = meta.get("author").copied().unwrap_or("");
-        let category = meta.get("category").copied().unwrap_or("");
+/// An entry's `key=value` fields. Entries have a dozen keys at most, so a
+/// linear scan beats hashing, and a boxed slice costs a single exact-size
+/// allocation per entry instead of a hash table.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct Meta(Box<[(&'static str, &'static str)]>);
 
-        let date = CompactDate::parse(meta.get("date").unwrap_or(&"")).unwrap_or_default();
+impl Meta {
+    pub fn get(&self, key: &str) -> Option<&'static str> {
+        self.0.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn insert(&mut self, key: &'static str, val: &'static str) {
+        let mut pairs = std::mem::take(&mut self.0).into_vec();
+        set_pair(&mut pairs, key, val);
+        self.0 = pairs.into_boxed_slice();
+    }
+
+    pub fn insert_if_absent(&mut self, key: &'static str, val: &'static str) {
+        if !self.contains_key(key) {
+            self.insert(key, val);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.0.iter().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Insert or replace `key` in a list of pairs being built into a [`Meta`].
+pub fn set_pair(pairs: &mut Vec<(&'static str, &'static str)>, key: &'static str, val: &'static str) {
+    match pairs.iter_mut().find(|(k, _)| *k == key) {
+        Some(pair) => pair.1 = val,
+        None => pairs.push((key, val)),
+    }
+}
+
+/// The keys must already be unique (built with [`set_pair`]).
+impl From<Vec<(&'static str, &'static str)>> for Meta {
+    fn from(pairs: Vec<(&'static str, &'static str)>) -> Self {
+        Meta(pairs.into_boxed_slice())
+    }
+}
+
+/// Later duplicates replace earlier ones.
+impl FromIterator<(&'static str, &'static str)> for Meta {
+    fn from_iter<I: IntoIterator<Item = (&'static str, &'static str)>>(iter: I) -> Self {
+        let mut pairs = Vec::new();
+        for (k, v) in iter {
+            set_pair(&mut pairs, k, v);
+        }
+        Meta(pairs.into_boxed_slice())
+    }
+}
+
+impl<const N: usize> From<[(&'static str, &'static str); N]> for Meta {
+    fn from(pairs: [(&'static str, &'static str); N]) -> Self {
+        pairs.into_iter().collect()
+    }
+}
+
+impl GameInfo {
+    pub fn new(meta: &Meta) -> Self {
+        let title = meta.get("title").unwrap_or("");
+        let author = meta.get("author").unwrap_or("");
+        let category = meta.get("category").unwrap_or("");
+
+        let date = CompactDate::parse(meta.get("date").unwrap_or("")).unwrap_or_default();
 
         let mut rank = 0;
         if let Some(pouet) = meta.get("pouet") {
@@ -857,7 +929,7 @@ impl StripFirst for str {
 #[derive(Default, Clone, Debug)]
 pub struct EmuFile {
     pub path: FileSource,
-    pub meta: HashMap<&'static str, &'static str>,
+    pub meta: Meta,
     pub game_info: GameInfo,
 }
 
@@ -867,7 +939,7 @@ impl EmuFile {
     }
 
     pub fn get_meta(&self, name: &str) -> &'static str {
-        self.meta.get(name).copied().unwrap_or("")
+        self.meta.get(name).unwrap_or("")
     }
 
     pub fn demo_id(&self) -> Option<DemoId> {

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs,
     io::{self, IsTerminal, Read},
     path::Path,
@@ -10,7 +9,7 @@ use regex::Regex;
 use tracing::info;
 
 use crate::{
-    emu_file::{CompactDate, EmuFile, FileSource, GameInfo, UrlList},
+    emu_file::{CompactDate, EmuFile, FileSource, GameInfo, Meta, UrlList, set_pair},
     m3u::M3u,
     modland,
     utils::{is_disk_image, unpack_if_packed},
@@ -20,7 +19,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
     let mut title: &'static str = "";
     let mut group: &'static str = "";
     let mut date = CompactDate::default();
-    let mut meta = HashMap::new();
+    let mut meta = Vec::new();
 
     let m3u = M3u::from_file(in_path)?;
 
@@ -41,12 +40,12 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
             let year = val.parse::<u32>().unwrap_or(0);
             date = CompactDate::new(year, 0, 0)?;
         } else {
-            meta.insert(leak(key), leak(val));
+            set_pair(&mut meta, leak(key), leak(val));
         }
     }
     Ok(EmuFile {
         path: path.into(),
-        meta,
+        meta: meta.into(),
         game_info: GameInfo {
             title,
             group,
@@ -142,7 +141,7 @@ pub fn collect_db_unless(
 fn tag_db(files: &mut [EmuFile], name: &str) {
     let name = leak(name.to_string());
     for file in files {
-        file.meta.entry("db").or_insert(name);
+        file.meta.insert_if_absent("db", name);
     }
 }
 
@@ -244,7 +243,7 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<Opt
 fn parse_db_header(
     comment: &'static str,
     platform: &mut Option<&'static str>,
-    meta: &mut HashMap<&'static str, &'static str>,
+    meta: &mut Vec<(&'static str, &'static str)>,
 ) {
     let Some(fields) = comment
         .split_whitespace()
@@ -260,7 +259,7 @@ fn parse_db_header(
         if key.eq_ignore_ascii_case("platform") {
             *platform = Some(val);
         } else {
-            meta.insert(key, val);
+            set_pair(meta, key, val);
         }
     }
 }
@@ -270,7 +269,7 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
     let mut file_platform: Option<&'static str> = None;
 
     // Meta from header comments, applied to every entry below them.
-    let mut file_meta = HashMap::<&'static str, &'static str>::new();
+    let mut file_meta = Vec::<(&'static str, &'static str)>::new();
 
     for l in text.lines() {
         let line = l.trim();
@@ -287,10 +286,11 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
         }
         let fields = parse_named_db_line(line);
 
-        let mut meta = file_meta.clone();
+        let mut meta = Vec::with_capacity(file_meta.len() + 12);
+        meta.extend_from_slice(&file_meta);
         if let Some(platform) = file_platform.filter(|p| !p.is_empty()) {
-            // A `platform` field on the line itself is inserted below and wins.
-            meta.insert("platform", platform);
+            // A `platform` field on the line itself is set below and wins.
+            set_pair(&mut meta, "platform", platform);
         }
         let mut urls = UrlList::default();
         for (key, val) in fields {
@@ -302,22 +302,18 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
             if key == "download" {
                 urls = UrlList::parse_field(val);
             }
-            meta.insert(key, val);
+            set_pair(&mut meta, key, val);
         }
         if urls.is_empty() {
             continue;
         }
 
-        let year = meta
-            .get("date")
-            .copied()
-            .unwrap_or("")
-            .split(['-', '/', '.'])
-            .next()
-            .unwrap_or("");
+        let date = meta.iter().find(|(k, _)| *k == "date").map_or("", |(_, v)| *v);
+        let year = date.split(['-', '/', '.']).next().unwrap_or("");
         if !year.is_empty() {
-            meta.insert("year", year);
+            set_pair(&mut meta, "year", year);
         }
+        let meta = Meta::from(meta);
 
         let game_info = GameInfo::new(&meta);
 
