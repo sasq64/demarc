@@ -2217,3 +2217,32 @@ meta = { wine_narrow = "true" }
 # synchroplastikum by Calodox: renders at the session size with a 4:3 projection
 [zoo.55453]
 meta = { wine_narrow = "true" }
+
+# Waillee by Prismbeings: NVIDIA-lax GLSL, white screen with music
+[zoo.178895]
+fix_info = '''
+Mesa refused both shaders, so only the clear colour showed. The scene returns
+an int from a float function and uses ! on an int; the blur pass has no
+#version but calls texture() and textureLod().
+'''
+glsl = [
+  { match = 'if\(!c\)', edits = [['if\(!c\)', "if(c==0)"], ['return 0;', "return 0.;"]] },
+  { match = "textureLod", edits = [["^(.)", "#version 130\n$1"]] },
+]
+
+# Optical Circuit by 0x4015: black screen with music
+[zoo.133196]
+fix_info = '''
+Mesa's preprocessor fails on the scene shaders: after a .z swizzle, with a
+function-like macro also named z, the next directive is a syntax error. The
+glsl edit renames the macro, and adds #version 130 for its bit operations.
+'''
+glsl = { match = '#define z\(a\)', edits = [['\bz\(', "zz("], ['^#define', "#version 130\n#define"]] }
+
+# K-wak by K-Rad Productions & The Dennis Courtney 5
+[zoo.74934]
+known_issue = """
+NVIDIA only. Prints "Necessary extensions are not supported" and quits
+without NV_register_combiners, NV_texture_shader and NV_vertex_program, none
+of which Mesa has.
+"""

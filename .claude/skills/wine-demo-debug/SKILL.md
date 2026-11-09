@@ -176,7 +176,7 @@ right after `glGetShaderiv` is an assert: the info log is in winedbg at the
 fault, the source in the unpacked image; glslang over every string in it finds
 the rest (On, `zoo.136151`). When the sources are not plain strings, iterate
 under software Mesa with dumps, one patch per error (Hologram, `zoo.119170`).
-A `match` is a regex. `gl_FragColor` under `#version 420`+ compiles on Mesa
+A `match` is a regex; an edit's `^` matches every line start. A "preprocessor error: unexpected HASH_TOKEN" can be Mesa's macro lookahead: a function-like macro named like a swizzle (`z`); rename it (Optical Circuit, `zoo.133196`). `gl_FragColor` under `#version 420`+ compiles on Mesa
 and fails on NVIDIA: run `glslangValidator` on the Mesa dump, and rename it
 to an `out vec4` (Apex `zoo.274554`, Horizon Machine `zoo.170744`).
 

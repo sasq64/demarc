@@ -1557,3 +1557,13 @@
   1440x1080 one. Hoody then fails its 1920x1080 mode switch (`returned -2`)
   and never shows. Pass `widescreen=false` to reproduce a windowed failure
   headless before concluding that a demo works.
+
+- Mesa's preprocessor breaks on a function-like macro that shares its name
+  with a swizzle: after `b.z` with `#define z(a)` in force, the next directive
+  is "unexpected HASH_TOKEN" (Optical Circuit, `zoo.133196`; rename the macro
+  in a `glsl` edit). A `MESA_SHADER_DUMP_PATH` dump compiled by a 30-line
+  surfaceless EGL program reproduces Mesa's errors in milliseconds, which made
+  bisecting the source practical; a demarc run per attempt would not.
+
+- Luau in `--remote-control` has no `os.getenv`: the script dies silently
+  with no output at all. Bake values into the script instead.
