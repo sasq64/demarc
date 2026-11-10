@@ -279,7 +279,7 @@ impl<T: 'static> Picker<T> {
         source: ListSource<T>,
         prompt: Option<&str>,
         selected: Option<usize>,
-        title: &str,
+        title: &[String],
         title_select: i32,
         keep_open: bool,
     ) {
@@ -296,7 +296,7 @@ impl<T: 'static> Picker<T> {
             self.list_query = prompt.into();
         }
         self.list_pending_select = selected;
-        let mut parts: Vec<String> = title.split('/').map(|s| format!(" {s} ")).collect();
+        let mut parts: Vec<String> = title.iter().map(|s| format!(" {s} ")).collect();
 
         let len = parts.len() as i32;
         parts.insert(0, "  ".into());

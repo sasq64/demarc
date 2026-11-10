@@ -76,7 +76,7 @@ fn open_menu(
         source: Arc::new(AllWordsSource::new(items)),
         prompt: None,
         selected: None,
-        title: "Patch overrides".into(),
+        title: vec!["Patch overrides".into()],
         title_select: -1,
         keep_open: false,
     });

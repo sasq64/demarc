@@ -29,7 +29,7 @@ pub struct ShowFuzzyList {
     /// Source id of the row to highlight, if it is among the results.
     pub selected: Option<usize>,
     /// Shown above the search box, and hidden while empty.
-    pub title: String,
+    pub title: Vec<String>,
     // Highlight this part of the title
     pub title_select: i32,
     /// Stay open after a pick; the caller closes it.

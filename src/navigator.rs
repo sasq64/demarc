@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use indexmap::{IndexMap, IndexSet};
-use regex::Regex;
 
 use crate::AppState;
 use crate::config::AppSettings;
@@ -52,7 +51,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
 pub(crate) struct NavList {
     id: usize,
     source: ListSource,
-    path: String,
+    path: Vec<String>,
     /// Search text this list was left with, restored when it comes back up.
     prompt: String,
     /// Source id of the row this list was left on.
@@ -63,10 +62,9 @@ impl NavList {
     pub(crate) fn show(
         &self,
         pos: i32,
-        title: String,
+        title: Vec<String>,
         show_list: &mut MessageWriter<ShowFuzzyList>,
     ) {
-        info!("POS: {pos} TITLE: {}", self.path);
         show_list.write(ShowFuzzyList {
             id: self.id,
             source: self.source.clone(),
@@ -107,13 +105,45 @@ const PLAYLIST_ROOT_MENU: usize = 2;
 
 type DbCallback = Box<dyn Fn(&[&str], &'static [EmuFile]) -> Option<ListSource> + Send + Sync>;
 
+enum Seg {
+    Lit(String),
+    Capture,
+    /// Any number of path parts.
+    Any,
+}
+
+/// The captures of `segs` matched against `path`, or None if it doesn't match.
+fn match_segs<'a>(segs: &[Seg], path: &'a [String], out: &mut Vec<&'a str>) -> bool {
+    match segs.split_first() {
+        None => path.is_empty(),
+        Some((Seg::Any, rest)) => (0..=path.len()).any(|skip| {
+            let len = out.len();
+            match_segs(rest, &path[skip..], out) || {
+                out.truncate(len);
+                false
+            }
+        }),
+        Some((seg, rest)) => {
+            let Some((first, path)) = path.split_first() else {
+                return false;
+            };
+            match seg {
+                Seg::Lit(lit) if lit != first => return false,
+                Seg::Capture => out.push(first),
+                _ => {}
+            }
+            match_segs(rest, path, out)
+        }
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct Navigator {
     pub(crate) pos: isize,
     showing: isize,
     pub(crate) stack: Vec<NavList>,
     files: IndexMap<String, &'static [EmuFile]>,
-    mapping: Vec<(Regex, DbCallback)>,
+    mapping: Vec<(Vec<Seg>, DbCallback)>,
     playlists: HashSet<String>,
     pub(crate) current_launch: Option<Launch>,
 }
@@ -152,8 +182,7 @@ impl Navigator {
 
     /// Go to the deepest list in the stack whose path has at most `depth` parts.
     fn to_depth(&mut self, depth: usize) -> &mut Self {
-        let parts = |path: &str| if path.is_empty() { 0 } else { path.split('/').count() };
-        if let Some(i) = self.stack.iter().rposition(|l| parts(&l.path) <= depth) {
+        if let Some(i) = self.stack.iter().rposition(|l| l.path.len() <= depth) {
             self.pos = i as isize;
         }
         self
@@ -211,23 +240,28 @@ impl Navigator {
         self.stack.push(NavList {
             id: 0,
             source: self.root_source(),
-            path: "".into(),
+            path: vec![],
             prompt: String::new(),
             selected: None,
         });
         self
     }
 
+    #[cfg(test)]
     fn goto(&mut self, path: &str) -> &mut Self {
+        self.goto_path(split_path(path))
+    }
+
+    fn goto_path(&mut self, path: Vec<String>) -> &mut Self {
         if path.is_empty() {
             return self.go_root();
         }
-        debug!("Goto: '{}'", path);
-        if let Some(source) = self.source_for(path) {
+        debug!("Goto: {path:?}");
+        if let Some(source) = self.source_for(&path) {
             self.push(NavList {
                 id: 0,
                 source,
-                path: path.into(),
+                path,
                 prompt: String::new(),
                 selected: None,
             });
@@ -235,8 +269,8 @@ impl Navigator {
         self
     }
 
-    fn source_for(&self, path: &str) -> Option<ListSource> {
-        let (db, rest) = path.split_once('/').unwrap_or((path, ""));
+    fn source_for(&self, path: &[String]) -> Option<ListSource> {
+        let (db, rest) = path.split_first()?;
         let Some(files) = self.files.get(db).copied() else {
             warn!("No such database: {db}");
             return None;
@@ -244,13 +278,14 @@ impl Navigator {
         if rest.is_empty() && self.playlists.contains(db) {
             return Some(Arc::new(PickerSource::new(files, None, IconMode::All)));
         }
-        for (key, val) in &self.mapping {
-            if let Some(m) = key.captures(rest) {
-                let groups: Vec<&str> = m.iter().map(|m| m.map_or("", |m| m.as_str())).collect();
-                // A callback returning None declines the path; keep looking.
-                if let Some(source) = val(&groups, files) {
-                    return Some(source);
-                }
+        let joined = rest.join("/");
+        for (segs, val) in &self.mapping {
+            let mut groups = vec![joined.as_str()];
+            // A callback returning None declines the path; keep looking.
+            if match_segs(segs, rest, &mut groups)
+                && let Some(source) = val(&groups, files)
+            {
+                return Some(source);
             }
         }
         None
@@ -259,7 +294,7 @@ impl Navigator {
     /// The entries listed at `path`, in the order shown. A path that lists
     /// folders has none; `None` if the path doesn't exist.
     pub(crate) fn files_at(&self, path: &str) -> Option<Vec<EmuFile>> {
-        let source = self.source_for(path)?;
+        let source = self.source_for(&split_path(path))?;
         let ids = source.search("", usize::MAX);
         Some(ids.into_iter().filter_map(|id| source.get_data(id)).collect())
     }
@@ -269,18 +304,12 @@ impl Navigator {
     pub(crate) fn files_under(&self, pattern: &str) -> Vec<EmuFile> {
         let mut files = vec![];
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        self.collect_files("", &segments, &mut files);
+        self.collect_files(&[], &segments, &mut files);
         files
     }
 
-    fn collect_files(&self, path: &str, pattern: &[&str], out: &mut Vec<EmuFile>) {
-        let join = |name: &str| {
-            if path.is_empty() {
-                name.to_string()
-            } else {
-                format!("{path}/{name}")
-            }
-        };
+    fn collect_files(&self, path: &[String], pattern: &[&str], out: &mut Vec<EmuFile>) {
+        let join = |name: &str| [path, &[name.to_string()]].concat();
         if let Some((first, rest)) = pattern.split_first()
             && !first.contains('*')
         {
@@ -309,19 +338,17 @@ impl Navigator {
         }
     }
 
-    fn current_path(&self) -> &str {
+    fn current_path(&self) -> &[String] {
         if self.pos < 0 {
-            return "";
+            return &[];
         }
         &self.stack[self.pos as usize].path
     }
 
-    fn enter(&mut self, path: &str) -> &mut Self {
-        let current = self.current_path().to_string();
-        if current.is_empty() {
-            return self.goto(path);
-        }
-        self.goto(&(current + "/" + path))
+    fn enter(&mut self, names: &[&str]) -> &mut Self {
+        let mut path = self.current_path().to_vec();
+        path.extend(names.iter().map(|n| n.to_string()));
+        self.goto_path(path)
     }
 
     #[cfg(test)]
@@ -347,7 +374,7 @@ impl Navigator {
             root.source = root_source;
         }
         for list in &mut self.stack {
-            if list.id == 0 && list.path == name {
+            if list.id == 0 && list.path == [name] {
                 list.source = Arc::new(PickerSource::new(files, None, IconMode::All));
             }
         }
@@ -369,7 +396,7 @@ impl Navigator {
             source: Arc::new(AllWordsSource::new(vec![
                 "\u{f0156} Delete Playlist".into(),
             ])),
-            path: name.into(),
+            path: vec![name.into()],
             prompt: String::new(),
             selected: None,
         })
@@ -378,67 +405,43 @@ impl Navigator {
     /// Shift+Enter on entry `id` of a playlist: remove it, or go on to its
     /// downloads.
     fn open_playlist_menu(&mut self, id: usize) -> &mut Self {
-        let list = self.current_path().to_string();
+        let list = self.current_path().join("/");
         self.push(NavList {
             id: PLAYLIST_MENU,
             source: Arc::new(AllWordsSource::new(vec![
                 format!("\u{f0156} Remove from {list}"),
                 "Run...".into(),
             ])),
-            path: format!("{list}/{id}"),
+            path: vec![list, id.to_string()],
             prompt: String::new(),
             selected: None,
         })
     }
 
-    // Add a new path pattern.
-    // 'callback' will be called to populate navitator if 'pattern' matches current path.
-    // ie: "DemoZoo/Parties/Revision 2022" will match "Parties\/([^\/]*)\" and the callback
-    // will be called with ["DemoZoo/Parties/Revision 2022", "Revision 2022"] and the EmuFiles
-    // added for database "Demozoo"
+    // Register a path pattern; "Parties/{party}/{combo}" calls `callback` for
+    // "Demozoo/Parties/Revision 2022/PC Demo" with ["Revision 2022/PC Demo",
+    // "Revision 2022", "PC Demo"] and the Demozoo EmuFiles. A "*" part matches
+    // any number of path parts, so "*/{id}/dls" also matches "Platforms/C64/12345/dls".
     // Returning None from the callback declines the path, so the next matching
     // registration is tried instead.
-    pub fn register_regex<S: FuzzySource<EmuFile>>(
-        &mut self,
-        pattern: Regex,
-        callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
-    ) -> Result<()> {
-        debug!("Regex: {pattern:?}");
-        self.mapping.push((
-            pattern,
-            Box::new(move |groups, files| Some(Arc::new(callback(groups, files)?) as ListSource)),
-        ));
-        Ok(())
-    }
-
-    // Register with simpler pattern; "Parties/{party}/{combo}" becomes "^Parties/([^/]*)/([^/]*)$".
-    // A "*" part matches any number of leading path components, so "*/{id}/dls" also
-    // matches "Platforms/C64/12345/dls".
     pub fn register<S: FuzzySource<EmuFile>>(
         &mut self,
         pattern: &str,
         callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
     ) -> Result<()> {
-        let mut rx = String::from("^");
-        let mut sep = false;
-        for part in pattern.split('/') {
-            if part == "*" {
-                rx.push_str("(?:[^/]+/)*");
-                sep = false;
-                continue;
-            }
-            if sep {
-                rx.push('/');
-            }
-            if part.starts_with('{') && part.ends_with('}') {
-                rx.push_str("([^/]*)");
-            } else {
-                rx.push_str(&regex::escape(part));
-            }
-            sep = true;
-        }
-        rx.push('$');
-        self.register_regex(Regex::new(&rx)?, callback)
+        let segs = split_path(pattern)
+            .into_iter()
+            .map(|part| match part.as_str() {
+                "*" => Seg::Any,
+                p if p.starts_with('{') && p.ends_with('}') => Seg::Capture,
+                _ => Seg::Lit(part),
+            })
+            .collect();
+        self.mapping.push((
+            segs,
+            Box::new(move |groups, files| Some(Arc::new(callback(groups, files)?) as ListSource)),
+        ));
+        Ok(())
     }
 
     pub fn open(&mut self, show_list: &mut MessageWriter<ShowFuzzyList>) {
@@ -447,6 +450,10 @@ impl Navigator {
             self.stack[self.pos as usize].show(self.pos as i32, title, show_list);
         }
     }
+}
+
+fn split_path(path: &str) -> Vec<String> {
+    path.split('/').filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
 static CATS: [&str; 10] = [
@@ -778,33 +785,34 @@ fn handle_selection(
     let path = current.path.clone();
     for msg in reader.read() {
         if msg.id == id && id == PLAYLIST_ROOT_MENU {
-            if let Some(index) = playlists.find(&path)
+            let name = path.join("/");
+            if let Some(index) = playlists.find(&name)
                 && playlists.delete(index)
             {
-                navigator.remove_playlist(&path);
+                navigator.remove_playlist(&name);
             }
             navigator.pop().show(&mut list_writer);
         } else if msg.id == id && id == PLAYLIST_MENU {
-            let Some((list, file_id)) = path.rsplit_once('/') else {
+            let [list, file_id] = path.as_slice() else {
                 continue;
             };
             if msg.item == 0 {
                 let file = file_id
                     .parse::<usize>()
                     .ok()
-                    .and_then(|i| navigator.files.get(list)?.get(i));
+                    .and_then(|i| navigator.files.get(list.as_str())?.get(i));
                 if let (Some(file), Some(index)) = (file, playlists.find(list)) {
                     playlists.toggle(index, file, "");
                     navigator.add_playlist(list, playlists.lists[index].files);
                 }
                 navigator.back().show(&mut list_writer);
             } else {
-                navigator.enter("dls").show(&mut list_writer);
+                navigator.enter(&["dls"]).show(&mut list_writer);
             }
         } else if msg.id == id {
             debug!("Selected {:?}", msg);
             if let Some(emu_file) = msg.emu_file.clone() {
-                if msg.alt && navigator.playlists.contains(&path) {
+                if msg.alt && path.len() == 1 && navigator.playlists.contains(&path[0]) {
                     navigator
                         .open_playlist_menu(msg.item)
                         .show(&mut list_writer);
@@ -812,7 +820,7 @@ fn handle_selection(
                 }
                 if msg.alt {
                     let id = msg.item;
-                    navigator.enter(&format!("{id}/dls")).show(&mut list_writer);
+                    navigator.enter(&[&id.to_string(), "dls"]).show(&mut list_writer);
                     continue;
                 }
                 let ids = source.search(&prompt, usize::MAX);
@@ -840,7 +848,7 @@ fn handle_selection(
                     .open_playlist_root_menu(&msg.text)
                     .show(&mut list_writer);
             } else {
-                navigator.enter(&msg.text).show(&mut list_writer);
+                navigator.enter(&[&msg.text]).show(&mut list_writer);
             }
         }
     }
@@ -984,9 +992,9 @@ mod test {
         navigator.go_root();
         navigator.goto("Broken");
         navigator.open_playlist_menu(0);
-        assert_eq!(navigator.current_path(), "Broken/0");
+        assert_eq!(navigator.current_path(), ["Broken", "0"]);
         assert_eq!(navigator.get_showing()[1], "Run...");
-        navigator.enter("dls");
+        navigator.enter(&["dls"]);
         assert_eq!(navigator.get_showing(), vec!["a.zip"]);
 
         navigator.back().back();
@@ -1005,7 +1013,7 @@ mod test {
         setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
         navigator.go_root();
         navigator.open_playlist_root_menu("Old");
-        assert_eq!(navigator.current_path(), "Old");
+        assert_eq!(navigator.current_path(), ["Old"]);
         navigator.remove_playlist("Old");
         navigator.pop();
         assert_eq!(navigator.get_showing(), vec!["Keep"]);
@@ -1028,7 +1036,7 @@ mod test {
         assert_eq!(files[0].get_meta("id"), "2");
         assert!(navigator.files_at("Demozoo/Platforms").unwrap().is_empty());
         assert!(navigator.files_at("Nope/Platforms").is_none());
-        assert_eq!(navigator.current_path(), "");
+        assert!(navigator.current_path().is_empty());
     }
 
     #[test]
@@ -1065,6 +1073,25 @@ mod test {
         assert_eq!(ids("Demozoo/Awards/*2025"), vec!["3", "4", "2"]);
         assert_eq!(ids("Demozoo/Awards/Scene.org 2008/Best direction"), vec!["1"]);
         assert!(ids("Demozoo/Awards/Nope *").is_empty());
+    }
+
+    #[test]
+    fn compo_with_slash_in_name() {
+        let dbs: IndexMap<String, &'static [EmuFile]> = [(
+            "Demozoo".to_string(),
+            db("id:1\ttitle:A\tauthor:G\tparty:Evoke 2005;Oldskool 4k/Intro;1\tdownload:http://x/a.zip\n"),
+        )]
+        .into();
+        let mut navigator = Navigator::new();
+        setup_navigator(&dbs, &mut navigator).unwrap();
+
+        navigator.goto("Demozoo/Parties/Evoke 2005");
+        assert_eq!(navigator.get_showing(), vec!["Oldskool 4k/Intro"]);
+        navigator.enter(&["Oldskool 4k/Intro"]);
+        assert_eq!(navigator.current_path().len(), 4);
+        assert_eq!(navigator.get_showing(), vec!["A / G"]);
+        let files = navigator.files_under("Demozoo/Parties/Evoke 2005/*");
+        assert_eq!(files.len(), 1);
     }
 
     #[test]

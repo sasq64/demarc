@@ -641,7 +641,7 @@ fn handle_textlist(
                 source: Arc::new(source),
                 prompt: None,
                 selected: None,
-                title: String::new(),
+                title: vec![],
                 title_select: -1,
                 keep_open: false,
             });
@@ -973,7 +973,7 @@ pub(crate) fn handle_cmd(
                                 source: picker.clone(),
                                 prompt: Some(String::new()),
                                 selected: None,
-                                title: "Add to playlist".into(),
+                                title: vec!["Add to playlist".into()],
                                 title_select: -1,
                                 keep_open: false,
                             });
