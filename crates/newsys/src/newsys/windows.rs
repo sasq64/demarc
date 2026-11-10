@@ -354,19 +354,20 @@ impl System for WindowsSystem {
         // Which modes to ask the dialog for depends on the shape of the screen,
         // which only the frontend knows; set here rather than in `default_meta`
         // because that one can only hand back a fixed string.
-        if is_yes(&file.get_meta_or(META_NARROW, "")) {
+        let narrow = is_yes(&file.get_meta_or(META_NARROW, ""));
+        if narrow {
             file.set_meta(META_WIDESCREEN, "false");
         }
         let widescreen = is_yes(&file.get_meta_or(META_WIDESCREEN, DEFAULT_WIDESCREEN.to_string()));
-        if !widescreen && !file.has_meta(META_RES) {
-            file.set_meta(META_RES, NARROW_RES);
-        }
+        let given_res = file.get_meta_or(META_RES, String::new());
         let dialog_res = file.get_meta_or(META_DIALOG_RES, default_dialog_res(widescreen));
-        let dialog_res = fitting_modes(&dialog_res, &file.get_meta_or(META_RES, String::new()));
+        // A release that ships its 16:9 version as its own exe runs that one
+        // on a narrow screen too.
+        let pick_res = file.get_meta_or(META_DIALOG_RES, default_dialog_res(!narrow));
         let target = if is_windows_bat(file) {
             Some(file.path.clone())
         } else {
-            match self.pick_target(file, &dialog_res)? {
+            match self.pick_target(file, &fitting_modes(&pick_res, &given_res))? {
                 None if is_windows_platform(file) && file.is_dir() => pick_bat(file)?,
                 target => target,
             }
@@ -407,6 +408,10 @@ impl System for WindowsSystem {
             info!("Running {target:?} at {res}, after its name");
             file.set_meta(META_RES, res);
         }
+        if !widescreen && !file.has_meta(META_RES) {
+            file.set_meta(META_RES, NARROW_RES);
+        }
+        let dialog_res = fitting_modes(&dialog_res, &file.get_meta_or(META_RES, String::new()));
 
         if !file.has_meta(META_DIALOG_RES) {
             file.set_meta(META_DIALOG_RES, dialog_res);

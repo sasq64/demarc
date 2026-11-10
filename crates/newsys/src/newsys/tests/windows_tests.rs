@@ -206,6 +206,32 @@ fn the_dialog_list_follows_the_shape_of_the_screen() {
     );
 }
 
+/// Rhodium ships an exe per mode; the 16:9 one is the release, whatever the screen.
+#[test]
+fn a_narrow_screen_still_runs_the_widescreen_exe() {
+    let dir = tempfile::tempdir().unwrap();
+    let sys = WindowsSystem {};
+    let release = dir.path().join("rhodium");
+    fs::create_dir_all(&release).unwrap();
+    windows_exe(&release, "rhodium_1024x768.exe");
+    windows_exe(&release, "rhodium_1920x1080.exe");
+
+    let load = |meta: &[(&str, &str)]| {
+        let meta = meta.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut wf = WorkFile::new_with_meta(release.clone(), meta);
+        assert!(sys.load(&mut wf).unwrap());
+        (wf.path.clone(), wf.get_meta_or(META_RES, ""))
+    };
+
+    let (path, res) = load(&[(META_WIDESCREEN, "false")]);
+    assert!(path.ends_with("rhodium_1920x1080.exe"), "{path:?}");
+    assert_eq!(res, "1920x1080");
+
+    let (path, res) = load(&[(META_NARROW, "true")]);
+    assert!(path.ends_with("rhodium_1024x768.exe"), "{path:?}");
+    assert_eq!(res, "1024x768");
+}
+
 /// The session is paced at the screen, not at the core's own 60: a demo held to
 /// 60Hz on a faster display runs slower than it was built to and lands unevenly
 /// on the refreshes it does get.
