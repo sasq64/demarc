@@ -2260,7 +2260,7 @@ glsl = { match = '#define z\(a\)', edits = [['\bz\(', "zz("], ['^#define', "#ver
 known_issue = """
 NVIDIA only. Prints "Necessary extensions are not supported" and quits
 without NV_register_combiners, NV_texture_shader and NV_vertex_program, none
-of which Mesa has.
+of which Mesa has. Its "/g" simpler mode checks for them too.
 """
 
 [zoo.57055]
@@ -2286,3 +2286,9 @@ meta = { amiberry_cpu_model = "68040" }
 
 # [zoo.8891]
 # fast = true
+
+# Hephaestus / org_100h: Win32 512b despite the MS-Dos tag. Its maximized "edit"
+# popup blitted with StretchDIBits stays black in the session without a desktop.
+[zoo.358365]
+boot = "Hephaestus.exe"
+meta = { wine_desktop = "true" }

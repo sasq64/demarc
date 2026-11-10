@@ -1641,3 +1641,10 @@
   offset to the selection every frame, not bevy_egui input. A `MouseWheel`
   test in the `Harness` (next to a plain `ScrollArea` as control) settles which
   side is at fault before reading bevy_egui's input path.
+
+- A Win32 GDI intro black in the session while `+relay` shows every
+  `StretchDIBits` succeeding at full size (Hephaestus, `zoo.358365`: a
+  maximized `edit` popup blitted from `GetDC`): try `wine_desktop=true` before
+  tracing x11drv; wine's side (window rect, managed, drawable) was all correct.
+  The release ships the 512b exe beside a linker-built `safe.exe` the picker
+  prefers; `boot` the original.
