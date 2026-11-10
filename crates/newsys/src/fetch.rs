@@ -364,6 +364,10 @@ pub fn is_download_cached(url: &str) -> bool {
     DOWNLOADS.is_cached(url, &name)
 }
 
+pub fn cached_download(url: &str) -> Option<PathBuf> {
+    DOWNLOADS.cached_path(url)
+}
+
 /// Copy `files` into a single fresh temp directory and return that directory's
 /// path, so the disks of a set end up side by side in one directory.
 ///

@@ -182,6 +182,10 @@ impl FileCache {
             .find(|name| !name.starts_with('.'))
     }
 
+    pub fn cached_path(&self, key: &str) -> Option<PathBuf> {
+        Some(self.root.join(hash_key(key)).join(self.cached_name(key)?))
+    }
+
     /// The cached file `filename` for `key`, producing it if it isn't there.
     ///
     /// On a miss `produce` is called with the path to write and is expected to

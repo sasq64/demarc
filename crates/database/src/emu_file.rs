@@ -449,7 +449,7 @@ fn cache_keys(urls: &[&str]) -> Vec<String> {
 }
 
 /// One URL in that form; see [`cache_keys`].
-fn cache_key(url: &str) -> String {
+pub fn cache_key(url: &str) -> String {
     Url::parse(url).map_or_else(|_| url.to_owned(), |parsed| parsed.to_string())
 }
 

@@ -11,7 +11,7 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, value};
 
 use crate::commands::reload;
 use crate::config::AppSettings;
-use crate::emu_file::{DemoId, url_file_name};
+use crate::emu_file::{DemoId, FileSource, cache_key, url_file_name};
 use crate::emulator::{Emulator, Recorded};
 use crate::frontend::EmuView;
 use crate::fuzzy_list::AllWordsSource;
@@ -32,8 +32,10 @@ const ITEMS: &[&str] = &[
     "Apply 68030",
     "Apply core puae",
     "Record Events",
+    "Debug",
 ];
 const RECORD: usize = 9;
+const DEBUG: usize = 10;
 
 pub struct PatchMenuPlugin;
 
@@ -97,6 +99,12 @@ fn handle_select(
         else {
             continue;
         };
+        if msg.item == DEBUG {
+            if let Err(err) = launch_claude(&emu) {
+                warn!("Debug: {err:#}");
+            }
+            continue;
+        }
         let text = match patch(&mut emu, msg.item, &mut settings) {
             Ok(text) => {
                 if msg.item != RECORD {
@@ -125,6 +133,60 @@ fn current<'a>(
     emus.iter()
         .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu)
         .map(|(emu, _)| emu)
+}
+
+fn debug_prompt(emu: &Emulator) -> String {
+    let file = emu.failed_file.as_ref().unwrap_or(&emu.emu_file);
+    let id = file
+        .demo_id()
+        .map_or("unknown".into(), |id| format!("{}.{}", id.db, id.id));
+    let cached: Vec<String> = match &file.path {
+        FileSource::Path(path) => vec![path.display().to_string()],
+        FileSource::Url(urls) => urls
+            .iter()
+            .map(|url| match newsys::fetch::cached_download(&cache_key(url)) {
+                Some(path) => format!("{url} -> {}", path.display()),
+                None => format!("{url} (not cached)"),
+            })
+            .collect(),
+    };
+    let failure = match &emu.load_error {
+        Some(err) => err.clone(),
+        None if emu.failed_file.is_none() && emu.core.is_some() => {
+            "Loaded, but does not play correctly".into()
+        }
+        None => "unknown".into(),
+    };
+    let mut text = format!(
+        "Debug why this demo does not work in demarc.\n\n\
+         Name: {}\nId: {id}\nPlatform: {}\nCached files:\n",
+        file.game_info.title,
+        file.platforms.join(";"),
+    );
+    for line in cached {
+        text += &format!("  {line}\n");
+    }
+    if emu.failed_file.is_none() && !emu.work_file.path.as_os_str().is_empty() {
+        text += &format!("Loaded from: {}\n", emu.work_file.path.display());
+    }
+    text += &format!(
+        "Failure: {failure}\n\n\
+         Read docs/LEARNINGS.md first. Reproduce headless with \
+         `--headless --remote-control <script>` (see scripts/remote_example.lua) on the \
+         cached file, and use RUST_LOG=retro=debug for core logs. For a Windows \
+         release use the wine-demo-debug skill. If the fix is an override, put it \
+         under [{id}] in system/overrides.toml."
+    );
+    text
+}
+
+fn launch_claude(emu: &Emulator) -> Result<()> {
+    std::process::Command::new("xdg-terminal-exec")
+        .arg("claude")
+        .arg(debug_prompt(emu))
+        .spawn()
+        .context("Can't start xdg-terminal-exec")?;
+    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
