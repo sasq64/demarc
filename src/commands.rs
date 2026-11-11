@@ -871,6 +871,9 @@ pub(crate) fn handle_cmd(
         );
         let cue = dj_focused && !advance;
         for (mut emu, view) in &mut emus {
+            if cmd.0 == Cmd::ToggleRecording && !settings.record {
+                emu.sink.stop_recording();
+            }
             if emu.is_crossfade != cue {
                 continue;
             }
@@ -880,9 +883,6 @@ pub(crate) fn handle_cmd(
             }
             if cmd.0 == Cmd::NextFileAll {
                 emu.run_next = true;
-            }
-            if cmd.0 == Cmd::ToggleRecording && !settings.record {
-                emu.sink.stop_recording();
             }
             if cue || settings.all_emus || i == settings.current_emu {
                 match cmd.0 {

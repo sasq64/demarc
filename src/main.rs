@@ -786,7 +786,9 @@ fn main() {
     if !win && !headless {
         app.add_systems(PostStartup, enter_fullscreen);
     }
-    if app.run().is_error() {
+    let result = app.run();
+    retro_core::audio_recorder::wait_for_writes();
+    if result.is_error() {
         // Without atexit handlers: a shader chain still building on another
         // thread would crash in glslang's freed statics.
         #[cfg(unix)]

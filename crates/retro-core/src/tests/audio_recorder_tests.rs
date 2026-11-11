@@ -67,7 +67,8 @@ fn finish_writes_a_wav() {
     let path = dir.path().join("rec.wav");
     let mut rec = AudioRecorder::new(&path, opts(None, None));
     rec.push(22050, &[0.25, -0.5, 1.5, 0.0]);
-    rec.finish().unwrap().join().unwrap();
+    rec.finish();
+    wait_for_writes();
     let reader = hound::WavReader::open(&path).unwrap();
     assert_eq!(reader.spec().sample_rate, 22050);
     assert_eq!(
@@ -96,7 +97,8 @@ fn finish_also_writes_an_mp3() {
     );
     let tone: Vec<f32> = (0..44100).map(|i| (i as f32 * 0.05).sin() * 0.25).collect();
     rec.push(44100, &tone);
-    rec.finish().unwrap().join().unwrap();
+    rec.finish();
+    wait_for_writes();
     let mp3 = std::fs::read(path.with_extension("mp3")).unwrap();
     assert!(mp3.len() > 1000);
     let tag = id3::Tag::read_from_path(path.with_extension("mp3")).unwrap();

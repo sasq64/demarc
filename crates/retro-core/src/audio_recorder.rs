@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -168,13 +169,13 @@ impl AudioRecorder {
         self.state == State::Recording && self.opts.stop_on_silence.is_some()
     }
 
-    /// Writes the recording in a thread of its own.
-    pub fn finish(self) -> Option<JoinHandle<()>> {
+    /// Writes the recording in a thread of its own; `wait_for_writes` joins it.
+    pub fn finish(self) {
         if self.state == State::Waiting || self.samples.is_empty() {
             info!("recording: nothing recorded");
-            return None;
+            return;
         }
-        Some(std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             if let Err(e) = write_wav(&self.path, self.rate(), &self.samples) {
                 error!("recording: writing {}: {e}", self.path.display());
                 return;
@@ -187,7 +188,23 @@ impl AudioRecorder {
                     Err(e) => error!("recording: writing {}: {e}", mp3.display()),
                 }
             }
-        }))
+        });
+        let mut pending = PENDING.lock().unwrap();
+        pending.retain(|h| !h.is_finished());
+        pending.push(handle);
+    }
+}
+
+static PENDING: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Blocks until every recording handed to `finish` is on disk.
+pub fn wait_for_writes() {
+    let pending = std::mem::take(&mut *PENDING.lock().unwrap());
+    if !pending.is_empty() {
+        info!("recording: waiting for {} write(s)", pending.len());
+    }
+    for handle in pending {
+        _ = handle.join();
     }
 }
 
