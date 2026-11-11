@@ -58,9 +58,7 @@ impl PlaylistEntry {
             .collect();
         let path = match &self.path {
             Some(p) => FileSource::Path(p.into()),
-            None => FileSource::Url(UrlList::parse_field(
-                meta.get("download").unwrap_or(""),
-            )),
+            None => FileSource::Url(UrlList::parse_field(meta.get("download").unwrap_or(""))),
         };
         EmuFile {
             game_info: GameInfo::new(&meta, &categories),

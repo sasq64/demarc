@@ -316,7 +316,9 @@ impl WineCheck {
 #[cfg(target_os = "linux")]
 pub fn wanted_version() -> Option<String> {
     let script = std::fs::read_to_string(system_dir().join(SETUP_SCRIPT)).ok()?;
-    let version = script.lines().find_map(|line| line.strip_prefix("WINE_VERSION="))?;
+    let version = script
+        .lines()
+        .find_map(|line| line.strip_prefix("WINE_VERSION="))?;
     Some(format!("wine-{}", version.trim()))
 }
 

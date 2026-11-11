@@ -1,7 +1,6 @@
 use super::*;
 use bevy::ecs::system::RunSystemOnce;
 
-
 #[test]
 fn pad_modifier_picks_the_combined_mapping() {
     let mut pad = ButtonInput::<GamepadButton>::default();
@@ -38,14 +37,20 @@ fn command_list_shows_pad_buttons() {
     );
     assert!(pad.iter().any(|(line, _)| line.starts_with(" L2+R1 ")));
     assert_eq!(command_list(false, None).len(), HOTKEYS.len());
-    assert_eq!(command_list(true, Some(MediaKind::Image)).len(), PAD_HOTKEYS.len());
+    assert_eq!(
+        command_list(true, Some(MediaKind::Image)).len(),
+        PAD_HOTKEYS.len()
+    );
 }
 
 #[test]
 fn command_list_shows_the_current_views_nav_keys_once() {
     let image = command_list(false, Some(MediaKind::Image));
     assert_eq!(image.len(), HOTKEYS.len() + 6);
-    assert_eq!(image[HOTKEYS.len()], (" + Zoom in ".to_string(), Cmd::ZoomIn));
+    assert_eq!(
+        image[HOTKEYS.len()],
+        (" + Zoom in ".to_string(), Cmd::ZoomIn)
+    );
     let music = command_list(false, Some(MediaKind::Music));
     let cmds: Vec<Cmd> = music[HOTKEYS.len()..].iter().map(|(_, c)| *c).collect();
     assert_eq!(cmds, [Cmd::NextSong, Cmd::PrevSong, Cmd::PauseResume]);
@@ -65,7 +70,12 @@ fn stick_moves_the_cursor_outside_the_deadzone() {
 #[test]
 fn every_bound_command_has_a_name() {
     let nav = MUSIC_KEYS.iter().chain(VIDEO_KEYS).chain(IMAGE_KEYS);
-    for cmd in HOTKEYS.iter().chain(nav).map(|m| m.cmd).chain(PAD_HOTKEYS.iter().map(|m| m.cmd)) {
+    for cmd in HOTKEYS
+        .iter()
+        .chain(nav)
+        .map(|m| m.cmd)
+        .chain(PAD_HOTKEYS.iter().map(|m| m.cmd))
+    {
         assert_eq!(Cmd::from_name(&format!("{cmd:?}")), Some(cmd));
     }
     assert_eq!(Cmd::from_name("NoSuchCommand"), None);
@@ -91,8 +101,14 @@ fn shift_picks_the_shifted_hotkey() {
 
 #[test]
 fn hotkey_labels_use_keyboard_glyphs() {
-    assert_eq!(KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll).label(), "\u{f0b08}");
-    assert_eq!(KeyMapping::new(KeyCode::KeyZ, Cmd::ShaderDialog).label(), "\u{f0b21}");
+    assert_eq!(
+        KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll).label(),
+        "\u{f0b08}"
+    );
+    assert_eq!(
+        KeyMapping::new(KeyCode::KeyZ, Cmd::ShaderDialog).label(),
+        "\u{f0b21}"
+    );
     assert_eq!(
         KeyMapping::shifted(KeyCode::Tab, Cmd::PrevEmu).label(),
         "\u{f0636} + \u{f0312}"
@@ -149,7 +165,9 @@ fn hotkeys_need_the_modifier_and_no_modal() {
     world.run_system_once(handle_hotkey).unwrap();
     assert!(sent(&mut world).is_empty());
 
-    world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ControlRight);
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::ControlRight);
     world.run_system_once(handle_hotkey).unwrap();
     assert_eq!(sent(&mut world), [Cmd::NextFile]);
 
@@ -256,7 +274,10 @@ fn render_toggles_cycle() {
     assert_eq!(render.crt_effect, !crt);
     assert_eq!(render.border_mode, BorderMode::Stretch);
     run_cmds(&mut world, &[Cmd::ToggleBorder]);
-    assert_eq!(world.resource::<RenderSettings>().border_mode, BorderMode::Black);
+    assert_eq!(
+        world.resource::<RenderSettings>().border_mode,
+        BorderMode::Black
+    );
 }
 
 #[test]
@@ -283,9 +304,7 @@ fn per_emu_commands_reach_the_current_emu_or_all() {
     let (mut world, _dir) = world();
     let a = spawn(&mut world, 0);
     let b = spawn(&mut world, 1);
-    let paused = |world: &World| {
-        [a, b].map(|e| world.get::<Emulator>(e).unwrap().paused)
-    };
+    let paused = |world: &World| [a, b].map(|e| world.get::<Emulator>(e).unwrap().paused);
     world.resource_mut::<AppSettings>().current_emu = 1;
     run_cmds(&mut world, &[Cmd::PauseResume]);
     assert_eq!(paused(&world), [false, true]);
@@ -320,18 +339,27 @@ fn nav_keys_follow_the_current_views_kind_without_the_hot_key() {
     fake.lock().media_kind = Some(MediaKind::Video);
     world.get_mut::<Emulator>(e).unwrap().core = fake.boxed();
 
-    world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ArrowUp);
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::ArrowUp);
     world.run_system_once(handle_nav_keys).unwrap();
     assert_eq!(sent(&mut world), [Cmd::SeekFwd10m]);
     run_cmds(&mut world, &[Cmd::SeekFwd10m, Cmd::SeekBack30]);
-    assert_eq!(fake.lock().media, [MediaCmd::Seek(600), MediaCmd::Seek(-30)]);
+    assert_eq!(
+        fake.lock().media,
+        [MediaCmd::Seek(600), MediaCmd::Seek(-30)]
+    );
 
-    world.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::ControlRight);
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::ControlRight);
     world.run_system_once(handle_nav_keys).unwrap();
     assert!(sent(&mut world).is_empty());
 
     fake.lock().media_kind = None;
-    world.resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::ControlRight);
+    world
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .release(KeyCode::ControlRight);
     world.run_system_once(handle_nav_keys).unwrap();
     assert!(sent(&mut world).is_empty());
 }

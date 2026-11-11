@@ -1,9 +1,6 @@
 //! The modland index (`allmods.txt`): one `<size>\t<path>` line per music file.
 
-use std::{
-    collections::HashSet,
-    ops::Range,
-};
+use std::{collections::HashSet, ops::Range};
 
 use newsys::{NewSys, SongName};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};

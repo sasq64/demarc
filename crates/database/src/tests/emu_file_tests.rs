@@ -313,9 +313,18 @@ fn compact_date_parses_partial_dates() {
 
 #[test]
 fn compact_date_keeps_the_year_of_a_bad_month_or_day() {
-    assert_eq!(CompactDate::parse("1995-??").unwrap(), CompactDate::new(1995, 0, 0).unwrap());
-    assert_eq!(CompactDate::parse("1995-13-01").unwrap(), CompactDate::new(1995, 0, 0).unwrap());
-    assert_eq!(CompactDate::parse("1995-03-xx").unwrap(), CompactDate::new(1995, 3, 0).unwrap());
+    assert_eq!(
+        CompactDate::parse("1995-??").unwrap(),
+        CompactDate::new(1995, 0, 0).unwrap()
+    );
+    assert_eq!(
+        CompactDate::parse("1995-13-01").unwrap(),
+        CompactDate::new(1995, 0, 0).unwrap()
+    );
+    assert_eq!(
+        CompactDate::parse("1995-03-xx").unwrap(),
+        CompactDate::new(1995, 3, 0).unwrap()
+    );
     assert!(CompactDate::parse("??").is_err());
 }
 
@@ -337,6 +346,9 @@ fn meta_later_keys_replace_earlier() {
     meta.insert("b", "4");
     meta.insert_if_absent("b", "5");
     meta.insert_if_absent("c", "6");
-    assert_eq!(meta.iter().collect::<Vec<_>>(), [("a", "3"), ("b", "4"), ("c", "6")]);
+    assert_eq!(
+        meta.iter().collect::<Vec<_>>(),
+        [("a", "3"), ("b", "4"), ("c", "6")]
+    );
     assert!(!meta.contains_key("d"));
 }

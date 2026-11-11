@@ -20,10 +20,7 @@ fn resolves_under_its_root_only() {
 #[test]
 fn serves_wasm_as_wasm() {
     assert_eq!(content_type(Path::new("a.WASM")), "application/wasm");
-    assert_eq!(
-        content_type(Path::new("a.html")),
-        "text/html"
-    );
+    assert_eq!(content_type(Path::new("a.html")), "text/html");
 }
 
 #[test]

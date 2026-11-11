@@ -128,7 +128,10 @@ fn fused_matches_stepping(code: &[u8], data: &[u8], regs: [u32; 8], stop: u32) {
     assert_eq!(steps, n);
     assert_eq!(fused.r, stepped.r);
     assert_eq!(flags(&fused), flags(&stepped));
-    assert_eq!(fused.mem.slice(0x7000, 0x1000), stepped.mem.slice(0x7000, 0x1000));
+    assert_eq!(
+        fused.mem.slice(0x7000, 0x1000),
+        stepped.mem.slice(0x7000, 0x1000)
+    );
 }
 
 fn noise(len: usize, values: u32) -> Vec<u8> {

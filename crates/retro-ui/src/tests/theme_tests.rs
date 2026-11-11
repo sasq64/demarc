@@ -126,7 +126,10 @@ fn shader_paths_are_not_palette_names() {
     )
     .unwrap();
     let panel = theme.panel.shader.unwrap();
-    assert_eq!((panel.shader.as_str(), panel.texture.as_deref()), ("stars", Some("stars.png")));
+    assert_eq!(
+        (panel.shader.as_str(), panel.texture.as_deref()),
+        ("stars", Some("stars.png"))
+    );
     assert_eq!(theme.screen.shader.unwrap().shader, "plasma.wgsl");
 }
 
@@ -144,8 +147,14 @@ fn shaders_are_painted_under_the_panel_and_over_the_screen() {
         }),
     );
     let mut theme = Theme::DEFAULT;
-    theme.panel.shader = Some(ShaderBg { shader: "panel.wgsl".into(), texture: None });
-    theme.screen.shader = Some(ShaderBg { shader: "screen.wgsl".into(), texture: None });
+    theme.panel.shader = Some(ShaderBg {
+        shader: "panel.wgsl".into(),
+        texture: None,
+    });
+    theme.screen.shader = Some(ShaderBg {
+        shader: "screen.wgsl".into(),
+        texture: None,
+    });
     set_theme(&harness.ctx, theme);
     let mut panel = egui::Rect::NOTHING;
     harness.frame(vec![], |ctx| {
@@ -155,7 +164,10 @@ fn shaders_are_painted_under_the_panel_and_over_the_screen() {
         });
     });
     let painted = painted.lock().unwrap();
-    assert_eq!(painted[0], (harness.ctx.content_rect(), "screen.wgsl".into()));
+    assert_eq!(
+        painted[0],
+        (harness.ctx.content_rect(), "screen.wgsl".into())
+    );
     assert_eq!(painted[1], (panel, "panel.wgsl".into()));
 }
 
@@ -179,7 +191,13 @@ fn icon_color_mixes_by_its_alpha() {
     let mut picker = Theme::DEFAULT.picker;
     assert_eq!(picker.tint_icon(blue), blue);
     picker.icon_color = Color32::WHITE;
-    assert_eq!(picker.tint_icon(blue).to_srgba_unmultiplied(), [255, 255, 255, 200]);
+    assert_eq!(
+        picker.tint_icon(blue).to_srgba_unmultiplied(),
+        [255, 255, 255, 200]
+    );
     picker.icon_color = Color32::from_rgba_unmultiplied(0, 255, 0, 128);
-    assert_eq!(picker.tint_icon(blue).to_srgba_unmultiplied(), [0, 128, 128, 200]);
+    assert_eq!(
+        picker.tint_icon(blue).to_srgba_unmultiplied(),
+        [0, 128, 128, 200]
+    );
 }

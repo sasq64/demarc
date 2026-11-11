@@ -291,7 +291,10 @@ impl ImageEmu {
 
 impl ImageEmu {
     fn visible(&self) -> (usize, usize) {
-        ((self.width / self.zoom).max(1), (self.height / self.zoom).max(1))
+        (
+            (self.width / self.zoom).max(1),
+            (self.height / self.zoom).max(1),
+        )
     }
 
     fn move_to(&mut self, x: isize, y: isize) {
@@ -338,7 +341,11 @@ impl Backend for ImageEmu {
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
-        let pixels = if self.zoom > 1 { &self.view } else { &self.frame };
+        let pixels = if self.zoom > 1 {
+            &self.view
+        } else {
+            &self.frame
+        };
         f(self.width, self.height, pixels);
     }
 

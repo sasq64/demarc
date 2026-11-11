@@ -136,13 +136,20 @@ fn ffmpeg_line() -> Line {
     if ffmpeg_emu::is_available() {
         Line::new(Status::Ok, "ffmpeg", "ffmpeg and ffprobe run")
     } else {
-        Line::new(Status::Warn, "ffmpeg", "not on PATH: video files cannot play")
-            .fix("Install ffmpeg")
+        Line::new(
+            Status::Warn,
+            "ffmpeg",
+            "not on PATH: video files cannot play",
+        )
+        .fix("Install ffmpeg")
     }
 }
 
 fn rife_line() -> Line {
-    match rife::lib_candidates().into_iter().find(|path| path.is_file()) {
+    match rife::lib_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
+    {
         Some(path) => Line::new(Status::Ok, "RIFE", path.display().to_string()),
         None => Line::new(
             Status::Info,
@@ -499,18 +506,36 @@ mod linux {
         text.split_whitespace().nth(1)?.parse().ok()
     }
 
-    fn rt_time_max(busctl: &Path, bus: &str, service: &str, path: &str, interface: &str) -> Option<i64> {
-        let args = [bus, "get-property", service, path, interface, "RTTimeUSecMax"];
-        output_of(busctl, &args).as_deref().and_then(parse_busctl_int)
+    fn rt_time_max(
+        busctl: &Path,
+        bus: &str,
+        service: &str,
+        path: &str,
+        interface: &str,
+    ) -> Option<i64> {
+        let args = [
+            bus,
+            "get-property",
+            service,
+            path,
+            interface,
+            "RTTimeUSecMax",
+        ];
+        output_of(busctl, &args)
+            .as_deref()
+            .and_then(parse_busctl_int)
     }
 
     fn rtkit_line() -> Line {
         const NAME: &str = "rtkit";
         const FIX: &str = "Install rtkit (Arch: `sudo pacman -S rtkit`), then log in again";
-        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
         // SAFETY: `limit` is a valid rlimit for the call to fill in.
-        let rtprio = unsafe { libc::getrlimit(libc::RLIMIT_RTPRIO, &mut limit) } == 0
-            && limit.rlim_max > 0;
+        let rtprio =
+            unsafe { libc::getrlimit(libc::RLIMIT_RTPRIO, &mut limit) } == 0 && limit.rlim_max > 0;
         if rtprio {
             return Line::new(Status::Ok, NAME, "realtime allowed without it");
         }
@@ -518,9 +543,21 @@ mod linux {
             return Line::new(Status::Info, NAME, "not checked, no busctl");
         };
         let rtkit = "org.freedesktop.RealtimeKit1";
-        if rt_time_max(&busctl, "--system", rtkit, "/org/freedesktop/RealtimeKit1", rtkit).is_none() {
-            return Line::new(Status::Warn, NAME, "not running: audio threads get no realtime priority")
-                .fix(FIX);
+        if rt_time_max(
+            &busctl,
+            "--system",
+            rtkit,
+            "/org/freedesktop/RealtimeKit1",
+            rtkit,
+        )
+        .is_none()
+        {
+            return Line::new(
+                Status::Warn,
+                NAME,
+                "not running: audio threads get no realtime priority",
+            )
+            .fix(FIX);
         }
         let portal = rt_time_max(
             &busctl,

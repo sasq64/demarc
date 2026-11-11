@@ -10,9 +10,9 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use retro_ui::shader_dialog::{ShaderAction, ShaderParam};
 
+use crate::config::ShaderEffect;
 use crate::config::{Args, RenderSettings, ShaderArg};
 use crate::egui_ui::{HudState, update_ui};
-use crate::config::ShaderEffect;
 use crate::post_process::ShaderPath;
 use crate::system_dir;
 

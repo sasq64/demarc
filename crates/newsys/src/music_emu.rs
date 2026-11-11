@@ -664,7 +664,9 @@ impl Backend for MusicEmu {
     }
 
     fn position(&self) -> Option<std::time::Duration> {
-        Some(std::time::Duration::from_secs_f64(self.frame_count as f64 / FRAME_RATE))
+        Some(std::time::Duration::from_secs_f64(
+            self.frame_count as f64 / FRAME_RATE,
+        ))
     }
 
     fn length(&self) -> Option<std::time::Duration> {

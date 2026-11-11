@@ -16,8 +16,8 @@ use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
 use crate::ui::{HudLocation, SetHudText};
 use crate::workfile::WorkFile;
-use retro_core::audio_recorder::RecorderOptions;
 use frameconv::Cadence;
+use retro_core::audio_recorder::RecorderOptions;
 
 mod load;
 pub(crate) use load::{LoadStatus, PendingLoad};
@@ -25,7 +25,8 @@ pub(crate) use load::{LoadStatus, PendingLoad};
 /// The middle square of the frame, at full height, as a PNG.
 fn cover_art(shot: &image::RgbaImage) -> Result<Vec<u8>> {
     let size = shot.width().min(shot.height());
-    let cropped = image::imageops::crop_imm(shot, (shot.width() - size) / 2, 0, size, size).to_image();
+    let cropped =
+        image::imageops::crop_imm(shot, (shot.width() - size) / 2, 0, size, size).to_image();
     let rgb = image::DynamicImage::ImageRgba8(cropped).into_rgb8();
     let mut png = Vec::new();
     rgb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
@@ -679,7 +680,11 @@ impl Emulator {
     }
 
     /// The info text and its favorite marker, for the HUD.
-    pub fn info_hud(&self, delay: std::time::Duration, duration: std::time::Duration) -> [SetHudText; 2] {
+    pub fn info_hud(
+        &self,
+        delay: std::time::Duration,
+        duration: std::time::Duration,
+    ) -> [SetHudText; 2] {
         let heart = if self.favorite { "\u{f02d1}" } else { "" };
         [
             (self.get_info(), HudLocation::InfoText),
@@ -852,7 +857,8 @@ impl Emulator {
                 FrameConvert::Matching => {
                     !self.is_image
                         && self.display_fps > core.fps() * 1.02
-                        && (self.display_fps - self.display_fps.round()).abs() < self.display_fps * 0.01
+                        && (self.display_fps - self.display_fps.round()).abs()
+                            < self.display_fps * 0.01
                 }
             };
             let rate = self.display_fps.round();
@@ -904,9 +910,11 @@ impl Emulator {
 
         let rate = self.sink.sample_rate() as f64;
         let av_offset = match &self.conversion {
-            Some(c) if converting && rate > 0.0 => {
-                c.av_offset(occupied_len as f64 / (2.0 * rate), core.queued_frames(), fps)
-            }
+            Some(c) if converting && rate > 0.0 => c.av_offset(
+                occupied_len as f64 / (2.0 * rate),
+                core.queued_frames(),
+                fps,
+            ),
             _ => f64::NAN,
         };
         crate::frame_log::log(&crate::frame_log::FrameStats {
@@ -1030,7 +1038,10 @@ impl Conversion {
             let ran = core.run();
             result &= ran;
             let frame = core.frame();
-            if queue.back().is_none_or(|last| !VideoFrame::same(last, &frame)) {
+            if queue
+                .back()
+                .is_none_or(|last| !VideoFrame::same(last, &frame))
+            {
                 queue.push_back(frame);
                 self.pulls.push_back(self.pulled);
             }
@@ -1044,7 +1055,11 @@ impl Conversion {
         let (source, phase) = self.cadence.peek();
         let advance = source != self.source;
         // Moving on with a short queue would show the picture ahead of the sound.
-        let needed = if advance { depth.saturating_sub(1).max(3) } else { 2 };
+        let needed = if advance {
+            depth.saturating_sub(1).max(3)
+        } else {
+            2
+        };
         if queue.len() >= needed {
             self.cadence.next();
             self.source = source;
@@ -1054,7 +1069,10 @@ impl Conversion {
                 self.pulls.pop_front();
             }
         } else {
-            debug!("frameconv: repeated a display frame (pull {pull}, {} queued)", queue.len());
+            debug!(
+                "frameconv: repeated a display frame (pull {pull}, {} queued)",
+                queue.len()
+            );
         }
         result
     }

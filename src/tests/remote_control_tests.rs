@@ -180,7 +180,12 @@ fn an_ask_returns_the_reply_a_frame_later() {
     let first: mlua::Table = files.get(1).unwrap();
     assert_eq!(first.get::<String>("id").unwrap(), "demozoo.7");
     assert_eq!(first.get::<String>("title").unwrap(), "A");
-    assert!(globals.get::<Option<mlua::Table>>("Missing").unwrap().is_none());
+    assert!(
+        globals
+            .get::<Option<mlua::Table>>("Missing")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

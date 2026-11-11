@@ -144,10 +144,12 @@ fn debug_prompt(emu: &Emulator) -> String {
         FileSource::Path(path) => vec![path.display().to_string()],
         FileSource::Url(urls) => urls
             .iter()
-            .map(|url| match newsys::fetch::cached_download(&cache_key(url)) {
-                Some(path) => format!("{url} -> {}", path.display()),
-                None => format!("{url} (not cached)"),
-            })
+            .map(
+                |url| match newsys::fetch::cached_download(&cache_key(url)) {
+                    Some(path) => format!("{url} -> {}", path.display()),
+                    None => format!("{url} (not cached)"),
+                },
+            )
             .collect(),
     };
     let failure = match &emu.load_error {
@@ -266,7 +268,11 @@ fn patch(emu: &mut Emulator, item: usize, settings: &mut AppSettings) -> Result<
         .context("Entry did not parse")?;
     std::fs::write(&path, text)?;
     settings.overrides.insert(id, over);
-    let name = if item == RECORD { "Commit Events" } else { ITEMS[item] };
+    let name = if item == RECORD {
+        "Commit Events"
+    } else {
+        ITEMS[item]
+    };
     Ok(format!("{name} -> [{}.{}]", id.db, id.id))
 }
 

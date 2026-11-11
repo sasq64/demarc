@@ -114,7 +114,9 @@ fn sample_diff_matches_frame_diff() {
             b[i] ^= 0x00ff_ffff;
         }
         let gather = |f: &[u32]| -> Vec<u32> {
-            sample_runs(count, width).flat_map(|r| f[r].to_vec()).collect()
+            sample_runs(count, width)
+                .flat_map(|r| f[r].to_vec())
+                .collect()
         };
         assert_eq!(
             get_sample_diff(&gather(&b), &gather(&a), 0.3),

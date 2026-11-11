@@ -11,6 +11,7 @@ use bevy::{
 };
 
 use crate::backend::ViewFocus;
+use crate::config::ScaleMode;
 use crate::config::{AppSettings, Args, FrameConvMethod, LatencySetting, RenderSettings};
 use crate::emulator::{Emulator, FrameConvert};
 use crate::frame_conv::FrameConvPlugin;
@@ -19,7 +20,6 @@ use crate::headless::{HeadlessTarget, camera_target};
 use crate::loading::LoadingPlugin;
 use crate::mouse_cursor::HideMouse;
 use crate::newsys::{META_REFRESH, META_WIDESCREEN};
-use crate::config::ScaleMode;
 use crate::post_process::{EmuCamera, PostProcess, ViewRect};
 use crate::ui::{HudLocation, SetHudText, UiState};
 use crate::wine::{META_FILTER, is_yes};

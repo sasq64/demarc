@@ -209,7 +209,9 @@ impl Picker {
     pub fn tint_icon(&self, color: Color32) -> Color32 {
         let [r, g, b, a] = color.to_srgba_unmultiplied();
         let [tr, tg, tb, ta] = self.icon_color.to_srgba_unmultiplied();
-        let mix = |c: u8, t: u8| ((c as u32 * (255 - ta as u32) + t as u32 * ta as u32 + 127) / 255) as u8;
+        let mix = |c: u8, t: u8| {
+            ((c as u32 * (255 - ta as u32) + t as u32 * ta as u32 + 127) / 255) as u8
+        };
         Color32::from_rgba_unmultiplied(mix(r, tr), mix(g, tg), mix(b, tb), a)
     }
 }
@@ -374,7 +376,10 @@ fn use_palette(value: &mut toml::Value, palette: &toml::Table) -> Result<(), Str
             _ => return Err(format!("`{name}` is not in the palette")),
         },
         toml::Value::Table(table) => {
-            for (_, value) in table.iter_mut().filter(|(key, _)| !matches!(key.as_str(), "shader" | "font")) {
+            for (_, value) in table
+                .iter_mut()
+                .filter(|(key, _)| !matches!(key.as_str(), "shader" | "font"))
+            {
                 use_palette(value, palette)?;
             }
         }

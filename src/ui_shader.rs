@@ -8,8 +8,8 @@ use std::time::SystemTime;
 
 use bevy::{
     asset::RenderAssetUsages,
-    diagnostic::FrameCount,
     core_pipeline::FullscreenShader,
+    diagnostic::FrameCount,
     prelude::*,
     render::{
         RenderApp, RenderStartup,
@@ -93,7 +93,11 @@ fn theme_dir(args: &Args) -> PathBuf {
 
 fn load_image(path: &Path) -> Result<Image, String> {
     let img = image::open(path).map_err(|e| e.to_string())?;
-    Ok(Image::from_dynamic(img, true, RenderAssetUsages::RENDER_WORLD))
+    Ok(Image::from_dynamic(
+        img,
+        true,
+        RenderAssetUsages::RENDER_WORLD,
+    ))
 }
 
 /// Loads every shader the theme uses, again whenever a file changes, and keeps
@@ -144,7 +148,10 @@ pub(crate) fn update_shaders(
 
     let theme = retro_ui::theme(ctx);
     let dir = theme_dir(&args);
-    for bg in [&theme.panel.shader, &theme.screen.shader].into_iter().flatten() {
+    for bg in [&theme.panel.shader, &theme.screen.shader]
+        .into_iter()
+        .flatten()
+    {
         let shader_path = dir.join(&bg.shader);
         let image_path = bg.texture.as_ref().map(|t| dir.join(t));
         let mtimes = (mtime(&shader_path), image_path.as_deref().and_then(mtime));

@@ -14,7 +14,9 @@ pub mod theme;
 
 pub use hud::{Hud, HudLocation};
 pub use picker::{Picked, Picker, TitleClick};
-pub use theme::{ShaderBg, ShaderPainter, Theme, paint_screen, set_shader_painter, set_theme, theme};
+pub use theme::{
+    ShaderBg, ShaderPainter, Theme, paint_screen, set_shader_painter, set_theme, theme,
+};
 
 /// Key the app font is registered under in [`egui::FontDefinitions::font_data`].
 const APP_FONT: &str = "app";
@@ -76,17 +78,29 @@ pub fn set_fonts(ctx: &egui::Context, fonts: [Option<Vec<u8>>; 3]) {
             .collect()
     };
     let families = [
-        (FontFamily::Proportional, chain("ui", &FontFamily::Proportional)),
+        (
+            FontFamily::Proportional,
+            chain("ui", &FontFamily::Proportional),
+        ),
         (FontFamily::Monospace, chain("ui", &FontFamily::Monospace)),
-        (FontFamily::Name(PICKER_FAMILY.into()), chain(PICKER_FAMILY, &FontFamily::Proportional)),
-        (FontFamily::Name(HUD_FAMILY.into()), chain(HUD_FAMILY, &FontFamily::Proportional)),
+        (
+            FontFamily::Name(PICKER_FAMILY.into()),
+            chain(PICKER_FAMILY, &FontFamily::Proportional),
+        ),
+        (
+            FontFamily::Name(HUD_FAMILY.into()),
+            chain(HUD_FAMILY, &FontFamily::Proportional),
+        ),
     ];
     defs.families.extend(families);
     ctx.set_fonts(defs);
 }
 
 fn family(ctx: &egui::Context, name: &str) -> egui::FontFamily {
-    if ctx.data(|d| d.get_temp::<Arc<egui::FontData>>(app_font_id())).is_some() {
+    if ctx
+        .data(|d| d.get_temp::<Arc<egui::FontData>>(app_font_id()))
+        .is_some()
+    {
         egui::FontFamily::Name(name.into())
     } else {
         egui::FontFamily::Proportional

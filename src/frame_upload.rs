@@ -41,7 +41,10 @@ fn extract_frames(mut frames: ResMut<ExtractedFrames>, emus: Extract<Query<&Emul
 #[cfg(target_os = "linux")]
 fn gpu_texture(frame: &VideoFrame) -> Option<&wgpu::Texture> {
     let gpu = frame.gpu.as_ref()?;
-    Some(&gpu.downcast_ref::<crate::dmabuf_import::GpuTexture>()?.texture)
+    Some(
+        &gpu.downcast_ref::<crate::dmabuf_import::GpuTexture>()?
+            .texture,
+    )
 }
 
 #[cfg(not(target_os = "linux"))]

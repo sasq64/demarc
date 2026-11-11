@@ -605,62 +605,62 @@ macro_rules! awards {
 }
 
 awards! {
-    // scene.org Awards
-    BestDemo = 1,
-    BestIntro = 2,
-    Best64kIntro = 3,
-    Best4kIntro = 4,
-    BestEffects = 5,
-    BestGraphics = 6,
-    BestSoundtrack = 7,
-    BestDirection = 8,
-    MostOriginalConcept = 9,
-    BestBreakthroughPerformance = 10,
-    PublicsChoice = 11,
-    BestOldschoolDemo = 12,
-    BestAnimation = 13,
-    BestTechnicalAchievement = 14,
-    ViewingTip = 15,
+// scene.org Awards
+BestDemo = 1,
+BestIntro = 2,
+Best64kIntro = 3,
+Best4kIntro = 4,
+BestEffects = 5,
+BestGraphics = 6,
+BestSoundtrack = 7,
+BestDirection = 8,
+MostOriginalConcept = 9,
+BestBreakthroughPerformance = 10,
+PublicsChoice = 11,
+BestOldschoolDemo = 12,
+BestAnimation = 13,
+BestTechnicalAchievement = 14,
+ViewingTip = 15,
 
-    // The Meteoriks
-    MeteoriksPublicsChoice = 18,
-    BestHighEndDemo = 19,
-    BestHighEndIntro = 20,
-    BestHighEndGraphics = 21,
-    BestHighEndSoundtrack = 22,
-    BestLowEndDemo = 23,
-    BestLowEndIntro = 24,
-    BestLowEndGraphics = 25,
-    BestLowEndSoundtrack = 26,
-    NewTalent = 27,
-    Interactive = 28,
-    BestTinyIntro = 29,
-    AlternativePlatforms = 30,
-    BestArtDirection = 31,
-    BestLowEndPixelGraphics = 32,
-    BestStorytelling = 33,
-    NotPossibleOnThisPlatform = 38,
-    BestLowEndProduction = 40,
-    BestSmallHighEndIntro = 41,
-    BestHighEnd64kIntro = 42,
-    BestVisuals = 43,
-    OutstandingTechnicalAchievement = 44,
-    OutstandingConcept = 45,
-    BestExecutableGraphics = 48,
-    SceneSpirit = 49,
-    BestOldschoolProduction = 50,
-    BestMidschoolProduction = 51,
+// The Meteoriks
+MeteoriksPublicsChoice = 18,
+BestHighEndDemo = 19,
+BestHighEndIntro = 20,
+BestHighEndGraphics = 21,
+BestHighEndSoundtrack = 22,
+BestLowEndDemo = 23,
+BestLowEndIntro = 24,
+BestLowEndGraphics = 25,
+BestLowEndSoundtrack = 26,
+NewTalent = 27,
+Interactive = 28,
+BestTinyIntro = 29,
+AlternativePlatforms = 30,
+BestArtDirection = 31,
+BestLowEndPixelGraphics = 32,
+BestStorytelling = 33,
+NotPossibleOnThisPlatform = 38,
+BestLowEndProduction = 40,
+BestSmallHighEndIntro = 41,
+BestHighEnd64kIntro = 42,
+BestVisuals = 43,
+OutstandingTechnicalAchievement = 44,
+OutstandingConcept = 45,
+BestExecutableGraphics = 48,
+SceneSpirit = 49,
+BestOldschoolProduction = 50,
+BestMidschoolProduction = 51,
 
-    // The Nano Awards
-    BestOldschoolTinyIntro = 46,
-    NanoBestHighEndIntro = 47,
-    BestFantasyConsoleTinyIntro = 56,
+// The Nano Awards
+BestOldschoolTinyIntro = 46,
+NanoBestHighEndIntro = 47,
+BestFantasyConsoleTinyIntro = 56,
 
-    // 30 Years Of Assembly
-    AssemblyGameDev = 52,
-    AssemblyRestricted = 53,
-    AssemblyGroundBreakingProduction = 54,
-    AssemblyDemo = 55,}
+// 30 Years Of Assembly
+AssemblyGameDev = 52,
+AssemblyRestricted = 53,
+AssemblyGroundBreakingProduction = 54,
+AssemblyDemo = 55,}
 
 impl Award {
     /// The competition handing out this award, and whether it is held yearly.
@@ -786,7 +786,11 @@ impl Meta {
 }
 
 /// Insert or replace `key` in a list of pairs being built into a [`Meta`].
-pub fn set_pair(pairs: &mut Vec<(&'static str, &'static str)>, key: &'static str, val: &'static str) {
+pub fn set_pair(
+    pairs: &mut Vec<(&'static str, &'static str)>,
+    key: &'static str,
+    val: &'static str,
+) {
     match pairs.iter_mut().find(|(k, _)| *k == key) {
         Some(pair) => pair.1 = val,
         None => pairs.push((key, val)),
@@ -891,20 +895,29 @@ pub struct EmuFile {
 
 /// Split a `;`-separated `platform`/`category` value into its parts.
 pub fn split_values(val: &'static str) -> Box<[&'static str]> {
-    val.split(';').map(str::trim).filter(|v| !v.is_empty()).collect()
+    val.split(';')
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .collect()
 }
 
 impl EmuFile {
     /// The meta plus `platform` and `category`, joined with `;`.
     pub fn meta_strings(&self) -> impl Iterator<Item = (&'static str, Cow<'static, str>)> + '_ {
-        let lists = [("platform", &self.platforms), ("category", &self.categories)]
-            .into_iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, v)| match **v {
-                [one] => (k, Cow::Borrowed(one)),
-                _ => (k, Cow::Owned(v.join(";"))),
-            });
-        self.meta.iter().map(|(k, v)| (k, Cow::Borrowed(v))).chain(lists)
+        let lists = [
+            ("platform", &self.platforms),
+            ("category", &self.categories),
+        ]
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| match **v {
+            [one] => (k, Cow::Borrowed(one)),
+            _ => (k, Cow::Owned(v.join(";"))),
+        });
+        self.meta
+            .iter()
+            .map(|(k, v)| (k, Cow::Borrowed(v)))
+            .chain(lists)
     }
 
     pub fn is_cached(&self) -> bool {

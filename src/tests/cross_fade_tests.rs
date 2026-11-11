@@ -155,7 +155,10 @@ fn a_load_is_redirected_into_the_spare_and_takes_the_views_cell() {
 
     assert_eq!(state(&world).origin, Some(view));
     assert!(!state(&world).armed);
-    assert_eq!(world.get::<GridCell>(spare).unwrap().offset, cells[1].offset);
+    assert_eq!(
+        world.get::<GridCell>(spare).unwrap().offset,
+        cells[1].offset
+    );
 }
 
 #[test]

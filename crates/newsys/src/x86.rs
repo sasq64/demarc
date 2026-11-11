@@ -232,7 +232,11 @@ impl Cpu {
     }
 
     fn stack_addr(&self) -> u32 {
-        let sp = if self.real { self.r[ESP] & 0xffff } else { self.r[ESP] };
+        let sp = if self.real {
+            self.r[ESP] & 0xffff
+        } else {
+            self.r[ESP]
+        };
         self.base(SS).wrapping_add(sp)
     }
 
@@ -336,7 +340,11 @@ impl Cpu {
     fn pusha(&mut self, size: Size) {
         let sp = self.reg(ESP as u8, size);
         for n in 0..8 {
-            let v = if n == ESP as u8 { sp } else { self.reg(n, size) };
+            let v = if n == ESP as u8 {
+                sp
+            } else {
+                self.reg(n, size)
+            };
             self.push_sz(v, size);
         }
     }
@@ -1010,7 +1018,8 @@ impl Cpu {
             let count = self.r[ECX] as u64;
             let bytes = self.reg(0, size).to_le_bytes();
             let len = count * size.bytes() as u64;
-            self.mem.fill(self.r[EDI], len, &bytes[..size.bytes() as usize]);
+            self.mem
+                .fill(self.r[EDI], len, &bytes[..size.bytes() as usize]);
             self.r[EDI] = self.r[EDI].wrapping_add(len as u32);
             self.r[ECX] = 0;
             return Ok(());

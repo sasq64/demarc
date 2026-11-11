@@ -28,12 +28,28 @@ fn overlays_the_real_prefix_onto_the_session_one() {
     fs::write(base.path().join("system.reg"), "").unwrap();
     let base_str = base.path().to_string_lossy().into_owned();
     let args = args(&base_str, "/run/user/1000/x/0", None);
-    assert!(follows(&args, "--overlay-src", &format!("{base_str}/drive_c")));
-    assert!(follows(&args, "--tmp-overlay", "/run/user/1000/x/0/drive_c"));
+    assert!(follows(
+        &args,
+        "--overlay-src",
+        &format!("{base_str}/drive_c")
+    ));
+    assert!(follows(
+        &args,
+        "--tmp-overlay",
+        "/run/user/1000/x/0/drive_c"
+    ));
     // And never the other way round.
-    assert!(!follows(&args, "--tmp-overlay", &format!("{base_str}/drive_c")));
+    assert!(!follows(
+        &args,
+        "--tmp-overlay",
+        &format!("{base_str}/drive_c")
+    ));
     // Files are not overlaid, only folders.
-    assert!(!follows(&args, "--overlay-src", &format!("{base_str}/system.reg")));
+    assert!(!follows(
+        &args,
+        "--overlay-src",
+        &format!("{base_str}/system.reg")
+    ));
 }
 
 /// Read-only, so wineserver's periodic registry save fails before it
@@ -41,7 +57,10 @@ fn overlays_the_real_prefix_onto_the_session_one() {
 #[test]
 fn the_prefix_top_level_is_read_only() {
     let args = args("/home/me/.wine-demarc", "/run/user/1000/x/0", None);
-    let bind = args.iter().position(|a| a == "--ro-bind").expect("a ro bind");
+    let bind = args
+        .iter()
+        .position(|a| a == "--ro-bind")
+        .expect("a ro bind");
     assert_eq!(args[bind + 1], "/home/me/.wine-demarc");
     assert_eq!(args[bind + 2], "/run/user/1000/x/0");
     assert!(!follows(&args, "--tmp-overlay", "/run/user/1000/x/0"));
@@ -177,7 +196,10 @@ fn binds_a_file_over_ntsync() {
         None,
         Some(Path::new("/run/x/0.nontsync")),
     );
-    let at = args.iter().position(|a| a == NTSYNC_DEVICE).expect("the device bound");
+    let at = args
+        .iter()
+        .position(|a| a == NTSYNC_DEVICE)
+        .expect("the device bound");
     assert_eq!(args[at - 2], "--ro-bind");
     assert_eq!(args[at - 1], "/run/x/0.nontsync");
     let off = HashMap::from([(META_NTSYNC.to_string(), "false".to_string())]);

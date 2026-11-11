@@ -215,7 +215,11 @@ impl FrameImporter for Importer {
 impl Importer {
     /// A pooled texture nothing else holds, or a new one.
     fn texture(&mut self) -> Arc<GpuTexture> {
-        let mut free = self.pool.iter().filter(|t| Arc::strong_count(t) == 1).count();
+        let mut free = self
+            .pool
+            .iter()
+            .filter(|t| Arc::strong_count(t) == 1)
+            .count();
         self.pool.retain(|t| {
             let drop = Arc::strong_count(t) == 1 && free > SPARE + 1;
             free -= drop as usize;
@@ -259,11 +263,14 @@ unsafe fn import_buffer(device: &wgpu::Device, fd: BorrowedFd, size: u64) -> Opt
     let (buffer, memory, alloc_size) = {
         let hal = unsafe { device.as_hal::<Vulkan>() }?;
         let raw = hal.raw_device();
-        let fd_ext = ash::khr::external_memory_fd::Device::new(hal.shared_instance().raw_instance(), raw);
+        let fd_ext =
+            ash::khr::external_memory_fd::Device::new(hal.shared_instance().raw_instance(), raw);
         let handle_type = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
 
         let mut props = vk::MemoryFdPropertiesKHR::default();
-        if let Err(e) = unsafe { fd_ext.get_memory_fd_properties(handle_type, fd.as_raw_fd(), &mut props) } {
+        if let Err(e) =
+            unsafe { fd_ext.get_memory_fd_properties(handle_type, fd.as_raw_fd(), &mut props) }
+        {
             warn!("dmabuf: vkGetMemoryFdPropertiesKHR: {e}");
             return None;
         }
@@ -300,14 +307,19 @@ unsafe fn import_buffer(device: &wgpu::Device, fd: BorrowedFd, size: u64) -> Opt
                 i,
             )
         };
-        let index = (0..32).filter(|i| bits & (1 << i) != 0).min_by_key(|&i| rank(i)).unwrap();
+        let index = (0..32)
+            .filter(|i| bits & (1 << i) != 0)
+            .min_by_key(|&i| rank(i))
+            .unwrap();
         let Ok(owned) = fd.try_clone_to_owned() else {
             unsafe { raw.destroy_buffer(buffer, None) };
             return None;
         };
         // A successful import takes the fd.
         let raw_fd = owned.into_raw_fd();
-        let mut import = vk::ImportMemoryFdInfoKHR::default().handle_type(handle_type).fd(raw_fd);
+        let mut import = vk::ImportMemoryFdInfoKHR::default()
+            .handle_type(handle_type)
+            .fd(raw_fd);
         let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(req.size)
             .memory_type_index(index)

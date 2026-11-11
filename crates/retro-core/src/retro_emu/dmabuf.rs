@@ -78,7 +78,14 @@ impl Mapping {
         let fd = fd.try_clone_to_owned().ok()?;
         let len = size as usize;
         let ptr = unsafe {
-            libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0)
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                0,
+            )
         };
         if ptr == libc::MAP_FAILED {
             return None;
@@ -175,7 +182,13 @@ impl Ring {
         let (width, height) = (state.width, state.height);
         let mut pixels = vec![0u32; width * height];
         dma_sync(map.fd.as_fd(), DMA_BUF_SYNC_START);
-        convert_xrgb8888(&map.bytes()[map.offset..], &mut pixels, width, height, map.stride);
+        convert_xrgb8888(
+            &map.bytes()[map.offset..],
+            &mut pixels,
+            width,
+            height,
+            map.stride,
+        );
         dma_sync(map.fd.as_fd(), DMA_BUF_SYNC_END);
         f(width, height, &pixels);
         true
@@ -258,7 +271,9 @@ impl Dmabuf {
             (state.width, state.height)
         };
         let ring = Arc::clone(&self.ring);
-        let frame = self.importer.import(slot, Box::new(move || ring.lock().unref(slot)));
+        let frame = self
+            .importer
+            .import(slot, Box::new(move || ring.lock().unref(slot)));
         let mut state = self.ring.lock();
         let Some(frame) = frame else {
             // The core gives it back itself.
@@ -309,7 +324,12 @@ unsafe extern "C" fn set_buffers_cb(
         })
         .collect();
     let ok = dmabuf.set_buffers(width as usize, height as usize, &buffers);
-    info!("dmabuf: {}x{} ring of {n} {}", width, height, if ok { "imported" } else { "not imported" });
+    info!(
+        "dmabuf: {}x{} ring of {n} {}",
+        width,
+        height,
+        if ok { "imported" } else { "not imported" }
+    );
     ok
 }
 

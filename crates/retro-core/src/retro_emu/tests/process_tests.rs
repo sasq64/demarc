@@ -7,7 +7,8 @@ fn pair() -> (Channel, Channel) {
 
 fn shm_file(slots: usize) -> File {
     let file = shared_file().unwrap();
-    file.set_len((HEADER_SIZE + slots * SLOT_SIZE) as u64).unwrap();
+    file.set_len((HEADER_SIZE + slots * SLOT_SIZE) as u64)
+        .unwrap();
     file
 }
 
@@ -36,19 +37,37 @@ fn msg_to_cmd() {
     assert!(matches!(cmd(MSG_RESET, 0, 0, 0), Some(RetroCmd::Reset)));
     assert!(matches!(
         cmd(MSG_PRESS_KEY, 65, 1, 0x1_0003),
-        Some(RetroCmd::PressKey { code: 65, down: true, mods: 3 })
+        Some(RetroCmd::PressKey {
+            code: 65,
+            down: true,
+            mods: 3
+        })
     ));
     assert!(matches!(
         cmd(MSG_MOUSE_BUTTONS, 1, 0, 2),
-        Some(RetroCmd::SetMouseButtons { left: true, right: false, middle: true })
+        Some(RetroCmd::SetMouseButtons {
+            left: true,
+            right: false,
+            middle: true
+        })
     ));
     assert!(matches!(
         cmd(MSG_JOYPAD, 1, 4, 0),
-        Some(RetroCmd::SetJoypad { port: 1, id: 4, down: false })
+        Some(RetroCmd::SetJoypad {
+            port: 1,
+            id: 4,
+            down: false
+        })
     ));
-    assert!(matches!(cmd(MSG_SET_DISK, 2, 0, 0), Some(RetroCmd::SetDisk { no: 2 })));
+    assert!(matches!(
+        cmd(MSG_SET_DISK, 2, 0, 0),
+        Some(RetroCmd::SetDisk { no: 2 })
+    ));
     assert!(matches!(cmd(MSG_UNLOAD, 0, 0, 0), Some(RetroCmd::Unload)));
-    assert!(matches!(cmd(MSG_SKIP, 30, 0, 0), Some(RetroCmd::Skip { frames: 30 })));
+    assert!(matches!(
+        cmd(MSG_SKIP, 30, 0, 0),
+        Some(RetroCmd::Skip { frames: 30 })
+    ));
 
     let motion = Msg {
         tag: MSG_MOUSE_MOTION,
@@ -72,7 +91,15 @@ fn msg_to_cmd() {
     ));
 
     // Handled by the worker loop itself, never as a `RetroCmd`.
-    for tag in [MSG_SEND_EVENTS, MSG_KEY, MSG_RELEASE, MSG_CLICK, MSG_LATENCY, MSG_FRAME, 0] {
+    for tag in [
+        MSG_SEND_EVENTS,
+        MSG_KEY,
+        MSG_RELEASE,
+        MSG_CLICK,
+        MSG_LATENCY,
+        MSG_FRAME,
+        0,
+    ] {
         assert!(cmd(tag, 0, 0, 0).is_none(), "tag {tag}");
     }
 }

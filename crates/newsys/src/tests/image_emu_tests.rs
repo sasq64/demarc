@@ -337,7 +337,10 @@ fn zoom_keeps_the_centre_and_scroll_stops_at_the_edges() {
     let mut emu = grid(4, 4);
     emu.media(MediaCmd::Zoom(1));
     // The middle 2x2 of the 4x4, each pixel doubled.
-    assert_eq!(shown(&emu), [5, 5, 6, 6, 5, 5, 6, 6, 9, 9, 10, 10, 9, 9, 10, 10]);
+    assert_eq!(
+        shown(&emu),
+        [5, 5, 6, 6, 5, 5, 6, 6, 9, 9, 10, 10, 9, 9, 10, 10]
+    );
     emu.media(MediaCmd::Scroll(-1, -1));
     emu.media(MediaCmd::Scroll(-1, -1));
     assert_eq!(emu.offset, (0, 0));

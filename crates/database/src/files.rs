@@ -388,7 +388,10 @@ pub fn collect_db_text(text: &'static str, filter: &DbFilter, out: &mut Vec<EmuF
             }
         }
 
-        let date = meta.iter().find(|(k, _)| *k == "date").map_or("", |(_, v)| *v);
+        let date = meta
+            .iter()
+            .find(|(k, _)| *k == "date")
+            .map_or("", |(_, v)| *v);
         let year = date.split(['-', '/', '.']).next().unwrap_or("");
         if !year.is_empty() {
             set_pair(&mut meta, "year", year);

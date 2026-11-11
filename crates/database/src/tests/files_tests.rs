@@ -441,7 +441,11 @@ fn collect_file_takes_a_url() {
 fn collect_db_unless_skips_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("other.txt");
-    fs::write(&db, "# CSDb database\ntitle:A\tdownload:http://example.com/a.zip\n").unwrap();
+    fs::write(
+        &db,
+        "# CSDb database\ntitle:A\tdownload:http://example.com/a.zip\n",
+    )
+    .unwrap();
 
     let mut out = vec![];
     let name = collect_db_unless(&db, &DbFilter::default(), &mut out, |n| n == "CSDb").unwrap();

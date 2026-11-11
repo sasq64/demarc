@@ -507,7 +507,16 @@ impl From<ScaleModeArg> for ScaleMode {
 }
 
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, bevy::reflect::Reflect, clap::ValueEnum,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    bevy::reflect::Reflect,
+    clap::ValueEnum,
 )]
 pub enum Latency {
     VeryLow,

@@ -49,9 +49,15 @@ fn picks_the_top_page_over_bundled_ones() {
 
 #[test]
 fn unpacks_a_self_serving_script() {
-    let mut script = b"#!/bin/sh\nprintf \"s.send_header('Content-Encoding','br');f.seek(69)\"\n".to_vec();
+    let mut script =
+        b"#!/bin/sh\nprintf \"s.send_header('Content-Encoding','br');f.seek(69)\"\n".to_vec();
     assert_eq!(script.len(), 69);
-    script.extend([0x0f, 0x04, 0x80, 0x3c, 0x70, 0x3e, 0x68, 0x69, 0x3c, 0x2f, 0x70, 0x3e, 0x03]);
-    assert_eq!(self_served_page(&script).as_deref(), Some(&b"<p>hi</p>"[..]));
+    script.extend([
+        0x0f, 0x04, 0x80, 0x3c, 0x70, 0x3e, 0x68, 0x69, 0x3c, 0x2f, 0x70, 0x3e, 0x03,
+    ]);
+    assert_eq!(
+        self_served_page(&script).as_deref(),
+        Some(&b"<p>hi</p>"[..])
+    );
     assert_eq!(self_served_page(b"#!/bin/sh\necho hi\n"), None);
 }

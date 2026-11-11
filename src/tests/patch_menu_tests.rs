@@ -63,7 +63,10 @@ fn replaces_events_with_recording() {
 #[test]
 fn sets_file() {
     let out = apply(81, Change::File("demo.zip".into()));
-    assert!(out.contains("[zoo.81]\nmeta = { dos4gw = \"true\" }\nfile = \"demo.zip\""), "{out}");
+    assert!(
+        out.contains("[zoo.81]\nmeta = { dos4gw = \"true\" }\nfile = \"demo.zip\""),
+        "{out}"
+    );
 }
 
 #[test]

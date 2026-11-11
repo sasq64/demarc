@@ -91,7 +91,11 @@ fn list_icon_texture(ctx: &egui::Context, id: u32) -> Option<egui::TextureId> {
             *px = picker.tint_icon(*px);
         }
     }
-    let handle = ctx.load_texture(format!("list_icon_{id}"), image, egui::TextureOptions::LINEAR);
+    let handle = ctx.load_texture(
+        format!("list_icon_{id}"),
+        image,
+        egui::TextureOptions::LINEAR,
+    );
     let texture_id = handle.id();
     ctx.data_mut(|d| d.insert_temp(key, (tint, handle)));
     Some(texture_id)
@@ -107,7 +111,9 @@ fn draw_list_icon(ui: &Ui, painter: &egui::Painter, rect: egui::Rect, icon: List
                 egui::Align2::CENTER_CENTER,
                 ch,
                 egui::FontId::proportional(ICON_SIZE),
-                theme(ui.ctx()).picker.tint_icon(egui::Color32::from_rgb(r, g, b)),
+                theme(ui.ctx())
+                    .picker
+                    .tint_icon(egui::Color32::from_rgb(r, g, b)),
             );
         }
         ListIcon::Image(id) => {

@@ -259,7 +259,9 @@ pub fn find_imports(code: &[u8], header: &[u8], exports: &Exports) -> Result<Imp
     .or_else(|| {
         find(
             code,
-            &pat!(0xbb, _, _, _, _, 0xbe, _, _, _, _, 0xbf, _, _, _, _, 0x64, 0x67, 0x8b, 0x47, 0x30),
+            &pat!(
+                0xbb, _, _, _, _, 0xbe, _, _, _, _, 0xbf, _, _, _, _, 0x64, 0x67, 0x8b, 0x47, 0x30
+            ),
         )
     });
     // Tiny import: every export is hashed into a table of pointers.

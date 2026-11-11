@@ -130,7 +130,11 @@ fn mono_output_is_doubled_into_stereo() {
     assert_eq!(samples.len(), 44100 / FRAME_RATE as usize * 2);
     for (i, pair) in samples.chunks(2).enumerate() {
         assert_eq!(pair[0], pair[1], "pair {i} is not duplicated: {pair:?}");
-        assert_eq!(pair[0], i16_to_f32(i as i16), "pair {i} is out of order: {pair:?}");
+        assert_eq!(
+            pair[0],
+            i16_to_f32(i as i16),
+            "pair {i} is out of order: {pair:?}"
+        );
     }
 
     // And the doubling holds across the chunk boundary, where the in-place
@@ -328,7 +332,10 @@ fn a_directory_plays_its_first_song() {
     assert!(emu.run());
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
-    assert!(samples.iter().any(|&s| s != 0.0), "directory load is silent");
+    assert!(
+        samples.iter().any(|&s| s != 0.0),
+        "directory load is silent"
+    );
 }
 
 /// Nothing playable at the top level: the subdirectories are searched too,
@@ -401,7 +408,10 @@ fn renders_audio_and_a_scope() {
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
     let expected = (emu.sample_rate() / FRAME_RATE) as usize * 2;
     assert_eq!(samples.len(), expected, "wrong frame length");
-    assert!(samples.iter().any(|&s| s != 0.0), "rendered frame is silent");
+    assert!(
+        samples.iter().any(|&s| s != 0.0),
+        "rendered frame is silent"
+    );
     assert!(!emu.is_idle());
 
     // The buffer is drained by the collection above, not re-delivered.
@@ -435,7 +445,10 @@ fn a_song_without_a_script_still_plays() {
     assert!(emu.run());
     let mut samples = Vec::new();
     emu.with_audio(&mut |s| samples.extend_from_slice(s));
-    assert!(samples.iter().any(|&s| s != 0.0), "no audio without a script");
+    assert!(
+        samples.iter().any(|&s| s != 0.0),
+        "no audio without a script"
+    );
 
     emu.with_frame(&mut |_, _, frame| {
         assert!(
@@ -515,7 +528,11 @@ fn subsongs_wrap_and_a_single_song_stays() {
     }
     let play = |songs, cmds: &[MediaCmd]| {
         let seeks = Arc::new(Mutex::new(Vec::new()));
-        let player = Songs { songs, seeks: seeks.clone(), files: Vec::new() };
+        let player = Songs {
+            songs,
+            seeks: seeks.clone(),
+            files: Vec::new(),
+        };
         let mut emu = MusicEmu::from_player(Box::new(player), "".into(), 44100.0, 2);
         for &cmd in cmds {
             emu.media(cmd);

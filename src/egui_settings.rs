@@ -51,8 +51,8 @@ use bevy_egui::{
 };
 
 use retro_ui::dialog::{
-    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING,
-    TITLE_SIZE, WIDGET_WIDTH, close_button, scale_widgets,
+    BODY_SIZE, CLOSE_SIZE, GRID_HEIGHT_FRACTION, LABEL_SIZE, ROW_SPACING, TITLE_SIZE, WIDGET_WIDTH,
+    close_button, scale_widgets,
 };
 use retro_ui::{show_panel, take_key, theme};
 

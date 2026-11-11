@@ -230,8 +230,7 @@ fn fixes_spelled_out_amigascne_url() {
 
 #[test]
 fn rewrites_google_drive_links() {
-    let direct =
-        "https://drive.usercontent.google.com/download?id=0Bz-E0DzAyFSJM08xSklPSlZVMEE&export=download&confirm=t";
+    let direct = "https://drive.usercontent.google.com/download?id=0Bz-E0DzAyFSJM08xSklPSlZVMEE&export=download&confirm=t";
     for link in [
         "https://drive.google.com/open?id=0Bz-E0DzAyFSJM08xSklPSlZVMEE",
         "https://drive.google.com/file/d/0Bz-E0DzAyFSJM08xSklPSlZVMEE/view?usp=sharing",

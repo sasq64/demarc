@@ -78,7 +78,12 @@ fn hud(world: &mut World) -> Vec<SetHudText> {
 
 /// Steps `entity` once in direction `d` from `current_game` and returns what
 /// it asked to load.
-fn step(world: &mut World, entity: Entity, current: isize, d: isize) -> Vec<(&'static str, Option<usize>)> {
+fn step(
+    world: &mut World,
+    entity: Entity,
+    current: isize,
+    d: isize,
+) -> Vec<(&'static str, Option<usize>)> {
     settings(world).current_game = current;
     let mut emu = emu_mut(world, entity);
     emu.run_next = d > 0;
@@ -194,7 +199,10 @@ fn fail_load(world: &mut World, entity: Entity) {
     let global = GlobalSettings::default();
     emu_mut(world, entity).start_load(&entry("Unreachable"), None, &global);
     let deadline = Instant::now() + Duration::from_secs(30);
-    while !matches!(world.get::<Emulator>(entity).unwrap().state, EmuState::Stopped) {
+    while !matches!(
+        world.get::<Emulator>(entity).unwrap().state,
+        EmuState::Stopped
+    ) {
         assert!(Instant::now() < deadline, "load never finished");
         handle(world);
         std::thread::yield_now();

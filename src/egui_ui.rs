@@ -81,10 +81,7 @@ fn load_icon_texture(
     Ok(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
 }
 
-fn setup_egui(
-    mut contexts: EguiContexts,
-    mut done: Local<bool>,
-) -> Result {
+fn setup_egui(mut contexts: EguiContexts, mut done: Local<bool>) -> Result {
     if *done {
         return Ok(());
     }
@@ -99,7 +96,9 @@ pub(crate) fn theme_path(theme: &str) -> std::path::PathBuf {
     if path.is_file() {
         return path;
     }
-    newsys::system_dir().join("themes").join(format!("{theme}.toml"))
+    newsys::system_dir()
+        .join("themes")
+        .join(format!("{theme}.toml"))
 }
 
 /// Loads `--theme`, and loads it again whenever the file's mtime changes.
@@ -455,28 +454,28 @@ impl Plugin for EguiUiPlugin {
             .resource_mut::<EguiGlobalSettings>()
             .auto_create_primary_context = false;
         app.add_systems(
-                EguiPrimaryContextPass,
-                (
-                    setup_egui,
-                    reload_theme,
-                    crate::ui_shader::update_shaders,
-                    update_ui,
-                )
-                    .chain(),
+            EguiPrimaryContextPass,
+            (
+                setup_egui,
+                reload_theme,
+                crate::ui_shader::update_shaders,
+                update_ui,
             )
-            .add_message::<SetHudText>()
-            .add_message::<ShowFuzzyList>()
-            .add_message::<FuzzyListSelect>()
-            .add_systems(Startup, setup_ui_camera)
-            .add_systems(PreUpdate, sync_ui_state)
-            .add_systems(
-                Update,
-                (
-                    spawn_toast.run_if(on_message::<SetHudText>),
-                    open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
-                ),
-            )
-            .insert_resource(HudState::default())
-            .insert_resource(UiState::default());
+                .chain(),
+        )
+        .add_message::<SetHudText>()
+        .add_message::<ShowFuzzyList>()
+        .add_message::<FuzzyListSelect>()
+        .add_systems(Startup, setup_ui_camera)
+        .add_systems(PreUpdate, sync_ui_state)
+        .add_systems(
+            Update,
+            (
+                spawn_toast.run_if(on_message::<SetHudText>),
+                open_fuzzy_list.run_if(on_message::<ShowFuzzyList>),
+            ),
+        )
+        .insert_resource(HudState::default())
+        .insert_resource(UiState::default());
     }
 }

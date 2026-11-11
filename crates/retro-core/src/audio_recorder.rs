@@ -8,7 +8,6 @@ use tracing::{error, info, warn};
 
 use crate::audio::SILENCE_LEVEL;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RecordSource {
     /// The core's own samples, at the core's rate.
@@ -101,7 +100,10 @@ impl AudioRecorder {
         if self.rate == 0 {
             self.rate = rate;
         } else {
-            warn!("recording: rate changed {} -> {rate}, keeping {}", self.rate, self.rate);
+            warn!(
+                "recording: rate changed {} -> {rate}, keeping {}",
+                self.rate, self.rate
+            );
         }
     }
 

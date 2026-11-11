@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::mpsc::{Receiver, sync_channel};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
@@ -155,7 +155,10 @@ fn external_subtitles(path: &Path) -> Vec<PathBuf> {
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| SUB_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            ext_ok && name.strip_prefix(stem).is_some_and(|rest| rest.starts_with('.'))
+            ext_ok
+                && name
+                    .strip_prefix(stem)
+                    .is_some_and(|rest| rest.starts_with('.'))
         })
         .collect();
     found.sort();
@@ -166,7 +169,11 @@ fn subtitle_tracks(path: &Path) -> Vec<(Subtitle, String)> {
     let mut tracks: Vec<(Subtitle, String)> = external_subtitles(path)
         .into_iter()
         .map(|p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             (Subtitle::File(p), name)
         })
         .collect();
@@ -178,7 +185,9 @@ fn subtitle_tracks(path: &Path) -> Vec<(Subtitle, String)> {
         .stdin(Stdio::null())
         .output();
     if let Ok(out) = streams {
-        tracks.extend(parse_subtitle_streams(&String::from_utf8_lossy(&out.stdout)));
+        tracks.extend(parse_subtitle_streams(&String::from_utf8_lossy(
+            &out.stdout,
+        )));
     }
     tracks
 }
@@ -312,7 +321,10 @@ impl FfmpegEmu {
         let decoders = Self::start(path, &info, has_audio, None, 0.0)?;
         Ok(Self {
             path: path.to_owned(),
-            frame: Arc::new(vec![u32::from_ne_bytes([0, 0, 0, 255]); info.width * info.height]),
+            frame: Arc::new(vec![
+                u32::from_ne_bytes([0, 0, 0, 255]);
+                info.width * info.height
+            ]),
             info,
             has_audio,
             decoders,
@@ -533,7 +545,9 @@ impl Backend for FfmpegEmu {
     }
 
     fn position(&self) -> Option<std::time::Duration> {
-        Some(std::time::Duration::from_secs_f64(self.frames as f64 / self.info.fps))
+        Some(std::time::Duration::from_secs_f64(
+            self.frames as f64 / self.info.fps,
+        ))
     }
 
     fn length(&self) -> Option<std::time::Duration> {
@@ -560,7 +574,10 @@ impl Backend for FfmpegEmu {
         if self.subtitles.is_empty() {
             return None;
         }
-        Some(self.subtitle.map_or("None".into(), |i| self.subtitles[i].1.clone()))
+        Some(
+            self.subtitle
+                .map_or("None".into(), |i| self.subtitles[i].1.clone()),
+        )
     }
 
     fn set_disk(&mut self, _no: u32) {}

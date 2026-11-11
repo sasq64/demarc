@@ -41,7 +41,7 @@ const MATCH_1K_NEXT: &[u16] = &[
 const HASH_4K: &[u16] = &[
     0x32, 0x07, // xor al,[edi]
     0x6b, 0xc0, ANY, // imul eax,eax,imm8
-    0x02, 0x87, ANY, ANY, ANY, ANY, // add al,[edi+disp32]
+    0x02, 0x87, ANY, ANY, ANY, ANY,  // add al,[edi+disp32]
     0x48, // dec eax
     0x4f, // dec edi
     0x00, 0xd2, // add dl,dl

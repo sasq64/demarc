@@ -28,7 +28,15 @@ fn plays_a_clip_to_the_end() {
     let dir = tempfile::tempdir().unwrap();
     let clip = dir.path().join("clip.mkv");
     let made = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=25"])
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x48:rate=25",
+        ])
         .args(["-f", "lavfi", "-i", "sine", "-t", "1"])
         .arg(&clip)
         .status()
@@ -97,7 +105,15 @@ fn subtitles_are_drawn_and_cycled() {
     // A black clip with the same cue embedded, plus a copy beside it.
     let clip = dir.path().join("cl'ip, [1].mkv");
     let made = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=black:size=320x240:rate=25"])
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:size=320x240:rate=25",
+        ])
         .arg("-i")
         .arg(&srt)
         .args(["-t", "4", "-c:s", "srt"])
@@ -108,7 +124,10 @@ fn subtitles_are_drawn_and_cycled() {
     std::fs::copy(&srt, dir.path().join("cl'ip, [1].en.srt")).unwrap();
 
     let mut emu = FfmpegEmu::new(&clip).unwrap();
-    assert!(matches!(emu.subtitles[..], [(Subtitle::File(_), _), (Subtitle::Text(0), _)]));
+    assert!(matches!(
+        emu.subtitles[..],
+        [(Subtitle::File(_), _), (Subtitle::Text(0), _)]
+    ));
     assert_eq!(emu.subtitle_name().as_deref(), Some("None"));
     let mut frame_lit = |emu: &mut FfmpegEmu| {
         emu.run();

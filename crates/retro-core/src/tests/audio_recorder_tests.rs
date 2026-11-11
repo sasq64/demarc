@@ -72,7 +72,10 @@ fn finish_writes_a_wav() {
     let reader = hound::WavReader::open(&path).unwrap();
     assert_eq!(reader.spec().sample_rate, 22050);
     assert_eq!(
-        reader.into_samples::<f32>().map(Result::unwrap).collect::<Vec<_>>(),
+        reader
+            .into_samples::<f32>()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>(),
         [0.25, -0.5, 1.5, 0.0]
     );
 }

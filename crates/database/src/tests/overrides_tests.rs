@@ -136,7 +136,10 @@ fn rejects_what_it_cannot_apply() {
     let err = |text: &str| format!("{:#}", parse(text).unwrap_err());
     assert!(err("[zoo_57849]\nfile = \"a.zip\"\n").contains("line 2"));
     assert!(err("[zoo.not-an-id]\nfile = \"a.zip\"\n").contains("[zoo.not-an-id]"));
-    assert!(err("[zoo.2]\npatch = { target = \"A\", contents = \"not base64!\" }\n").contains("[zoo.2]"));
+    assert!(
+        err("[zoo.2]\npatch = { target = \"A\", contents = \"not base64!\" }\n")
+            .contains("[zoo.2]")
+    );
     assert!(err("[zoo.1]\nfil = \"a.zip\"\n").contains("line 2"));
     assert!(parse("[zoo.1] file =").is_err());
 }
@@ -144,7 +147,9 @@ fn rejects_what_it_cannot_apply() {
 /// Key names are resolved by demarc itself, so any is taken here.
 #[test]
 fn shipped_file_parses() {
-    let path = Path::new(env!("DEMARC_ROOT")).join("system").join(FILE_NAME);
+    let path = Path::new(env!("DEMARC_ROOT"))
+        .join("system")
+        .join(FILE_NAME);
     load(&path, |_| Some(RETROK_a)).unwrap();
 }
 
@@ -157,10 +162,14 @@ fn patch_from_system_dir_source() {
         "#,
     )
     .unwrap();
-    assert!(parse("[zoo.2]\npatch = { target = \"A.DLL\", source = \"no/such/file.dll\" }").is_err());
     assert!(
-        parse("[zoo.3]\npatch = { target = \"A\", contents = \"AAEC\", source = \"overrides.toml\" }")
-            .is_err()
+        parse("[zoo.2]\npatch = { target = \"A.DLL\", source = \"no/such/file.dll\" }").is_err()
+    );
+    assert!(
+        parse(
+            "[zoo.3]\npatch = { target = \"A\", contents = \"AAEC\", source = \"overrides.toml\" }"
+        )
+        .is_err()
     );
     let patch = &overrides[&zoo(1)].patches[0];
     assert_eq!(patch.source, Some("overrides.toml"));
@@ -197,7 +206,9 @@ fn parses_click_events() {
     )
     .unwrap();
     assert_eq!(overrides[&zoo(108)].events, [(400, Click(0.25, 0.75))]);
-    assert!(parse("[zoo.2]\nevents = [{ frame = 1, key = \"Enter\", click = [0.5, 0.5] }]").is_err());
+    assert!(
+        parse("[zoo.2]\nevents = [{ frame = 1, key = \"Enter\", click = [0.5, 0.5] }]").is_err()
+    );
     assert!(parse("[zoo.3]\nevents = [{ frame = 1 }]").is_err());
 }
 
@@ -254,10 +265,7 @@ fn parses_a_bsdiff_patch() {
             r#"patch = {{ target = "a", format = "bsdiff", offset = 4, patch = """{delta}""" }}"#
         ),
     ] {
-        assert!(
-            parse(&format!("[zoo.1]\n{entry}\n")).is_err(),
-            "{entry}"
-        );
+        assert!(parse(&format!("[zoo.1]\n{entry}\n")).is_err(), "{entry}");
     }
 }
 

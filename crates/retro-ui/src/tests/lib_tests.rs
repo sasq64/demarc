@@ -187,17 +187,21 @@ fn the_panel_frame_has_a_border_and_padding() {
 #[test]
 fn theme_fonts_go_in_front_of_the_app_font() {
     let mut h = Harness::new();
-    let hack = egui::FontDefinitions::default().font_data["Hack"].font.to_vec();
+    let hack = egui::FontDefinitions::default().font_data["Hack"]
+        .font
+        .to_vec();
     h.frame(vec![], |ctx| {
         apply_style(ctx, hack.clone());
         set_fonts(ctx, [None, Some(hack), None]);
     });
-    h.frame(vec![], |ctx| ctx.fonts(|f| {
-        let families = &f.definitions().families;
-        let picker = &families[&egui::FontFamily::Name(PICKER_FAMILY.into())];
-        assert_eq!(picker[..2], [PICKER_FAMILY, APP_FONT]);
-        let hud = &families[&egui::FontFamily::Name(HUD_FAMILY.into())];
-        assert_eq!(hud[0], APP_FONT);
-        assert_eq!(families[&egui::FontFamily::Proportional][0], APP_FONT);
-    }));
+    h.frame(vec![], |ctx| {
+        ctx.fonts(|f| {
+            let families = &f.definitions().families;
+            let picker = &families[&egui::FontFamily::Name(PICKER_FAMILY.into())];
+            assert_eq!(picker[..2], [PICKER_FAMILY, APP_FONT]);
+            let hud = &families[&egui::FontFamily::Name(HUD_FAMILY.into())];
+            assert_eq!(hud[0], APP_FONT);
+            assert_eq!(families[&egui::FontFamily::Proportional][0], APP_FONT);
+        })
+    });
 }

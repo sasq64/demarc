@@ -22,8 +22,8 @@ pub use ::newsys::wine;
 #[cfg(target_os = "linux")]
 pub use ::newsys::wine_sandbox;
 pub use ::newsys::{
-    cache, cbmconvert, degas, fetch, ffmpeg_emu, health, ilbm, image_emu, libloader, m3u, music_emu, music_vis, newsys,
-    system_dir, tiff_pal, utils, workfile, zx_scr,
+    cache, cbmconvert, degas, fetch, ffmpeg_emu, health, ilbm, image_emu, libloader, m3u,
+    music_emu, music_vis, newsys, system_dir, tiff_pal, utils, workfile, zx_scr,
 };
 
 pub use ::database::{emu_file, files, load_error, modland, overrides};
@@ -33,12 +33,11 @@ mod commands;
 mod config;
 mod cross_fade;
 mod demarc_settings;
+mod dj;
 #[cfg(target_os = "linux")]
 mod dmabuf_import;
-mod dj;
 mod egui_settings;
 mod egui_ui;
-mod ui_shader;
 mod emulator;
 #[cfg(test)]
 #[path = "tests/fake_backend.rs"]
@@ -62,12 +61,15 @@ mod screensaver;
 mod shader_dialog;
 mod speed_test;
 mod ui;
+mod ui_shader;
 
 use commands::CommandPlugin;
 use cross_fade::CrossFadePlugin;
 use dj::DjPlugin;
 use egui_settings::AppSettingsExt;
-use files::{DbFilter, collect_db, collect_db_stdin, collect_db_unless, collect_file, collect_files};
+use files::{
+    DbFilter, collect_db, collect_db_stdin, collect_db_unless, collect_file, collect_files,
+};
 use frontend::FrontendPlugin;
 use mouse_cursor::MouseCursorPlugin;
 use navigator::NavigatorPlugin;
@@ -198,7 +200,9 @@ fn default_dbs() -> Vec<std::path::PathBuf> {
     }
     let mut found = vec![];
     for dir in roots {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut dbs: Vec<_> = entries
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {

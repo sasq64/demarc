@@ -438,7 +438,12 @@ impl<K: Eq + Hash> Chains<K> {
         source: K,
         size: (u32, u32),
         kind: ChainKind,
-    ) -> Option<(&mut FilterChain, Option<f32>, &IntermediateTarget, &mut usize)> {
+    ) -> Option<(
+        &mut FilterChain,
+        Option<f32>,
+        &IntermediateTarget,
+        &mut usize,
+    )> {
         // Destructured so the preset paths stay readable while `sources` is
         // borrowed mutably.
         let Self {

@@ -26,7 +26,10 @@ pub struct FrameStats {
 
 pub fn open(path: &Path) -> std::io::Result<()> {
     let mut file = LineWriter::new(File::create(path)?);
-    writeln!(file, "time,emu,delta,fill,queued,buf_min,buf_max,fps,cpu,av_offset")?;
+    writeln!(
+        file,
+        "time,emu,delta,fill,queued,buf_min,buf_max,fps,cpu,av_offset"
+    )?;
     *LOG.lock().unwrap() = Some(file);
     Ok(())
 }
@@ -41,7 +44,16 @@ pub fn log(s: &FrameStats) {
         let _ = writeln!(
             file,
             "{:.6},{},{:.6},{},{},{},{},{:.4},{:.4},{:.4}",
-            s.time, s.emu, s.delta, s.fill, s.queued, s.buf_min, s.buf_max, s.fps, s.cpu, s.av_offset
+            s.time,
+            s.emu,
+            s.delta,
+            s.fill,
+            s.queued,
+            s.buf_min,
+            s.buf_max,
+            s.fps,
+            s.cpu,
+            s.av_offset
         );
     }
 }

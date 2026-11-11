@@ -317,7 +317,11 @@ fn script_id(file: &EmuFile) -> String {
 
 /// The entry `id` names: `db.number`, or a bare id in the first db.
 fn find_demo(settings: &AppSettings, id: &str) -> Option<&'static EmuFile> {
-    if let Some(file) = settings.default_db().iter().find(|f| f.get_meta("id") == id) {
+    if let Some(file) = settings
+        .default_db()
+        .iter()
+        .find(|f| f.get_meta("id") == id)
+    {
         return Some(file);
     }
     let want = id
@@ -335,7 +339,10 @@ fn frame_stats(pixels: &[u32]) -> (f64, u32) {
         .count();
     let mut hasher = DefaultHasher::new();
     pixels.hash(&mut hasher);
-    (lit as f64 / pixels.len().max(1) as f64, hasher.finish() as u32)
+    (
+        lit as f64 / pixels.len().max(1) as f64,
+        hasher.finish() as u32,
+    )
 }
 
 /// Resident and peak resident size in KB, from `/proc/self/status`.
@@ -343,7 +350,12 @@ fn process_memory() -> Option<(u64, u64)> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let field = |name: &str| {
         let line = status.lines().find(|l| l.starts_with(name))?;
-        line[name.len()..].trim().trim_end_matches("kB").trim().parse().ok()
+        line[name.len()..]
+            .trim()
+            .trim_end_matches("kB")
+            .trim()
+            .parse()
+            .ok()
     };
     Some((field("VmRSS:")?, field("VmHWM:")?))
 }
@@ -434,7 +446,10 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
         })?,
     )?;
 
-    globals.set("memory", lua.create_function(|_, ()| Ok(process_memory().unzip()))?)?;
+    globals.set(
+        "memory",
+        lua.create_function(|_, ()| Ok(process_memory().unzip()))?,
+    )?;
 
     let audio = tap.clone();
     globals.set(
@@ -550,7 +565,8 @@ fn register(lua: &Lua, shared: &Arc<Mutex<RemoteState>>, tap: &Arc<Mutex<AudioTa
     globals.set(
         "log_to_file",
         lua.create_function(|_, path: String| {
-            crate::log_to_file(Path::new(&path)).map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))
+            crate::log_to_file(Path::new(&path))
+                .map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))
         })?,
     )?;
 
@@ -685,9 +701,9 @@ fn run_script(
             }
             Action::AskVideo => {
                 let mut stats = (0.0, 0);
-                let current = emus.iter().find(|(emu, view)| {
-                    !emu.is_crossfade && view.index == settings.current_emu
-                });
+                let current = emus
+                    .iter()
+                    .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu);
                 if let Some(core) = current.and_then(|(emu, _)| emu.core.as_ref()) {
                     core.with_frame(&mut |width, height, pixels| {
                         stats = frame_stats(&pixels[..width * height]);
@@ -696,9 +712,9 @@ fn run_script(
                 remote.runner.reply(Reply::Video(stats.0, stats.1));
             }
             Action::AskStatus => {
-                let current = emus.iter().find(|(emu, view)| {
-                    !emu.is_crossfade && view.index == settings.current_emu
-                });
+                let current = emus
+                    .iter()
+                    .find(|(emu, view)| !emu.is_crossfade && view.index == settings.current_emu);
                 let (status, error) = match current {
                     Some((emu, _)) => match (&emu.state, &emu.load_error) {
                         (EmuState::Loading, _) => ("loading", None),

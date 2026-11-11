@@ -316,7 +316,9 @@ pub fn parse(text: &str, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Ove
                 .ok()
                 .and_then(|n| DemoId::new(&db, n))
                 .with_context(|| format!("[{db}.{id}]: not an id"))?;
-            let over = raw.build(resolve_key).with_context(|| format!("[{db}.{id}]"))?;
+            let over = raw
+                .build(resolve_key)
+                .with_context(|| format!("[{db}.{id}]"))?;
             overrides.insert(demo_id, over);
         }
     }
@@ -373,9 +375,10 @@ impl RawOverride {
 
         let glsl = match self.glsl {
             Some(GlslPatches::One(patch)) => vec![patch.build()?],
-            Some(GlslPatches::Many(patches)) => {
-                patches.into_iter().map(RawGlsl::build).collect::<Result<_>>()?
-            }
+            Some(GlslPatches::Many(patches)) => patches
+                .into_iter()
+                .map(RawGlsl::build)
+                .collect::<Result<_>>()?,
             None => vec![],
         };
         if !glsl.is_empty() {

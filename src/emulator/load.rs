@@ -225,7 +225,10 @@ impl Emulator {
         match &self.failed_file {
             Some(file) => Some((file.clone(), String::new())),
             None => self.core.is_some().then(|| {
-                (self.emu_file.clone(), self.work_file.get_meta_or("fetched", ""))
+                (
+                    self.emu_file.clone(),
+                    self.work_file.get_meta_or("fetched", ""),
+                )
             }),
         }
     }

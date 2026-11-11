@@ -6,8 +6,8 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::config::{AppSettings, GlobalSettings};
-use crate::demarc_settings::DemarcSettings;
 use crate::cross_fade::{CrossFade, Views, redirect_load};
+use crate::demarc_settings::DemarcSettings;
 use crate::emu_file::EmuFile;
 use crate::emulator::{EmuState, Emulator, LoadStatus};
 use crate::frontend::{EmuView, FrontendSet};

@@ -137,7 +137,11 @@ fn unpacks_a_batch_file_that_is_a_cabinet() {
     let mut wf = WorkFile::new(release);
     wf.set_meta("platform", "Windows");
     assert!(WindowsSystem {}.load(&mut wf).unwrap());
-    assert!(wf.path.ends_with("panoptriptikum.exe"), "picked {:?}", wf.path);
+    assert!(
+        wf.path.ends_with("panoptriptikum.exe"),
+        "picked {:?}",
+        wf.path
+    );
     assert_eq!(fs::read(&wf.path).unwrap(), pe);
 }
 
@@ -217,7 +221,10 @@ fn a_narrow_screen_still_runs_the_widescreen_exe() {
     windows_exe(&release, "rhodium_1920x1080.exe");
 
     let load = |meta: &[(&str, &str)]| {
-        let meta = meta.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let meta = meta
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         let mut wf = WorkFile::new_with_meta(release.clone(), meta);
         assert!(sys.load(&mut wf).unwrap());
         (wf.path.clone(), wf.get_meta_or(META_RES, ""))
@@ -344,7 +351,10 @@ fn prefers_the_program_named_after_an_early_dialog_mode() {
     windows_exe(&release, "x_2160p.exe");
     let wanted = windows_exe(&release, "x_1080p.exe");
     windows_exe(&release, "x_1440p.exe");
-    let found = sys.pick_target(&release, "1920x1080,1280x720").unwrap().unwrap();
+    let found = sys
+        .pick_target(&release, "1920x1080,1280x720")
+        .unwrap()
+        .unwrap();
     assert_eq!(found, wanted);
 }
 
@@ -370,7 +380,10 @@ fn reads_a_resolution_only_where_a_name_holds_one() {
     // With both to go on, the `x` is the one that means a size.
     assert_eq!(res("party_2009_640x480.exe").as_deref(), Some("640x480"));
     // A 16:9 mode named by its height.
-    assert_eq!(res("pbr-dreamtime_return_1080p.exe").as_deref(), Some("1920x1080"));
+    assert_eq!(
+        res("pbr-dreamtime_return_1080p.exe").as_deref(),
+        Some("1920x1080")
+    );
     assert_eq!(res("intro_2160P.exe").as_deref(), Some("3840x2160"));
     assert_eq!(res("demo_720p_final.exe").as_deref(), Some("1280x720"));
     assert_eq!(res("demo_1080px.exe"), None);

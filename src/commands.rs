@@ -12,6 +12,7 @@ use bevy::window::{CursorMoved, PrimaryWindow, WindowMode};
 
 use crate::backend::{MediaCmd, MediaKind};
 use crate::config::{AppSettings, RenderSettings};
+use crate::config::{BorderMode, ScaleMode};
 use crate::demarc_settings::DemarcSettings;
 use crate::egui_settings::ShowSettings;
 use crate::emu_file::EmuFile;
@@ -22,7 +23,6 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::Navigator;
 use crate::playlists::{PlaylistPicker, Playlists};
-use crate::config::{BorderMode, ScaleMode};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
 
@@ -693,7 +693,10 @@ fn media_time_hud(
     mut writer: MessageWriter<SetHudText>,
 ) {
     let now = time.elapsed_secs();
-    if cmds.read().any(|c| matches!(c.0.media(), Some(MediaCmd::Seek(_)))) {
+    if cmds
+        .read()
+        .any(|c| matches!(c.0.media(), Some(MediaCmd::Seek(_))))
+    {
         *seeked_at = Some(now);
     }
     let emu = emus
@@ -986,14 +989,12 @@ pub(crate) fn handle_cmd(
                     }
                     Cmd::ToggleInfo => {
                         if emu.show_info {
-                            writer.write_batch(
-                                [HudLocation::InfoText, HudLocation::Favorite].map(|location| {
-                                    SetHudText {
-                                        location,
-                                        ..Default::default()
-                                    }
-                                }),
-                            );
+                            writer.write_batch([HudLocation::InfoText, HudLocation::Favorite].map(
+                                |location| SetHudText {
+                                    location,
+                                    ..Default::default()
+                                },
+                            ));
                         } else {
                             writer.write_batch(
                                 emu.info_hud(Duration::ZERO, Duration::from_secs(5000)),
@@ -1152,9 +1153,7 @@ fn handle_playlist_pick(
                 if emu.favorite != favorite {
                     emu.favorite = favorite;
                     if emu.show_info {
-                        writer.write_batch(
-                            emu.info_hud(Duration::ZERO, Duration::from_secs(5000)),
-                        );
+                        writer.write_batch(emu.info_hud(Duration::ZERO, Duration::from_secs(5000)));
                     }
                 }
             }

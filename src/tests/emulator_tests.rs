@@ -540,7 +540,10 @@ fn a_conversion_runs_five_source_frames_in_six_displays() {
     }
 
     assert_eq!(core.lock().runs, runs + 50);
-    assert!(phases.windows(2).all(|p| (p[0] + 5) % 6 == p[1]), "{phases:?}");
+    assert!(
+        phases.windows(2).all(|p| (p[0] + 5) % 6 == p[1]),
+        "{phases:?}"
+    );
 }
 
 #[test]
@@ -734,7 +737,9 @@ fn cover_art_crops_the_middle_square_at_full_height() {
         }
     }
     let png = cover_art(&shot).unwrap();
-    let cover = image::load_from_memory_with_format(&png, image::ImageFormat::Png).unwrap().into_rgb8();
+    let cover = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+        .unwrap()
+        .into_rgb8();
     assert_eq!(cover.dimensions(), (200, 200));
     assert!(cover.get_pixel(100, 100)[0] > 200);
     assert!(cover.get_pixel(5, 100)[2] < 100);

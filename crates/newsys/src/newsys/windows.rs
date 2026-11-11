@@ -28,10 +28,10 @@ use crate::utils::read_at;
 use crate::win_runner::WinRunner;
 #[cfg(target_os = "linux")]
 use crate::wine::{
-    D3D10_1_OVERRIDE, DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE, META_CNC_DDRAW,
-    META_D3D_CONFIG, META_GL_KEEP_BACK, META_GLSL_PATCHES, META_GLSL_VERSION, META_SHADER_READ, OPENGL32_OVERRIDE,
-    WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat, has_tool, wine_command,
-    wine_prefix,
+    D3D10_1_OVERRIDE, DCOMP_OVERRIDE, DX8VB_OVERRIDE, GL_COMPAT_OVERRIDE, KERNELBASE_OVERRIDE,
+    META_CNC_DDRAW, META_D3D_CONFIG, META_GL_KEEP_BACK, META_GLSL_PATCHES, META_GLSL_VERSION,
+    META_SHADER_READ, OPENGL32_OVERRIDE, WINMM_OVERRIDE, close_prefix, dll_overrides, gl_compat,
+    has_tool, wine_command, wine_prefix,
 };
 use crate::wine::{
     DEFAULT_DESKTOP, DEFAULT_GL_COMPAT, DEFAULT_GLSL_120_SUBSET, DEFAULT_RES, DEFAULT_WIDESCREEN,
@@ -156,7 +156,10 @@ fn scan_lines(stem: &str) -> Option<String> {
         if bytes.get(i + 1).is_some_and(|c| c.is_ascii_alphanumeric()) {
             return None;
         }
-        let start = bytes[..i].iter().rposition(|c| !c.is_ascii_digit()).map_or(0, |p| p + 1);
+        let start = bytes[..i]
+            .iter()
+            .rposition(|c| !c.is_ascii_digit())
+            .map_or(0, |p| p + 1);
         let width = match &stem[start..i] {
             "720" => 1280,
             "1080" => 1920,
@@ -278,7 +281,10 @@ fn unpack_cab_bat(file: &mut WorkFile, bat: PathBuf) -> Result<PathBuf> {
         return Ok(bat);
     };
     let exe = writable_target(file, bat)?.with_extension("exe");
-    std::io::copy(&mut cab.read_file(&name)?, &mut std::fs::File::create(&exe)?)?;
+    std::io::copy(
+        &mut cab.read_file(&name)?,
+        &mut std::fs::File::create(&exe)?,
+    )?;
     info!("Unpacked {exe:?} from its batch file");
     Ok(exe)
 }
@@ -610,7 +616,10 @@ fn capture_meta(path: &WorkFile, sandbox: Option<&Sandbox>) -> HashMap<String, S
                 );
             }
             if meta.get(META_GL_KEEP_BACK).is_some_and(|v| is_yes(v)) {
-                argv.splice(0..0, ["env".to_string(), "DEMARC_GL_KEEP_BACK=1".to_string()]);
+                argv.splice(
+                    0..0,
+                    ["env".to_string(), "DEMARC_GL_KEEP_BACK=1".to_string()],
+                );
             }
             if meta.get(META_SHADER_READ).is_some_and(|v| is_yes(v))
                 && let Some(dir) = path.path.parent()

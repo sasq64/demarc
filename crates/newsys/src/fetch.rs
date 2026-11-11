@@ -328,7 +328,11 @@ fn attachment_name(url: &str) -> Option<String> {
         .call()
         .inspect_err(|e| warn!("HEAD {url} failed: {e}"))
         .ok()?;
-    let header = response.headers().get("content-disposition")?.to_str().ok()?;
+    let header = response
+        .headers()
+        .get("content-disposition")?
+        .to_str()
+        .ok()?;
     disposition_filename(header)
 }
 

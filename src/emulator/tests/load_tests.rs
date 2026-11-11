@@ -92,7 +92,10 @@ fn a_failed_download_finishes_the_load() {
     assert_eq!(fetched, "");
 
     start_load(&mut emu, &EmuFile::default(), None);
-    assert!(emu.playlist_file().is_none(), "a new load forgets the failure");
+    assert!(
+        emu.playlist_file().is_none(),
+        "a new load forgets the failure"
+    );
 }
 
 /// The whole point of `update_load`: what reaches the main thread is an

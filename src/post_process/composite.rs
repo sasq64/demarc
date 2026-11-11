@@ -32,8 +32,8 @@ use retroarc::{ChainKind, ChainOutput};
 use super::SlangChains;
 use super::geometry::wants_downsample;
 use super::{
-    BorderMode, BorderScissor, DjCamera, DjView, EmuCamera, PostProcess, PostProcessUniform, ShaderEffect,
-    ShaderPath, TARGET_FORMAT,
+    BorderMode, BorderScissor, DjCamera, DjView, EmuCamera, PostProcess, PostProcessUniform,
+    ShaderEffect, ShaderPath, TARGET_FORMAT,
 };
 use crate::config::RenderSettings;
 use crate::frame_conv::ConvTargets;

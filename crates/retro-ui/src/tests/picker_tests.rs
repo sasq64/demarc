@@ -23,7 +23,8 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                     crate::show_panel(ui, |ui| {
                         ui.label(egui::RichText::new("query").size(QUERY_SIZE));
                     });
-                    let out = scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, |_, _, _| {});
+                    let out =
+                        scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, |_, _, _| {});
                     height = out.inner_rect.height();
                 });
         }

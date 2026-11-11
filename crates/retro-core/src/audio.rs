@@ -396,7 +396,10 @@ impl AudioOut {
         } else {
             state.low_water
         };
-        state.producer.as_ref().is_some_and(|p| p.occupied_len() < target)
+        state
+            .producer
+            .as_ref()
+            .is_some_and(|p| p.occupied_len() < target)
     }
 }
 
@@ -502,7 +505,10 @@ impl AudioSink {
     }
 
     pub fn stops_on_silence(&self) -> bool {
-        self.state().recorder.as_ref().is_some_and(AudioRecorder::stops_on_silence)
+        self.state()
+            .recorder
+            .as_ref()
+            .is_some_and(AudioRecorder::stops_on_silence)
     }
 
     pub fn recording_time(&self) -> Option<std::time::Duration> {
