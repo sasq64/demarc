@@ -522,6 +522,7 @@ pub(crate) fn run_frontend(
     // Bevy's input resources are app wide, so this is what keeps the keyboard
     // and mouse on the window that has focus -- see `crate::dj`.
     dj: Option<Res<crate::dj::DjWindow>>,
+    demo_settings: Res<crate::demarc_settings::DemarcSettings>,
 ) {
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let cursor = cursor_pos(window.as_deref().copied());
@@ -600,9 +601,15 @@ pub(crate) fn run_frontend(
                 emu.run_next = true;
                 emu.reset_idle(&time);
             }
-            if emu.sink.take_silence_stop() && settings.tv_mode {
-                debug!("Recording stopped on silence, running next");
-                emu.run_next = true;
+            if emu.sink.take_silence_stop() {
+                if settings.tv_mode {
+                    debug!("Recording stopped on silence, running next");
+                    emu.run_next = true;
+                } else if settings.record {
+                    let mut opts = demo_settings.recording.options();
+                    opts.start_on_audio.get_or_insert(0.01);
+                    emu.start_recording(&time, opts);
+                }
             }
         }
 
