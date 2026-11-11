@@ -375,6 +375,11 @@ under llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`) and zink first, then one `+opengl`
 run on radeonsi for the last calls. Edge flags in `GL_LINE` mode are dropped
 by the opengl32 proxy on radeonsi (This Way, `zoo.59612`).
 
+**Frozen on a loading screen, GPU at 100%.** `nvidia-smi dmon -s umt`
+during the stall: `fb` at the card's size with high `txpci` is VRAM
+overcommit, every pass running over PCIe. Not fixable by options; Before Zero
+(`zoo.395567`, Notch) wants ~18 GB.
+
 **Picture stalls for seconds, music plays on.** Count new frames per second
 (a temporary log in the gamescope core's `retro_run`; demarc's own calls stay
 at 60). Stalls with the GPU idle and the render thread at thousands of

@@ -2292,3 +2292,12 @@ meta = { amiberry_cpu_model = "68040" }
 [zoo.358365]
 boot = "Hephaestus.exe"
 meta = { wine_desktop = "true" }
+
+# Before Zero by Byterapers & Friends (Notch)
+[zoo.395567]
+known_issue = """
+Needs more than 12 GB of GPU memory under DXVK: it fills the 12 GB device heap
+and puts another 4-7 GB in system memory, so after loading every pass runs over
+PCIe (6.5 GB/s of GPU writes) and the picture stays on the loading bar for
+minutes. Resolution, dxgi.maxDeviceMemory and NGX change nothing.
+"""

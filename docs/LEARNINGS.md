@@ -1656,3 +1656,26 @@
 
 - A `--remote-control` script runs in Luau, which has no `os.getenv`; a script
   that calls it errors and leaves demarc running until the timeout.
+
+- On NVIDIA (615) `vkGetMemoryFdPropertiesKHR` for gamescope's ring offers
+  memory types 0 (no flags) and 3 (`HOST_CACHED`), but importing into type 0
+  fails with `OUT_OF_DEVICE_MEMORY`: only a type like the exporter's works. A
+  failed import there sometimes closed the fd too, so pick the type up front
+  rather than retrying.
+
+- A wine session's stderr is a FIFO (`wine_log.rs`), and it logs only the first
+  4096 distinct lines, so a demo that dumps shader sources (Notch) goes silent
+  in the log within a minute. `cp /proc/<pid>/fd/2` steals what it reads from
+  demarc instead of copying a file; `cat` it from the start of the run to see
+  everything.
+
+- Notch demos (Before Zero, `zoo.395567`) log through `OutputDebugStringA`:
+  `WINEDEBUG=fixme-all,+debugstr` shows their loading steps. Perf samples in an
+  anonymous `r-xp` region just above a DLL's `r--p` header are that DLL's code
+  (the sandbox overlay makes it anonymous), not a JIT.
+
+- A D3D11 demo frozen with the GPU at 100% is not always a hung shader:
+  `nvidia-smi dmon -s umt` showed VRAM at the card's limit with ~6.5 GB/s of
+  PCIe writes, i.e. resources spilled to system memory (Before Zero,
+  `zoo.395567`, ~18 GB on a 12 GB card). Run that first; a compiler swap, NGX,
+  wined3d and a Vulkan dispatch-marker layer came before it.
