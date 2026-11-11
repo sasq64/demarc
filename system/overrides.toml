@@ -2301,3 +2301,6 @@ and puts another 4-7 GB in system memory, so after loading every pass runs over
 PCIe (6.5 GB/s of GPU writes) and the picture stays on the loading bar for
 minutes. Resolution, dxgi.maxDeviceMemory and NGX change nothing.
 """
+
+[zoo.21372]
+meta = { aga = "true" }
