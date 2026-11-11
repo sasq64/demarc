@@ -18,7 +18,10 @@ less). `convert_xrgb8888` was 15.8% of the CPU path's samples, and gathering the
 diff samples is about 1% of the GPU path's. Screenshots of a still picture, alone and in a 2x2 grid, are
 pixel-identical on both paths, and `video_level()` returns the same value. A
 still session goes idle after `--idle-timeout`, and a moving one does not.
-Not yet tried on NVIDIA.
+On NVIDIA (RTX 4070, driver 615) the import needs the `HOST_CACHED` memory
+type (see `docs/LEARNINGS.md`). Atrium there, same method: 13.5 s on the CPU
+path, 9.9 s on the GPU path (26% less), with the same frame pacing; a still
+picture is pixel-identical on both paths.
 
 ## Problem
 

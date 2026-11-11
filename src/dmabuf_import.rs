@@ -284,6 +284,23 @@ unsafe fn import_buffer(device: &wgpu::Device, fd: BorrowedFd, size: u64) -> Opt
             unsafe { raw.destroy_buffer(buffer, None) };
             return None;
         }
+        // NVIDIA offers more types than it imports into: only one like the
+        // exporter's (gamescope's HOST_CACHED) works, and a failed try may close the fd.
+        let types = unsafe {
+            hal.shared_instance()
+                .raw_instance()
+                .get_physical_device_memory_properties(hal.raw_physical_device())
+        }
+        .memory_types;
+        let rank = |i: u32| {
+            let f = types[i as usize].property_flags;
+            (
+                !f.contains(vk::MemoryPropertyFlags::HOST_CACHED),
+                !f.contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+                i,
+            )
+        };
+        let index = (0..32).filter(|i| bits & (1 << i) != 0).min_by_key(|&i| rank(i)).unwrap();
         let Ok(owned) = fd.try_clone_to_owned() else {
             unsafe { raw.destroy_buffer(buffer, None) };
             return None;
@@ -293,12 +310,12 @@ unsafe fn import_buffer(device: &wgpu::Device, fd: BorrowedFd, size: u64) -> Opt
         let mut import = vk::ImportMemoryFdInfoKHR::default().handle_type(handle_type).fd(raw_fd);
         let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(req.size)
-            .memory_type_index(bits.trailing_zeros())
+            .memory_type_index(index)
             .push_next(&mut import);
         let memory = match unsafe { raw.allocate_memory(&alloc, None) } {
             Ok(m) => m,
             Err(e) => {
-                warn!("dmabuf: vkAllocateMemory: {e}");
+                warn!("dmabuf: vkAllocateMemory (memory type {index}): {e}");
                 unsafe {
                     libc::close(raw_fd);
                     raw.destroy_buffer(buffer, None);
