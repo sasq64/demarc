@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use anyhow::Result;
 use bevy::asset::RenderAssetUsages;
@@ -808,6 +808,8 @@ impl Emulator {
             return true;
         };
         core.keep_alive(self.paused);
+        // Conversion works on the frames' pixels.
+        core.set_cpu_frames(self.frame_convert != FrameConvert::Off);
         let idle = core.is_idle();
         let t = time.elapsed_secs();
         // A paused core stands still because it was asked to, so the timer is
@@ -1028,7 +1030,7 @@ impl Conversion {
             let ran = core.run();
             result &= ran;
             let frame = core.frame();
-            if queue.back().is_none_or(|last| !Arc::ptr_eq(&last.pixels, &frame.pixels)) {
+            if queue.back().is_none_or(|last| !VideoFrame::same(last, &frame)) {
                 queue.push_back(frame);
                 self.pulls.push_back(self.pulled);
             }

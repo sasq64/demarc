@@ -81,6 +81,7 @@ pub fn solid_frame(width: usize, height: usize, pixel: u32) -> VideoFrame {
         width,
         height,
         pixels: Arc::new(vec![pixel; width * height]),
+        gpu: None,
     }
 }
 

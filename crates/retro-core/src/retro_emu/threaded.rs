@@ -12,8 +12,10 @@ use anyhow::{Result, anyhow};
 use tracing::{error, trace};
 
 use crate::audio::AudioOut;
-use crate::backend::{Backend, InputEvent, MAX_LATENCY, STATE_SKIPPING, VideoFrame, ViewFocus};
-use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats};
+use crate::backend::{
+    Backend, GpuFrame, InputEvent, MAX_LATENCY, STATE_SKIPPING, VideoFrame, ViewFocus,
+};
+use crate::pixels::{FrameStatsLog, get_frame_diff, get_frame_stats, get_sample_diff};
 
 use super::{FrameTarget, RetroCoreDirect};
 
@@ -119,6 +121,7 @@ pub(super) enum RetroCmd {
         events: Vec<(u32, InputEvent)>,
     },
     SetAudioOut(AudioOut),
+    CpuFrames(bool),
 }
 
 /// One step of a scheduled event, due on an absolute frame.
@@ -150,6 +153,7 @@ struct RetroUpdate {
     used_width: usize,
     used_height: usize,
     frame: Arc<Vec<u32>>,
+    gpu: Option<GpuFrame>,
     audio: Vec<f32>,
     aspect_ratio: f32,
     sample_rate: f64,
@@ -170,6 +174,11 @@ pub struct RetroCoreThreaded {
     update_rx: Mutex<mpsc::Receiver<RetroUpdate>>,
     handle: Option<thread::JoinHandle<()>>,
     frame: Arc<Vec<u32>>,
+    gpu: Option<GpuFrame>,
+    /// Where `with_frame` reads a GPU frame's pixels from.
+    #[cfg(unix)]
+    ring: Option<Arc<super::dmabuf::Ring>>,
+    cpu_frames: bool,
     /// Motion in the last frame handed over, and the moving average of it —
     /// see [`get_frame_diff`]. Together they are [`Self::screen_changed`].
     frame_diff: f32,
@@ -211,6 +220,8 @@ struct SetupResult {
     height: usize,
     used: (usize, usize),
     disks: u32,
+    #[cfg(unix)]
+    ring: Option<Arc<super::dmabuf::Ring>>,
 }
 
 impl RetroCoreThreaded {
@@ -255,6 +266,8 @@ impl RetroCoreThreaded {
                                 height: core.get_frame_size().1,
                                 used: core.get_used_frame_size(),
                                 disks: core.get_number_of_disks(),
+                                #[cfg(unix)]
+                                ring: core.dmabuf.as_ref().map(|d| Arc::clone(&d.ring)),
                             }));
                             core
                         }
@@ -282,11 +295,17 @@ impl RetroCoreThreaded {
                 height,
                 used,
                 disks,
+                #[cfg(unix)]
+                ring,
             })) => Ok(Self {
                 cmd_tx,
                 update_rx: Mutex::new(update_rx),
                 handle: Some(handle),
                 frame: Arc::default(),
+                gpu: None,
+                #[cfg(unix)]
+                ring,
+                cpu_frames: false,
                 frame_diff: 0.0,
                 aggregated_diff: 0.0,
                 cpu: 0.0,
@@ -350,7 +369,14 @@ fn worker_loop(
     // Only opened when `DEMARC_FRAME_STATS` asks for a log; the average colour
     // it adds costs a couple of extra passes over the framebuffer.
     let mut stats_log = FrameStatsLog::from_env();
+    // The log wants every pixel.
+    core.set_cpu_frames(stats_log.is_some());
     let mut last_frame: Arc<Vec<u32>> = Arc::default();
+    // A GPU frame has no pixels: it comes with `empty`, and with the samples
+    // the frame diff needs.
+    let empty: Arc<Vec<u32>> = Arc::default();
+    let mut last_gpu: Option<GpuFrame> = None;
+    let mut last_samples: Vec<u32> = Vec::new();
     // Frame buffers the core converts straight into; one is free again once
     // the frontend has dropped every other reference to it.
     let mut pool: Vec<Arc<Vec<u32>>> = Vec::new();
@@ -366,6 +392,7 @@ fn worker_loop(
         loop {
             match cmd_rx.try_recv() {
                 Ok(RetroCmd::SetAudioOut(o)) => out = Some(o),
+                Ok(RetroCmd::CpuFrames(cpu)) => core.set_cpu_frames(cpu || stats_log.is_some()),
                 Ok(cmd) => {
                     if apply_cmd(core, cmd, &mut key_queue, frame, state) {
                         return; // Unload
@@ -403,6 +430,7 @@ fn worker_loop(
             });
             core.run();
             let written = core.frame_target.take().is_none();
+            let gpu_frame = core.take_gpu_frame();
             // Count every emulated frame the core steps, including skipped ones.
             frames.fetch_add(1, Ordering::Relaxed);
             if core.skip_frames > 0 {
@@ -419,31 +447,46 @@ fn worker_loop(
             let (width, height) = core.get_frame_size();
             let (used_width, used_height) = core.get_used_frame_size();
             let pixels = Arc::get_mut(&mut frame).unwrap();
-            if written {
-                pixels.truncate(width * height);
-            } else if pixels.len() != width * height {
-                // The frame outgrew the buffer and went to `state.frame`.
-                pixels.clear();
-                core.with_frame(|_, _, fr| pixels.extend_from_slice(fr));
-            } else {
-                // The core produced no frame this run.
-                pool.push(frame);
-                frame = Arc::clone(&last_frame);
-            }
-            if !Arc::ptr_eq(&frame, &last_frame) {
-                pool.push(Arc::clone(&frame));
-            }
-
             let frame_diff;
-            if let Some(log) = &mut stats_log {
-                let stats = get_frame_stats(&frame, &last_frame, width, aggregated_diff);
-                (frame_diff, aggregated_diff) = (stats.frame_diff, stats.aggregated_diff);
-                log.log(frames.load(Ordering::Relaxed), width, height, &stats);
-            } else {
+            let gpu;
+            if let Some((handle, samples)) = gpu_frame {
+                pool.push(frame);
+                frame = Arc::clone(&empty);
                 (frame_diff, aggregated_diff) =
-                    get_frame_diff(&frame, &last_frame, width, aggregated_diff);
+                    get_sample_diff(&samples, &last_samples, aggregated_diff);
+                last_samples = samples;
+                last_frame = Arc::clone(&empty);
+                last_gpu = Some(Arc::clone(&handle));
+                gpu = Some(handle);
+            } else {
+                if written {
+                    pixels.truncate(width * height);
+                } else if pixels.len() != width * height {
+                    // The frame outgrew the buffer and went to `state.frame`.
+                    pixels.clear();
+                    core.with_frame(|_, _, fr| pixels.extend_from_slice(fr));
+                } else {
+                    // The core produced no frame this run.
+                    pool.push(frame);
+                    frame = Arc::clone(&last_frame);
+                }
+                if !Arc::ptr_eq(&frame, &last_frame) {
+                    pool.push(Arc::clone(&frame));
+                    last_gpu = None;
+                    last_samples.clear();
+                }
+                gpu = last_gpu.clone();
+
+                if let Some(log) = &mut stats_log {
+                    let stats = get_frame_stats(&frame, &last_frame, width, aggregated_diff);
+                    (frame_diff, aggregated_diff) = (stats.frame_diff, stats.aggregated_diff);
+                    log.log(frames.load(Ordering::Relaxed), width, height, &stats);
+                } else {
+                    (frame_diff, aggregated_diff) =
+                        get_frame_diff(&frame, &last_frame, width, aggregated_diff);
+                }
+                last_frame = Arc::clone(&frame);
             }
-            last_frame = Arc::clone(&frame);
 
             let mut audio = Vec::new();
             core.with_audio(|s| audio.extend_from_slice(s));
@@ -464,6 +507,7 @@ fn worker_loop(
                 used_width,
                 used_height,
                 frame,
+                gpu,
                 audio,
                 aspect_ratio: core.aspect_ratio(),
                 sample_rate: core.sample_rate(),
@@ -527,6 +571,7 @@ pub(super) fn apply_cmd(
             return true;
         }
         RetroCmd::SetAudioOut(_) => {}
+        RetroCmd::CpuFrames(cpu) => core.set_cpu_frames(cpu),
         RetroCmd::Skip { frames } => {
             core.skip_frames = frames;
             // A zero-frame skip is a no-op, so make sure it doesn't leave the
@@ -574,6 +619,7 @@ impl Backend for RetroCoreThreaded {
                 self.wake_worker();
             }
             self.frame = update.frame;
+            self.gpu = update.gpu;
             self.frame_diff = update.frame_diff;
             self.aggregated_diff = update.aggregated_diff;
             self.cpu = update.cpu;
@@ -664,6 +710,13 @@ impl Backend for RetroCoreThreaded {
         let _ = self.cmd_tx.send(RetroCmd::SetJoypad { port, id, down });
     }
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
+        #[cfg(unix)]
+        if self.gpu.is_some()
+            && let Some(ring) = &self.ring
+            && ring.with_newest(f)
+        {
+            return;
+        }
         f(self.frame_width, self.frame_height, &self.frame);
     }
     fn frame(&self) -> VideoFrame {
@@ -671,6 +724,13 @@ impl Backend for RetroCoreThreaded {
             width: self.frame_width,
             height: self.frame_height,
             pixels: Arc::clone(&self.frame),
+            gpu: self.gpu.clone(),
+        }
+    }
+    fn set_cpu_frames(&mut self, cpu: bool) {
+        if cpu != self.cpu_frames {
+            self.cpu_frames = cpu;
+            let _ = self.cmd_tx.send(RetroCmd::CpuFrames(cpu));
         }
     }
     fn with_audio(&mut self, f: &mut dyn FnMut(&[f32])) {

@@ -1648,3 +1648,11 @@
   tracing x11drv; wine's side (window rect, managed, drawable) was all correct.
   The release ships the 512b exe beside a linker-built `safe.exe` the picker
   prefers; `boot` the original.
+
+- gamescope's mappable ring reports `DRM_FORMAT_MOD_INVALID`, not
+  `DRM_FORMAT_MOD_LINEAR`: it is a plain `VK_IMAGE_TILING_LINEAR` image made
+  without modifiers. A check for modifier 0 silently turned the dmabuf import
+  off; log why an offer is refused rather than returning early.
+
+- A `--remote-control` script runs in Luau, which has no `os.getenv`; a script
+  that calls it errors and leaves demarc running until the timeout.

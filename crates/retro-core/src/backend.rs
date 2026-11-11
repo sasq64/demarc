@@ -5,16 +5,33 @@
 //! [`crate::retro_emu`] are only one implementation, alongside the image, music,
 //! Flash and Wine backends.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::audio::AudioOut;
 
+/// A frame already on the GPU, as the frontend's
+/// [`FrameImporter`](crate::frame_import::FrameImporter) made it.
+pub type GpuFrame = Arc<dyn Any + Send + Sync>;
+
 /// A finished frame of packed RGBA pixels, cheap to clone and hold on to.
+/// A frame with `gpu` set has no `pixels`.
 #[derive(Clone, Default)]
 pub struct VideoFrame {
     pub width: usize,
     pub height: usize,
     pub pixels: Arc<Vec<u32>>,
+    pub gpu: Option<GpuFrame>,
+}
+
+impl VideoFrame {
+    pub fn same(a: &VideoFrame, b: &VideoFrame) -> bool {
+        match (&a.gpu, &b.gpu) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => Arc::ptr_eq(&a.pixels, &b.pixels),
+            _ => false,
+        }
+    }
 }
 
 /// One scheduled input for [`Backend::send_events`].
@@ -100,6 +117,7 @@ pub trait Backend {
                 width,
                 height,
                 pixels: Arc::new(pixels.to_vec()),
+                gpu: None,
             };
         });
         frame
@@ -193,6 +211,10 @@ pub trait Backend {
     /// Called every frontend tick, so the backend can tell the frontend has
     /// stopped running, from having paused it (`paused`) or from a stall.
     fn keep_alive(&self, _paused: bool) {}
+
+    /// Whether every frame has to come with its pixels, for a frontend that
+    /// works on them on the CPU.
+    fn set_cpu_frames(&mut self, _cpu: bool) {}
 
     fn media_kind(&self) -> Option<MediaKind> {
         None

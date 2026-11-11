@@ -152,6 +152,9 @@ toml_edit = "0.25.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 raw-window-handle = "0.6"
+# Imports the gamescope core's dmabuf ring into the Vulkan device (src/dmabuf_import.rs).
+# The version wgpu-hal uses.
+ash = "0.38"
 # Runtime that drives the MPRIS D-Bus listener in src/media_keys.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # Preferred screen-saver inhibition path under Wayland: `zwp_idle_inhibit_v1`

@@ -9,6 +9,8 @@ pub mod audio;
 pub mod audio_recorder;
 pub mod backend;
 mod find;
+#[cfg(unix)]
+pub mod frame_import;
 #[allow(warnings)]
 pub mod libretro;
 mod path;

@@ -71,7 +71,7 @@ demarc                                    │  gamescope (child process)
     gamescope_libretro.so                 │    steamcompmgr thread
       retro_load_game  ── fork/exec ──────┼──▶   paint_all()
       socketpair(SEQPACKET)  ◀── HELLO ───┼──      └─ CLibretroConnector::Present()
-        + 3 dmabuf fds (SCM_RIGHTS)       │             vulkan_screenshot() ─▶ ring[slot]
+        + 4 dmabuf fds (SCM_RIGHTS)       │             vulkan_screenshot() ─▶ ring[slot]
       retro_run        ◀── FRAME{slot,used}┼──          vulkan_wait()
         video_refresh(map[slot], pitch)   │
                        ─── RELEASE ──────▶┼──      ring slot free again
@@ -108,20 +108,26 @@ than copied (below), and buys crash isolation and more than one session at a tim
 
 A `CVulkanTexture` created with `bMappable` is allocated `HOST_VISIBLE | HOST_COHERENT |
 HOST_CACHED` and linear-tiled (`src/rendervulkan.cpp`), and with `bExportable` it also
-carries a dmabuf. The backend allocates a ring of three such textures and sends their fds
+carries a dmabuf. The backend allocates a ring of four such textures and sends their fds
 over the socket once, at the hello; the core `mmap`s each one once. After that a frame is
 a slot number.
 
-So the chain is: the compositor writes the composite into host-visible memory (that is the
-composite, not a copy), demarc's `convert_xrgb8888` reads that mapping straight into its
-`frame: Vec<u32>`, `RetroCoreThreaded` moves it down its channel, and `frame_upload`'s
-`write_texture` copies it into wgpu's staging buffer for the GPU to upload. Exactly what an
-in-process design would do. `src/pipewire.cpp` has one `memcpy` at this point only because
-pipewire allocates its shm separately from the texture.
+demarc imports the ring into its own Vulkan device (`docs/GAMESCOPE_ZEROCOPY.md`). The
+core offers it through demarc's private `RETRO_ENVIRONMENT_DEMARC_DMABUF`, and from then on
+`PublishFrame` calls `present(slot)` instead of `video_refresh`. demarc reads only the
+pixels its frame diff samples from the mapping, then a compute pass copies the slot,
+swizzled to RGBA and opaque, into a pooled texture, and `frame_upload` copies that into the
+view's image on the GPU. The slot goes back to gamescope once the copy is done and a newer
+frame has replaced it; the newest is kept so `with_frame` (screenshots, `video_level`) can
+still read it.
 
-`DRM_FORMAT_XRGB8888` *is* `RETRO_PIXEL_FORMAT_XRGB8888` on a little-endian machine, so the
-core hands the mapping over as is; `convert_xrgb8888` swaps it to RGBA and sets alpha on
-the way into the `Vec`, which costs no extra pass.
+Everything else takes the old path, frame by frame: the indicator and black frames,
+`--frame-convert` (RIFE and blending want CPU pixels), `DEMARC_FRAME_STATS`, a backend
+other than Vulkan, a failed import, `use_proc`, and `DEMARC_NO_DMABUF=1`. There the core
+hands the mapping to `video_refresh`, `convert_xrgb8888` copies it into a `Vec<u32>` —
+`DRM_FORMAT_XRGB8888` *is* `RETRO_PIXEL_FORMAT_XRGB8888` on a little-endian machine, and the
+swap to RGBA costs no extra pass — and `write_texture` copies that into wgpu's staging
+buffer.
 
 ### What the client covers
 

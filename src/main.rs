@@ -33,6 +33,8 @@ mod commands;
 mod config;
 mod cross_fade;
 mod demarc_settings;
+#[cfg(target_os = "linux")]
+mod dmabuf_import;
 mod dj;
 mod egui_settings;
 mod egui_ui;

@@ -168,6 +168,8 @@ pub struct RetroCoreDirect {
     /// Where the next `video_refresh` converts to instead of `state.frame`.
     /// Taken once a frame has been written there.
     frame_target: Option<FrameTarget>,
+    #[cfg(unix)]
+    dmabuf: Option<dmabuf::Dmabuf>,
 }
 
 struct FrameTarget {
@@ -245,6 +247,10 @@ impl RetroCoreDirect {
         // and the libc state below is just as shared either way.
         let _load_guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _guard = CurrentEmuGuard::enter(self);
+        #[cfg(unix)]
+        if let Some(d) = &self.dmabuf {
+            d.ring.detach();
+        }
         unsafe {
             (self.retro_unload_game_fn)();
             (self.retro_deinit_fn)();
@@ -522,6 +528,16 @@ impl RetroCoreDirect {
                     info!("Core sends float audio");
                     *(data as *mut AudioSampleBatchFloat) = Self::audio_sample_batch_float_cb;
                 }
+                #[cfg(unix)]
+                dmabuf::RETRO_ENVIRONMENT_DEMARC_DMABUF => {
+                    if self.dmabuf.is_none() {
+                        self.dmabuf = dmabuf::Dmabuf::new();
+                    }
+                    match &mut self.dmabuf {
+                        Some(d) => d.answer(&mut *(data as *mut dmabuf::DmabufIface)),
+                        None => handled = false,
+                    }
+                }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
                     (*(data as *mut retro_log_callback)).log = Some(demarc_retro_log_shim);
@@ -772,6 +788,8 @@ impl RetroCoreDirect {
                 time_reference: 0,
                 visible: true,
                 frame_target: None,
+                #[cfg(unix)]
+                dmabuf: None,
             };
             // Our options go in before the core is told anything, so they are
             // already there whenever it announces its own defaults (usually
@@ -1038,6 +1056,18 @@ impl Backend for RetroCoreDirect {
 
 mod threaded;
 pub use threaded::RetroCoreThreaded;
+
+#[cfg(unix)]
+mod dmabuf;
+
+#[cfg(not(unix))]
+impl RetroCoreDirect {
+    pub(crate) fn take_gpu_frame(&mut self) -> Option<(crate::backend::GpuFrame, Vec<u32>)> {
+        None
+    }
+
+    pub(crate) fn set_cpu_frames(&mut self, _cpu: bool) {}
+}
 
 // `RetroCoreProcess` re-executes the current executable; an APK has none.
 #[cfg(all(unix, not(target_os = "android")))]

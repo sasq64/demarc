@@ -107,6 +107,7 @@ impl Backend for WinRunner {
             width: FRAME_W,
             height: FRAME_H,
             pixels: Arc::clone(&self.frame),
+            gpu: None,
         }
     }
 

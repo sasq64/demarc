@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use ringbuf::traits::{Producer, Split};
@@ -294,6 +295,7 @@ fn save_png_writes_the_cores_current_frame() {
         width: 2,
         height: 1,
         pixels: Arc::new(vec![rgba(255, 0, 0), rgba(0, 0, 255)]),
+        gpu: None,
     };
     let mut emu = emulator(&core);
     let dir = tempfile::tempdir().unwrap();
@@ -513,6 +515,7 @@ fn tick_at(core: &FakeBackend, emu: &mut Emulator, time: &mut Time, fresh: bool,
             width: 1,
             height: 1,
             pixels: Arc::new(vec![0]),
+            gpu: None,
         };
     }
     time.advance_by(Duration::from_micros(micros));

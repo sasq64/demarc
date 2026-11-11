@@ -263,6 +263,35 @@ fn diff_pixels(frame: &[u32], last_frame: &[u32], skip: usize) -> (u64, u64, usi
 /// overlay drawn there (gamescope's load bar) does not count as activity.
 const SKIP_TOP: usize = 16;
 
+/// The pixel ranges [`get_frame_diff`] looks at in a frame of `count` pixels,
+/// `width` wide.
+pub fn sample_runs(count: usize, width: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let top = match width {
+        0 => 0,
+        w => count / w / SKIP_TOP * w,
+    };
+    let left = count - top;
+    (top..count)
+        .step_by(SAMPLE_RUN * sample_skip(left))
+        .map(move |start| start..(start + SAMPLE_RUN).min(count))
+}
+
+fn finish_diff(changed: u64, moved: u64, sampled: usize, prev_aggregated: f32) -> (f32, f32) {
+    // Fewer pixels than one chunk: nothing was looked at.
+    if sampled == 0 {
+        return (0.0, prev_aggregated - prev_aggregated * AGG_ALPHA);
+    }
+    // Both are means over the sample, scaled so that a full black-to-white
+    // swing is 1.0.
+    let fraction = moved as f32 / sampled as f32;
+    let activity = 1.0 - (-fraction / ACTIVE_FRACTION).exp();
+    let weight = fraction.max(AGG_ALPHA);
+    (
+        changed as f32 / (sampled as f32 * 3.0 * 255.0),
+        prev_aggregated + (activity - prev_aggregated) * weight,
+    )
+}
+
 /// Motion only: `(frame_diff, aggregated_diff)` as [`get_frame_stats`] would
 /// compute them, without the two extra passes the average colour costs, and
 /// from a [`SAMPLE_TARGET`]-pixel sample rather than the whole frame.
@@ -273,36 +302,25 @@ pub fn get_frame_diff(
     width: usize,
     prev_aggregated: f32,
 ) -> (f32, f32) {
-    let decayed = prev_aggregated - prev_aggregated * AGG_ALPHA;
     if frame.is_empty() || last_frame.len() != frame.len() {
-        return (0.0, decayed);
+        return finish_diff(0, 0, 0, prev_aggregated);
     }
-    let top = match width {
-        0 => 0,
-        w => frame.len() / w / SKIP_TOP * w,
-    };
-    let (frame, last_frame) = (&frame[top..], &last_frame[top..]);
-
     let (mut changed, mut moved, mut sampled) = (0, 0, 0);
-    let runs = frame.chunks(SAMPLE_RUN).zip(last_frame.chunks(SAMPLE_RUN));
-    for (a, b) in runs.step_by(sample_skip(frame.len())) {
-        let (c, m, s) = diff_pixels(a, b, 1);
+    for run in sample_runs(frame.len(), width) {
+        let (c, m, s) = diff_pixels(&frame[run.clone()], &last_frame[run], 1);
         (changed, moved, sampled) = (changed + c, moved + m, sampled + s);
     }
-    // Fewer pixels than one chunk: nothing was looked at.
-    if sampled == 0 {
-        return (0.0, decayed);
-    }
+    finish_diff(changed, moved, sampled, prev_aggregated)
+}
 
-    // Both are means over the sample, scaled so that a full black-to-white
-    // swing is 1.0.
-    let fraction = moved as f32 / sampled as f32;
-    let activity = 1.0 - (-fraction / ACTIVE_FRACTION).exp();
-    let weight = fraction.max(AGG_ALPHA);
-    (
-        changed as f32 / (sampled as f32 * 3.0 * 255.0),
-        prev_aggregated + (activity - prev_aggregated) * weight,
-    )
+/// [`get_frame_diff`] for the pixels of [`sample_runs`] gathered one after the
+/// other. Alpha, or the X of XRGB, is ignored.
+pub fn get_sample_diff(samples: &[u32], last_samples: &[u32], prev_aggregated: f32) -> (f32, f32) {
+    if samples.is_empty() || last_samples.len() != samples.len() {
+        return finish_diff(0, 0, 0, prev_aggregated);
+    }
+    let (changed, moved, sampled) = diff_pixels(samples, last_samples, 1);
+    finish_diff(changed, moved, sampled, prev_aggregated)
 }
 
 /// Statistics for one frame of packed RGBA8888 pixels. `prev_aggregated` is the

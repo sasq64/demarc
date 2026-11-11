@@ -101,6 +101,29 @@ fn frame_diff_ignores_top_rows() {
     assert_eq!(get_frame_diff(&bar, &dark, width, 0.0), (0.0, 0.0));
 }
 
+/// Diffing the gathered samples is the same as diffing the frames.
+#[test]
+fn sample_diff_matches_frame_diff() {
+    for (width, height) in [(320usize, 240usize), (800, 600), (1366, 768), (1920, 1080)] {
+        let count = width * height;
+        let a: Vec<u32> = (0..count)
+            .map(|i| u32::from_ne_bytes([(i * 7) as u8, (i * 13) as u8, (i * 29) as u8, 255]))
+            .collect();
+        let mut b = a.clone();
+        for i in (0..count).step_by(41) {
+            b[i] ^= 0x00ff_ffff;
+        }
+        let gather = |f: &[u32]| -> Vec<u32> {
+            sample_runs(count, width).flat_map(|r| f[r].to_vec()).collect()
+        };
+        assert_eq!(
+            get_sample_diff(&gather(&b), &gather(&a), 0.3),
+            get_frame_diff(&b, &a, width, 0.3),
+            "{width}x{height}"
+        );
+    }
+}
+
 /// Micro-benchmark of the per-frame statistics, which run on the emulator
 /// worker thread for every frame. Run:
 ///   cargo test --profile release-fast frame_stats_bench -- --ignored --nocapture

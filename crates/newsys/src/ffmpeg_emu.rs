@@ -487,6 +487,7 @@ impl Backend for FfmpegEmu {
             width: self.info.width,
             height: self.info.height,
             pixels: Arc::clone(&self.frame),
+            gpu: None,
         }
     }
 
