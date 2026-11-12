@@ -407,7 +407,7 @@ fn worker_loop(
         let free_run = full
             && !fill.paused.load(Ordering::Relaxed)
             && out.as_ref().is_some_and(|o| o.is_low(fill.stalled()));
-        if !speed_test && full && !free_run {
+        if !core.visible || (!speed_test && full && !free_run) {
             let t = Instant::now();
             thread::park_timeout(THROTTLE_POLL);
             idle += t.elapsed();
