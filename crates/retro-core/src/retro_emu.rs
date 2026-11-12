@@ -59,7 +59,7 @@ use crate::libretro::{
     retro_audio_sample_t, retro_disk_control_callback, retro_disk_control_ext_callback,
     retro_environment_t, retro_frame_time_callback, retro_game_geometry, retro_game_info,
     retro_input_poll_t, retro_input_state_t, retro_keyboard_callback, retro_log_callback,
-    retro_log_level, retro_pixel_format, retro_system_av_info, retro_throttle_state,
+    retro_log_level, retro_pixel_format, retro_system_av_info, retro_system_info, retro_throttle_state,
     retro_variable, retro_vfs_interface_info, retro_video_refresh_t,
 };
 use crate::pixels::{RGB565_LUT, RGB1555_LUT, convert_16bpp, convert_xrgb8888};
@@ -802,8 +802,16 @@ impl RetroCoreDirect {
                 retro_emu.set_var(key, val);
             }
 
+            let need_fullpath = lib
+                .get::<unsafe extern "C" fn(*mut retro_system_info)>(b"retro_get_system_info")
+                .is_ok_and(|get_info| {
+                    let mut info = retro_system_info::default();
+                    get_info(&mut info);
+                    info.need_fullpath
+                });
+
             let _load_guard = LOAD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            CURRENT_EMU.with(|p| p.set(&mut retro_emu as *mut _));
+            let _guard = CurrentEmuGuard::enter(&mut retro_emu);
             retro_set_environment(Self::environment_cb);
             retro_set_video_refresh(Self::video_refresh_cb);
             retro_set_audio_sample(Self::audio_sample_cb);
@@ -813,13 +821,18 @@ impl RetroCoreDirect {
 
             retro_init();
 
-            if let Some(game) = game {
-                info!("retro_load_game({})", game.to_string_lossy());
-                retro_emu.load_game(game)?;
-            } else {
-                if !(retro_emu.retro_load_game_fn)(std::ptr::null_mut()) {
-                    return Err(anyhow!("retro_load_game failed"));
+            let loaded = match game {
+                Some(game) => {
+                    info!("retro_load_game({})", game.to_string_lossy());
+                    retro_emu.load_game(game, need_fullpath)
                 }
+                None if (retro_emu.retro_load_game_fn)(std::ptr::null_mut()) => Ok(()),
+                None => Err(anyhow!("retro_load_game failed")),
+            };
+            if let Err(e) = loaded {
+                // `lib` is not in `retro_emu` yet, so its `Drop` will not do this.
+                (retro_emu.retro_deinit_fn)();
+                return Err(e);
             }
 
             // Tell the core both ports are joypads. Several cores (VICE among
@@ -834,7 +847,6 @@ impl RetroCoreDirect {
             retro_emu.state.set_used_size(&av_info.geometry);
             retro_emu.state.sample_rate = av_info.timing.sample_rate;
             retro_emu.state.fps = av_info.timing.fps;
-            CURRENT_EMU.with(|p| p.set(std::ptr::null_mut()));
             info!("Got avinfo: {:?}", av_info);
 
             retro_emu.lib = Some(lib);
@@ -847,14 +859,12 @@ impl RetroCoreDirect {
         unsafe { (self.retro_reset_fn)() }
     }
 
-    fn load_game(&mut self, game_path: &Path) -> Result<()> {
-        // puae mounts a directory as a virtual hard drive, and for any
-        // need_fullpath content it loads from the path itself. In those cases
-        // there are no bytes to hand over (and reading a directory errors with
-        // IsADirectory), so pass data=null/size=0 and let the core use `path`.
-        // A URL (the gamescope core's web pages) has no bytes here either.
+    fn load_game(&mut self, game_path: &Path, need_fullpath: bool) -> Result<()> {
+        // A directory (puae's virtual hard drive) or a URL (the gamescope
+        // core's web pages) has no bytes to hand over, and a need_fullpath
+        // core opens the path itself.
         let is_url = game_path.to_string_lossy().starts_with("http://");
-        let game_data = if game_path.is_dir() || is_url {
+        let game_data = if need_fullpath || game_path.is_dir() || is_url {
             None
         } else {
             Some(std::fs::read(game_path)?)
