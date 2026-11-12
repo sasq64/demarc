@@ -444,7 +444,12 @@ impl NewSys {
         }
         self.apply_cmdline_meta(&mut wf);
         crate::com_dropper::unpack_release(&mut wf)?;
-        crate::crinkler::unpack_release(&mut wf)?;
+        // The rest are left for the system, which unpacks only the one it starts.
+        let named: Vec<_> = over
+            .iter()
+            .flat_map(|o| o.patches.iter().map(|p| p.target).chain(o.boot_file))
+            .collect();
+        crate::crinkler::unpack_release(&mut wf, &named)?;
         crate::boxedapp::unpack_release(&mut wf)?;
 
         // Now that the release is unpacked and its own meta is in place: an

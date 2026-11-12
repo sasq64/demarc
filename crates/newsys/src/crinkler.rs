@@ -705,48 +705,56 @@ const MAX_SIZE: u64 = 1 << 20;
 /// Part of the cache key: bump it when [`rebuild`] writes something else.
 const REBUILD_FORMAT: &str = "5";
 
-fn crinkler_exes(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut found = vec![];
-    walk_dir(dir, 2, |path, ext, header| {
-        if ext == "exe"
-            && header == b"MZ"
-            && fs::metadata(path)?.len() <= MAX_SIZE
-            && version(&fs::read(path)?).is_some()
-        {
-            found.push(path.to_owned());
-        }
-        Ok(())
-    })?;
-    Ok(found)
+fn is_crinkler_exe(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.len() <= MAX_SIZE)
+        && fs::read(path).is_ok_and(|data| version(&data).is_some())
 }
 
-/// Replace every Crinkler exe in the release with its [rebuilt](rebuild)
-/// form, on a copy. One that cannot be rebuilt stays as it is.
-pub fn unpack_release(file: &mut WorkFile) -> Result<()> {
-    if file.is_in_place() || !is_yes(&file.get_meta_or(UNPACK_META, "true")) {
+fn wants_unpack(file: &WorkFile) -> bool {
+    !file.is_in_place() && is_yes(&file.get_meta_or(UNPACK_META, "true"))
+}
+
+/// Replace the Crinkler exes among `names` in the release with their
+/// [rebuilt](rebuild) form, on a copy, so an override can patch or start them.
+pub fn unpack_release(file: &mut WorkFile, names: &[&str]) -> Result<()> {
+    if names.is_empty() || !wants_unpack(file) {
         return Ok(());
     }
-    if crinkler_exes(&file.path)?.is_empty() {
+    let find = |dir: &Path| -> Result<Vec<PathBuf>> {
+        let mut found = vec![];
+        walk_dir(dir, 2, |path, ext, header| {
+            let named = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .is_some_and(|f| names.iter().any(|n| f.eq_ignore_ascii_case(n)));
+            if ext == "exe" && header == b"MZ" && named && is_crinkler_exe(path) {
+                found.push(path.to_owned());
+            }
+            Ok(())
+        })?;
+        Ok(found)
+    };
+    if find(&file.path)?.is_empty() {
         return Ok(());
     }
     file.make_temp()?;
-    let list = system_dir().join("win/crinkler/exports.txt");
-    let list_text = fs::read_to_string(&list).with_context(|| format!("Can't read {list:?}"))?;
-    // A release may ship one exe per resolution; each takes seconds.
-    std::thread::scope(|scope| {
-        let jobs: Vec<_> = crinkler_exes(&file.path)?
-            .into_iter()
-            .map(|exe| scope.spawn(|| unpack_exe(exe, &list_text)))
-            .collect();
-        for job in jobs {
-            job.join()
-                .map_err(|_| anyhow::anyhow!("Crinkler unpacking panicked"))??;
-        }
-        Ok(())
-    })
+    for exe in find(&file.path)? {
+        unpack_exe(exe)?;
+    }
+    Ok(())
 }
 
-fn unpack_exe(exe: PathBuf, list_text: &str) -> Result<()> {
+/// Whether `exe`, the program a release starts, should be [unpacked](unpack_exe).
+pub fn should_unpack(file: &WorkFile, exe: &Path) -> bool {
+    wants_unpack(file) && is_crinkler_exe(exe)
+}
+
+/// Replace `exe` with its [rebuilt](rebuild) form, or leave it packed if it
+/// cannot be rebuilt.
+pub fn unpack_exe(exe: PathBuf) -> Result<()> {
+    let list = system_dir().join("win/crinkler/exports.txt");
+    let list_text = fs::read_to_string(&list).with_context(|| format!("Can't read {list:?}"))?;
+    let list_text = list_text.as_str();
     let data = fs::read(&exe)?;
     let version = version(&data).unwrap_or(0);
     let mut key = KeyHasher::new();

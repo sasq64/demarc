@@ -381,7 +381,11 @@ impl System for WindowsSystem {
         let Some(target) = target else {
             return Ok(false);
         };
-        let target = unpack_cab_bat(file, target)?;
+        let mut target = unpack_cab_bat(file, target)?;
+        if crate::crinkler::should_unpack(file, &target) {
+            target = writable_target(file, target)?;
+            crate::crinkler::unpack_exe(target.clone())?;
+        }
 
         for tag in [
             "512x384", "320x200", "320x240", "640x480", "800x600", "1024x768", "1280x720",
