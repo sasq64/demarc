@@ -214,3 +214,7 @@ strip = false
 lto = "off"
 incremental = true
 codegen-units = 256
+
+# Crinkler depacking tests take over a minute unoptimized.
+[profile.test.package.newsys]
+opt-level = 1

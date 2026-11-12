@@ -355,26 +355,51 @@ fn phase_zero_is_the_scaled_source() {
     }
 }
 
-#[test]
-fn a_textured_background_stays_exact() {
+fn stays_exact(bg: Vec<u32>, speed: i32) {
     let Some(gpu) = gpu() else { return };
-    for bg in [noise(), checker(1), checker(2), checker(8)] {
-        for scene in directions(&bg, 1) {
-            assert_eq!(scene.check(&gpu), 0);
-        }
+    for scene in directions(&bg, speed) {
+        assert_eq!(scene.check(&gpu), 0);
     }
 }
 
 #[test]
-fn faster_rects_stay_exact() {
-    let Some(gpu) = gpu() else { return };
-    for bg in [uniform(), noise()] {
-        for speed in [2, 4] {
-            for scene in directions(&bg, speed) {
-                assert_eq!(scene.check(&gpu), 0);
-            }
-        }
-    }
+fn a_noise_background_stays_exact() {
+    stays_exact(noise(), 1);
+}
+
+#[test]
+fn a_fine_checker_background_stays_exact() {
+    stays_exact(checker(1), 1);
+}
+
+#[test]
+fn a_2px_checker_background_stays_exact() {
+    stays_exact(checker(2), 1);
+}
+
+#[test]
+fn a_coarse_checker_background_stays_exact() {
+    stays_exact(checker(8), 1);
+}
+
+#[test]
+fn rects_at_speed_2_stay_exact() {
+    stays_exact(uniform(), 2);
+}
+
+#[test]
+fn rects_at_speed_4_stay_exact() {
+    stays_exact(uniform(), 4);
+}
+
+#[test]
+fn rects_at_speed_2_on_noise_stay_exact() {
+    stays_exact(noise(), 2);
+}
+
+#[test]
+fn rects_at_speed_4_on_noise_stay_exact() {
+    stays_exact(noise(), 4);
 }
 
 #[test]

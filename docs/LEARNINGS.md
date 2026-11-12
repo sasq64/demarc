@@ -1679,3 +1679,9 @@
   PCIe writes, i.e. resources spilled to system memory (Before Zero,
   `zoo.395567`, ~18 GB on a 12 GB card). Run that first; a compiler swap, NGX,
   wined3d and a Vulkan dispatch-marker layer came before it.
+
+- Test only `--bin demarc` and failures in `crates/` go unseen (retro-ui's
+  default theme had drifted from `default.toml`). Run `cargo test --workspace`;
+  its slowness was newsys's Crinkler depacker unoptimized (fixed with a
+  `profile.test` opt-level) and frameconv's GPU tests packed into a few huge
+  `#[test]`s that couldn't run in parallel.

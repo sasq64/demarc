@@ -32,6 +32,9 @@ cargo build --profile release-fast
 
 ## Testing changes
 
+`cargo nextest run --workspace` runs everything but the slow frameconv and
+`crinkler::` tests in a few seconds; `-P full` adds them.
+
 Run headless with
 
 `<files> --headless --remote-control <lua_script>`
