@@ -1,7 +1,7 @@
 //! The render world's side of the frame conversion: runs `frameconv` for every
 //! emulator with a pair of source frames, for the composite pass to pick up.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -25,9 +25,112 @@ pub struct FrameConvPlugin;
 #[derive(Resource, Clone, Default)]
 struct RifeFailure(Arc<Mutex<Option<String>>>);
 
+/// A RIFE frame in a texture of the source's size.
+pub(crate) struct RifeTarget {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    frame: Option<Arc<Vec<u32>>>,
+}
+
+impl RifeTarget {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rife frame"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&default());
+        Self {
+            texture,
+            view,
+            frame: None,
+        }
+    }
+
+    fn show(&mut self, queue: &wgpu::Queue, frame: &Arc<Vec<u32>>) {
+        if self.frame.as_ref().is_some_and(|f| Arc::ptr_eq(f, frame)) {
+            return;
+        }
+        let (width, height) = (self.texture.width(), self.texture.height());
+        queue.write_texture(
+            self.texture.as_image_copy(),
+            crate::backend::frame_bytes(frame),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.frame = Some(Arc::clone(frame));
+    }
+}
+
+pub(crate) enum ConvTarget {
+    Simple(Box<Converter>),
+    Rife(RifeTarget),
+}
+
+impl ConvTarget {
+    fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Simple(conv) => conv.size(),
+            Self::Rife(rife) => (rife.texture.width(), rife.texture.height()),
+        }
+    }
+
+    /// The picture to show as it is.
+    pub fn six_view(&self) -> &wgpu::TextureView {
+        match self {
+            Self::Simple(conv) => conv.six_view(),
+            Self::Rife(rife) => &rife.view,
+        }
+    }
+
+    /// The picture at the source's size, for an effect.
+    pub fn native_view(&self) -> &wgpu::TextureView {
+        match self {
+            Self::Simple(conv) => conv.native_view(),
+            Self::Rife(rife) => &rife.view,
+        }
+    }
+
+    pub fn native(&self) -> &wgpu::Texture {
+        match self {
+            Self::Simple(conv) => conv.native(),
+            Self::Rife(rife) => &rife.texture,
+        }
+    }
+}
+
 /// The converted picture of each emulator that has one, by its source image.
+/// An emulator not in `shown` this frame shows its source image.
 #[derive(Resource, Default)]
-pub(crate) struct ConvTargets(pub HashMap<AssetId<Image>, Converter>);
+pub(crate) struct ConvTargets {
+    targets: HashMap<AssetId<Image>, ConvTarget>,
+    shown: HashSet<AssetId<Image>>,
+}
+
+impl ConvTargets {
+    pub fn get(&self, id: &AssetId<Image>) -> Option<&ConvTarget> {
+        self.targets.get(id).filter(|_| self.shown.contains(id))
+    }
+}
 
 #[derive(Resource, Default)]
 struct ExtractedPairs {
@@ -44,10 +147,12 @@ fn extract_pairs(
 ) {
     pairs.pairs.clear();
     pairs.ahead.clear();
-    pairs.rife = settings.rife && !settings.no_motion;
+    pairs.rife = settings.rife;
+    if settings.no_motion {
+        return;
+    }
     for emu in &emus {
         if let Some((a, b, n)) = emu.conversion_pair() {
-            let n = if settings.no_motion { 0.0 } else { n };
             pairs.pairs.push((emu.image.id(), a.clone(), b.clone(), n));
         }
         if pairs.rife {
@@ -135,55 +240,79 @@ fn convert_frames(
             i == id && convertible(a, b) && (a.width as u32, a.height as u32) == size
         })
     };
-    targets.0.retain(|id, conv| wanted(id, conv.size()));
+    targets.shown.clear();
+    targets
+        .targets
+        .retain(|id, target| wanted(id, target.size()));
     if pairs.pairs.is_empty() {
         return;
     }
-    let pipelines = pipelines.get_or_insert_with(|| Pipelines::new(device));
-    let mut rife = pairs
-        .rife
-        .then(|| rife.get_or_insert_with(RifeState::start).ready(&failure))
-        .flatten();
-    if let Some(rife) = &mut rife {
-        let ahead = pairs.ahead.iter().filter(|(_, a, b, _)| convertible(a, b));
-        rife.keep(
-            ahead
-                .clone()
-                .map(|(id, a, b, phases)| (*id, &a.pixels, &b.pixels, phases.as_slice())),
-        );
-        for (id, a, b, phases) in ahead {
-            let phases: Vec<f32> = phases.iter().copied().filter(|&t| t > 0.0).collect();
-            let size = (a.width as u32, a.height as u32);
-            rife.request(*id, &a.pixels, &b.pixels, size, &phases);
+    if pairs.rife {
+        let rife = rife.get_or_insert_with(RifeState::start).ready(&failure);
+        if let Some(rife) = rife {
+            show_rife_frames(&pairs, rife, device, &queue, &mut targets);
         }
+        return;
     }
+    let pipelines = pipelines.get_or_insert_with(|| Pipelines::new(device));
     let mut encoder = device.create_command_encoder(&default());
     for (id, a, b, n) in &pairs.pairs {
         let (width, height) = (a.width as u32, a.height as u32);
         if !convertible(a, b) || !frameconv::supported(device, width, height) {
             continue;
         }
-        let conv = targets
-            .0
-            .entry(*id)
-            .or_insert_with(|| Converter::new(device, pipelines, width, height));
-        let frame = match &rife {
-            Some(_) if *n == 0.0 => Some(Arc::clone(&a.pixels)),
-            Some(rife) => rife.get(*id, &a.pixels, &b.pixels, *n),
-            None => None,
+        let target = targets.targets.entry(*id).or_insert_with(|| {
+            ConvTarget::Simple(Box::new(Converter::new(device, pipelines, width, height)))
+        });
+        let ConvTarget::Simple(conv) = target else {
+            continue;
         };
-        if rife.is_some() && frame.is_none() {
-            debug!("frameconv: RIFE frame at {n} not ready");
-        }
-        match frame {
-            Some(frame) => conv.present(pipelines, &queue, &mut encoder, &frame),
-            None => {
-                let n = frameconv::sixths(*n);
-                conv.render(pipelines, &queue, &mut encoder, &a.pixels, &b.pixels, n);
-            }
-        }
+        let n = frameconv::sixths(*n);
+        conv.render(pipelines, &queue, &mut encoder, &a.pixels, &b.pixels, n);
+        targets.shown.insert(*id);
     }
     queue.submit([encoder.finish()]);
+}
+
+/// Asks RIFE for the frames still to come, and shows the ones it has made. A
+/// frame it has not made shows the source.
+fn show_rife_frames(
+    pairs: &ExtractedPairs,
+    rife: &mut Worker<AssetId<Image>>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    targets: &mut ConvTargets,
+) {
+    let ahead = pairs.ahead.iter().filter(|(_, a, b, _)| convertible(a, b));
+    rife.keep(
+        ahead
+            .clone()
+            .map(|(id, a, b, phases)| (*id, &a.pixels, &b.pixels, phases.as_slice())),
+    );
+    for (id, a, b, phases) in ahead {
+        let phases: Vec<f32> = phases.iter().copied().filter(|&t| t > 0.0).collect();
+        let size = (a.width as u32, a.height as u32);
+        rife.request(*id, &a.pixels, &b.pixels, size, &phases);
+    }
+    for (id, a, b, n) in &pairs.pairs {
+        if !convertible(a, b) || *n == 0.0 {
+            continue;
+        }
+        let Some(frame) = rife.get(*id, &a.pixels, &b.pixels, *n) else {
+            debug!("frameconv: RIFE frame at {n} not ready");
+            continue;
+        };
+        let (width, height) = (a.width as u32, a.height as u32);
+        let target = targets
+            .targets
+            .entry(*id)
+            .or_insert_with(|| ConvTarget::Rife(RifeTarget::new(device, width, height)));
+        let ConvTarget::Rife(target) = target else {
+            continue;
+        };
+        target.show(queue, &frame);
+        targets.shown.insert(*id);
+    }
 }
 
 fn exit_on_rife_failure(failure: Res<RifeFailure>, mut exit: MessageWriter<AppExit>) {

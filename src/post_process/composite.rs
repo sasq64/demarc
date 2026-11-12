@@ -162,7 +162,7 @@ pub(super) fn post_process_pass(
 
         // A converted frame replaces the source: at 6x where it is shown as it
         // is, at native size where an effect takes its scale from the texture.
-        let conv = conv_targets.0.get(&post_process.source.id());
+        let conv = conv_targets.get(&post_process.source.id());
         let six = conv.map(|c| TextureView::from(c.six_view().clone()));
         let native = conv.map(|c| TextureView::from(c.native_view().clone()));
         let plain_view = six.as_ref().unwrap_or(&source_image.texture_view);

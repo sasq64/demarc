@@ -582,23 +582,6 @@ impl Converter {
         self.render_with(interp, pipelines, queue, encoder, a, b, n);
     }
 
-    /// Record `frame`, interpolated elsewhere, into the targets as it is.
-    pub fn present(
-        &mut self,
-        pipelines: &Pipelines,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        frame: &Pixels,
-    ) {
-        let layer = self.layer(queue, frame) as u32;
-        let params = InterpParams {
-            a: [layer, layer, 0, 0],
-            b: [self.tiles.0, self.tiles.1, 0, 0],
-        };
-        queue.write_buffer(&self.interp_params, 0, bytemuck::bytes_of(&params));
-        self.draw(pipelines, encoder, &pipelines.interp);
-    }
-
     fn draw(
         &self,
         pipelines: &Pipelines,
