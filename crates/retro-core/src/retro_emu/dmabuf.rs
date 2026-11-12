@@ -203,6 +203,7 @@ pub struct Dmabuf {
     pub cpu_frames: bool,
     /// The frame the last `present` made, with its [`sample_runs`] pixels.
     pub frame: Option<(GpuFrame, Vec<u32>)>,
+    warned: bool,
 }
 
 impl Dmabuf {
@@ -213,6 +214,7 @@ impl Dmabuf {
             active: false,
             cpu_frames: false,
             frame: None,
+            warned: false,
         })
     }
 
@@ -256,15 +258,27 @@ impl Dmabuf {
         true
     }
 
+    fn fall_back(&mut self, why: &str) -> Option<(usize, usize)> {
+        if !self.warned {
+            self.warned = true;
+            warn!("dmabuf: not zero-copy, frames go through the CPU ({why})");
+        }
+        None
+    }
+
     fn present(&mut self, slot: usize) -> Option<(usize, usize)> {
-        if self.cpu_frames || !self.active {
+        if self.cpu_frames {
             return None;
+        }
+        if !self.active {
+            return self.fall_back("ring not imported");
         }
         let mut samples = Vec::new();
         let size = {
             let mut state = self.ring.lock();
             if state.refs.get(slot) != Some(&0) {
-                return None;
+                drop(state);
+                return self.fall_back("ring slot still in use");
             }
             state.maps[slot].gather(state.width, state.height, &mut samples);
             state.refs[slot] = 2;
@@ -278,7 +292,8 @@ impl Dmabuf {
         let Some(frame) = frame else {
             // The core gives it back itself.
             state.refs[slot] = 0;
-            return None;
+            drop(state);
+            return self.fall_back("GPU import failed");
         };
         if let Some(old) = state.newest.replace(slot) {
             state.unref(old);
@@ -324,12 +339,11 @@ unsafe extern "C" fn set_buffers_cb(
         })
         .collect();
     let ok = dmabuf.set_buffers(width as usize, height as usize, &buffers);
-    info!(
-        "dmabuf: {}x{} ring of {n} {}",
-        width,
-        height,
-        if ok { "imported" } else { "not imported" }
-    );
+    if ok {
+        info!("dmabuf: {width}x{height} ring of {n} imported");
+    } else {
+        warn!("dmabuf: {width}x{height} ring of {n} not imported, frames go through the CPU");
+    }
     ok
 }
 

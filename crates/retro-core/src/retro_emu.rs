@@ -535,7 +535,10 @@ impl RetroCoreDirect {
                     }
                     match &mut self.dmabuf {
                         Some(d) => d.answer(&mut *(data as *mut dmabuf::DmabufIface)),
-                        None => handled = false,
+                        None => {
+                            warn!("dmabuf: no frame importer, frames go through the CPU");
+                            handled = false;
+                        }
                     }
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
