@@ -37,6 +37,16 @@ fn zero_gap_restarts_pre_roll() {
 }
 
 #[test]
+fn quiet_pre_roll_is_capped() {
+    let mut rec = AudioRecorder::new("x.wav", opts(Some(0.5), None));
+    rec.push(1000, &[0.01; 2 * 5000]);
+    rec.push(1000, &[0.9, 0.9]);
+    assert_eq!(rec.state, State::Recording);
+    assert!(rec.samples.len() <= 2 * 1000 + 2);
+    assert_eq!(rec.samples[rec.samples.len() - 2..], [0.9, 0.9]);
+}
+
+#[test]
 fn stop_on_silence_trims_the_tail() {
     let mut rec = AudioRecorder::new("x.wav", opts(Some(0.5), Some(Duration::from_millis(3))));
     rec.push(1000, &[0.9, 0.0, 0.001, 0.001, 0.001, 0.001]);

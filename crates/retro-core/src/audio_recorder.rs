@@ -39,6 +39,9 @@ pub struct Tags {
     pub cover: Option<Vec<u8>>,
 }
 
+/// Quiet audio kept from before the start level is reached.
+const PRE_ROLL: Duration = Duration::from_millis(500);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Waiting,
@@ -126,6 +129,11 @@ impl AudioRecorder {
                 self.samples.extend([l, r]);
                 if peak > self.opts.start_on_audio.unwrap_or(SILENCE_LEVEL) {
                     self.state = State::Recording;
+                }
+                // Trimmed in batches, so the drain is not paid per frame.
+                let keep = (self.rate() as f64 * PRE_ROLL.as_secs_f64()) as usize * 2;
+                if self.samples.len() > keep * 2 {
+                    self.samples.drain(..self.samples.len() - keep);
                 }
             }
             State::Recording => {
