@@ -81,6 +81,7 @@ bevy = {
     "bevy_image",
     "bevy_log",
     "bevy_post_process",
+    "bevy_sprite_render",
     "bevy_render",
     "bevy_state",
     "bevy_window",
