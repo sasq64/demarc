@@ -25,7 +25,21 @@ kills wineserver on packed exes. A multiarch build needs `lib32-libxrandr`, or
 
 Locating demo. Demo may be referenced by demozoo (id), then the information
 can be found in demodb/demozoo.txt. A crashing demo should already be cached
-in ~/.cache/demarc/downloads/
+in ~/.cache/demarc/downloads/; find it by archive name, since a cached download
+keeps its old mtime. Compare any "fixed" copy against the one there before
+writing a patch from the two.
+
+**Before you start.** Read the release's `.bat` (Dragon Rising's assert was a
+missing argument), check the db line for later "fix" / `_patch` / `_patched`
+downloads (Planet Loop, `zoo.9072`), and note that only the first of several
+downloads is fetched. A release may bundle an emulator for another platform;
+`--boot-file <image>` tests the native image.
+
+**Prefix scope.** demarc ignores `WINEPREFIX`: test a copied prefix with
+`wine demarc-autodlg.exe --launch` under gamescope. A scratch `WINEPREFIX` does
+not sandbox `setup-wine.sh` either; set `XDG_DATA_HOME` too. A rebuilt proxy
+DLL is not copied into the prefix's `syswow64` by a build: copy it there or
+rerun `--setup-wine`.
 
 ## Three ways to run
 
@@ -45,13 +59,33 @@ needed for gamescope's, autodlg's and Lua `print` output. Meta goes in with
 `screenshot()` and `quit()`; shoot several frames apart before calling a window
 black (a launcher can take 360 frames). `audio_level()` tells if sound plays.
 
+Headless counts as 16:9 (a 1920x1080 session); a failure seen windowed on the
+3:2 laptop needs `-x widescreen=false`. Luau has no `os.getenv`, and a script
+that errors leaves demarc idling until the timeout: write one script per run.
+A `timeout` kill leaves gamescope, bwrap and wine behind (check `ps` for
+`gamescopereaper`), and two headless sessions at once spoil each other.
+
+demarc's wine log drops repeated lines and stops after 4096 distinct ones, so
+`+relay` or a per-frame `+opengl` through demarc shows wine's startup and
+little else. Its stderr is a FIFO (`/tmp/demarc-wine-*.log`): reading it
+steals lines from demarc.
+
 **2. Plain wine.** For a crash that is wine's own, skip demarc:
 
 ```sh
 cd <demo dir> && WINEPREFIX=~/.wine-demarc WINEDEBUG=+loaddll wine demo.exe
 ```
 
-Plain wine plays sound on the host (no capture); keep runs short.
+Plain wine plays sound on the host (no capture); keep runs short. For long
+traces run it under headless gamescope instead, through autodlg so the dialog
+is answered as demarc would, with stderr to a file:
+
+```sh
+gamescope --backend headless -w 1920 -h 1080 -- \
+    wine demarc-autodlg.exe --launch demo.exe 2>trace.log
+```
+
+The session size changes the heap layout, so keep it at demarc's.
 demarc's launch path adds things plain wine lacks: autodlg, DLL overrides for
 DLLs shipped beside the exe, `allow_glsl_120_subset_in_110`, the session size,
 override patches. If it works here and not in demarc, the difference is there.
@@ -75,6 +109,32 @@ the core directory's `./gamescope --version` for the real error.
 file name: a test db must be called `demozoo.txt` / `csdb.txt` or its entry is
 not applied. Edit `system/` and rebuild; `~/.cache/demarc/system` is rewritten
 at start. A `wine_dialog_res:pick` field on the db line leaves the dialog up.
+A line copied from `grep -n` starts `306676:` and parses no id. `load_demo(id)`
+takes the first db entry with that id, which can be csdb's. An unknown key or
+a duplicate `[zoo.N]` breaks the whole file silently: grep the log for
+`** Error`, and the "Found override" debug line for what loaded. `-x
+boot=<exe>` does not change which exe starts (check the `launched` line); pass
+a copy of the release without the other exes. A bare `.exe` argument copies
+only that exe, so DLLs beside it are missing: pass the release directory.
+
+**Override patches.** A `patch` offset is the first byte written, not the
+instruction's start (Patter wrote over the opcode). `cmp -l` against a copy
+known to work. A packed DLL can take a plain patch: point the unpacker's final
+jump at a cave in its stub's zero tail that patches the decompressed code
+(te-2rb's `bass.dll`, `zoo.270858`). `wine_dll_overrides` has no wildcards
+(`d3d*=n,b` matches nothing); a native `msvcr100.dll` beside the exe still
+needs `msvcr100=n`. `DXVK_CONFIG` accepts keys DXVK lacks without a word.
+
+## Verifying a fix
+
+Lit pixels and moving frames are not enough: check that `video_level()`'s
+hash keeps changing over a minute, look at every screenshot, and compare the
+shape against the release's screenshot or Pouet's
+(`api.pouet.net/v1/prod/?id=`). A precalc can be black for 60-90 s, a demo may
+wait on its own screen (Point Blank's calibration page wants Space), and a
+moving loading screen with no audio can be a demo that already exited (`ps`).
+Clear shader dump directories between demos; Epsilon's "bad" shaders were the
+previous demo's.
 
 ## Tools
 
@@ -83,10 +143,20 @@ at start. A `wine_dialog_res:pick` field on the db line leaves the dialog up.
 `+d3dx,+d3d9` (grep `stub`), `+ddraw`, `warn+ddraw`. Default hides `warn:`.
 
 **winedbg.** `winedbg --file cmds "Z:\\path\\x.exe"` with `cont`, `info reg`,
-`bt`, `x/Nx` in `cmds`; copy the exe to a space-free path. For a packed exe,
-dump the unpacked code from `/proc/<pid>/mem` while it runs (from
-the script that started gamescope, since ptrace_scope only lets ancestors read) and
-`objdump -b binary --adjust-vma=0x400000`.
+`bt`, `x/Nx` in `cmds`; copy the exe to a space-free path. `attach` to a
+running wow64 process kills it: launch under winedbg and answer the dialog
+with a second `demarc-autodlg.exe` (no `--launch`). A break on a builtin's
+symbol fails but one on its address works (`0x7be60000` + export RVA for i386
+kernel32); breakpoints set before unpacking are overwritten, so break on an
+import called afterwards (`SizeofResource`) and set the rest there. For a
+packed exe, dump the unpacked code from `/proc/<pid>/mem` while it runs (from
+the script that started gamescope, since ptrace_scope only lets ancestors
+read; through demarc's bwrap Yama refuses) and `objdump -b binary
+--adjust-vma=0x400000`. `upx -d` unpacks UPX.
+
+**Debug output.** `+debugstr` shows `OutputDebugStringA` (Notch's loading
+steps). A `+relay` of a live D3D demo writes ~2.6 GB in 40 s, and it slows a
+64k intro so much that its crash never comes; use winedbg there.
 
 **wineserver.** `wineserver -f -p -d1` logs the request stream when `wine`
 exits 0 and nothing ran.
@@ -141,7 +211,12 @@ name kernelbase lacks (Kindercrasher's `OpenFile`): add it to `EXTRA`. A 4k
 frozen at 100% CPU: `perf record -p` shows the hot loop, and a scan of
 `/proc/<pid>/mem` (from gamescope's parent) for its stack frame shows the
 bad locals. A kkrunchy exe can be patched through a cave that patches the
-code once unpacked (Tension, `zoo.269513`).
+code once unpacked (Tension, `zoo.269513`). A call into an unimplemented user32
+stub reported from `RaiseException` is a hash collision with a nearby export
+(Cassini, Eisenerz); a Crinkler import getting odd arguments landed on the
+wrong export (8K Reality): disassemble the call site and map the IAT slots
+before patching the callee. An `opencl`-tagged 4k needs an OpenCL ICD on the
+host (`/etc/OpenCL/vendors`).
 
 **Vulkan hang, GPU idle.** Run the Khronos validation layer before tracing:
 unpack Arch's `vulkan-validation-layers` package anywhere, point its JSON's
@@ -161,7 +236,10 @@ refuse reached the driver through DXVK (Tension, `zoo.269513`).
 **GLSL compile errors (white or black GL intro).** Read Mesa's errors at
 `RUST_LOG=retro=warn`; `MESA_DEBUG=1` shows "program not linked" when
 `glCreateShaderProgramv` hides it. `MESA_SHADER_DUMP_PATH=<dir>` writes each
-shader as `FS_<hash>.glsl`. Fixes: `wine_glsl_version=130` for unversioned
+shader as `FS_<hash>.glsl`. The opengl32 proxy is i386 only, so a `glsl` patch
+does nothing for a 64-bit demo (`file` whatever the launcher starts). Never
+`wine_glsl_version=120`: it also hits glamor's shaders and kills Xwayland.
+`wine_glsl_120_subset` does not cover uniform initializers. Fixes: `wine_glsl_version=130` for unversioned
 shaders using `texture()`/`round()`, or, when forcing every shader breaks
 the demo, a `glsl` patch adding `#version 130` to the failing ones only
 (B - Incubation, `zoo.172`); `wine_glsl_120_subset` (on by default) for
@@ -256,7 +334,10 @@ silent without it (Dose 2, `zoo.8540`). So are GL demos that also import DDRAW t
 Also check `GL_POINT_SMOOTH` (radeonsi draws nothing; zink does) and NV-only
 extensions such as `glLoadProgramNV`. A demo that draws once and then post-processes the back buffer
 every frame expects it to survive the swap: `wine_gl_keep_back` (Bull,
-`zoo.292424`). Black on NVIDIA only, first frame
+`zoo.292424`). A GDI intro black while every `StretchDIBits` succeeds:
+`wine_desktop=true` (Hephaestus, `zoo.358365`). A window created at 0x0 with
+`WS_MAXIMIZE` never reaches the session (Organix, `zoo.51295`; unsolved).
+Black on NVIDIA only, first frame
 drawn: the window's depth is not kept across a swap, and a demo that cleared
 it once fails its depth test (Axxelerate, `zoo.31450`, patched to clear it).
 
@@ -325,7 +406,8 @@ Bomb, `zoo.878`).
 
 **White or washed-out D3D9.** `WINEDEBUG=+d3dx,+d3d9`, grep `stub`. DXVK is the
 prefix default; `wine_dll_overrides=d3d9=b` tries wined3d, which forgives more
-invalid API use.
+invalid API use. Minas' intros show only their background colour under DXVK
+and need it (polystreptikum `zoo.66322`, Black Lines `zoo.58998`).
 
 **BoxedApp-packed exe (`.bxpck` and `.main` sections).** demarc writes the
 virtual files next to the exe and puts back the exe's own imports
@@ -387,6 +469,8 @@ voluntary context switches a second are lock contention: the futex address
 from `/proc/<pid>/task/<tid>/syscall`, looked up in `maps` and `nm ntdll.so`,
 names the lock. `fd_cache_mutex` is ntsync's handle cache: `wine_ntsync=false`
 (Ziphead, `zoo.136314`). Find the pid with `ps -eo pid,comm`, never `pgrep -f`.
+Gaps in demarc's own `retro_run` calls mean a long GPU draw is stalling the
+shared GPU (Hoody, `zoo.277165`).
 
 **Low frame rate in Direct2D scenes.** Count frames with `video_level()` every
 frame; `+d3dcompiler` shows repeated `D3DCompile`s, wine's d2d1 compiling per
@@ -454,7 +538,10 @@ frame, which is the window's client area: a 640x480 window with a frame is
 **Audio.** A crash in wine's winmm thread: check whether the `WAVEHDR` is a
 stack address. winmm `midiOut*` plays through the winmm proxy's DirectMusic synth
 (`gm.dls`), and so does `midiStream*` (Anorgatronikum, `zoo.32482`). Odd ACM
-codecs need installing in the prefix (`docs/WINE.md`).
+codecs need installing in the prefix (`docs/WINE.md`). Skips mid-demo: run
+with `WINEDEBUG=+timestamp,warn+pulse,fixme-all` for
+`pulse_underflow_callback`, and check that the `ntsync` module is loaded.
+After installing rtkit, restart xdg-desktop-portal or demarc is SIGKILLed.
 
 **Exit right after loading, `winegstreamer error: typefind`.** BASS hands
 formats it lacks (FLAC, AAC) to Media Foundation, i.e. host gstreamer. Try
