@@ -7,6 +7,7 @@ meta = { dos4gw = "true" }
 patch = {
   info = "x",
   target = "a.exe",
+  contents = "eA==",
 }
 "#;
 

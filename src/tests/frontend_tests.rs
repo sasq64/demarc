@@ -22,6 +22,7 @@ fn world() -> World {
     world.init_resource::<UiState>();
     world.init_resource::<HideMouse>();
     world.init_resource::<ScreenDetection>();
+    world.init_resource::<crate::demarc_settings::DemarcSettings>();
     world.insert_resource(HeadlessTarget {
         image: Handle::default(),
         size: TARGET,

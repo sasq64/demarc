@@ -228,7 +228,11 @@ impl Theme {
             border: stroke(2.0, rgb(0xff, 0xaa, 0x7c)),
             padding: 16,
             corner_radius: 0,
-            glow: None,
+            glow: Some(Glow {
+                blur: 24,
+                spread: 4,
+                color: Color32::from_rgba_premultiplied(96, 64, 47, 96),
+            }),
             shader: None,
         },
         popup: Panel {
