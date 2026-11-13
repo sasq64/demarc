@@ -243,7 +243,13 @@ fn process_tree(root: u32) -> Vec<u32> {
         e.size = std::mem::size_of::<ProcessEntry32W>() as u32;
         let mut ok = Process32FirstW(snap, &mut e);
         while ok != 0 {
-            parents.push((e.process_id, e.parent_process_id));
+            // wine starts its desktop explorer as a child of the first process
+            // to open a window, and it outlives the demo.
+            let n = e.exe_file.iter().position(|&c| c == 0).unwrap_or(e.exe_file.len());
+            let name = String::from_utf16_lossy(&e.exe_file[..n]);
+            if !name.eq_ignore_ascii_case("explorer.exe") {
+                parents.push((e.process_id, e.parent_process_id));
+            }
             ok = Process32NextW(snap, &mut e);
         }
         CloseHandle(snap);
@@ -923,9 +929,13 @@ fn drive(top: &Ctl, kids: &[Ctl], args: &Args) -> bool {
 /// a dialog — dialogs are the ones carrying push buttons. It is worth waiting
 /// for: a demo typically destroys its setup dialog and creates the real window
 /// a moment later, and some do it more than once while they pick a mode.
-fn wait_and_fill(timeout: f64) {
+fn has_exited(demo: Option<isize>) -> bool {
+    demo.is_some_and(|handle| unsafe { WaitForSingleObject(handle, 0) } == 0)
+}
+
+fn wait_and_fill(timeout: f64, demo: Option<isize>) {
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs_f64(timeout) {
+    while start.elapsed() < Duration::from_secs_f64(timeout) && !has_exited(demo) {
         for top in top_levels() {
             if children(top.hwnd).iter().any(|c| c.kind == Kind::Push) {
                 continue;
@@ -969,7 +979,11 @@ fn main() {
     let mut driven = false;
     // Since when the demo has had a window with no buttons on it.
     let mut plain: Option<Instant> = None;
-    while !args.no_go && !driven && start.elapsed() < Duration::from_secs_f64(args.timeout) {
+    while !args.no_go
+        && !driven
+        && start.elapsed() < Duration::from_secs_f64(args.timeout)
+        && !has_exited(demo)
+    {
         let mut any_plain = false;
         for top in top_levels() {
             let kids = children(top.hwnd);
@@ -1005,7 +1019,7 @@ fn main() {
     }
 
     if !args.list && !args.no_fill {
-        wait_and_fill(args.timeout);
+        wait_and_fill(args.timeout, demo);
     }
 
     if hiding {

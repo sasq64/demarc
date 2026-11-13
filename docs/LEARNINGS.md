@@ -1685,3 +1685,11 @@
   its slowness was newsys's Crinkler depacker unoptimized (fixed with a
   `profile.test` opt-level) and frameconv's GPU tests packed into a few huge
   `#[test]`s that couldn't run in parallel.
+
+- Testing the end of a wine session: `cassini.exe` loops forever and ignores
+  Escape, and a `kill -SEGV` is ignored by wine ("unexpected trap 0"). A
+  tiny `cargo xwin` exe that sleeps and then returns or writes through null
+  is a quick test, but it opens no window, so it missed the real bug: wine
+  starts `explorer.exe /desktop` as a child of the first process to open a
+  window, and autodlg waited for the demo's whole tree, so a demo that quit
+  on Esc never reported `exited`.

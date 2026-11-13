@@ -417,28 +417,24 @@ Working, and verified by eye on captured frames:
   client is linked to it and the hardware sink has nothing on it, verified with `pw-link`
   on a wine session under demarc. A grid gives each session a sink of its own, so only the
   focused view is heard, and neither picks up the desktop's audio or the other's.
+- **End of a demo** — the driver's `!demarc exited`/`failed`, the client's stdout
+  closing, or gamescope going makes the core send `RETRO_ENVIRONMENT_SHUTDOWN`
+  once; demarc then unloads the view (tv mode steps to the next entry).
 - **Two Windows demos at once** — `--grid=2x1 heaven7.exe tracie.exe`
   brings up two compositors, two sandboxes, two wineservers and two demos rendering side
   by side in demarc's grid. See The prefix each session runs in.
 
 Open:
 
-1. **The end of a demo is noticed late.** The core now reads the driver's stream — that is
-   what hides the setup dialog, above — but only acts on the lines that bound it.
-   `!demarc exited` stops the hiding and is otherwise ignored, so what ends a captured
-   session is still demarc's ordinary idle detection: the compositor keeps presenting the
-   same empty frame once the demo is gone, and a frozen, silent view is one the frontend
-   moves on from. Ending the session on that line would make it prompt, and would tell a
-   demo that failed to start from one on a long loading screen.
-2. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
-3. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
+1. **`retro_reset` does nothing.** The honest equivalent is relaunching the client.
+2. **A URL is not a page yet.** `WebSystem` matches on extension, and a URL demarc
    downloads lands in the content-addressed cache under a name that has none. Chrome
    itself is happy with either (`BuildClient` passes an `http` path through unchanged);
    it is the routing that needs teaching.
-4. **Chrome sessions still share one profile directory.** `ProfileDir()` is one path under
+3. **Chrome sessions still share one profile directory.** `ProfileDir()` is one path under
    the save directory, so two pages at once fight over it — the wine half of this is
    solved (see The prefix each session runs in), the Chrome half is not.
-5. **The release has not been run on a machine that did not build it.** See
+4. **The release has not been run on a machine that did not build it.** See
    Distribution — the bundle is built against Ubuntu 24.04's libraries and carries the
    ones a desktop cannot be assumed to have, but nobody has yet unpacked it on a
    different distribution and started a session from it.
