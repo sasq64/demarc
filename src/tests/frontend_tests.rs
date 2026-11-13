@@ -19,6 +19,8 @@ fn world() -> World {
     world.init_resource::<AccumulatedMouseMotion>();
     world.init_resource::<Time>();
     world.init_resource::<Messages<SetHudText>>();
+    world.init_resource::<Messages<crate::ui::ShowFuzzyList>>();
+    world.insert_resource(crate::navigator::Navigator::new());
     world.init_resource::<UiState>();
     world.init_resource::<HideMouse>();
     world.init_resource::<ScreenDetection>();

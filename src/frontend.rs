@@ -523,6 +523,10 @@ pub(crate) fn run_frontend(
     // and mouse on the window that has focus -- see `crate::dj`.
     dj: Option<Res<crate::dj::DjWindow>>,
     demo_settings: Res<crate::demarc_settings::DemarcSettings>,
+    (mut navigator, mut show_list): (
+        ResMut<crate::navigator::Navigator>,
+        MessageWriter<crate::ui::ShowFuzzyList>,
+    ),
 ) {
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let cursor = cursor_pos(window.as_deref().copied());
@@ -596,7 +600,17 @@ pub(crate) fn run_frontend(
             if settings.tv_mode && emu.sink.stops_on_silence() {
                 max_idle = 0;
             }
-            if max_idle > 0 && emu.idle_time > max_idle as f32 {
+            if emu.core.as_ref().is_some_and(|core| core.has_exited()) {
+                info!("Content exited");
+                if settings.tv_mode {
+                    emu.run_next = true;
+                } else {
+                    emu.stop();
+                    if navigator.current_launch.is_some() {
+                        navigator.open(&mut show_list);
+                    }
+                }
+            } else if max_idle > 0 && emu.idle_time > max_idle as f32 {
                 debug!("Idle for {max_idle}, running next");
                 emu.run_next = true;
                 emu.reset_idle(&time);

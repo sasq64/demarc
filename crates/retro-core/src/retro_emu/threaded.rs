@@ -158,6 +158,7 @@ struct RetroUpdate {
     aspect_ratio: f32,
     sample_rate: f64,
     fps: f64,
+    exited: bool,
     frame_diff: f32,
     aggregated_diff: f32,
     /// Share of the worker's time spent not waiting, over the last
@@ -185,6 +186,7 @@ pub struct RetroCoreThreaded {
     aggregated_diff: f32,
     cpu: f32,
     silent: bool,
+    exited: bool,
     frame_width: usize,
     frame_height: usize,
     used_width: usize,
@@ -310,6 +312,7 @@ impl RetroCoreThreaded {
                 aggregated_diff: 0.0,
                 cpu: 0.0,
                 silent: true,
+                exited: false,
                 frame_width: width,
                 frame_height: height,
                 used_width: used.0,
@@ -512,6 +515,7 @@ fn worker_loop(
                 aspect_ratio: core.aspect_ratio(),
                 sample_rate: core.sample_rate(),
                 fps: core.fps(),
+                exited: core.has_exited(),
                 frame_diff,
                 aggregated_diff,
                 cpu,
@@ -632,6 +636,7 @@ impl Backend for RetroCoreThreaded {
             self.aspect_ratio = update.aspect_ratio;
             self.sample_rate = update.sample_rate;
             self.fps = update.fps;
+            self.exited = update.exited;
             true
         } else {
             trace!("Starving");
@@ -671,6 +676,10 @@ impl Backend for RetroCoreThreaded {
 
     fn is_silent(&self) -> bool {
         self.silent
+    }
+
+    fn has_exited(&self) -> bool {
+        self.exited
     }
 
     fn screen_activity(&self) -> f32 {

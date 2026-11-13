@@ -244,6 +244,13 @@ impl Emulator {
         }
     }
 
+    /// Unload the running content, leaving the view empty.
+    pub(crate) fn stop(&mut self) {
+        self.drop_core_async();
+        self.frame_queue.clear();
+        self.state = EmuState::Stopped;
+    }
+
     /// Start the second half of a load. From here on this emulator has no core,
     /// and the job pool holds both the old one — to tear down — and everything
     /// needed to build the new one.

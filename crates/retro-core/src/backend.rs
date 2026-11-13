@@ -163,6 +163,11 @@ pub trait Backend {
         self.is_silent() && !self.screen_changed()
     }
 
+    /// The content has ended for good, e.g. a captured demo that quit.
+    fn has_exited(&self) -> bool {
+        false
+    }
+
     // Value between 0 -> 1 indicating "current" screen activity,
     // an aggregated value of screen diffs.
     fn screen_activity(&self) -> f32 {

@@ -54,13 +54,14 @@ use crate::libretro::{
     RETRO_ENVIRONMENT_SET_MESSAGE_EXT, RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, RETRO_ENVIRONMENT_SET_ROTATION,
     RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, RETRO_ENVIRONMENT_SET_VARIABLES,
-    RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565, RETRO_PIXEL_FORMAT_XRGB8888,
-    RETRO_THROTTLE_FAST_FORWARD, RETRO_THROTTLE_NONE, retro_audio_sample_batch_t,
-    retro_audio_sample_t, retro_disk_control_callback, retro_disk_control_ext_callback,
-    retro_environment_t, retro_frame_time_callback, retro_game_geometry, retro_game_info,
-    retro_input_poll_t, retro_input_state_t, retro_keyboard_callback, retro_log_callback,
-    retro_log_level, retro_pixel_format, retro_system_av_info, retro_system_info, retro_throttle_state,
-    retro_variable, retro_vfs_interface_info, retro_video_refresh_t,
+    RETRO_ENVIRONMENT_SHUTDOWN, RETRO_PIXEL_FORMAT_0RGB1555, RETRO_PIXEL_FORMAT_RGB565,
+    RETRO_PIXEL_FORMAT_XRGB8888, RETRO_THROTTLE_FAST_FORWARD, RETRO_THROTTLE_NONE,
+    retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
+    retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
+    retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
+    retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
+    retro_system_av_info, retro_system_info, retro_throttle_state, retro_variable,
+    retro_vfs_interface_info, retro_video_refresh_t,
 };
 use crate::pixels::{RGB565_LUT, RGB1555_LUT, convert_16bpp, convert_xrgb8888};
 
@@ -114,6 +115,8 @@ pub struct RetroState {
     pub used_height: usize,
     /// Audio sample rate reported by the core, in Hz (0.0 if unknown).
     pub sample_rate: f64,
+    /// The core asked to be shut down (`RETRO_ENVIRONMENT_SHUTDOWN`).
+    pub shutdown: bool,
     pixel_format: c_int,
     fps: f64,
     keys: Vec<u8>,
@@ -654,6 +657,10 @@ impl RetroCoreDirect {
                     // TODO: Return unsafe pointer to frame?
                 }
                 RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL => {}
+                RETRO_ENVIRONMENT_SHUTDOWN => {
+                    info!("Core asked to shut down");
+                    self.state.shutdown = true;
+                }
                 // Accepted but not applied; Holani panics if this fails.
                 RETRO_ENVIRONMENT_SET_ROTATION => {}
                 RETRO_ENVIRONMENT_GET_THROTTLE_STATE => {
@@ -921,6 +928,10 @@ impl RetroCoreDirect {
         self.state.sample_rate
     }
 
+    pub fn has_exited(&self) -> bool {
+        self.state.shutdown
+    }
+
     pub(crate) fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         if self.state.keys.len() <= code as usize {
             self.state.keys.resize(code as usize + 1, 0);
@@ -1052,6 +1063,9 @@ impl Backend for RetroCoreDirect {
     }
     fn sample_rate(&self) -> f64 {
         RetroCoreDirect::sample_rate(self)
+    }
+    fn has_exited(&self) -> bool {
+        RetroCoreDirect::has_exited(self)
     }
     fn fps(&self) -> f64 {
         RetroCoreDirect::fps(self)

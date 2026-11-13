@@ -161,6 +161,7 @@ J = Toggle Joystick/keyboard
 Z = Shader Settings
 X = Runtime Settings
 H = Add to playlist
+ESC = Stop current emulator
 SHIFT+O = Fade in from DJ window
 
 For grid:

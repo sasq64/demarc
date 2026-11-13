@@ -73,6 +73,7 @@ pub enum Cmd {
     ScrollLeft,
     ScrollRight,
     NextSubtitle,
+    StopEmu,
 }
 
 impl Cmd {
@@ -121,6 +122,7 @@ impl Cmd {
         Cmd::ScrollLeft,
         Cmd::ScrollRight,
         Cmd::NextSubtitle,
+        Cmd::StopEmu,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -173,6 +175,7 @@ impl Cmd {
             Cmd::ScrollLeft => "Scroll left",
             Cmd::ScrollRight => "Scroll right",
             Cmd::NextSubtitle => "Next subtitle track",
+            Cmd::StopEmu => "Stop current emulator",
         }
     }
 
@@ -227,6 +230,7 @@ impl KeyMapping {
     fn glyph(&self) -> char {
         match self.key {
             KeyCode::Tab => '\u{f0312}',
+            KeyCode::Escape => '\u{f12b7}',
             KeyCode::Enter => '\u{f0311}',
             KeyCode::Space => '\u{f1050}',
             KeyCode::ArrowLeft => '←',
@@ -281,6 +285,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::shifted(KeyCode::Tab, Cmd::PrevEmu),
     KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll),
     KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
+    KeyMapping::new(KeyCode::Escape, Cmd::StopEmu),
 ];
 
 /// Keys for the music, video and image views, used without the hot key.
@@ -905,6 +910,12 @@ pub(crate) fn handle_cmd(
                         });
                     }
                     Cmd::Reload => reload(&mut emu, &mut settings, &mut navigator),
+                    Cmd::StopEmu => {
+                        emu.stop();
+                        if navigator.current_launch.is_some() {
+                            navigator.open(&mut show_list);
+                        }
+                    }
                     c if let Some(media) = c.media() => {
                         if let Some(core) = emu.core.as_mut() {
                             core.media(media);
