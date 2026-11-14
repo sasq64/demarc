@@ -1,5 +1,31 @@
 # Learnings
 
+- Android's Back never reached minimarc: with `targetSdk` 36 the system
+  finishes the activity itself unless the manifest sets
+  `android:enableOnBackInvokedCallback="false"`. Once it does arrive, winit
+  gives it a logical key only (`NamedKey::BrowserBack`); the physical key is
+  `Unidentified`, so matching `KeyCode::BrowserBack` does nothing.
+
+- `AndroidApp::set_window_flags` called from minimarc's event loop once a demo
+  had started froze the app (ANR on the next touch) and the flag never showed
+  in `dumpsys window`. Called in `android_main` before the event loop exists it
+  works, so `KEEP_SCREEN_ON` is set for the whole run instead of per demo.
+
+- Gradle gunzips a `.gz` file in `assets/` and packages it without the suffix,
+  so `csdb.txt.gz` was in the APK as `csdb.txt` and the lookup by the original
+  name failed. Check `unzip -l` on the APK before trusting an asset name.
+
+- `egui-wgpu` 0.36 is built against wgpu 30, not the 29 that Bevy 0.19 and
+  `bevy_egui` 0.42 use with the same egui. A crate that wants egui on bare
+  wgpu has to name wgpu 30 itself (`crates/minimarc`).
+
+- egui's `TexturesDelta` panics when dropped with deltas in it, so a render
+  path that returns early on an unavailable surface has to apply the texture
+  updates first.
+
+- `sevenz-rust2` also builds as a cdylib, and `cargo ndk -o` copies every
+  cdylib it sees into `jniLibs`; `run-android.sh` deletes it again.
+
 - `--headless` used to skip `update_ui`, a leftover from when it needed the
   primary window, so the HUD and picker never drew there. The UI camera already
   rendered into the headless image; all it took was dropping the `run_if` and

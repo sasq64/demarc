@@ -1,14 +1,12 @@
-//! `minimarc` — a minimal C64 player: one 720x576 window, the VICE libretro core,
-//! and the lottes CRT shader on top.
-//!
-//! No Bevy, no librashader, no CLI: winit, wgpu and cpal only, which is the
-//! stack an Android port needs — see `docs/ANDROID.md`.
+//! The window: the VICE libretro core through the lottes CRT shader, with the
+//! picker drawn over it.
 
 #![allow(dead_code)]
 
-use crate::libretro;
+use retro_core::libretro;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,12 +19,16 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, KeyEvent, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use crate::backend::frame_bytes;
-use crate::retro_emu::RetroCoreDirect;
-use crate::{dylib_name, find_core, system_dir};
+use retro_core::backend::frame_bytes;
+use retro_core::retro_emu::RetroCoreDirect;
+use retro_core::{dylib_name, find_core, system_dir};
+
+use crate::load::{Loaded, Loader};
+use crate::ui::{Action, Ui};
+use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
 const WINDOW_SIZE: (u32, u32) = (720, 576);
@@ -34,6 +36,8 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 /// How far a finger has to travel, in physical pixels, before it is a swipe,
 /// and how long it may take to get there.
 const SWIPE_DIST: f64 = 80.0;
+/// Phone text is read at arm's length on a small screen.
+const UI_ZOOM: f32 = if cfg!(target_os = "android") { 2.0 } else { 1.0 };
 const SWIPE_TIME: Duration = Duration::from_millis(500);
 
 // -------------------------------------------------------------------------
@@ -264,10 +268,14 @@ struct Gfx {
     bind_group: wgpu::BindGroup,
     /// Display aspect the frame is presented at.
     aspect: f32,
+    /// Whether `texture` holds a frame of the core that is running.
+    has_frame: bool,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>) -> Result<Self> {
+    fn new(window: Arc<Window>, ctx: &egui::Context) -> Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_without_display_handle_from_env()
@@ -278,6 +286,7 @@ impl Gfx {
             power_preference: wgpu::PowerPreference::default(),
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -303,6 +312,7 @@ impl Gfx {
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
+            color_space: Default::default(),
         };
         surface.configure(&device, &config);
 
@@ -389,6 +399,16 @@ impl Gfx {
         let texture = create_frame_texture(&device, 1, 1);
         let bind_group = create_bind_group(&device, &bind_layout, &texture, &sampler, &uniform);
 
+        let egui_state = egui_winit::State::new(
+            ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            Some(device.limits().max_texture_dimension_2d as usize),
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(&device, format, Default::default());
+
         Ok(Self {
             window,
             surface,
@@ -402,6 +422,9 @@ impl Gfx {
             texture,
             bind_group,
             aspect: 0.0,
+            has_frame: false,
+            egui_state,
+            egui_renderer,
         })
     }
 
@@ -412,6 +435,7 @@ impl Gfx {
     }
 
     fn upload(&mut self, width: u32, height: u32, pixels: &[u32]) {
+        self.has_frame = true;
         if self.texture.width() != width || self.texture.height() != height {
             self.texture = create_frame_texture(&self.device, width, height);
             self.bind_group = create_bind_group(
@@ -438,7 +462,47 @@ impl Gfx {
         );
     }
 
-    fn render(&mut self) {
+    /// Run one egui frame over `ui`, and return what it wants drawn along with
+    /// the entry the user picked.
+    fn run_ui(&mut self, ui: &mut Ui) -> (UiFrame, Option<Action>) {
+        let scale = self.window.scale_factor() as f32;
+        retro_ui::set_scale(&ui.ctx, self.config.height as f32 / scale, scale, UI_ZOOM);
+        let input = self.egui_state.take_egui_input(&self.window);
+        let ctx = ui.ctx.clone();
+        let mut picked = None;
+        let mut output = ctx.run_ui(input, |egui_ui| picked = ui.draw(egui_ui.ctx()));
+        // The soft keyboard covers the picker's buttons.
+        if cfg!(target_os = "android") && !ui.soft_keyboard {
+            output.platform_output.ime = None;
+        }
+        self.egui_state
+            .handle_platform_output(&self.window, output.platform_output);
+        let frame = UiFrame {
+            jobs: ctx.tessellate(output.shapes, output.pixels_per_point),
+            textures: output.textures_delta,
+            pixels_per_point: output.pixels_per_point,
+        };
+        (frame, picked)
+    }
+
+    fn render(&mut self, mut ui: UiFrame) {
+        // Before anything that can bail out: egui panics over a delta that is
+        // dropped unapplied, and a skipped frame's textures are still current.
+        for (id, deltas) in &ui.textures.set {
+            for delta in deltas {
+                self.egui_renderer
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
+        let free = std::mem::take(&mut ui.textures.free);
+        ui.textures.clear();
+        self.draw(&ui);
+        for id in &free {
+            self.egui_renderer.free_texture(id);
+        }
+    }
+
+    fn draw(&mut self, ui: &UiFrame) {
         use wgpu::CurrentSurfaceTexture as Acquired;
         let frame = match self.surface.get_current_texture() {
             Acquired::Success(frame) | Acquired::Suboptimal(frame) => frame,
@@ -450,6 +514,17 @@ impl Gfx {
         };
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: ui.pixels_per_point,
+        };
+        let extra = self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &ui.jobs,
+            &screen,
+        );
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("lottes"),
@@ -467,16 +542,47 @@ impl Gfx {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let win = (self.config.width as f32, self.config.height as f32);
-            let (x, y, w, h) = fit_rect(win, self.aspect);
-            pass.set_viewport(x, y, w, h, 0.0, 1.0);
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            if self.has_frame {
+                let win = (self.config.width as f32, self.config.height as f32);
+                let (x, y, w, h) = fit_rect(win, self.aspect);
+                pass.set_viewport(x, y, w, h, 0.0, 1.0);
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
-        self.queue.submit([encoder.finish()]);
-        frame.present();
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("ui"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
+            self.egui_renderer.render(&mut pass, &ui.jobs, &screen);
+        }
+        self.queue
+            .submit(extra.into_iter().chain([encoder.finish()]));
+        self.queue.present(frame);
     }
+}
+
+/// What one egui frame left to draw.
+struct UiFrame {
+    jobs: Vec<egui::ClippedPrimitive>,
+    textures: egui::TexturesDelta,
+    pixels_per_point: f32,
 }
 
 fn create_frame_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
@@ -650,8 +756,19 @@ fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
 // App
 // -------------------------------------------------------------------------
 
+/// How long a scheduled startup key is held, in frames.
+const KEY_HOLD: u32 = 2;
+
 pub struct App {
-    core: RetroCoreDirect,
+    core: Option<RetroCoreDirect>,
+    /// The release `core` is running, kept for the temp dir it may sit in.
+    work: Option<WorkFile>,
+    /// Keys to press once `core` has run that many frames.
+    startup_keys: Vec<(u32, libretro::retro_key, bool)>,
+    core_frames: u32,
+    disk_no: u32,
+    ui: Ui,
+    loader: Loader,
     gfx: Option<Gfx>,
     audio: Option<Audio>,
     alt: bool,
@@ -665,15 +782,27 @@ pub struct App {
     /// Every finger currently down, so a second one can veto the swipe.
     touches: Vec<u64>,
     swipe: Option<Swipe>,
+    /// The finger that went down on the open picker, and where.
+    nav_swipe: Option<(u64, (f64, f64))>,
     frame_time: Duration,
     next_frame: Instant,
 }
 
 impl App {
-    pub fn new(core: RetroCoreDirect) -> Self {
-        let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
+    /// An app browsing the database at `db`.
+    pub fn new(db: PathBuf) -> Self {
+        let mut ui = Ui::new();
+        ui.status("Loading database...");
+        let loader = Loader::new();
+        loader.load_db(db);
         Self {
-            core,
+            core: None,
+            work: None,
+            startup_keys: Vec::new(),
+            core_frames: 0,
+            disk_no: 0,
+            ui,
+            loader,
             gfx: None,
             audio: None,
             alt: false,
@@ -683,9 +812,77 @@ impl App {
             shift_pending: None,
             touches: Vec::new(),
             swipe: None,
-            frame_time: Duration::from_secs_f64(1.0 / fps),
+            nav_swipe: None,
+            frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
         }
+    }
+
+    fn press(&mut self, key: libretro::retro_key, down: bool, mods: u16) {
+        if let Some(core) = self.core.as_mut() {
+            core.press_key(key, down, mods);
+        }
+    }
+
+    /// Act on what the loader threads have finished.
+    fn poll_loader(&mut self) {
+        while let Some(loaded) = self.loader.poll() {
+            let result = match loaded {
+                Loaded::Db(db) => db.and_then(|(name, files)| self.ui.set_db(name, files)),
+                Loaded::Demo(_, work) => work.and_then(|work| self.start(work)),
+            };
+            if let Err(e) = result {
+                tracing::error!("{e:#}");
+                self.ui.error(&format!("{e:#}"));
+                self.ui.open();
+            }
+        }
+    }
+
+    /// Replace the running core with one booting `work`.
+    fn start(&mut self, work: WorkFile) -> Result<()> {
+        self.cancel_touch();
+        self.pressed.clear();
+        self.shift_pending = None;
+        // One core at a time: Android loads it in place, so the old instance
+        // has to be gone before the new one starts.
+        self.core = None;
+        self.work = None;
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.has_frame = false;
+        }
+        let core = load_core(Some(&work.path), work.get_all_meta())?;
+        let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
+        self.frame_time = Duration::from_secs_f64(1.0 / fps);
+        self.startup_keys.clear();
+        if work.has_meta("vice_cartridge") {
+            for (frame, event) in release_io::c64::FAST_LOAD_EVENTS {
+                if let retro_core::backend::InputEvent::Key(key) = event {
+                    self.startup_keys.push((frame, key, true));
+                    self.startup_keys.push((frame + KEY_HOLD, key, false));
+                }
+            }
+        }
+        self.core_frames = 0;
+        self.disk_no = 0;
+        self.core = Some(core);
+        self.work = Some(work);
+        self.ui.status("");
+        Ok(())
+    }
+
+    fn flip_disk(&mut self) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        let disks = core.get_number_of_disks();
+        if disks > 0 {
+            self.disk_no = (self.disk_no + 1) % disks;
+            core.set_disk(self.disk_no);
+        }
+        self.ui.close();
+        self.ui
+            .note(&format!("Disk {}/{}", self.disk_no + 1, disks));
     }
 
     fn mods(&self) -> u16 {
@@ -747,7 +944,9 @@ impl App {
             KeyCode::ShiftLeft => self.shift = down,
             KeyCode::ShiftRight => self.ctrl = down,
             KeyCode::Backspace if down && self.alt && self.shift => {
-                self.core.reset();
+                if let Some(core) = self.core.as_mut() {
+                    core.reset();
+                }
                 return;
             }
             _ => {}
@@ -765,10 +964,10 @@ impl App {
                 if self.shift_pending.is_some_and(|(c, _)| c == code) {
                     self.shift_pending = None;
                 } else {
-                    self.core.press_key(key, false, mods);
+                    self.press(key, false, mods);
                 }
                 if shifted {
-                    self.core.press_key(libretro::RETROK_LSHIFT, false, mods);
+                    self.press(libretro::RETROK_LSHIFT, false, mods);
                 }
             }
         } else if !self.pressed.contains_key(&code)
@@ -777,10 +976,10 @@ impl App {
             self.pressed.insert(code, (key, shifted));
             let mods = self.mods_with_shift(shifted);
             if shifted {
-                self.core.press_key(libretro::RETROK_LSHIFT, true, mods);
+                self.press(libretro::RETROK_LSHIFT, true, mods);
                 self.shift_pending = Some((code, key));
             } else {
-                self.core.press_key(key, true, mods);
+                self.press(key, true, mods);
             }
         }
     }
@@ -814,7 +1013,7 @@ impl App {
                 }
                 let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
                 if let Some(key) = swipe_key(dx, dy) {
-                    self.core.press_key(key, true, self.mods());
+                    self.press(key, true, self.mods());
                     if let Some(swipe) = self.swipe.as_mut() {
                         swipe.key = Some(key);
                     }
@@ -822,8 +1021,33 @@ impl App {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&id| id != t.id);
-                if self.swipe.as_ref().is_some_and(|s| s.id == t.id) {
+                if let Some(swipe) = self.swipe.as_ref().filter(|s| s.id == t.id) {
+                    let tap = swipe.key.is_none() && swipe.began.elapsed() < SWIPE_TIME;
                     self.release_swipe();
+                    if tap && t.phase == TouchPhase::Ended {
+                        self.ui.open();
+                    }
+                }
+            }
+        }
+    }
+
+    /// A sideways swipe over the picker is Left or Right.
+    fn nav_touch(&mut self, t: &Touch) {
+        match t.phase {
+            TouchPhase::Started => self.nav_swipe = Some((t.id, (t.location.x, t.location.y))),
+            TouchPhase::Moved => {}
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                let Some((id, start)) = self.nav_swipe.take() else {
+                    return;
+                };
+                if id != t.id || t.phase == TouchPhase::Cancelled {
+                    return;
+                }
+                match swipe_key(t.location.x - start.0, t.location.y - start.1) {
+                    Some(libretro::RETROK_LEFT) => self.ui.back(),
+                    Some(libretro::RETROK_RIGHT) => self.ui.forward(),
+                    _ => {}
                 }
             }
         }
@@ -836,7 +1060,7 @@ impl App {
 
     fn release_swipe(&mut self) {
         if let Some(key) = self.swipe.take().and_then(|s| s.key) {
-            self.core.press_key(key, false, self.mods());
+            self.press(key, false, self.mods());
         }
     }
 
@@ -846,31 +1070,115 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        self.core.run();
+        self.poll_loader();
+        if let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
+        }
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        core.run();
+        self.core_frames += 1;
+        let frames = self.core_frames;
+        self.startup_keys.retain(|&(frame, key, down)| {
+            if frame <= frames {
+                core.press_key(key, down, 0);
+            }
+            frame > frames
+        });
         // After the run, so the shift gets a frame of its own first.
         if let Some((_, key)) = self.shift_pending.take() {
-            self.core.press_key(key, true, self.mods_with_shift(true));
+            let mods = self.mods_with_shift(true);
+            if let Some(core) = self.core.as_mut() {
+                core.press_key(key, true, mods);
+            }
         }
+        let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
+            return;
+        };
         // Taken either way: dropping them is better than letting the core's
         // buffer grow without bound.
-        let rate = self.core.sample_rate();
+        let rate = core.sample_rate();
         let audio = self.audio.as_mut();
-        self.core.with_audio(|samples| {
+        core.with_audio(|samples| {
             if let Some(audio) = audio {
                 audio.push(rate, samples);
             }
         });
-        let Some(gfx) = self.gfx.as_mut() else {
-            return;
-        };
-        gfx.aspect = self.core.aspect_ratio();
-        let (width, height) = self.core.get_frame_size();
+        gfx.aspect = core.aspect_ratio();
+        let (width, height) = core.get_frame_size();
         if width == 0 || height == 0 {
             return;
         }
-        self.core
-            .with_frame(|w, h, pixels| gfx.upload(w as u32, h as u32, pixels));
-        gfx.window.request_redraw();
+        core.with_frame(|w, h, pixels| gfx.upload(w as u32, h as u32, pixels));
+    }
+
+    /// Whether `event` was for the picker rather than the emulator.
+    fn ui_event(&mut self, event: &WindowEvent) -> bool {
+        if let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key,
+                    logical_key,
+                    state,
+                    repeat,
+                    ..
+                },
+            ..
+        } = event
+        {
+            let down = *state == ElementState::Pressed;
+            // Android's Back has a logical key only.
+            let toggle = *logical_key == Key::Named(NamedKey::BrowserBack)
+                || *physical_key == PhysicalKey::Code(KeyCode::Escape);
+            match physical_key {
+                _ if toggle => {
+                    if down && !repeat {
+                        if !self.ui.is_open() {
+                            self.cancel_touch();
+                            self.ui.open();
+                        } else if self.core.is_some() {
+                            self.ui.close();
+                        }
+                    }
+                    return true;
+                }
+                PhysicalKey::Code(KeyCode::ArrowLeft) if self.ui.is_open() => {
+                    if down {
+                        self.ui.back();
+                    }
+                    return true;
+                }
+                PhysicalKey::Code(KeyCode::ArrowRight) if self.ui.is_open() => {
+                    if down {
+                        self.ui.forward();
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        if !self.ui.is_open() {
+            return false;
+        }
+        if let WindowEvent::Touch(t) = event {
+            self.nav_touch(t);
+        }
+        let input = matches!(
+            event,
+            WindowEvent::KeyboardInput { .. }
+                | WindowEvent::Touch(_)
+                | WindowEvent::CursorMoved { .. }
+                | WindowEvent::CursorLeft { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. }
+                | WindowEvent::ModifiersChanged(_)
+                | WindowEvent::Ime(_)
+        );
+        if let Some(gfx) = self.gfx.as_mut() {
+            let _ = gfx.egui_state.on_window_event(&gfx.window, event);
+        }
+        input
     }
 }
 
@@ -882,7 +1190,7 @@ impl ApplicationHandler for App {
         match event_loop
             .create_window(attrs)
             .map_err(anyhow::Error::from)
-            .and_then(|window| Gfx::new(Arc::new(window)))
+            .and_then(|window| Gfx::new(Arc::new(window), &self.ui.ctx))
         {
             Ok(gfx) => {
                 self.gfx = Some(gfx);
@@ -906,6 +1214,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.ui_event(&event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -927,7 +1238,16 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.render();
+                    let (frame, picked) = gfx.run_ui(&mut self.ui);
+                    gfx.render(frame);
+                    match picked {
+                        Some(Action::Play(file)) => {
+                            self.ui.status("Loading...");
+                            self.loader.load_demo(file);
+                        }
+                        Some(Action::FlipDisk) => self.flip_disk(),
+                        None => {}
+                    }
                 }
             }
             _ => {}
@@ -945,7 +1265,7 @@ impl ApplicationHandler for App {
     }
 }
 
-pub fn load_core(
+fn load_core(
     game: Option<&std::path::Path>,
     settings: HashMap<String, String>,
 ) -> Result<RetroCoreDirect> {
@@ -967,14 +1287,17 @@ pub fn load_core(
 // Android entry point
 // -------------------------------------------------------------------------
 
-/// Media packaged in the APK (`android/app/src/main/assets/`), and where each
+/// Files packaged in the APK (`android/app/src/main/assets/`), and where each
 /// one is unpacked under the app's data directory. A core cannot read out of
 /// the APK, and VICE looks for cartridge images in `<system dir>/vice/<machine>`.
 #[cfg(target_os = "android")]
 const ASSETS: [(&str, &str); 2] = [
-    ("tar_v2_pal.crt", "vice/C64/tar_v2_pal.crt"),
-    ("disk.d64", "disk.d64"),
+    ("rr38ppal-auto.crt", "vice/C64/rr38ppal-auto.crt"),
+    (DB_ASSET, DB_ASSET),
 ];
+
+#[cfg(target_os = "android")]
+const DB_ASSET: &str = "csdb.txt";
 
 /// Unconditionally, so a rebuilt APK replaces whatever the last one left behind.
 #[cfg(target_os = "android")]
@@ -1009,30 +1332,40 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
     use winit::event_loop::EventLoop;
     use winit::platform::android::EventLoopBuilderExtAndroid;
 
-    crate::android::init_logging();
+    retro_core::android::init_logging();
+    // A dimmed screen throttles the CPU, and the demo with it.
+    {
+        use winit::platform::android::activity::WindowManagerFlags;
+        app.set_window_flags(
+            WindowManagerFlags::KEEP_SCREEN_ON,
+            WindowManagerFlags::empty(),
+        );
+    }
 
     let run = || -> Result<()> {
-        // The app's private data directory is the only writable place, and is
-        // what the core gets as its system and save directory.
+        // The app's private data directory is the only writable place: the
+        // core's system dir, the download cache and every temp dir go there.
         let data = app
             .internal_data_path()
             .ok_or_else(|| anyhow!("no internal data path"))?;
-        crate::set_system_dir(data.clone());
+        let tmp = data.join("tmp");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp)?;
+        // SAFETY: nothing else in the process reads the environment this early.
+        unsafe { std::env::set_var("TMPDIR", &tmp) };
+        release_io::set_cache_dir(data.join("cache"));
+        retro_core::set_system_dir(data.clone());
         unpack_assets(&app, &data)?;
 
-        let settings = HashMap::from([
-            ("vice_cartridge".to_string(), "tar_v2_pal.crt".to_string()),
-            // The cartridge's boot menu is what we want to come up; autostarting
-            // the disk would run straight past it.
-            ("vice_autostart".to_string(), "disabled".to_string()),
-        ]);
-        let core = load_core(Some(&data.join("disk.d64")), settings)?;
-
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
-        event_loop.run_app(&mut App::new(core))?;
+        event_loop.run_app(&mut App::new(data.join(DB_ASSET)))?;
         Ok(())
     };
     if let Err(e) = run() {
         tracing::error!("{e:#}");
     }
 }
+
+#[cfg(test)]
+#[path = "tests/player_tests.rs"]
+mod tests;

@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/newsys", "crates/retro-core", "crates/retro-ui", "crates/retroarc", "crates/rife"]
+members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/minimarc", "crates/navigator", "crates/newsys", "crates/release-io", "crates/retro-core", "crates/retro-ui", "crates/retroarc", "crates/rife"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -103,6 +103,7 @@ flash-emu = { path = "crates/flash-emu", optional = true }
 frameconv = { path = "crates/frameconv" }
 libloading.workspace = true
 # Unpacking a release, working out which machine it is, and getting it booted.
+navigator = { path = "crates/navigator" }
 newsys = { path = "crates/newsys" }
 rand = "0.10.1"
 # The libretro layer, split out so it can be built for targets the rest of

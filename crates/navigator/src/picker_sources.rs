@@ -1,7 +1,7 @@
 //! The [`FuzzySource`]s behind the file and download pickers.
 
-use crate::emu_file::{EmuFile, FileSource, UrlList};
-use crate::fuzzy_list::{FuzzySource, IndexedSource, ListIcon};
+use database::emu_file::{EmuFile, FileSource, UrlList};
+use retro_ui::fuzzy_list::{FuzzySource, IndexedSource, ListIcon};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconMode {
@@ -29,11 +29,7 @@ pub struct PickerSource {
 }
 
 impl PickerSource {
-    pub(crate) fn new(
-        files: &'static [EmuFile],
-        subset: Option<Vec<u32>>,
-        icon_mode: IconMode,
-    ) -> Self {
+    pub fn new(files: &'static [EmuFile], subset: Option<Vec<u32>>, icon_mode: IconMode) -> Self {
         let names: Vec<String> = match &subset {
             Some(subset) => subset
                 .iter()

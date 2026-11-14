@@ -60,7 +60,7 @@ fn parses_an_override_per_release() {
     assert_eq!(inside.patches[0].target, "SOUND.CFG");
     assert_eq!(inside.patches[0].info, "GUS 0x240");
     assert_eq!(inside.patches[0].offset, None);
-    assert_eq!(inside.patches[0].bytes().unwrap(), [0, 1, 2]);
+    assert_eq!(inside.patches[0].bytes(system_dir()).unwrap(), [0, 1, 2]);
 }
 
 /// `assign` is written as a table of AmigaDOS names, and arrives as the one
@@ -173,7 +173,7 @@ fn patch_from_system_dir_source() {
     );
     let patch = &overrides[&zoo(1)].patches[0];
     assert_eq!(patch.source, Some("overrides.toml"));
-    assert!(!patch.bytes().unwrap().is_empty());
+    assert!(!patch.bytes(system_dir()).unwrap().is_empty());
 }
 
 /// `events` keys go through the resolver, and an unknown one is an error.
@@ -254,7 +254,9 @@ fn parses_a_bsdiff_patch() {
     assert!(patch.bsdiff);
     assert_eq!(patch.target, "demo.dat");
     // Wrapped over several lines in the file, and still the delta it was.
-    assert!(patch.data.contains('\n') && patch.bytes().unwrap().starts_with(b"BSDIFF40"));
+    assert!(
+        patch.data.contains('\n') && patch.bytes(system_dir()).unwrap().starts_with(b"BSDIFF40")
+    );
 
     // Not a delta at all, an unknown format, and an offset that means nothing
     // for a delta — each one is an error.

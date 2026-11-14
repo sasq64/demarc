@@ -44,6 +44,8 @@ const QUERY_SIZE: f32 = 32.0;
 const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
 /// Fraction of the screen height the list box is allowed to take up.
 const LIST_HEIGHT_FRACTION: f32 = 0.6;
+/// Height of everything in the picker but the list: title, query and info.
+const CHROME_HEIGHT: f32 = 360.0;
 /// Side of the square icon column at the left of every row, and the gap between
 /// it and the row's text. Fixed, so rows line up whether they have an icon or not.
 const ICON_SIZE: f32 = ROW_SIZE;
@@ -53,10 +55,13 @@ const TITLE_SIZE: f32 = 30.0;
 /// Extra room under the title, so a panel glow doesn't run into it.
 const TITLE_GAP: f32 = 12.0;
 
+const BUTTON_SIZE: f32 = 26.0;
+const BUTTON_HEIGHT: f32 = BUTTON_SIZE * 2.0;
+
 const INFO_SIZE: f32 = 22.0;
-/// How many lines of info the field below the list reserves room for. Fixed, so
-/// the centred layout doesn't jump as the selection moves between items whose
-/// info differs in length.
+/// How many lines of info the field below the list reserves room for by
+/// default. Fixed, so the centred layout doesn't jump as the selection moves
+/// between items whose info differs in length.
 const INFO_LINES: f32 = 5.0;
 /// How long the selected row's highlight takes to fade away once the selection has
 /// left a row, so a row the user passed over dims out instead of blinking off.
@@ -225,6 +230,13 @@ pub struct Picker<T> {
     /// Built rows by item id, for the current `list_source`.
     rows: HashMap<usize, Row>,
     edit_id: egui::Id,
+    /// Labels of the buttons drawn under the info box.
+    pub buttons: Vec<String>,
+    pub info_lines: f32,
+    pub right_icons: bool,
+    button_click: Option<usize>,
+    pick_requested: bool,
+    query_clicked: bool,
 }
 
 impl<T> Default for Picker<T> {
@@ -249,6 +261,12 @@ impl<T> Default for Picker<T> {
             list_source: None,
             rows: HashMap::new(),
             edit_id: egui::Id::new("edit_id"),
+            buttons: Vec::new(),
+            info_lines: INFO_LINES,
+            right_icons: true,
+            button_click: None,
+            pick_requested: false,
+            query_clicked: false,
         }
     }
 }
@@ -273,6 +291,31 @@ impl<T: 'static> Picker<T> {
 
     pub fn take_title_click(&mut self) -> Option<TitleClick> {
         self.title_click.take()
+    }
+
+    /// Index into `buttons` of the one clicked.
+    pub fn take_button_click(&mut self) -> Option<usize> {
+        self.button_click.take()
+    }
+
+    /// Whether the search box was clicked since the last call.
+    pub fn take_query_click(&mut self) -> bool {
+        std::mem::take(&mut self.query_clicked)
+    }
+
+    /// Picks the highlighted row on the next [`Picker::show`], as Enter does.
+    pub fn pick_selected(&mut self) {
+        self.pick_requested = true;
+    }
+
+    /// What the buttons and a non-default info box add to [`CHROME_HEIGHT`].
+    fn extra_chrome(&self) -> f32 {
+        let toolbar = if self.buttons.is_empty() {
+            0.0
+        } else {
+            BUTTON_HEIGHT + PANEL_GAP
+        };
+        toolbar + (self.info_lines - INFO_LINES) * INFO_SIZE * 1.3
     }
 
     /// Opens the list over `source`. Re-opening the same `id` restores the
@@ -411,12 +454,14 @@ impl<T: 'static> Picker<T> {
             let close = take_key(i, egui::Key::Escape) > 0;
             (rows, pages, pick, close, i.modifiers.shift)
         });
+        let pick = pick || std::mem::take(&mut self.pick_requested);
         let alt = pick && shift;
         if close {
             self.show_list = false;
             return None;
         }
-        let delta = row_steps + page_steps * visible_rows(ctx) as i64;
+        let extra = self.extra_chrome();
+        let delta = row_steps + page_steps * visible_rows(ctx, extra) as i64;
         let selected = if len == 0 {
             0
         } else {
@@ -460,6 +505,15 @@ impl<T: 'static> Picker<T> {
 
                 let (index, title) = &self.list_title;
                 if !title.is_empty() {
+                    // Clipped to the picker's width, showing the right end.
+                    egui::ScrollArea::horizontal()
+                        .id_salt("title")
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                        )
+                        .scroll_source(egui::scroll_area::ScrollSource::NONE)
+                        .stick_to_right(true)
+                        .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.add_space(10.0);
                         for (i, part) in title.iter().enumerate() {
@@ -488,6 +542,7 @@ impl<T: 'static> Picker<T> {
                             }
                         }
                     });
+                        });
                     ui.add_space(TITLE_GAP);
                 }
                 theme.panel.show(ui, |ui| {
@@ -507,6 +562,7 @@ impl<T: 'static> Picker<T> {
                             .font(picker_font(ctx, QUERY_SIZE))
                             .text_color(theme.picker.text),
                     );
+                    self.query_clicked |= response.clicked();
                     if !response.has_focus() {
                         response.request_focus();
                     }
@@ -520,6 +576,7 @@ impl<T: 'static> Picker<T> {
                     self.list_scroll,
                     follow,
                     &self.list_items,
+                    extra,
                     |ui, rect, &id| {
                         let row = self.rows.entry(id).or_insert_with(|| {
                             let mut job = egui::text::LayoutJob::default();
@@ -532,9 +589,13 @@ impl<T: 'static> Picker<T> {
                                 ),
                             );
                             let images = render(&mut job, source.as_ref(), id);
+                            let mut icons = source.get_icon(id);
+                            if !self.right_icons {
+                                icons.1 = None;
+                            }
                             Row {
                                 job,
-                                icons: source.get_icon(id),
+                                icons,
                                 images,
                             }
                         });
@@ -545,7 +606,7 @@ impl<T: 'static> Picker<T> {
                 let clicked = scrolled.inner;
 
                 theme.panel.show(ui, |ui| {
-                    let size = egui::vec2(ui.available_width(), INFO_LINES * INFO_SIZE * 1.3);
+                    let size = egui::vec2(ui.available_width(), self.info_lines * INFO_SIZE * 1.3);
                     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                     let galley = ui.painter().layout(
                         self.list_info.clone(),
@@ -557,6 +618,20 @@ impl<T: 'static> Picker<T> {
                         .with_clip_rect(rect.intersect(ui.clip_rect()))
                         .galley(rect.min, galley, theme.picker.info);
                 });
+                if !self.buttons.is_empty() {
+                    ui.horizontal(|ui| {
+                        for (i, label) in self.buttons.iter().enumerate() {
+                            let text = egui::RichText::new(label)
+                                .font(picker_font(ctx, BUTTON_SIZE))
+                                .color(theme.picker.text);
+                            let button = egui::Button::new(text)
+                                .min_size(egui::vec2(BUTTON_HEIGHT * 2.5, BUTTON_HEIGHT));
+                            if ui.add(button).clicked() {
+                                self.button_click = Some(i);
+                            }
+                        }
+                    });
+                }
                 clicked
             })
             .inner;
@@ -580,10 +655,12 @@ impl<T: 'static> Picker<T> {
 }
 
 /// How many rows the list shows at once: whole rows filling
-/// [`LIST_HEIGHT_FRACTION`] of the screen. Also the PageUp/PageDown step, so
+/// [`LIST_HEIGHT_FRACTION`] of the screen, less when zoomed in so far that
+/// the rest would not fit. Also the PageUp/PageDown step, so
 /// the key moves the selection exactly one screenful.
-fn visible_rows(ctx: &egui::Context) -> f32 {
-    (ctx.content_rect().height() * LIST_HEIGHT_FRACTION / ROW_HEIGHT)
+fn visible_rows(ctx: &egui::Context, extra: f32) -> f32 {
+    let height = ctx.content_rect().height();
+    ((height * LIST_HEIGHT_FRACTION).min(height - CHROME_HEIGHT - extra) / ROW_HEIGHT)
         .floor()
         .max(1.0)
 }
@@ -602,9 +679,10 @@ fn scroll_area<T>(
     list_scroll: f32,
     follow: bool,
     items: &[T],
+    extra: f32,
     mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
-    let view_height = visible_rows(ui.ctx()) * ROW_HEIGHT;
+    let view_height = visible_rows(ui.ctx(), extra) * ROW_HEIGHT;
     let id = ui.id();
     let theme = theme(ui.ctx());
     theme

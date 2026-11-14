@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail};
-use newsys::SongName;
-use newsys::fetch::is_download_cached;
+use release_io::SongName;
+use release_io::fetch::is_download_cached;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -36,10 +36,10 @@ pub static DOWNLOAD_COUNTER: DownloadCounter = DownloadCounter {
 };
 
 // `Override` and `Patch` live beside the systems that consume them.
-pub use newsys::{Override, Patch};
+pub use release_io::{Override, Patch};
 
 // The byte gauge itself lives with the only thing that writes it, `fetch`.
-pub use newsys::fetch::bytes_in_progress;
+pub use release_io::fetch::bytes_in_progress;
 
 /// A release id, which is only unique within the db it comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

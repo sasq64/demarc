@@ -11,7 +11,7 @@ use crate::emu_file::{EmuFile, FileSource, GameInfo, Meta, UrlList, split_values
 use crate::files::leak;
 use crate::fuzzy_list::{AllWordsSource, FuzzySource};
 
-pub const FAVORITES: &str = "Favorites";
+pub use ::navigator::FAVORITES;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PlaylistEntry {

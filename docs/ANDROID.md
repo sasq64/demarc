@@ -1,14 +1,44 @@
 # Android
 
-The minimal one-window VICE player — `crates/retro-core/src/player.rs`, run by
-`crates/retro-core/src/bin/minimarc.rs` on the desktop — as an Android app. It boots to the
-BASIC banner on a device; touch input is what is missing.
+`minimarc` (`crates/minimarc`) as an Android app: the csdb database, demarc's
+picker and navigator tree, and VICE playing what is picked. The same crate runs
+on the desktop as `cargo run -p minimarc -- demodb/csdb.txt`.
 
 ```sh
 scripts/run-android.sh --logcat
 ```
 
-builds it, fetches the core if needed, installs and launches it.
+builds it, fetches the core if needed, packs the database, installs and launches it.
+
+## What the app is made of
+
+```
+minimarc     player.rs (window, lottes pass, egui pass, audio, input), ui.rs (picker + HUD),
+             load.rs (db parsing, download + unpack on threads); lib is the APK's cdylib
+navigator    the tree of lists, shared with demarc
+database     db parsing and EmuFile, built with default-features = false
+release-io   fetch, cache, unpack, WorkFile, cbmconvert, c64::prepare
+retro-core   the libretro layer
+retro-ui     the egui picker and HUD
+```
+
+- Starts in the picker with no core running. Picking an entry downloads and
+  unpacks it on a thread, then replaces the core.
+- Escape or Back opens the picker over a running demo and closes it again; a
+  tap opens it; Left/Right go back and forward in the tree.
+- Only the demo categories are read (`CATEGORIES` in `load.rs`).
+- APK assets, both copied in by the script and not checked in: `csdb.txt`
+  (from `demodb/`; gradle would gunzip a `.gz` asset and drop the suffix) and `rr38ppal-auto.crt`, unpacked to
+  `<data>/vice/C64/`.
+- The data dir holds everything writable: `set_system_dir`, `set_cache_dir`
+  and `TMPDIR` all point into it.
+- No RAR or LHA on Android: `unarc-rs` does not build there, so
+  `release-io/src/utils/plain.rs` unpacks zip, gzip and 7z only.
+- Left out: `overrides.toml`, playlists, next/previous, an on-screen keyboard.
+
+The rest of this file is the log of how the port got here; `retro-core`'s
+`player` feature and `libretro_core.so` in it are now `minimarc` and
+`libminimarc.so`.
 
 ## Starting position
 

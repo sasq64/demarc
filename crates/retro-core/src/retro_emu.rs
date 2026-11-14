@@ -932,7 +932,7 @@ impl RetroCoreDirect {
         self.state.shutdown
     }
 
-    pub(crate) fn press_key(&mut self, code: u32, down: bool, mods: u16) {
+    pub fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         if self.state.keys.len() <= code as usize {
             self.state.keys.resize(code as usize + 1, 0);
         }
@@ -994,7 +994,7 @@ impl RetroCoreDirect {
         }
     }
 
-    pub(crate) fn get_frame_size(&self) -> (usize, usize) {
+    pub fn get_frame_size(&self) -> (usize, usize) {
         (self.state.frame_width, self.state.frame_height)
     }
 
@@ -1011,7 +1011,7 @@ impl RetroCoreDirect {
         }
     }
 
-    pub(crate) fn fps(&self) -> f64 {
+    pub fn fps(&self) -> f64 {
         self.state.fps
     }
 }

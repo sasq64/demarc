@@ -93,6 +93,22 @@ pub struct FileCache {
     max_age: Option<Duration>,
 }
 
+static CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Put every cache under `dir` instead of the user's cache directory, for a
+/// host that has none (Android). Only the first call counts.
+pub fn set_cache_dir(dir: PathBuf) {
+    let _ = CACHE_DIR.set(dir);
+}
+
+fn cache_dir() -> PathBuf {
+    CACHE_DIR
+        .get()
+        .cloned()
+        .or_else(dirs::cache_dir)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 impl FileCache {
     /// A cache named `name`, living under the user's cache directory, pruned
     /// back to `size_limit` bytes.
@@ -102,10 +118,7 @@ impl FileCache {
     /// that refuses to fetch anything.
     pub fn new(name: &str, size_limit: u64) -> Self {
         Self {
-            root: dirs::cache_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("demarc")
-                .join(name),
+            root: cache_dir().join("demarc").join(name),
             levels: vec![Level {
                 max_entry: u64::MAX,
                 budget: size_limit,
@@ -147,7 +160,6 @@ impl FileCache {
 
     /// A cache rooted at an explicit path, for tests that must not touch — or
     /// depend on the state of — the user's real cache directory.
-    #[cfg(test)]
     pub fn at(root: PathBuf, size_limit: u64) -> Self {
         Self {
             root,

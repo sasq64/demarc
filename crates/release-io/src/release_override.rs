@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use retro_core::backend::InputEvent;
 
-use crate::system_dir;
+use std::path::Path;
 
 /// Give a runtime-built string the `'static` lifetime an an override wants.
 ///
@@ -41,9 +41,9 @@ pub struct Patch {
 
 impl Patch {
     /// The bytes to write, read from [`Self::source`] or decoded from [`Self::data`].
-    pub fn bytes(&self) -> Result<Vec<u8>> {
+    pub fn bytes(&self, system_dir: &Path) -> Result<Vec<u8>> {
         if let Some(source) = self.source {
-            let path = system_dir().join(source);
+            let path = system_dir.join(source);
             return std::fs::read(&path).with_context(|| format!("Could not read {path:?}"));
         }
         use base64::Engine;

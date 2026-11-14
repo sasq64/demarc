@@ -4,20 +4,10 @@ version.workspace = true
 edition.workspace = true
 description = "libretro core loading and frame/audio plumbing, free of any frontend"
 
-# `cdylib` is what an Android APK loads; `rlib` is what demarc links against.
 # `doctest = false`: libretro.rs is bindgen output, and the C snippets bindgen
 # copies out of the libretro headers are not Rust.
 [lib]
-crate-type = ["rlib", "cdylib"]
 doctest = false
-
-# The minimal single-core player. `test = false`: the modules it uses carry
-# their own unit tests, which the lib target already runs.
-[[bin]]
-name = "minimarc"
-path = "src/bin/minimarc.rs"
-required-features = ["player"]
-test = false
 
 [dependencies]
 anyhow.workspace = true
@@ -37,13 +27,6 @@ hound = "3.5.1"
 mp3lame-encoder = { version = "0.2.5", optional = true }
 id3 = { version = "1.17.2", optional = true }
 
-# The window, surface and input for the `minimarc` player. Optional so that a plain
-# `retro-core` — which is all demarc and an Android core host need — builds
-# none of it.
-pollster = { workspace = true, optional = true }
-wgpu = { workspace = true, optional = true }
-winit = { workspace = true, optional = true }
-
 [dev-dependencies]
 # PNG output for the tests that boot a real core and snapshot a frame.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -54,17 +37,6 @@ cc.workspace = true
 [target."cfg(unix)".dependencies]
 libc.workspace = true
 
-# winit needs to be told which Android activity to build against, and pulls in
-# `android-activity` to do it; without this it does not compile for the target
-# at all. `android_main` (docs/ANDROID.md step 3) is what will use it.
-[target."cfg(target_os = \"android\")".dependencies]
-winit = { workspace = true, features = ["android-native-activity"], optional = true }
-
 [features]
 default = []
-player = ["dep:winit", "dep:wgpu", "dep:pollster"]
 mp3 = ["dep:mp3lame-encoder", "dep:id3"]
-
-# `minimarc` is a development tool, not something to release.
-[package.metadata.dist]
-dist = false

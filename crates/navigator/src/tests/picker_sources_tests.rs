@@ -1,6 +1,6 @@
 use super::*;
-use crate::emu_file::{GameInfo, UrlList};
-use crate::fuzzy_list::DEFAULT_MAX_RESULTS;
+use database::emu_file::{GameInfo, UrlList};
+use retro_ui::fuzzy_list::DEFAULT_MAX_RESULTS;
 
 const URL: &str = "https://ftp.example.org/pub/demos/c64/1992/zentro4.zip";
 

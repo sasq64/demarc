@@ -1,7 +1,7 @@
-use crate::{
+use crate::{Navigator, setup_navigator};
+use database::{
     emu_file::EmuFile,
     files::{DbFilter, collect_db},
-    navigator::{Navigator, setup_navigator},
 };
 use indexmap::IndexMap;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 fn test_navigator() {
     let filter = DbFilter::default();
     let mut files = vec![];
-    let path: PathBuf = "testdata/demos.txt".into();
+    let path = PathBuf::from(env!("DEMARC_ROOT")).join("testdata/demos.txt");
     let name = collect_db(&path, &filter, &mut files).unwrap();
     assert_eq!(name, "Demozoo");
     let files: &'static [EmuFile] = files.leak();
@@ -47,7 +47,7 @@ fn test_navigator() {
 
 fn db(text: &'static str) -> &'static [EmuFile] {
     let mut files = vec![];
-    crate::files::collect_db_text(text, &DbFilter::default(), &mut files);
+    database::files::collect_db_text(text, &DbFilter::default(), &mut files);
     files.leak()
 }
 

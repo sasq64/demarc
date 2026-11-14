@@ -1,0 +1,44 @@
+[package]
+name = "minimarc"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "A C64 demo browser and player: the csdb database, the picker and VICE, without Bevy"
+
+# `cdylib` is what the Android APK loads (see docs/ANDROID.md).
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+database = { path = "../database", default-features = false }
+navigator = { path = "../navigator" }
+release-io = { path = "../release-io" }
+retro-core = { path = "../retro-core" }
+retro-ui = { path = "../retro-ui" }
+
+anyhow.workspace = true
+cpal = "0.17.1"
+egui.workspace = true
+indexmap = "2"
+# egui-wgpu 0.36 is built against wgpu 30, one ahead of what Bevy pins the
+# rest of the workspace to, so this crate names its own.
+egui-wgpu = { version = "0.36.2", default-features = false }
+egui-winit = { version = "0.36.2", default-features = false }
+pollster.workspace = true
+regex = "1"
+ringbuf = "0.5.0"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wgpu = "30"
+winit.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-native-activity"] }
+egui-winit = { version = "0.36.2", default-features = false, features = ["android-native-activity"] }
+
+# A development tool, not something to release.
+[package.metadata.dist]
+dist = false

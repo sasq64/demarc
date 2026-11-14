@@ -217,13 +217,7 @@ pub fn gl_compat(meta: &HashMap<String, String>) -> bool {
         .unwrap_or(DEFAULT_GL_COMPAT)
 }
 
-/// Is a meta value one of the ways of saying yes?
-pub fn is_yes(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "true" | "1" | "yes" | "on"
-    )
-}
+pub use release_io::release::is_yes;
 
 /// Under the data dir (`~/.local/share`): a wine unpacked here is used ahead
 /// of the system's, for hosts that cannot install one (SteamOS).

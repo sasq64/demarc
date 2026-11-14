@@ -48,18 +48,28 @@ See `scripts/remote_example.lua`
 ### Crates
 
 The repo root is both the workspace root and the `demarc` package, so `src/` is
-demarc's own. The seven crates under `crates/` hold the parts that do **not**
-need Bevy, which is what lets the libretro layer be built for Android
-(`docs/ANDROID.md`):
+demarc's own. The crates under `crates/` hold the parts that do **not** need
+Bevy, which is what lets `minimarc` — the C64-only browser and player — be
+built for Android (`docs/ANDROID.md`):
+
+- `retro-core`: the libretro layer.
+- `release-io`: fetching, caching and unpacking a release, and the C64 load
+  logic. `newsys` re-exports its modules at their old paths.
+- `database` (db parsing, `EmuFile`), `navigator` (the picker's tree) and
+  `retro-ui` (the egui picker and HUD).
+- `minimarc`: the app over those, on winit, wgpu 30 and egui. Its own
+  `crates/minimarc/CLAUDE.md` covers the Android work.
+- `newsys`, `retroarc`, `frameconv`, `rife`, `flash-emu`: desktop only.
 
 Dependencies point one way only. `demarc/src/main.rs` re-exports the moved
 modules at its crate root, so `crate::backend`, `crate::newsys`, `crate::utils`
 etc. still resolve inside demarc.
 
 Two rules keep the split honest: **nothing under `crates/` may mention Bevy**,
-and **`retro-core` may not gain a dependency that does not cross-compile to
-`aarch64-linux-android`** (this is what keeps `utils.rs` out of it — `unarc-rs`
-does not build for bionic).
+and **`retro-core`, `release-io`, `navigator`, `minimarc` and `database`
+(without its `desktop` feature) may not gain a dependency that does not
+cross-compile to `aarch64-linux-android`** (`unarc-rs` does not build for
+bionic, so `release-io` only depends on it off Android).
 
 ## Conventions
 

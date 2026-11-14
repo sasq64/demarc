@@ -1,0 +1,1 @@
+@../crates/minimarc/CLAUDE.md

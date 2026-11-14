@@ -15,8 +15,8 @@ coverage_text:
 
 # Cross-compile the minimarc player for a phone. See docs/ANDROID.md.
 android:
-    cargo ndk -t arm64-v8a -P 24 -o android/app/src/main/jniLibs \
-        build -p retro-core --features player --lib --release
+    cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs \
+        build -p minimarc --lib --release
 
 RUST_SYSROOT := `rustc --print sysroot`
 

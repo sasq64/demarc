@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the `minimarc` player as an Android cdylib, package it into an APK with the
-# VICE core, install and launch it. See docs/ANDROID.md.
+# Build `minimarc` as an Android cdylib, package it into an APK with the VICE
+# core, the csdb database and the fast-load cartridge, install and launch it.
+# See docs/ANDROID.md.
 #
 #   scripts/run-android.sh            release build (the default: debug Bevy-less
 #                                     wgpu is still slow, and the .so is huge)
@@ -25,6 +26,7 @@ PKG=com.demarc.c64
 ACTIVITY=android.app.NativeActivity
 CORE=vice_x64sc
 JNILIBS=android/app/src/main/jniLibs/$ABI
+ASSETS=android/app/src/main/assets
 
 CARGO_PROFILE=(--release)
 GRADLE_TASK=assembleRelease
@@ -56,9 +58,15 @@ if [[ ! -f "$JNILIBS/lib${CORE}_libretro.so" ]]; then
     rm -rf "$tmp"
 fi
 
+mkdir -p "$ASSETS"
+rm -f "$ASSETS/csdb.txt.gz"
+cp -u demodb/csdb.txt system/vice/C64/rr38ppal-auto.crt "$ASSETS/"
+
 echo "==> cargo ndk ($ABI, API $API)"
 cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \
-    build -p retro-core --features player --lib "${CARGO_PROFILE[@]}"
+    build -p minimarc --lib "${CARGO_PROFILE[@]}"
+# sevenz-rust2 also builds as a cdylib, which cargo-ndk copies along.
+rm -f "$JNILIBS"/libsevenz_rust2-*.so "$JNILIBS/libretro_core.so"
 
 echo "==> gradle $GRADLE_TASK"
 (cd android && ./gradlew --console=plain "$GRADLE_TASK")

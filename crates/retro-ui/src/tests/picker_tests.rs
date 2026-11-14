@@ -24,7 +24,7 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                         ui.label(egui::RichText::new("query").size(QUERY_SIZE));
                     });
                     let out =
-                        scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, |_, _, _| {});
+                        scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, 0.0, |_, _, _| {});
                     height = out.inner_rect.height();
                 });
         }
@@ -148,7 +148,7 @@ fn arrows_move_the_selection_and_clamp() {
 fn page_keys_move_a_screenful() {
     let mut h = Harness::new();
     let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
-    let page = visible_rows(&h.ctx) as usize;
+    let page = visible_rows(&h.ctx, 0.0) as usize;
     assert!(h.has("row 0") && !h.has("row 150"));
     assert!(h.has("about 0"), "the info box describes the selection");
 
@@ -352,4 +352,60 @@ fn wheel_scrolls_past_the_selection() {
     step(&mut h, &mut picker, vec![key(egui::Key::ArrowDown)]);
     step(&mut h, &mut picker, vec![]);
     assert!(h.has("row 1"));
+}
+
+/// A button under the info box reports its click, and `pick_selected` picks
+/// the highlighted row as Enter would.
+#[test]
+fn buttons_report_clicks_and_can_pick() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    assert!(!h.has("Start"));
+    picker.buttons = vec!["Start".into(), "Disk".into()];
+    step(&mut h, &mut picker, vec![]);
+    step(&mut h, &mut picker, vec![key(egui::Key::ArrowDown)]);
+    h.click_text("Disk", |ctx| picker.show(ctx, |_, _, _| Vec::new()));
+    assert_eq!(picker.take_button_click(), Some(1));
+    assert_eq!(picker.take_button_click(), None);
+
+    picker.pick_selected();
+    let picked = step(&mut h, &mut picker, vec![]).expect("a pick");
+    assert_eq!(picked.text, "banana");
+}
+
+#[test]
+fn a_click_on_the_search_box_is_reported() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    assert!(!picker.take_query_click());
+    let pos = h.find("apple").center() - egui::vec2(0.0, 2.0 * ROW_HEIGHT);
+    h.click(pos, |ctx| picker.show(ctx, |_, _, _| Vec::new()));
+    assert!(picker.take_query_click());
+    assert!(!picker.take_query_click());
+}
+
+/// A title wider than the picker is clipped to it, showing its right end.
+#[test]
+fn a_long_title_is_clipped_to_its_right_end() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    let width = |h: &Harness| {
+        h.ctx
+            .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
+            .unwrap()
+            .width()
+    };
+    let before = width(&h);
+    let title: Vec<String> = (0..40).map(|i| format!("part{i}")).collect();
+    picker.open(1, fruit(), None, None, &title, -1, false);
+    for _ in 0..4 {
+        step(&mut h, &mut picker, vec![]);
+    }
+    assert!((width(&h) - before).abs() < 1.0);
+    let area = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
+        .unwrap();
+    assert!(area.x_range().contains(h.find(" part39 ").right()));
+    assert!(!h.has(" part0 "));
 }

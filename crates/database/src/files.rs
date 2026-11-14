@@ -11,7 +11,6 @@ use tracing::{info, warn};
 use crate::{
     emu_file::{CompactDate, EmuFile, FileSource, GameInfo, Meta, UrlList, set_pair, split_values},
     m3u::M3u,
-    modland,
     utils::{is_disk_image, unpack_if_packed},
 };
 
@@ -65,7 +64,7 @@ fn handle_m3u(in_path: &Path) -> Result<EmuFile> {
 }
 
 // Lives beside `Override`, whose fields are what wants the `'static`.
-pub use newsys::leak;
+pub use release_io::leak;
 
 /// Parse a tab-separated demo database file into `EmuFile` entries appended to
 /// `out`.
@@ -112,7 +111,10 @@ pub fn collect_db_unless(
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "db".into());
-    let modland = modland::is_index(text);
+    #[cfg(feature = "desktop")]
+    let modland = crate::modland::is_index(text);
+    #[cfg(not(feature = "desktop"))]
+    let modland = false;
     let name = if modland {
         "Modland".into()
     } else {
@@ -122,9 +124,11 @@ pub fn collect_db_unless(
         return Ok(None);
     }
     let start = out.len();
+    #[cfg(feature = "desktop")]
     if modland {
-        modland::collect(text, filter, out);
-    } else {
+        crate::modland::collect(text, filter, out);
+    }
+    if !modland {
         collect_db_text(text, filter, out);
     }
     tag_db(&mut out[start..], &name);

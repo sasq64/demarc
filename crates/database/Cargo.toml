@@ -6,7 +6,9 @@ repository.workspace = true
 description = "Reads demo databases, file lists and per-release overrides into EmuFile entries"
 
 [dependencies]
-newsys = { path = "../newsys" }
+# `modland` and `overrides` need the systems; the Android player does without.
+newsys = { path = "../newsys", optional = true }
+release-io = { path = "../release-io" }
 
 anyhow.workspace = true
 dirs.workspace = true
@@ -24,6 +26,10 @@ toml = { version = "1.1.4", features = ["preserve_order"] }
 url = "2"
 # `DbFilter`: matched against each raw db line while collecting.
 regex = "1"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:newsys"]
 
 [dev-dependencies]
 # Encoding a patch the way overrides.toml carries one, in overrides_tests.

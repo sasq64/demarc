@@ -377,7 +377,18 @@ impl From<Kickstart> for String {
     }
 }
 
-impl WorkFile {
+trait AmigaMeta {
+    fn set_fast_mem(&mut self, mb: usize);
+    fn set_chip_mem(&mut self, mb: usize);
+    fn set_z3_mem(&mut self, mb: usize);
+    fn set_cpu(&mut self, cpu: Cpu);
+    fn set_machine(&mut self, machine: Machine);
+    fn set_kickstart(&mut self, kickstart: Kickstart);
+    fn set_fast(&mut self);
+    fn is_aga(&self) -> bool;
+}
+
+impl AmigaMeta for WorkFile {
     fn set_fast_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
         self.set_meta("puae_fastmem_size", &mbs);

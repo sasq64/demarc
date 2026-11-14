@@ -1,0 +1,14 @@
+[package]
+name = "navigator"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "The tree of lists the picker browses a demo database through"
+
+[dependencies]
+database = { path = "../database", default-features = false }
+retro-ui = { path = "../retro-ui" }
+
+anyhow.workspace = true
+indexmap = "2"
+tracing.workspace = true

@@ -465,7 +465,7 @@ impl RawPatch {
         } else {
             // Decoded here and thrown away, so that a mistyped `contents` is
             // reported at startup rather than by the one load that needs it.
-            let data = patch.bytes()?;
+            let data = patch.bytes(system_dir())?;
             if bsdiff {
                 Bspatch::new(&data).with_context(|| {
                     format!("patch for {:?} is not a bsdiff patch", patch.target)

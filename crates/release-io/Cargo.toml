@@ -1,0 +1,38 @@
+[package]
+name = "release-io"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Fetching, caching and unpacking a release, free of any system that runs it"
+
+[dependencies]
+# `InputEvent` and the libretro key codes an override or a startup key names.
+retro-core = { path = "../retro-core" }
+
+anyhow.workspace = true
+dirs.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+walkdir = "2.5.0"
+
+# Fetching releases into the content-addressed cache.
+percent-encoding.workspace = true
+suppaftp.workspace = true
+ureq.workspace = true
+url = "2"
+
+# `Patch::bytes`: base64 `contents`.
+base64 = "0.23.1"
+
+# Unpacking. `unarc-rs` covers every format but pulls in `unrar`, which does
+# not build for bionic, so Android gets by on these three alone.
+zip.workspace = true
+flate2 = "1.1"
+sevenz-rust2 = "0.20.2"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+unarc-rs = "0.6.1"
+
+[build-dependencies]
+cc.workspace = true
