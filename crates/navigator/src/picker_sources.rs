@@ -4,6 +4,7 @@ use database::emu_file::{EmuFile, FileSource, UrlList};
 use regex::{Regex, RegexBuilder};
 use retro_ui::fuzzy_list::{FuzzySource, IndexedSource, ListIcon};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconMode {
@@ -354,6 +355,9 @@ fn entry_name(file: &EmuFile) -> String {
     }
 }
 
+/// Cleared to leave a download's URL out of the info field.
+pub static SHOW_URL: AtomicBool = AtomicBool::new(true);
+
 /// Everything we know about an entry, for the picker's info field: title,
 /// group, what it is and when, the party it was released at, its tags, and
 /// where it comes from. Empty fields are left out rather than shown blank.
@@ -385,6 +389,7 @@ fn entry_info(file: &EmuFile, width: usize) -> String {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| p.display().to_string()),
+        FileSource::Url(_) if !SHOW_URL.load(Ordering::Relaxed) => String::new(),
         FileSource::Url(urls) => urls
             .first()
             .map(|u| trunc_url(u, width))

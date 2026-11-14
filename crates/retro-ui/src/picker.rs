@@ -234,6 +234,8 @@ pub struct Picker<T> {
     pub buttons: Vec<String>,
     pub info_lines: f32,
     pub right_icons: bool,
+    /// Fills the screen's width, with no border on the search and info boxes.
+    pub compact: bool,
     button_click: Option<usize>,
     pick_requested: bool,
     query_clicked: bool,
@@ -264,6 +266,7 @@ impl<T> Default for Picker<T> {
             buttons: Vec::new(),
             info_lines: INFO_LINES,
             right_icons: true,
+            compact: false,
             button_click: None,
             pick_requested: false,
             query_clicked: false,
@@ -435,6 +438,7 @@ impl<T: 'static> Picker<T> {
             })
             .max(screen.height())
             .min(fits);
+        let width = if self.compact { screen.width() } else { width };
 
         // Selection keys are taken before the search box is drawn, so the
         // `TextEdit` never sees them. Home/End are deliberately left alone -- they
@@ -496,6 +500,11 @@ impl<T: 'static> Picker<T> {
         }
 
         let theme = theme(ctx);
+        let mut field = theme.panel.clone();
+        if self.compact {
+            field.border = egui::Stroke::NONE;
+            field.glow = None;
+        }
         let clicked = egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -545,7 +554,7 @@ impl<T: 'static> Picker<T> {
                         });
                     ui.add_space(TITLE_GAP);
                 }
-                theme.panel.show(ui, |ui| {
+                field.show(ui, |ui| {
                     let inner_width = ui.available_width();
                     ui.set_width(inner_width);
                     // The picker is modal, so the search box keeps focus the whole
@@ -605,7 +614,7 @@ impl<T: 'static> Picker<T> {
                 self.list_scroll = scrolled.state.offset.y;
                 let clicked = scrolled.inner;
 
-                theme.panel.show(ui, |ui| {
+                field.show(ui, |ui| {
                     let size = egui::vec2(ui.available_width(), self.info_lines * INFO_SIZE * 1.3);
                     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                     let galley = ui.painter().layout(

@@ -32,6 +32,8 @@ impl Ui {
         picker.buttons = vec!["\u{f04b}".into(), "\u{f0c7}".into()];
         picker.info_lines = 2.0;
         picker.right_icons = false;
+        picker.compact = true;
+        navigator::picker_sources::SHOW_URL.store(false, std::sync::atomic::Ordering::Relaxed);
         Self {
             ctx,
             picker,
