@@ -985,8 +985,9 @@ impl App {
         }
     }
 
-    /// A swipe holds its cursor key down until the finger is lifted, so the
-    /// C64's own key repeat carries it. A second finger cancels it and blocks
+    /// A sideways swipe is the next or previous release. A vertical one holds
+    /// its cursor key down until the finger is lifted, so the C64's own key
+    /// repeat carries it. A second finger cancels it and blocks
     /// another until the screen is clear: the touchpad sits on the keyboard, so
     /// typing drags fingers across it.
     fn touch(&mut self, t: Touch) {
@@ -1013,11 +1014,16 @@ impl App {
                     return;
                 }
                 let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
-                if let Some(key) = swipe_key(dx, dy) {
-                    self.press(key, true, self.mods());
-                    if let Some(swipe) = self.swipe.as_mut() {
-                        swipe.key = Some(key);
+                match swipe_key(dx, dy) {
+                    Some(libretro::RETROK_LEFT) => self.skip(1),
+                    Some(libretro::RETROK_RIGHT) => self.skip(-1),
+                    Some(key) => {
+                        self.press(key, true, self.mods());
+                        if let Some(swipe) = self.swipe.as_mut() {
+                            swipe.key = Some(key);
+                        }
                     }
+                    None => {}
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -1030,6 +1036,15 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    /// Load the release `d` steps along the list the running one was picked from.
+    fn skip(&mut self, d: isize) {
+        self.swipe = None;
+        if let Some(file) = self.ui.step(d) {
+            self.ui.status("Loading...");
+            self.loader.load_demo(file);
         }
     }
 

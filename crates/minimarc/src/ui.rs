@@ -84,6 +84,12 @@ impl Ui {
         self.show_changed();
     }
 
+    /// The release `d` steps from the playing one in the list it was picked from.
+    pub fn step(&mut self, d: isize) -> Option<EmuFile> {
+        let (file, _) = self.navigator.current_launch.as_mut()?.step(d, false)?;
+        Some(file)
+    }
+
     pub fn status(&mut self, text: &str) {
         self.status_for(text, Duration::from_secs(3600));
     }
