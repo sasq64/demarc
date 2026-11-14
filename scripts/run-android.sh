@@ -19,7 +19,8 @@ if [[ -z "${JAVA_HOME:-}" && -d /opt/android-studio/jbr ]]; then
 fi
 ADB="$ANDROID_HOME/platform-tools/adb"
 
-ABI=arm64-v8a
+# ABI=x86_64 for the emulator.
+ABI="${ABI:-arm64-v8a}"
 # 26 is where AAudio — cpal's Android backend — starts.
 API=26
 PKG=com.demarc.c64
@@ -69,7 +70,7 @@ cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \
 rm -f "$JNILIBS"/libsevenz_rust2-*.so "$JNILIBS/libretro_core.so"
 
 echo "==> gradle $GRADLE_TASK"
-(cd android && ./gradlew --console=plain "$GRADLE_TASK")
+(cd android && ./gradlew --console=plain -Pabi="$ABI" "$GRADLE_TASK")
 
 echo "==> install ($(du -h "$APK" | cut -f1))"
 "$ADB" install -r "$APK"
