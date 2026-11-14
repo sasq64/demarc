@@ -69,7 +69,10 @@ fn read_db(path: &std::path::Path) -> Result<(String, &'static [EmuFile])> {
     let mut files = vec![];
     let name = collect_db(path, &filter, &mut files)?;
     // Lower rank is better; 0 is unrated.
-    files.sort_by_key(|f| (f.game_info.rank == 0, f.game_info.rank));
+    files.sort_by_key(|f| {
+        let demo = matches!(f.game_info.category, "Demo" | "One-File Demo");
+        (f.game_info.rank == 0, f.game_info.rank, !demo)
+    });
     Ok((name, files.leak()))
 }
 

@@ -42,6 +42,24 @@ fn entries_are_sorted_by_rating() {
 }
 
 #[test]
+fn demos_come_first_among_equal_ratings() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("csdb.txt");
+    std::fs::write(
+        &db,
+        "# CSDb database\n# Platform:C64\n\
+         id:1\ttitle:Tune\tauthor:A\tcategory:Music\trating:9.0\tdownload:https://x.org/a.zip\n\
+         id:2\ttitle:Onefiler\tauthor:A\tcategory:One-File Demo\trating:9.0\tdownload:https://x.org/b.zip\n\
+         id:3\ttitle:Pic\tauthor:A\tcategory:Graphics\trating:9.5\tdownload:https://x.org/c.zip\n\
+         id:4\ttitle:Big\tauthor:A\tcategory:Demo\trating:9.0\tdownload:https://x.org/d.zip\n",
+    )
+    .unwrap();
+    let (_, files) = read_db(&db).unwrap();
+    let titles: Vec<_> = files.iter().map(|f| f.game_info.title).collect();
+    assert_eq!(titles, ["Pic", "Onefiler", "Big", "Tune"]);
+}
+
+#[test]
 fn a_zipped_disk_set_is_prepared_for_vice() {
     let file = EmuFile {
         path: FileSource::Path(root("testdata/c64/Skaaneland.zip")),
