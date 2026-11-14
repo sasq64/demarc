@@ -1693,3 +1693,10 @@
   starts `explorer.exe /desktop` as a child of the first process to open a
   window, and autodlg waited for the demo's whole tree, so a demo that quit
   on Esc never reported `exited`.
+
+- A `queue.submit` from a non-render thread blocks while the render thread
+  waits on the swapchain: wgpu holds the device fence through
+  `get_current_texture` and `present`. With rare frame callbacks (unfocused
+  window) that stalled the gamescope core's worker in its dmabuf import, so no
+  `retro_run`, no audio, and a SIGSTOPped session. The import now submits on
+  its own thread.

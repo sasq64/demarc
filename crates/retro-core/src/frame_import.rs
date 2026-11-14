@@ -27,7 +27,8 @@ pub trait FrameImporter: Send {
     /// Import the ring, replacing any earlier one. The fds are borrowed.
     fn set_buffers(&mut self, bufs: &DmabufSet) -> bool;
     /// Start copying `slot` into a frame of the frontend's own. `done` runs,
-    /// on any thread, once the copy no longer reads the slot.
+    /// on any thread, once the copy no longer reads the slot. `None` when it
+    /// cannot take this frame, which then goes through the CPU.
     fn import(&mut self, slot: usize, done: Box<dyn FnOnce() + Send>) -> Option<GpuFrame>;
 }
 

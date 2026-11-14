@@ -292,8 +292,7 @@ impl Dmabuf {
         let Some(frame) = frame else {
             // The core gives it back itself.
             state.refs[slot] = 0;
-            drop(state);
-            return self.fall_back("GPU import failed");
+            return None;
         };
         if let Some(old) = state.newest.replace(slot) {
             state.unref(old);

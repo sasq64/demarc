@@ -4,6 +4,9 @@
 
 use std::os::fd::{AsRawFd, BorrowedFd, IntoRawFd};
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use ash::vk;
 use bevy::prelude::*;
@@ -19,6 +22,11 @@ pub struct GpuTexture {
 
 /// Free textures kept in the pool past what is in use.
 const SPARE: usize = 2;
+
+/// How long the core thread waits for a copy to be submitted. wgpu holds the
+/// queue's fence while the render thread waits on the swapchain, which is
+/// seconds when the window gets no frame callbacks.
+const SUBMIT_WAIT: Duration = Duration::from_millis(4);
 
 const SHADER: &str = r#"
 struct Params { width: u32, height: u32, stride: u32, offset: u32 }
@@ -51,7 +59,7 @@ pub fn install(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>
     set_frame_importer(move || {
         Some(Box::new(Importer {
             device: device.clone(),
-            queue: queue.clone(),
+            submitter: Submitter::new(queue.clone())?,
             pipeline: Arc::clone(&pipeline),
             slots: Vec::new(),
             size: (0, 0),
@@ -137,9 +145,55 @@ struct Slot {
     params: wgpu::Buffer,
 }
 
+type Job = (wgpu::CommandBuffer, Box<dyn FnOnce() + Send>);
+
+/// Submits on a thread of its own, so a blocked queue does not block the core.
+struct Submitter {
+    jobs: mpsc::Sender<Job>,
+    submitted: mpsc::Receiver<()>,
+    in_flight: bool,
+}
+
+impl Submitter {
+    fn new(queue: wgpu::Queue) -> Option<Self> {
+        let (jobs, job_rx) = mpsc::channel::<Job>();
+        let (done_tx, submitted) = mpsc::channel();
+        thread::Builder::new()
+            .name("dmabuf-submit".into())
+            .spawn(move || {
+                for (commands, done) in job_rx {
+                    queue.submit([commands]);
+                    queue.on_submitted_work_done(done);
+                    if done_tx.send(()).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Self {
+            jobs,
+            submitted,
+            in_flight: false,
+        })
+    }
+
+    fn ready(&mut self) -> bool {
+        if self.in_flight && self.submitted.try_recv().is_ok() {
+            self.in_flight = false;
+        }
+        !self.in_flight
+    }
+
+    fn submit(&mut self, commands: wgpu::CommandBuffer, done: Box<dyn FnOnce() + Send>) {
+        if self.jobs.send((commands, done)).is_ok() {
+            self.in_flight = self.submitted.recv_timeout(SUBMIT_WAIT).is_err();
+        }
+    }
+}
+
 struct Importer {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    submitter: Submitter,
     pipeline: Arc<Pipeline>,
     slots: Vec<Slot>,
     size: (u32, u32),
@@ -174,7 +228,7 @@ impl FrameImporter for Importer {
     }
 
     fn import(&mut self, slot: usize, done: Box<dyn FnOnce() + Send>) -> Option<GpuFrame> {
-        if slot >= self.slots.len() {
+        if slot >= self.slots.len() || !self.submitter.ready() {
             return None;
         }
         let texture = self.texture();
@@ -206,8 +260,7 @@ impl FrameImporter for Importer {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
         }
-        self.queue.submit([encoder.finish()]);
-        self.queue.on_submitted_work_done(done);
+        self.submitter.submit(encoder.finish(), done);
         Some(texture)
     }
 }
