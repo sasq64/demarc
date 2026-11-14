@@ -14,7 +14,7 @@ use release_io::workfile::WorkFile;
 /// The csdb categories that are something to watch.
 const CATEGORIES: &str = "^category:(Demo|One-File Demo|Intro|Crack Intro|4K Intro|1K Intro|\
     256b Intro|Basic Demo|Fake Demo|Invitation|Diskmag|Intro Collection|REU Release|\
-    EasyFlash Release)$";
+    EasyFlash Release|Graphics|Graphics Collection|Music|Music Collection)$";
 
 pub enum Loaded {
     Db(Result<(String, &'static [EmuFile])>),
