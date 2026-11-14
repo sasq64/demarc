@@ -11,4 +11,5 @@ retro-ui = { path = "../retro-ui" }
 
 anyhow.workspace = true
 indexmap = "2"
+regex = "1"
 tracing.workspace = true

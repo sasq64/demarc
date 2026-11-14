@@ -5348,6 +5348,7 @@ dependencies = [
  "anyhow",
  "database",
  "indexmap",
+ "regex",
  "retro-ui",
  "tracing",
 ]
@@ -7392,6 +7393,13 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "shadertoy"
+version = "1.8.3"
+dependencies = [
+ "naga 29.0.4",
 ]
 
 [[package]]

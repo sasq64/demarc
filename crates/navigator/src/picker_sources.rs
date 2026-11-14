@@ -1,13 +1,14 @@
 //! The [`FuzzySource`]s behind the file and download pickers.
 
 use database::emu_file::{EmuFile, FileSource, UrlList};
+use regex::{Regex, RegexBuilder};
 use retro_ui::fuzzy_list::{FuzzySource, IndexedSource, ListIcon};
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconMode {
     Platforms,
     Categories,
-    PlatformOnly,
     CategoryOnly,
     All,
 }
@@ -90,15 +91,53 @@ impl FuzzySource<EmuFile> for PickerSource {
         };
         let p = file.platforms.first().copied().unwrap_or("");
         let c = file.categories.first().copied().unwrap_or("");
-        let category = ListIcon::Glyph(category_icon(c), category_color(c));
+        let category = category_list_icon(c);
         let platform = ListIcon::Glyph(platform_icon(p), platform_color(p));
         match self.mode {
             IconMode::Categories | IconMode::Platforms => (Some(category), Some(platform)),
             IconMode::CategoryOnly => (Some(category), None),
-            IconMode::PlatformOnly => (None, Some(platform)),
             IconMode::All => (None, None),
         }
     }
+}
+
+pub(crate) fn category_list_icon(category: &str) -> ListIcon {
+    ListIcon::Glyph(category_icon(category), category_color(category))
+}
+
+/// Competition name patterns, matched case-insensitively in order, and the
+/// category whose icon a match gets.
+const COMPO_CATEGORIES: &[(&str, &str)] = &[
+    ("game", "Game"),
+    ("256b", "256b Intro"),
+    (r"\b1k\b", "1K Intro"),
+    (r"\b4k\b", "4K Intro"),
+    (r"\b8k\b", "8K Intro"),
+    (r"\b64k\b", "64K Intro"),
+    ("intro", "Intro"),
+    ("demo|wild", "Demo"),
+    ("music|sid|mp3", "Music"),
+    ("graphics|gfx|photo|cover", "Graphics"),
+];
+
+pub(crate) fn compo_icon(compo: &str) -> ListIcon {
+    static PATTERNS: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| {
+        COMPO_CATEGORIES
+            .iter()
+            .map(|(pattern, category)| {
+                let regex = RegexBuilder::new(pattern)
+                    .case_insensitive(true)
+                    .build()
+                    .expect("compo pattern");
+                (regex, *category)
+            })
+            .collect()
+    });
+    let category = PATTERNS
+        .iter()
+        .find(|(regex, _)| regex.is_match(compo))
+        .map_or("", |(_, category)| category);
+    category_list_icon(category)
 }
 
 fn category_icon(category: &str) -> char {

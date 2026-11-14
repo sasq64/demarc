@@ -37,6 +37,7 @@ pub struct ShowList {
 const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
+const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
 
 const PARTY_ICON: char = '󰍖';
 /// Saturation and brightness of the per-party colours; tweak to taste.
@@ -599,18 +600,25 @@ pub fn setup_navigator(
             .collect();
         // Known categories in CATS order, the rest after in the order they appeared.
         cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
-        Some(AllWordsSource::new(cats))
+        Some(WordsIconSource::new(
+            cats.into_iter()
+                .map(|c| {
+                    let icon = picker_sources::category_list_icon(&c);
+                    (c, icon)
+                })
+                .collect(),
+        ))
     })?;
     navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
-        let authors: Vec<String> = files
+        let authors = files
             .iter()
             .map(|f| f.get_meta("author"))
             .filter(|p| !p.is_empty() && !p.contains(" & "))
             .collect::<IndexSet<_>>()
             .into_iter()
-            .map(String::from)
+            .map(|a| (a.to_string(), AUTHOR_ICON))
             .collect();
-        Some(AllWordsSource::new(authors))
+        Some(WordsIconSource::new(authors))
     })?;
     navigator.register(
         "Authors/{author}",
@@ -621,11 +629,7 @@ pub fn setup_navigator(
                 .filter(|(_, f)| f.get_meta("author").split(" & ").any(|s| s == path[1]))
                 .map(|(i, _)| i as u32)
                 .collect();
-            Some(PickerSource::new(
-                files,
-                Some(subset),
-                IconMode::PlatformOnly,
-            ))
+            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
         },
     )?;
     navigator.register(
@@ -654,17 +658,13 @@ pub fn setup_navigator(
                 .filter(|(_, f)| *f.categories == [path[1]])
                 .map(|(i, _)| i as u32)
                 .collect();
-            Some(PickerSource::new(
-                files,
-                Some(subset),
-                IconMode::PlatformOnly,
-            ))
+            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
         },
     )?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
-            Some(AllWordsSource::new(
+            Some(WordsIconSource::new(
                 files
                     .iter()
                     .filter(|f| f.get_party() == path[1])
@@ -672,7 +672,7 @@ pub fn setup_navigator(
                     .filter(|p| !p.is_empty())
                     .collect::<BTreeSet<_>>()
                     .into_iter()
-                    .map(String::from)
+                    .map(|c| (c.to_string(), picker_sources::compo_icon(c)))
                     .collect(),
             ))
         },
@@ -747,7 +747,7 @@ pub fn setup_navigator(
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Platforms".into(), ListIcon::Glyph('󰍹', 0xc0f0c0)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
-                ("Authors".into(), ListIcon::Glyph('', 0x20a0a0)),
+                ("Authors".into(), AUTHOR_ICON),
                 ("Awards".into(), ListIcon::Glyph('\u{f091}', 0xffd700)),
             ]
             .into(),

@@ -97,3 +97,27 @@ fn multibyte_urls_are_counted_in_characters() {
     assert_eq!(out, "https://exämple.org/.../filnämn-ÅÄÖ.zip");
     assert!(out.chars().count() <= 40);
 }
+
+#[test]
+fn a_compo_gets_the_icon_of_the_category_its_name_matches() {
+    let glyph = |icon: ListIcon| match icon {
+        ListIcon::Glyph(c, color) => (c, color),
+        _ => panic!("not a glyph"),
+    };
+    for (compo, category) in [
+        ("C64 Demo", "Demo"),
+        ("WiLD Demo", "Demo"),
+        ("PC 4K Intro", "4K Intro"),
+        ("C64 4K Game", "Game"),
+        ("C64 Fast Intro", "Intro"),
+        ("C64 2SID", "Music"),
+        ("Gfx", "Graphics"),
+        ("Mixed", ""),
+    ] {
+        assert_eq!(
+            glyph(compo_icon(compo)),
+            glyph(category_list_icon(category)),
+            "{compo}"
+        );
+    }
+}
