@@ -27,7 +27,7 @@ use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Loaded, Loader};
-use crate::ui::{Action, Ui};
+use crate::ui::{Action, KEY_LABELS, Ui};
 use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
@@ -730,13 +730,25 @@ impl Audio {
 // Touch
 // -------------------------------------------------------------------------
 
-/// One finger on the screen, and the cursor key its direction picked.
+/// One finger on the screen.
 struct Swipe {
     id: u64,
     start: (f64, f64),
     began: Instant,
-    key: Option<libretro::retro_key>,
 }
+
+/// What the key bar's buttons send, in the order of `KEY_LABELS`. The two
+/// cursor keys are the C64's own, which a held shift turns into left and up.
+const BAR_KEYS: [libretro::retro_key; KEY_LABELS.len()] = [
+    libretro::RETROK_F1,
+    libretro::RETROK_F3,
+    libretro::RETROK_F5,
+    libretro::RETROK_F7,
+    libretro::RETROK_RIGHT,
+    libretro::RETROK_DOWN,
+    libretro::RETROK_ESCAPE,
+    libretro::RETROK_HOME,
+];
 
 /// The cursor key a movement of `(dx, dy)` means, once it is long enough.
 fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
@@ -783,6 +795,8 @@ pub struct App {
     /// Every finger currently down, so a second one can veto the swipe.
     touches: Vec<u64>,
     swipe: Option<Swipe>,
+    /// The finger on a key bar button, and the key it holds down.
+    bar_key: Option<(u64, libretro::retro_key)>,
     /// The finger that went down on the open picker, and where.
     nav_swipe: Option<(u64, (f64, f64))>,
     frame_time: Duration,
@@ -813,6 +827,7 @@ impl App {
             shift_pending: None,
             touches: Vec::new(),
             swipe: None,
+            bar_key: None,
             nav_swipe: None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
@@ -985,15 +1000,28 @@ impl App {
         }
     }
 
-    /// A sideways swipe is the next or previous release. A vertical one holds
-    /// its cursor key down until the finger is lifted, so the C64's own key
-    /// repeat carries it. A second finger cancels it and blocks
+    /// A sideways swipe is the next or previous release, one up or down opens
+    /// or closes the key bar, whose buttons are held for as long as the finger
+    /// is on them. A second finger cancels a swipe and blocks
     /// another until the screen is clear: the touchpad sits on the keyboard, so
     /// typing drags fingers across it.
     fn touch(&mut self, t: Touch) {
+        if self.bar_key.is_some_and(|(id, _)| id == t.id) {
+            if matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                self.release_bar_key();
+            }
+            return;
+        }
         match t.phase {
             TouchPhase::Started => {
-                self.release_swipe();
+                if let Some(i) = self.ui.key_at(t.location.x, t.location.y) {
+                    self.release_bar_key();
+                    self.press(BAR_KEYS[i], true, self.mods());
+                    self.bar_key = Some((t.id, BAR_KEYS[i]));
+                    self.ui.key_held = Some(i);
+                    return;
+                }
+                self.swipe = None;
                 if !self.touches.contains(&t.id) {
                     self.touches.push(t.id);
                 }
@@ -1002,7 +1030,6 @@ impl App {
                         id: t.id,
                         start: (t.location.x, t.location.y),
                         began: Instant::now(),
-                        key: None,
                     });
                 }
             }
@@ -1010,7 +1037,7 @@ impl App {
                 let Some(swipe) = self.swipe.as_ref() else {
                     return;
                 };
-                if swipe.id != t.id || swipe.key.is_some() || swipe.began.elapsed() > SWIPE_TIME {
+                if swipe.id != t.id || swipe.began.elapsed() > SWIPE_TIME {
                     return;
                 }
                 let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
@@ -1018,19 +1045,16 @@ impl App {
                     Some(libretro::RETROK_LEFT) => self.skip(1),
                     Some(libretro::RETROK_RIGHT) => self.skip(-1),
                     Some(key) => {
-                        self.press(key, true, self.mods());
-                        if let Some(swipe) = self.swipe.as_mut() {
-                            swipe.key = Some(key);
-                        }
+                        self.swipe = None;
+                        self.ui.keys_open = key == libretro::RETROK_UP;
                     }
                     None => {}
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&id| id != t.id);
-                if let Some(swipe) = self.swipe.as_ref().filter(|s| s.id == t.id) {
-                    let tap = swipe.key.is_none() && swipe.began.elapsed() < SWIPE_TIME;
-                    self.release_swipe();
+                if let Some(swipe) = self.swipe.take_if(|s| s.id == t.id) {
+                    let tap = swipe.began.elapsed() < SWIPE_TIME;
                     if tap && t.phase == TouchPhase::Ended {
                         self.ui.open();
                     }
@@ -1071,12 +1095,16 @@ impl App {
 
     fn cancel_touch(&mut self) {
         self.touches.clear();
-        self.release_swipe();
+        self.swipe = None;
+        self.release_bar_key();
     }
 
-    fn release_swipe(&mut self) {
-        if let Some(key) = self.swipe.take().and_then(|s| s.key) {
-            self.press(key, false, self.mods());
+    /// Lifted a couple of frames on, so a tap shorter than a frame still lands.
+    fn release_bar_key(&mut self) {
+        self.ui.key_held = None;
+        if let Some((_, key)) = self.bar_key.take() {
+            self.startup_keys
+                .push((self.core_frames + KEY_HOLD, key, false));
         }
     }
 

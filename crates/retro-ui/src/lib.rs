@@ -107,7 +107,7 @@ fn family(ctx: &egui::Context, name: &str) -> egui::FontFamily {
     }
 }
 
-pub(crate) fn picker_font(ctx: &egui::Context, size: f32) -> egui::FontId {
+pub fn picker_font(ctx: &egui::Context, size: f32) -> egui::FontId {
     egui::FontId::new(size, family(ctx, PICKER_FAMILY))
 }
 

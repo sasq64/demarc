@@ -9,6 +9,12 @@ use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
 const FONT: &[u8] = include_bytes!("../../../system/font.ttf");
 
+/// The key bar's buttons, a row of four at a time.
+pub const KEY_LABELS: [&str; 8] = [
+    "F1", "F3", "F5", "F7", "\u{f07e}", "\u{f07d}", "STOP", "HOME",
+];
+const KEY_SIZE: f32 = 26.0;
+
 pub enum Action {
     Play(EmuFile),
     FlipDisk,
@@ -22,6 +28,10 @@ pub struct Ui {
     start: Instant,
     /// Set by a tap on the search box, until a tap elsewhere.
     pub soft_keyboard: bool,
+    pub keys_open: bool,
+    /// Index into `KEY_LABELS` of the button a finger is on.
+    pub key_held: Option<usize>,
+    key_rects: Vec<egui::Rect>,
 }
 
 impl Ui {
@@ -41,6 +51,9 @@ impl Ui {
             navigator: Navigator::new(),
             start: Instant::now(),
             soft_keyboard: false,
+            keys_open: false,
+            key_held: None,
+            key_rects: Vec::new(),
         }
     }
 
@@ -135,10 +148,48 @@ impl Ui {
         }
     }
 
+    /// Index into `KEY_LABELS` of the key bar button at a physical position.
+    pub fn key_at(&self, x: f64, y: f64) -> Option<usize> {
+        if !self.keys_open || self.picker.is_open() {
+            return None;
+        }
+        let scale = self.ctx.pixels_per_point();
+        let pos = egui::pos2(x as f32 / scale, y as f32 / scale);
+        let gap = self.ctx.global_style().spacing.item_spacing.x / 2.0;
+        self.key_rects
+            .iter()
+            .position(|r| r.expand(gap).contains(pos))
+    }
+
+    fn draw_keys(&mut self, ctx: &egui::Context) {
+        self.key_rects.clear();
+        let gap = ctx.global_style().spacing.item_spacing.x;
+        let size = egui::vec2(ctx.content_rect().width() / 4.0 - gap, KEY_SIZE * 2.0);
+        egui::Area::new(egui::Id::new("key_bar"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -gap))
+            .show(ctx, |ui| {
+                for row in KEY_LABELS.chunks(4) {
+                    ui.horizontal(|ui| {
+                        for label in row {
+                            let text = egui::RichText::new(*label)
+                                .font(retro_ui::picker_font(ctx, KEY_SIZE));
+                            let button = egui::Button::new(text)
+                                .selected(self.key_held == Some(self.key_rects.len()))
+                                .min_size(size);
+                            self.key_rects.push(ui.add(button).rect);
+                        }
+                    });
+                }
+            });
+    }
+
     /// Draw one frame, and return what the user asked for.
     pub fn draw(&mut self, ctx: &egui::Context) -> Option<Action> {
         self.hud.show(ctx, self.now(), bytes_in_progress(), None);
         if !self.picker.is_open() {
+            if self.keys_open {
+                self.draw_keys(ctx);
+            }
             return None;
         }
         if let Some(list) = self.navigator.current()

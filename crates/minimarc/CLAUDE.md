@@ -75,7 +75,10 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 
 - Starts in the picker with no core. A pick goes to a loader thread; the
   result replaces the core (`App::start`). Stale results are dropped.
-- Picker open: all input goes to egui. Closed: keys and swipes go to the core.
+- Picker open: all input goes to egui. Closed: keys go to the core.
+- During a demo a sideways swipe is the next or previous release, a swipe up
+  opens the key bar (`Ui::draw_keys`, `BAR_KEYS`) and a swipe down closes it.
+  Its buttons are hit-tested in `App::touch`, not by egui.
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

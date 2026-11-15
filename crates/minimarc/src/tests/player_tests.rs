@@ -56,3 +56,25 @@ fn the_picker_draws_and_enters_a_list() {
     }
     assert!(ui.is_open());
 }
+
+#[test]
+fn the_key_bar_finds_the_button_under_a_finger() {
+    let mut ui = Ui::new();
+    ui.keys_open = true;
+    let ctx = ui.ctx.clone();
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |egui_ui| {
+            ui.draw(egui_ui.ctx());
+        });
+        output.textures_delta.clear();
+    }
+    let screen = ctx.content_rect();
+    let scale = ctx.pixels_per_point() as f64;
+    let at = |x: f32, y: f32| ui.key_at(x as f64 * scale, y as f64 * scale);
+    let (w, bottom) = (screen.width() / 4.0, screen.bottom());
+    assert_eq!(at(w * 0.5, bottom - 90.0), Some(0));
+    assert_eq!(at(w * 3.5, bottom - 90.0), Some(3));
+    assert_eq!(at(w * 0.5, bottom - 30.0), Some(4));
+    assert_eq!(at(w * 3.5, bottom - 30.0), Some(7));
+    assert_eq!(at(w * 0.5, screen.top() + 10.0), None);
+}
