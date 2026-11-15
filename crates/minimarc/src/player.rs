@@ -1408,6 +1408,9 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
     if let Err(e) = run() {
         tracing::error!("{e:#}");
     }
+    // Android keeps the process after the activity is gone and would call
+    // this again in it, where the logger, winit and the core are all set up.
+    std::process::exit(0);
 }
 
 #[cfg(test)]

@@ -1726,3 +1726,10 @@
   window) that stalled the gamescope core's worker in its dmabuf import, so no
   `retro_run`, no audio, and a SIGSTOPped session. The import now submits on
   its own thread.
+
+- Android keeps minimarc's process after its activity is gone (swiped out of
+  recents), and the next launch calls `android_main` again in it: the tracing
+  `init()` panicked ("global default trace dispatcher has already been set")
+  and the app closed at once, every time. `android_main` now ends in
+  `process::exit`. Two `Load ... libminimarc.so` lines with one pid in logcat
+  are the sign.
