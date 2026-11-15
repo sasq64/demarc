@@ -38,10 +38,6 @@ suppaftp.workspace = true
 ureq.workspace = true
 url = "2"
 
-# `overrides.toml` fixups: base64 `contents`, bsdiff `format = "bsdiff"` deltas.
-base64 = "0.23.1"
-qbsdiff = "1.4.4"
-
 # The still-image backend. PCX comes from image-extras, which plugs into
 # `image`'s decoding/sniffing hooks rather than being driven directly.
 image.workspace = true
@@ -63,6 +59,9 @@ brotli-decompressor = "5"
 symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 
 [dev-dependencies]
+# Building the patches `overrides.toml` carries, in newsys_tests.
+base64 = "0.23.1"
+qbsdiff = "1.4.4"
 tracing-subscriber.workspace = true
 
 [target."cfg(unix)".dependencies]

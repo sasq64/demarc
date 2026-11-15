@@ -697,18 +697,6 @@ fn a_skip_ends_when_audio_comes_back() {
 }
 
 #[test]
-fn the_rate_adjust_drains_a_full_sink_and_fills_an_empty_one() {
-    let latency = LatencySetting::default();
-    let target = latency.audio_buf_min + (latency.audio_buf_max - latency.audio_buf_min) / 8;
-
-    assert!((rate_adjust(target as f64, &latency) - 1.0).abs() < 1e-9);
-    assert!(rate_adjust(latency.audio_buf_max as f64, &latency) < 1.0);
-    assert!(rate_adjust(latency.audio_buf_min as f64, &latency) > 1.0);
-    assert_eq!(rate_adjust(1e9, &latency), 0.99);
-    assert!(rate_adjust(0.0, &latency) <= 1.01);
-}
-
-#[test]
 fn the_key_map_covers_letters_digits_and_cursor_keys() {
     let map = Emulator::build_keycode_map();
     assert_eq!(map[&KeyCode::KeyZ], libretro::RETROK_z);

@@ -62,6 +62,13 @@ fi
 mkdir -p "$ASSETS"
 rm -f "$ASSETS/csdb.txt.gz"
 cp -u demodb/csdb.txt system/vice/C64/rr38ppal-auto.crt "$ASSETS/"
+# Only the csdb entries, each with the comment lines right above it.
+awk '
+    /^\[[a-z]+\.[0-9]+\]$/ { keep = /^\[csdb\./; if (keep) printf "%s", pend; pend = "" }
+    keep { print; next }
+    /^#/ { pend = pend $0 "\n"; next }
+    { pend = "" }
+' system/overrides.toml > "$ASSETS/overrides.toml"
 
 echo "==> cargo ndk ($ABI, API $API)"
 cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \

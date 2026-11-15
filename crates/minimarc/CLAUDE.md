@@ -13,10 +13,12 @@ record mistakes there, small changes, short comments, test layout).
 ## Where things are
 
 ```
-crates/minimarc/src/player.rs   window, wgpu 30, lottes CRT pass, egui pass, audio, keys,
-                                touch, android_main, asset unpacking
+crates/minimarc/src/player.rs   window, wgpu 30, lottes CRT pass, egui pass, keys, touch,
+                                android_main, asset unpacking
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
-crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack
+crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
+                                overrides.toml
+crates/retro-core/src/audio.rs  AudioSink (cpal, resampler, drift control), shared with demarc
 crates/navigator                the tree of lists, shared with demarc (src/navigator.rs wraps it)
 crates/retro-ui                 the egui picker/HUD, shared with demarc
 crates/release-io               fetch, cache, unpack, WorkFile, c64::prepare
@@ -90,6 +92,14 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   when the zoom leaves no room (`CHROME_HEIGHT`).
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
   frame 50 and Return at 55 (`release_io::c64::FAST_LOAD_EVENTS`).
+- The `[csdb.<id>]` entries of `overrides.toml` (an APK asset on Android, the
+  system dir elsewhere) are applied in `load.rs`: download, meta, patches,
+  boot file and key events. Other sections are skipped unparsed.
+- A started release shows title, author and "C64 <category>" bottom right for
+  five seconds (`Ui::info`).
+- Sound goes through `retro_core::audio::AudioSink`; `App::step` steers the
+  resample ratio by the ring fill (`AUDIO_BUF`) and runs an extra frame when
+  the ring is nearly dry.
 
 ## Android facts that cost time
 
@@ -125,7 +135,9 @@ Not yet confirmed on the phone:
 
 Known rough edges: the soft keyboard is only asked for after a tap on the
 search box (`Ui::soft_keyboard`), and then covers the picker's buttons until
-a tap elsewhere; no on-screen C64 keyboard; no
-`overrides.toml`, playlists or next/previous; no audio drift control.
+a tap elsewhere; no on-screen C64 keyboard; no playlists.
+
+The shared audio sink, the overrides and the info text have only been run by
+the tests and the cross-compile check, not on the phone.
 
 Nothing from this work is committed yet. Commit only when asked.

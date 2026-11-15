@@ -78,3 +78,14 @@ fn the_key_bar_finds_the_button_under_a_finger() {
     assert_eq!(at(w * 3.5, bottom - 30.0), Some(7));
     assert_eq!(at(w * 0.5, screen.top() + 10.0), None);
 }
+
+#[test]
+fn override_key_names_resolve_to_retro_keys() {
+    assert_eq!(key_by_name("Enter"), Some(libretro::RETROK_RETURN));
+    assert_eq!(key_by_name("NumpadEnter"), Some(libretro::RETROK_RETURN));
+    assert_eq!(key_by_name("KeyA"), Some(libretro::RETROK_a));
+    assert_eq!(key_by_name("1"), Some(libretro::RETROK_1));
+    assert_eq!(key_by_name("b"), Some(libretro::RETROK_b));
+    assert_eq!(key_by_name("NoSuchKey"), None);
+    assert_eq!(retro_key(KeyCode::F7), Some(libretro::RETROK_F7));
+}

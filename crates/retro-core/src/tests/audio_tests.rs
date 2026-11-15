@@ -87,3 +87,21 @@ fn audio_out_pushes_into_the_sinks_ring() {
 
     assert!(sink.occupied_len() > 0);
 }
+
+#[test]
+fn the_rate_adjust_drains_a_full_sink_and_fills_an_empty_one() {
+    let (min, max) = (3000, 18000);
+    let target = min + (max - min) / 8;
+
+    assert!((rate_adjust(target as f64, min, max) - 1.0).abs() < 1e-9);
+    assert!(rate_adjust(max as f64, min, max) < 1.0);
+    assert!(rate_adjust(min as f64, min, max) > 1.0);
+    assert_eq!(rate_adjust(1e9, min, max), 0.99);
+    assert!(rate_adjust(0.0, min, max) <= 1.01);
+}
+
+#[test]
+fn the_fill_starts_at_the_first_reading_and_then_follows_slowly() {
+    assert_eq!(smooth_fill(0.0, 4000), 4000.0);
+    assert_eq!(smooth_fill(4000.0, 8000), 4200.0);
+}

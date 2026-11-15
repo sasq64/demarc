@@ -65,9 +65,49 @@ fn a_zipped_disk_set_is_prepared_for_vice() {
         path: FileSource::Path(root("testdata/c64/Skaaneland.zip")),
         ..Default::default()
     };
-    let work = prepare(file).unwrap();
-    assert_eq!(work.path.extension().unwrap(), "m3u");
-    assert_eq!(work.get_meta_or("vice_cartridge", ""), "rr38ppal-auto.crt");
+    let demo = prepare(file).unwrap();
+    assert_eq!(demo.work.path.extension().unwrap(), "m3u");
+    assert_eq!(
+        demo.work.get_meta_or("vice_cartridge", ""),
+        "rr38ppal-auto.crt"
+    );
+    assert_eq!(demo.events, release_io::c64::FAST_LOAD_EVENTS);
+    assert_eq!(demo.info, "");
+}
+
+#[test]
+fn an_override_sets_meta_and_adds_its_keys() {
+    use retro_core::libretro::RETROK_SPACE;
+
+    let file = EmuFile {
+        path: FileSource::Path(root("testdata/c64/Skaaneland.zip")),
+        ..Default::default()
+    };
+    let over = Override {
+        meta: [("vice_sid_extra", "0xd420"), ("c64_fast_load", "disabled")].into(),
+        events: vec![(300, InputEvent::Key(RETROK_SPACE))],
+        ..Default::default()
+    };
+    let demo = prepare_with(file, Some(&over)).unwrap();
+    assert_eq!(demo.work.get_meta_or("vice_sid_extra", ""), "0xd420");
+    assert!(!demo.work.has_meta("vice_cartridge"));
+    assert_eq!(demo.events, [(300, InputEvent::Key(RETROK_SPACE))]);
+}
+
+#[test]
+fn a_db_entry_is_keyed_for_overrides_and_described() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("csdb.txt");
+    std::fs::write(
+        &db,
+        "# CSDb database\n# Platform:C64\n\
+         id:197970\ttitle:Embryo\tauthor:Padua\tcategory:Demo\tdate:2020-10-31\t\
+         download:https://x.org/a.zip\n",
+    )
+    .unwrap();
+    let (_, files) = read_db(&db).unwrap();
+    assert_eq!(files[0].demo_id(), DemoId::new("csdb", 197970));
+    assert_eq!(info_text(&files[0]), "\"Embryo\"\nPadua (2020)\nC64 Demo");
 }
 
 #[test]

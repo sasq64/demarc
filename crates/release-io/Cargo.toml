@@ -22,8 +22,9 @@ suppaftp.workspace = true
 ureq.workspace = true
 url = "2"
 
-# `Patch::bytes`: base64 `contents`.
+# `Patch::bytes`: base64 `contents`; `apply_patches`: bsdiff deltas.
 base64 = "0.23.1"
+qbsdiff = "1.4.4"
 
 # Unpacking. `unarc-rs` covers every format but pulls in `unrar`, which does
 # not build for bionic, so Android gets by on these three alone.

@@ -9,7 +9,7 @@ use bevy::{image::Image, prelude::*};
 
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::audio::AudioSink;
+use crate::audio::{AudioSink, rate_adjust, smooth_fill};
 use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
@@ -896,12 +896,12 @@ impl Emulator {
         // below fire on every single frame, running the demo at double speed.
         let has_audio = self.audio_seen;
         let occupied_len = self.sink.occupied_len();
-        self.audio_fill = if self.audio_fill == 0.0 {
-            occupied_len as f64
-        } else {
-            self.audio_fill * 0.95 + occupied_len as f64 * 0.05
-        };
-        self.audio_rate_adjust = rate_adjust(self.audio_fill, &self.latency);
+        self.audio_fill = smooth_fill(self.audio_fill, occupied_len);
+        self.audio_rate_adjust = rate_adjust(
+            self.audio_fill,
+            self.latency.audio_buf_min,
+            self.latency.audio_buf_max,
+        );
         if converting && let Some(conversion) = &mut self.conversion {
             conversion.displayed += 1;
             conversion.secs += delta;
@@ -1084,15 +1084,6 @@ fn video_delay(latency: &LatencySetting, self_audio: bool) -> usize {
     } else {
         latency.video_delay
     }
-}
-
-/// Resample ratio multiplier that steers the smoothed sink `fill` down towards
-/// just above `audio_buf_min`, so the ring runs near empty instead of filling.
-fn rate_adjust(fill: f64, latency: &LatencySetting) -> f64 {
-    let min = latency.audio_buf_min as f64;
-    let window = (latency.audio_buf_max - latency.audio_buf_min) as f64;
-    let target = min + window / 8.0;
-    (1.0 - 0.01 * (fill - target) / window).clamp(0.99, 1.01)
 }
 
 #[cfg(test)]

@@ -1,7 +1,5 @@
 use anyhow::{Context, Result, bail};
-use qbsdiff::Bspatch;
 use std::fs;
-use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tracing::{debug, info, trace, warn};
@@ -144,161 +142,22 @@ pub fn unpack_release_writeback(
     Ok(WorkFile::new_in_place(path, wf.get_all_meta()))
 }
 
-/// Meta key holding the release directory a `boot_file` was picked out of, set
-/// by [`apply_override`] when it narrows the work file's path to one program.
-/// A system that copies a release into a drive of its own reads it to know that
-/// what it is holding is one file out of a release rather than a loose program.
-pub const RELEASE_DIR: &str = "release_dir";
+pub use release_io::release_override::{BOOT_COMMAND, RELEASE_DIR, apply_override_meta};
 
-/// Meta key holding the command line of an override's `boot` that has
-/// arguments, e.g. `dos4gw.exe demo.exe`.
-pub const BOOT_COMMAND: &str = "boot_command";
-
-/// Apply what `overrides.toml` says about this release, once it is unpacked and
-/// before any system looks at it — see [`crate::overrides`].
-///
-/// The parts are independent and any of them may be absent: `fast` and meta go
-/// on the [`WorkFile`], patches are written into the release, and `boot_file`
-/// points the path at the one program to start so that the systems' own file
-/// picking is skipped.
-///
-/// `fast` goes on first, because it is a whole Amiga configuration written as
-/// one word (see [`amiga::apply_fast`]) and an entry that also names an option
-/// of its own means that one to stand.
+/// [`release_io::apply_override`], after the one part of an override that
+/// belongs to a system: `fast` goes on first, because it is a whole Amiga
+/// configuration written as one word (see [`amiga::apply_fast`]) and an entry
+/// that also names an option of its own means that one to stand.
 fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
     if over.fast {
         debug!("Override asks for the fast Amiga configuration");
         amiga::apply_fast(file);
     }
-    apply_override_meta(file, over);
-    // An in-place release was patched before it was written back
-    if !over.patches.is_empty() && !file.is_in_place() {
-        apply_patches(file, &over.patches)?;
-    }
-    if let Some(boot) = over.boot_file {
-        if !over.boot_args.is_empty() {
-            let command = [&[boot], &over.boot_args[..]].concat().join(" ");
-            file.set_meta(BOOT_COMMAND, command);
-        }
-        match find_named(&release_dir(file), boot)? {
-            Some(path) => {
-                info!("Override starts {path:?}");
-                // A system tells "one loose program the user pointed at" from
-                // "a whole release" by whether the work file is a file or a
-                // directory, and copies the data files along only in the
-                // second case (`copy_all` in `newsys::amiga`). Narrowing the
-                // path to the named program throws that away, so leave behind
-                // the release it came out of.
-                let dir = release_dir(file).to_string_lossy().into_owned();
-                file.set_meta(RELEASE_DIR, dir);
-                file.path = path;
-            }
-            // The archive it named is not the one that was downloaded, most
-            // likely. Falling back to the systems' own pick still runs
-            // something, which beats refusing to load the release at all.
-            None => warn!("Override names {boot:?}, which is not in {:?}", file.path),
-        }
-    }
-    Ok(())
+    release_io::apply_override(file, over, system_dir())
 }
 
-fn apply_override_meta(file: &mut WorkFile, over: &Override) {
-    for (key, val) in &over.meta {
-        debug!("Override sets {key}={val}");
-        file.set_meta(key, *val);
-    }
-}
-
-/// The directory holding the release, whether the work file points at the
-/// directory itself or at one file inside it.
-fn release_dir(file: &WorkFile) -> PathBuf {
-    if file.path.is_dir() {
-        file.path.clone()
-    } else {
-        file.path.parent().unwrap_or(Path::new(".")).to_owned()
-    }
-}
-
-/// Patch a release;
-/// Will add or modify files in the release directory
-/// Must call make_temp() to make sure that is OK.
 fn apply_patches(file: &mut WorkFile, patches: &[Patch]) -> Result<()> {
-    file.make_temp()?;
-    let dir = release_dir(file);
-    for patch in patches {
-        let data = patch.bytes(system_dir())?;
-        let target = match find_named(&dir, patch.target)? {
-            Some(path) => path,
-            None => dir.join(patch.target),
-        };
-        let result = if patch.bsdiff {
-            apply_bsdiff(&target, &data)
-        } else {
-            write_patch(&target, patch.offset, &data)
-        };
-        result.with_context(|| format!("Could not patch {target:?}"))?;
-        info!(
-            "Patched {target:?} with {} bytes{}",
-            data.len(),
-            if patch.info.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", patch.info)
-            }
-        );
-    }
-    Ok(())
-}
-
-/// Write `data` into `target`: replacing it entirely when there is no offset,
-/// or overwriting the bytes at `offset` when there is. A file too short to
-/// reach the offset is extended with zeros.
-fn write_patch(target: &Path, offset: Option<usize>, data: &[u8]) -> Result<()> {
-    let Some(offset) = offset else {
-        return Ok(fs::write(target, data)?);
-    };
-    let mut out = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(target)?;
-    let offset = offset as u64;
-    if out.metadata()?.len() < offset {
-        out.set_len(offset)?;
-    }
-    out.seek(SeekFrom::Start(offset))?;
-    out.write_all(data)?;
-    Ok(())
-}
-
-/// Apply a bsdiff patch to `target`, rewriting it with the result. This is how
-/// a release whose data file needs a few bytes changed is fixed up without
-/// writing the whole file out in the override — see `format = "bsdiff"` in
-/// [`crate::overrides`].
-fn apply_bsdiff(target: &Path, patch: &[u8]) -> Result<()> {
-    let source = fs::read(target)?;
-    let patcher = Bspatch::new(patch)?;
-    let mut out = Vec::with_capacity(patcher.hint_target_size() as usize);
-    patcher.apply(&source, &mut out)?;
-    fs::write(target, &out)?;
-    Ok(())
-}
-
-/// A name with a `/` is a path from the release directory, for a name the
-/// release has more than once.
-fn find_named(dir: &Path, name: &str) -> Result<Option<PathBuf>> {
-    debug!("Finding {name} in {dir:?}");
-    if name.contains('/') {
-        let path = dir.join(name);
-        return Ok(path.is_file().then_some(path));
-    }
-    walk_dir_find(dir, 0, |path, _ext, _header| {
-        let found = path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .is_some_and(|f| f.eq_ignore_ascii_case(name));
-        Ok(found.then(|| path.to_owned()))
-    })
+    release_io::apply_patches(file, patches, system_dir())
 }
 
 /// A System is responsible for indentifying, converting, configuring and loading releases for

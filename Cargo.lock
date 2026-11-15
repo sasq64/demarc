@@ -2690,6 +2690,7 @@ dependencies = [
  "qbsdiff",
  "regex",
  "release-io",
+ "retro-core",
  "serde",
  "suppaftp",
  "tempfile",
@@ -5099,7 +5100,6 @@ name = "minimarc"
 version = "1.8.3"
 dependencies = [
  "anyhow",
- "cpal",
  "database",
  "egui",
  "egui-wgpu",
@@ -5111,7 +5111,6 @@ dependencies = [
  "release-io",
  "retro-core",
  "retro-ui",
- "ringbuf",
  "tempfile",
  "tracing",
  "tracing-subscriber",
@@ -6743,6 +6742,7 @@ dependencies = [
  "dirs",
  "flate2",
  "percent-encoding",
+ "qbsdiff",
  "retro-core",
  "sevenz-rust2",
  "sha2 0.11.0",

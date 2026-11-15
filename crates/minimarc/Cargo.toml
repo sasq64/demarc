@@ -17,7 +17,6 @@ retro-core = { path = "../retro-core" }
 retro-ui = { path = "../retro-ui" }
 
 anyhow.workspace = true
-cpal = "0.17.1"
 egui.workspace = true
 indexmap = "2"
 # egui-wgpu 0.36 is built against wgpu 30, one ahead of what Bevy pins the
@@ -26,7 +25,6 @@ egui-wgpu = { version = "0.36.2", default-features = false }
 egui-winit = { version = "0.36.2", default-features = false }
 pollster.workspace = true
 regex = "1"
-ringbuf = "0.5.0"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 wgpu = "30"

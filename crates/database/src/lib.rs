@@ -3,13 +3,15 @@
 
 use release_io::{fetch, m3u, utils};
 
+// The desktop one unpacks the bundled `system.zip` on first use.
 #[cfg(feature = "desktop")]
 use newsys::system_dir;
+#[cfg(not(feature = "desktop"))]
+use retro_core::system_dir;
 
 pub mod emu_file;
 pub mod files;
 pub mod load_error;
 #[cfg(feature = "desktop")]
 pub mod modland;
-#[cfg(feature = "desktop")]
 pub mod overrides;

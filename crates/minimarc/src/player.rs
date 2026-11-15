@@ -11,9 +11,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::HeapProd;
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use tracing::info;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -22,11 +19,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use retro_core::backend::frame_bytes;
+use retro_core::audio::{AudioSink, rate_adjust, smooth_fill};
+use retro_core::backend::{InputEvent, frame_bytes};
 use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core, system_dir};
 
-use crate::load::{Loaded, Loader};
+use crate::load::{Demo, Loaded, Loader};
 use crate::ui::{Action, KEY_LABELS, Ui};
 use release_io::workfile::WorkFile;
 
@@ -46,95 +44,113 @@ const SWIPE_TIME: Duration = Duration::from_millis(500);
 
 /// winit physical key → libretro keycode, for the keys a C64 has (or that VICE
 /// maps onto one).
-fn retro_key(key: KeyCode) -> Option<libretro::retro_key> {
+fn key_table() -> &'static [(KeyCode, libretro::retro_key)] {
     use KeyCode::*;
     use libretro::*;
-    Some(match key {
-        Backspace => RETROK_BACKSPACE,
-        Tab => RETROK_TAB,
-        Enter | NumpadEnter => RETROK_RETURN,
-        Escape => RETROK_ESCAPE,
-        Space => RETROK_SPACE,
-        Quote => RETROK_QUOTE,
-        Comma => RETROK_COMMA,
-        Minus => RETROK_MINUS,
-        Period => RETROK_PERIOD,
-        Slash => RETROK_SLASH,
-        Digit0 => RETROK_0,
-        Digit1 => RETROK_1,
-        Digit2 => RETROK_2,
-        Digit3 => RETROK_3,
-        Digit4 => RETROK_4,
-        Digit5 => RETROK_5,
-        Digit6 => RETROK_6,
-        Digit7 => RETROK_7,
-        Digit8 => RETROK_8,
-        Digit9 => RETROK_9,
-        Semicolon => RETROK_SEMICOLON,
-        Equal => RETROK_EQUALS,
-        BracketLeft => RETROK_LEFTBRACKET,
-        Backslash => RETROK_BACKSLASH,
-        BracketRight => RETROK_RIGHTBRACKET,
-        Backquote => RETROK_BACKQUOTE,
-        KeyA => RETROK_a,
-        KeyB => RETROK_b,
-        KeyC => RETROK_c,
-        KeyD => RETROK_d,
-        KeyE => RETROK_e,
-        KeyF => RETROK_f,
-        KeyG => RETROK_g,
-        KeyH => RETROK_h,
-        KeyI => RETROK_i,
-        KeyJ => RETROK_j,
-        KeyK => RETROK_k,
-        KeyL => RETROK_l,
-        KeyM => RETROK_m,
-        KeyN => RETROK_n,
-        KeyO => RETROK_o,
-        KeyP => RETROK_p,
-        KeyQ => RETROK_q,
-        KeyR => RETROK_r,
-        KeyS => RETROK_s,
-        KeyT => RETROK_t,
-        KeyU => RETROK_u,
-        KeyV => RETROK_v,
-        KeyW => RETROK_w,
-        KeyX => RETROK_x,
-        KeyY => RETROK_y,
-        KeyZ => RETROK_z,
-        Delete => RETROK_DELETE,
-        Insert => RETROK_INSERT,
-        Home => RETROK_HOME,
-        End => RETROK_END,
-        PageUp => RETROK_PAGEUP,
-        PageDown => RETROK_PAGEDOWN,
-        ArrowUp => RETROK_UP,
-        ArrowDown => RETROK_DOWN,
-        ArrowLeft => RETROK_LEFT,
-        ArrowRight => RETROK_RIGHT,
-        F1 => RETROK_F1,
-        F2 => RETROK_F2,
-        F3 => RETROK_F3,
-        F4 => RETROK_F4,
-        F5 => RETROK_F5,
-        F6 => RETROK_F6,
-        F7 => RETROK_F7,
-        F8 => RETROK_F8,
-        F9 => RETROK_F9,
-        F10 => RETROK_F10,
-        F11 => RETROK_F11,
-        F12 => RETROK_F12,
-        ShiftLeft => RETROK_LSHIFT,
-        ShiftRight => RETROK_RSHIFT,
-        ControlLeft => RETROK_LCTRL,
-        ControlRight => RETROK_RCTRL,
-        AltLeft => RETROK_LALT,
-        AltRight => RETROK_RALT,
-        SuperLeft => RETROK_LSUPER,
-        SuperRight => RETROK_RSUPER,
-        CapsLock => RETROK_CAPSLOCK,
-        _ => return None,
-    })
+    &[
+        (Backspace, RETROK_BACKSPACE),
+        (Tab, RETROK_TAB),
+        (Enter, RETROK_RETURN),
+        (NumpadEnter, RETROK_RETURN),
+        (Escape, RETROK_ESCAPE),
+        (Space, RETROK_SPACE),
+        (Quote, RETROK_QUOTE),
+        (Comma, RETROK_COMMA),
+        (Minus, RETROK_MINUS),
+        (Period, RETROK_PERIOD),
+        (Slash, RETROK_SLASH),
+        (Digit0, RETROK_0),
+        (Digit1, RETROK_1),
+        (Digit2, RETROK_2),
+        (Digit3, RETROK_3),
+        (Digit4, RETROK_4),
+        (Digit5, RETROK_5),
+        (Digit6, RETROK_6),
+        (Digit7, RETROK_7),
+        (Digit8, RETROK_8),
+        (Digit9, RETROK_9),
+        (Semicolon, RETROK_SEMICOLON),
+        (Equal, RETROK_EQUALS),
+        (BracketLeft, RETROK_LEFTBRACKET),
+        (Backslash, RETROK_BACKSLASH),
+        (BracketRight, RETROK_RIGHTBRACKET),
+        (Backquote, RETROK_BACKQUOTE),
+        (KeyA, RETROK_a),
+        (KeyB, RETROK_b),
+        (KeyC, RETROK_c),
+        (KeyD, RETROK_d),
+        (KeyE, RETROK_e),
+        (KeyF, RETROK_f),
+        (KeyG, RETROK_g),
+        (KeyH, RETROK_h),
+        (KeyI, RETROK_i),
+        (KeyJ, RETROK_j),
+        (KeyK, RETROK_k),
+        (KeyL, RETROK_l),
+        (KeyM, RETROK_m),
+        (KeyN, RETROK_n),
+        (KeyO, RETROK_o),
+        (KeyP, RETROK_p),
+        (KeyQ, RETROK_q),
+        (KeyR, RETROK_r),
+        (KeyS, RETROK_s),
+        (KeyT, RETROK_t),
+        (KeyU, RETROK_u),
+        (KeyV, RETROK_v),
+        (KeyW, RETROK_w),
+        (KeyX, RETROK_x),
+        (KeyY, RETROK_y),
+        (KeyZ, RETROK_z),
+        (Delete, RETROK_DELETE),
+        (Insert, RETROK_INSERT),
+        (Home, RETROK_HOME),
+        (End, RETROK_END),
+        (PageUp, RETROK_PAGEUP),
+        (PageDown, RETROK_PAGEDOWN),
+        (ArrowUp, RETROK_UP),
+        (ArrowDown, RETROK_DOWN),
+        (ArrowLeft, RETROK_LEFT),
+        (ArrowRight, RETROK_RIGHT),
+        (F1, RETROK_F1),
+        (F2, RETROK_F2),
+        (F3, RETROK_F3),
+        (F4, RETROK_F4),
+        (F5, RETROK_F5),
+        (F6, RETROK_F6),
+        (F7, RETROK_F7),
+        (F8, RETROK_F8),
+        (F9, RETROK_F9),
+        (F10, RETROK_F10),
+        (F11, RETROK_F11),
+        (F12, RETROK_F12),
+        (ShiftLeft, RETROK_LSHIFT),
+        (ShiftRight, RETROK_RSHIFT),
+        (ControlLeft, RETROK_LCTRL),
+        (ControlRight, RETROK_RCTRL),
+        (AltLeft, RETROK_LALT),
+        (AltRight, RETROK_RALT),
+        (SuperLeft, RETROK_LSUPER),
+        (SuperRight, RETROK_RSUPER),
+        (CapsLock, RETROK_CAPSLOCK),
+    ]
+}
+
+fn retro_key(key: KeyCode) -> Option<libretro::retro_key> {
+    let (_, code) = key_table().iter().find(|(k, _)| *k == key)?;
+    Some(*code)
+}
+
+/// A key as `overrides.toml` names it: a `KeyCode` name, or a lone letter or digit.
+pub(crate) fn key_by_name(key: &str) -> Option<libretro::retro_key> {
+    let name = match key {
+        c if c.len() == 1 && c.as_bytes()[0].is_ascii_digit() => format!("Digit{c}"),
+        c if c.len() == 1 && c.as_bytes()[0].is_ascii_alphabetic() => {
+            format!("Key{}", c.to_ascii_uppercase())
+        }
+        name => name.to_string(),
+    };
+    let (_, code) = key_table().iter().find(|(k, _)| format!("{k:?}") == name)?;
+    Some(*code)
 }
 
 /// The keys a C64 needs that a compact keyboard does not have: Alt picks a
@@ -637,94 +653,9 @@ fn create_bind_group(
 // Audio
 // -------------------------------------------------------------------------
 
-/// Stereo `f32` samples the callback has not taken yet. ~170 ms at 48 kHz.
-const RING_SIZE: usize = 16384;
-
-/// The core's samples, resampled to the device rate and handed to cpal through
-/// a ring buffer.
-///
-/// There is no drift control: an overrun drops samples and an underrun plays
-/// silence, which one window of one core does rarely enough to live with.
-struct Audio {
-    _stream: cpal::Stream,
-    prod: HeapProd<f32>,
-    rate: f64,
-    /// Where the next output frame falls between `last` and the input frame
-    /// being fed, in input frames.
-    pos: f64,
-    last: (f32, f32),
-}
-
-impl Audio {
-    fn new() -> Result<Self> {
-        let device = cpal::default_host()
-            .default_output_device()
-            .ok_or_else(|| anyhow!("no output device"))?;
-        // Whatever the device itself runs at: nothing a core emits is sourced
-        // above 48 kHz, so asking for more only adds a resample somewhere else.
-        let target = device
-            .default_output_config()
-            .map(|c| c.sample_rate())
-            .unwrap_or(48000);
-        // Every advertised range is clamped against rather than filtered on its
-        // minimum: cpal's WASAPI backend lists each common rate as its own
-        // single-rate range, and the first of those is 5512 Hz.
-        let supported = device
-            .supported_output_configs()?
-            .filter(|c| c.channels() == 2 && c.sample_format() == cpal::SampleFormat::F32)
-            .min_by_key(|c| target.abs_diff(target.clamp(c.min_sample_rate(), c.max_sample_rate())))
-            .ok_or_else(|| anyhow!("no stereo f32 output config"))?;
-        let rate = target.clamp(supported.min_sample_rate(), supported.max_sample_rate());
-        let config: cpal::StreamConfig = supported.with_sample_rate(rate).into();
-
-        let (prod, mut cons) = ringbuf::HeapRb::<f32>::new(RING_SIZE).split();
-        let stream = device.build_output_stream(
-            &config,
-            move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let count = cons.pop_slice(out);
-                // cpal hands back the previous callback's buffer, so the tail
-                // has to be cleared or an underrun replays it.
-                out[count..].fill(0.0);
-            },
-            |e| tracing::warn!("audio stream error: {e}"),
-            None,
-        )?;
-        stream.play()?;
-        info!("Audio: {} Hz", config.sample_rate);
-
-        Ok(Self {
-            _stream: stream,
-            prod,
-            rate: config.sample_rate as f64,
-            pos: 0.0,
-            last: (0.0, 0.0),
-        })
-    }
-
-    /// Feed one frame's worth of interleaved samples captured at `from` Hz,
-    /// linearly interpolated to the device rate.
-    fn push(&mut self, from: f64, samples: &[f32]) {
-        if from <= 0.0 {
-            return;
-        }
-        let step = from / self.rate;
-        for frame in samples.chunks_exact(2) {
-            let cur = (frame[0], frame[1]);
-            while self.pos < 1.0 {
-                let t = self.pos as f32;
-                // A full ring drops whole frames: half of one would swap the
-                // channels for good.
-                if self.prod.vacant_len() >= 2 {
-                    let _ = self.prod.try_push(self.last.0 + (cur.0 - self.last.0) * t);
-                    let _ = self.prod.try_push(self.last.1 + (cur.1 - self.last.1) * t);
-                }
-                self.pos += step;
-            }
-            self.pos -= 1.0;
-            self.last = cur;
-        }
-    }
-}
+/// Sink fill, in samples, the drift control steers between. Under the lower
+/// one an extra frame is run rather than let the ring run dry.
+const AUDIO_BUF: (usize, usize) = (3000, 18000);
 
 // -------------------------------------------------------------------------
 // Touch
@@ -783,7 +714,9 @@ pub struct App {
     ui: Ui,
     loader: Loader,
     gfx: Option<Gfx>,
-    audio: Option<Audio>,
+    audio: AudioSink,
+    /// Smoothed fill of `audio`, see `smooth_fill`.
+    audio_fill: f64,
     alt: bool,
     shift: bool,
     ctrl: bool,
@@ -819,7 +752,8 @@ impl App {
             ui,
             loader,
             gfx: None,
-            audio: None,
+            audio: AudioSink::default(),
+            audio_fill: 0.0,
             alt: false,
             shift: false,
             ctrl: false,
@@ -845,7 +779,7 @@ impl App {
         while let Some(loaded) = self.loader.poll() {
             let result = match loaded {
                 Loaded::Db(db) => db.and_then(|(name, files)| self.ui.set_db(name, files)),
-                Loaded::Demo(_, work) => work.and_then(|work| self.start(work)),
+                Loaded::Demo(_, demo) => demo.and_then(|demo| self.start(demo)),
             };
             if let Err(e) = result {
                 tracing::error!("{e:#}");
@@ -855,8 +789,9 @@ impl App {
         }
     }
 
-    /// Replace the running core with one booting `work`.
-    fn start(&mut self, work: WorkFile) -> Result<()> {
+    /// Replace the running core with one booting `demo`.
+    fn start(&mut self, demo: Demo) -> Result<()> {
+        let Demo { work, events, info } = demo;
         self.cancel_touch();
         self.pressed.clear();
         self.shift_pending = None;
@@ -871,19 +806,18 @@ impl App {
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         self.frame_time = Duration::from_secs_f64(1.0 / fps);
         self.startup_keys.clear();
-        if work.has_meta("vice_cartridge") {
-            for (frame, event) in release_io::c64::FAST_LOAD_EVENTS {
-                if let retro_core::backend::InputEvent::Key(key) = event {
-                    self.startup_keys.push((frame, key, true));
-                    self.startup_keys.push((frame + KEY_HOLD, key, false));
-                }
+        for (frame, event) in events {
+            if let InputEvent::Key(key) = event {
+                self.startup_keys.push((frame, key, true));
+                self.startup_keys.push((frame + KEY_HOLD, key, false));
             }
         }
         self.core_frames = 0;
+        self.audio_fill = 0.0;
         self.disk_no = 0;
         self.core = Some(core);
         self.work = Some(work);
-        self.ui.status("");
+        self.ui.info(&info);
         Ok(())
     }
 
@@ -1118,8 +1052,32 @@ impl App {
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
         }
-        let Some(core) = self.core.as_mut() else {
+        if self.core.is_none() {
             return;
+        }
+        // Timer jitter and a late frame both drain the ring.
+        if self.run_frame() && self.audio.occupied_len() < AUDIO_BUF.0 {
+            self.run_frame();
+        }
+        self.audio_fill = smooth_fill(self.audio_fill, self.audio.occupied_len());
+        let adjust = rate_adjust(self.audio_fill, AUDIO_BUF.0, AUDIO_BUF.1);
+        self.audio.set_adjust(adjust);
+
+        let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
+            return;
+        };
+        gfx.aspect = core.aspect_ratio();
+        let (width, height) = core.get_frame_size();
+        if width == 0 || height == 0 {
+            return;
+        }
+        core.with_frame(|w, h, pixels| gfx.upload(w as u32, h as u32, pixels));
+    }
+
+    /// Run the core one frame and queue its sound. Whether there was any.
+    fn run_frame(&mut self) -> bool {
+        let Some(core) = self.core.as_mut() else {
+            return false;
         };
         core.run();
         self.core_frames += 1;
@@ -1137,24 +1095,17 @@ impl App {
                 core.press_key(key, true, mods);
             }
         }
-        let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
-            return;
+        let Some(core) = self.core.as_mut() else {
+            return false;
         };
-        // Taken either way: dropping them is better than letting the core's
-        // buffer grow without bound.
-        let rate = core.sample_rate();
-        let audio = self.audio.as_mut();
+        let rate = core.sample_rate() as f32;
+        let audio = &mut self.audio;
+        let mut heard = false;
         core.with_audio(|samples| {
-            if let Some(audio) = audio {
-                audio.push(rate, samples);
-            }
+            heard = !samples.is_empty();
+            audio.push_audio(rate, samples);
         });
-        gfx.aspect = core.aspect_ratio();
-        let (width, height) = core.get_frame_size();
-        if width == 0 || height == 0 {
-            return;
-        }
-        core.with_frame(|w, h, pixels| gfx.upload(w as u32, h as u32, pixels));
+        heard
     }
 
     /// Whether `event` was for the picker rather than the emulator.
@@ -1238,11 +1189,7 @@ impl ApplicationHandler for App {
         {
             Ok(gfx) => {
                 self.gfx = Some(gfx);
-                match Audio::new() {
-                    Ok(audio) => self.audio = Some(audio),
-                    // Watching without sound beats not starting.
-                    Err(e) => tracing::warn!("No audio: {e:#}"),
-                }
+                self.audio.activate();
             }
             Err(e) => {
                 eprintln!("Could not open a window: {e:#}");
@@ -1254,7 +1201,7 @@ impl ApplicationHandler for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         self.cancel_touch();
         self.gfx = None;
-        self.audio = None;
+        self.audio.deactivate();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -1335,9 +1282,10 @@ fn load_core(
 /// one is unpacked under the app's data directory. A core cannot read out of
 /// the APK, and VICE looks for cartridge images in `<system dir>/vice/<machine>`.
 #[cfg(target_os = "android")]
-const ASSETS: [(&str, &str); 2] = [
+const ASSETS: [(&str, &str); 3] = [
     ("rr38ppal-auto.crt", "vice/C64/rr38ppal-auto.crt"),
     (DB_ASSET, DB_ASSET),
+    (database::overrides::FILE_NAME, database::overrides::FILE_NAME),
 ];
 
 #[cfg(target_os = "android")]

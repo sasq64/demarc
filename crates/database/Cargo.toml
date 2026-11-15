@@ -6,9 +6,10 @@ repository.workspace = true
 description = "Reads demo databases, file lists and per-release overrides into EmuFile entries"
 
 [dependencies]
-# `modland` and `overrides` need the systems; the Android player does without.
+# `modland` needs the systems; the Android player does without.
 newsys = { path = "../newsys", optional = true }
 release-io = { path = "../release-io" }
+retro-core = { path = "../retro-core" }
 
 anyhow.workspace = true
 dirs.workspace = true

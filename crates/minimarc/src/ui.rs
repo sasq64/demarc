@@ -14,6 +14,7 @@ pub const KEY_LABELS: [&str; 8] = [
     "F1", "F3", "F5", "F7", "\u{f07e}", "\u{f07d}", "STOP", "HOME",
 ];
 const KEY_SIZE: f32 = 26.0;
+const HUD_SCALE: f32 = 0.35;
 
 pub enum Action {
     Play(EmuFile),
@@ -47,7 +48,7 @@ impl Ui {
         Self {
             ctx,
             picker,
-            hud: Hud::default(),
+            hud: Hud::scaled(HUD_SCALE),
             navigator: Navigator::new(),
             start: Instant::now(),
             soft_keyboard: false,
@@ -109,6 +110,19 @@ impl Ui {
 
     pub fn note(&mut self, text: &str) {
         self.status_for(text, Duration::from_secs(3));
+    }
+
+    /// What is playing, in place of the status.
+    pub fn info(&mut self, text: &str) {
+        self.status("");
+        let now = self.now();
+        self.hud.set_text(
+            HudLocation::InfoText,
+            text,
+            now,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        );
     }
 
     fn status_for(&mut self, text: &str, time: Duration) {

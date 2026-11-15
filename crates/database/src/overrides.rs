@@ -71,7 +71,7 @@
 //! load — `file`/`download` when it is downloaded
 //! ([`FileSource::pick_download`](crate::emu_file::FileSource::pick_download)),
 //! `patch` once it is unpacked and `boot`/`libretro`/`fast` as it is handed to
-//! a system (both in [`NewSys::load_file`](newsys::newsys::NewSys::load_file)).
+//! a system (both in `NewSys::load_file`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -82,8 +82,9 @@ use serde::Deserialize;
 use tracing::info;
 use url::Url;
 
-use newsys::backend::InputEvent;
-use newsys::libretro::retro_key;
+use release_io::release_override::{GLSL_FIELD_SEP, GLSL_PATCH_SEP, META_GLSL_PATCHES};
+use retro_core::backend::InputEvent;
+use retro_core::libretro::retro_key;
 
 use crate::emu_file::{DemoId, Override, Patch};
 use crate::files::leak;
@@ -113,11 +114,21 @@ fn search_paths() -> Vec<PathBuf> {
 ///
 /// No file at all is the normal case and gives an empty map.
 pub fn load_default(resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
+    load_default_for(None, resolve_key)
+}
+
+/// [`load_default`], reading only the `[<db>.…]` entries when `db` is given.
+pub fn load_default_for(
+    db: Option<&str>,
+    resolve_key: KeyResolver,
+) -> Result<HashMap<DemoId, Override>> {
     let Some(path) = search_paths().into_iter().find(|p| p.is_file()) else {
         return Ok(HashMap::new());
     };
-    let overrides =
-        load(&path, resolve_key).with_context(|| format!("Can't read {}", path.display()))?;
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("Could not read {}", path.display()))?;
+    let overrides = parse_for(&text, db, resolve_key)
+        .with_context(|| format!("Can't read {}", path.display()))?;
     info!("Read {} overrides from {path:?}", overrides.len());
     Ok(overrides)
 }
@@ -157,13 +168,13 @@ struct RawOverride {
     /// `fast = true` to run the release on the fast Amiga configuration —
     /// an accelerated A1200 with fast/Z3 memory, an FPU and the JIT. Shorthand
     /// for the half-dozen core options that spells out, see
-    /// [`apply_fast`](newsys::newsys::amiga::apply_fast).
+    /// `newsys::amiga::apply_fast`.
     #[serde(default)]
     fast: bool,
     /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
     /// They are folded into the single `assign` meta value the Amiga system
     /// reads when it writes the startup-sequence — see
-    /// [`handle_exe`](newsys::newsys::amiga).
+    /// `handle_exe` in `newsys::amiga`.
     #[serde(default)]
     assign: toml::Table,
     /// One patch, or an array of them.
@@ -209,9 +220,6 @@ struct RawGlsl {
     #[serde(default)]
     edits: Vec<[String; 2]>,
 }
-
-pub const GLSL_PATCH_SEP: char = '\u{1d}';
-pub const GLSL_FIELD_SEP: char = '\u{1e}';
 
 impl RawGlsl {
     /// The patch in the form `META_GLSL_PATCHES` holds.
@@ -304,11 +312,24 @@ struct RawPatch {
 /// The file ships with demarc, so anything wrong in it is an error naming the
 /// line or the `[db.id]` it is in.
 pub fn parse(text: &str, resolve_key: KeyResolver) -> Result<HashMap<DemoId, Override>> {
+    parse_for(text, None, resolve_key)
+}
+
+/// [`parse`], building only the entries of section `only` when one is given:
+/// the others may name patch files a player for one db does not ship.
+pub fn parse_for(
+    text: &str,
+    only: Option<&str>,
+    resolve_key: KeyResolver,
+) -> Result<HashMap<DemoId, Override>> {
     let file: HashMap<String, HashMap<String, RawOverride>> = toml::from_str(text)?;
     let mut overrides = HashMap::new();
     for (db, entries) in file {
         if DemoId::new(&db, 0).is_none() {
             bail!("unknown section [{db}]: overrides go under [zoo.<id>] or [csdb.<id>]");
+        }
+        if only.is_some_and(|only| only != db) {
+            continue;
         }
         for (id, raw) in entries {
             let demo_id = id
@@ -383,8 +404,8 @@ impl RawOverride {
         };
         if !glsl.is_empty() {
             meta.insert(
-                newsys::wine::META_GLSL_PATCHES,
-                leak(glsl.join(&newsys::wine::GLSL_PATCH_SEP.to_string())),
+                META_GLSL_PATCHES,
+                leak(glsl.join(&GLSL_PATCH_SEP.to_string())),
             );
         }
 
@@ -465,7 +486,7 @@ impl RawPatch {
         } else {
             // Decoded here and thrown away, so that a mistyped `contents` is
             // reported at startup rather than by the one load that needs it.
-            let data = patch.bytes(system_dir())?;
+            let data = patch.bytes(system_dir().as_ref())?;
             if bsdiff {
                 Bspatch::new(&data).with_context(|| {
                     format!("patch for {:?} is not a bsdiff patch", patch.target)

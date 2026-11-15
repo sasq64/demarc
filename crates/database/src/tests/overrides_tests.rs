@@ -1,5 +1,5 @@
 use super::*;
-use newsys::libretro::{RETROK_RETURN, RETROK_a};
+use retro_core::libretro::{RETROK_RETURN, RETROK_a};
 
 fn resolve_key(name: &str) -> Option<retro_key> {
     match name {
@@ -343,4 +343,21 @@ fn folds_glsl_patches_into_one_meta_value() {
     assert!(bad.is_err());
     let bad = parse("[zoo.3]\nglsl = { match = \"a\" }\n");
     assert!(bad.is_err());
+}
+
+/// A player for one db skips the other sections, patch sources and all.
+#[test]
+fn one_section_can_be_read_on_its_own() {
+    let text = r#"
+        [csdb.197970]
+        meta = { vice_sid_extra = "0xd420" }
+
+        [zoo.390060]
+        patch = { target = "d3d11.dll", source = "no/such/file.dll" }
+    "#;
+    assert!(parse(text).is_err());
+    let overrides = parse_for(text, Some("csdb"), resolve_key).unwrap();
+    assert_eq!(overrides.len(), 1);
+    let over = &overrides[&DemoId::new("csdb", 197970).unwrap()];
+    assert_eq!(over.meta["vice_sid_extra"], "0xd420");
 }

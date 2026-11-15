@@ -32,12 +32,26 @@ struct HudText {
     duration: Range<f32>,
 }
 
-#[derive(Default)]
 pub struct Hud {
     current_texts: HashMap<HudLocation, HudText>,
+    scale: f32,
+}
+
+impl Default for Hud {
+    fn default() -> Self {
+        Self::scaled(1.0)
+    }
 }
 
 impl Hud {
+    /// A HUD whose corner texts are `scale` times the usual size.
+    pub fn scaled(scale: f32) -> Self {
+        Self {
+            current_texts: HashMap::new(),
+            scale,
+        }
+    }
+
     /// Shows `text` at `location` from `now + delay` for `duration`. `now` is
     /// on the same clock as the one handed to [`Hud::show`].
     pub fn set_text(
@@ -133,7 +147,7 @@ impl Hud {
                                 let line = heading_with_shadow(
                                     ui,
                                     &info.text,
-                                    HEADING_SIZE * scale,
+                                    HEADING_SIZE * scale * self.scale,
                                     color,
                                     corner.x(),
                                 );
@@ -148,7 +162,7 @@ impl Hud {
                 if t > 0.0
                     && let Some(line) = info_line
                 {
-                    let size = HEADING_SIZE * INFO_TEXT_SCALE;
+                    let size = HEADING_SIZE * INFO_TEXT_SCALE * self.scale;
                     let galley = ui.painter().layout_no_wrap(
                         info.text,
                         hud_font(ctx, size),

@@ -170,6 +170,26 @@ impl AudioResampler {
     }
 }
 
+/// The sink fill a frontend steers by: `occupied` folded into the running
+/// average `fill`, which starts at `0.0`.
+pub fn smooth_fill(fill: f64, occupied: usize) -> f64 {
+    if fill == 0.0 {
+        occupied as f64
+    } else {
+        fill * 0.95 + occupied as f64 * 0.05
+    }
+}
+
+/// Resample ratio multiplier, for [`AudioSink::set_adjust`], that steers the
+/// smoothed sink `fill` down towards just above `buf_min`, so the ring runs
+/// near empty instead of filling.
+pub fn rate_adjust(fill: f64, buf_min: usize, buf_max: usize) -> f64 {
+    let min = buf_min as f64;
+    let window = (buf_max - buf_min) as f64;
+    let target = min + window / 8.0;
+    (1.0 - 0.01 * (fill - target) / window).clamp(0.99, 1.01)
+}
+
 /// Wrapper that makes [`cpal::Stream`] `Send + Sync`.
 ///
 /// cpal marks `Stream` as `!Send + !Sync` (`NotSendSyncAcrossAllPlatforms`)
