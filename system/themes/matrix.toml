@@ -1,0 +1,94 @@
+# Green rain. Background art goes in matrix/; font is Share Tech Mono (OFL).
+
+[palette]
+green = "#c0ffc1"
+mid = "#00c030"
+dark = "#008f11"
+deep = "#003b00"
+pale = "#c8ffc8"
+glass = "#000a0080"
+
+[text]
+font = "matrix/ShareTechMono-Regular.ttf"
+color = "green"
+dim = "dark"
+
+[field]
+fill = "#000d00"
+
+[panel]
+fill = "glass"
+border = { width = 2.0, color = "green" }
+padding = 16
+corner_radius = 0
+glow = { blur = 28, spread = 6, color = "#00ff4170" }
+shader = { shader = "matrix/bird.wgsl", texture = "matrix/bird.jpg" }
+
+[popup]
+fill = "#000d00f0"
+border = { width = 1.0, color = "mid" }
+padding = 6
+corner_radius = 0
+glow = { blur = 12, spread = 2, color = "#00ff4150" }
+
+[selection]
+fill = "deep"
+border = { width = 1.0, color = "green" }
+
+[widgets.noninteractive]
+button_fill = "#000d00"
+fill = "#000d00"
+border = { width = 1.0, color = "deep" }
+foreground = { width = 1.0, color = "dark" }
+corner_radius = 0
+
+[widgets.inactive]
+button_fill = "#001a00"
+fill = "#001a00"
+border = { width = 1.0, color = "deep" }
+foreground = { width = 1.0, color = "mid" }
+corner_radius = 0
+
+[widgets.hovered]
+button_fill = "#002a00"
+fill = "#002a00"
+border = { width = 1.0, color = "green" }
+foreground = { width = 1.5, color = "pale" }
+corner_radius = 0
+
+[widgets.active]
+button_fill = "deep"
+fill = "deep"
+border = { width = 1.0, color = "pale" }
+foreground = { width = 2.0, color = "pale" }
+corner_radius = 0
+
+[widgets.open]
+button_fill = "#001a00"
+fill = "#000d00"
+border = { width = 1.0, color = "mid" }
+foreground = { width = 1.0, color = "green" }
+corner_radius = 0
+
+[picker]
+text = "green"
+title = "pale"
+title_selected_fill = "#00802080"
+row_selected_fill = "#00ff4140"
+info = "mid"
+cached = "pale"
+award_winner = "#d0ff40"
+award_nominee = "#40a060"
+icon_color = "#00ff41c0"
+
+[hud]
+text = "green"
+error = "#ff3030"
+favorite = "#ff3030"
+download = "pale"
+record = "#ff2020"
+shadow = "#000000"
+shadow_offset = 0.06
+
+[screen]
+shader = { shader = "matrix/rain.wgsl", texture = "matrix/rain.jpg" }

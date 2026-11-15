@@ -1,0 +1,101 @@
+# demarc UI theme: an animated ocean, with deep blue glass panels, rounded
+# corners and the Just Sugar font.
+
+[palette]
+foam = "#e8fbff"
+mist = "#7fa8c4"
+abyss = "#03182c"
+deep_glass = "#062a48d9"
+deep = "#0a2f4f"
+sea = "#11507a"
+wave = "#1a6e9e"
+lagoon = "#2bb3c8"
+seafoam = "#9fe8e0"
+sand = "#f4dfa8"
+coral = "#ff6f61"
+
+[text]
+font = "Just Sugar.otf"
+color = "foam"
+dim = "mist"
+
+[field]
+fill = "abyss"
+
+[panel]
+fill = "deep_glass"
+border = { width = 2.0, color = "lagoon" }
+padding = 18
+corner_radius = 18
+glow = { blur = 28, spread = 4, color = "#2bb3c860" }
+
+[popup]
+fill = "deep"
+border = { width = 1.0, color = "wave" }
+padding = 6
+corner_radius = 10
+glow = { blur = 12, spread = 0, color = "#00102080" }
+
+[selection]
+fill = "#1a6e9ec0"
+border = { width = 1.0, color = "seafoam" }
+
+[widgets.noninteractive]
+button_fill = "deep"
+fill = "deep"
+border = { width = 1.0, color = "sea" }
+foreground = { width = 1.0, color = "mist" }
+corner_radius = 8
+
+[widgets.inactive]
+button_fill = "sea"
+fill = "sea"
+border = { width = 0.0, color = "#00000000" }
+foreground = { width = 1.0, color = "#b8d8ea" }
+corner_radius = 8
+
+[widgets.hovered]
+button_fill = "wave"
+fill = "wave"
+border = { width = 1.0, color = "lagoon" }
+foreground = { width = 1.5, color = "foam" }
+corner_radius = 9
+
+[widgets.active]
+button_fill = "#0d4266"
+fill = "#0d4266"
+border = { width = 1.0, color = "seafoam" }
+foreground = { width = 2.0, color = "foam" }
+corner_radius = 8
+
+[widgets.open]
+button_fill = "#0c3a5c"
+fill = "deep"
+border = { width = 1.0, color = "wave" }
+foreground = { width = 1.0, color = "#d0ecf6" }
+corner_radius = 8
+
+[picker]
+font = "Just Sugar.otf"
+text = "foam"
+title = "sand"
+title_selected_fill = "sea"
+row_selected_fill = "#1a6e9eb0"
+info = "seafoam"
+cached = "foam"
+award_winner = "#b08a2a"
+award_nominee = "#5a7ea0"
+icon_color = "#2bb3c840"
+
+[hud]
+font = "Just Sugar.otf"
+text = "foam"
+error = "coral"
+favorite = "coral"
+download = "seafoam"
+record = "#ff3040"
+shadow = "#001428"
+shadow_offset = 0.05
+
+[screen]
+shader = { shader = "water.wgsl" }
