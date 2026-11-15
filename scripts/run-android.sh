@@ -14,8 +14,10 @@ cd "$(dirname "$0")/.."
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}"
 # AGP does not run on JDK 26, which is what this machine's `java` is.
-if [[ -z "${JAVA_HOME:-}" && -d /opt/android-studio/jbr ]]; then
-    export JAVA_HOME=/opt/android-studio/jbr
+if [[ -z "${JAVA_HOME:-}" ]]; then
+    for jbr in /opt/android-studio/jbr "$HOME/sdk/android-studio/jbr"; do
+        if [[ -d "$jbr" ]]; then export JAVA_HOME=$jbr; break; fi
+    done
 fi
 ADB="$ANDROID_HOME/platform-tools/adb"
 
