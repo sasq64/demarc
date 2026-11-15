@@ -272,7 +272,9 @@ fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
 
 struct Gfx {
     window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
+    /// `None` while the app is suspended: Android destroys the native window.
+    surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -428,7 +430,8 @@ impl Gfx {
 
         Ok(Self {
             window,
-            surface,
+            instance,
+            surface: Some(surface),
             device,
             queue,
             config,
@@ -448,7 +451,16 @@ impl Gfx {
     fn resize(&mut self, size: PhysicalSize<u32>) {
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = &self.surface {
+            surface.configure(&self.device, &self.config);
+        }
+    }
+
+    fn recreate_surface(&mut self) -> Result<()> {
+        let surface = self.instance.create_surface(self.window.clone())?;
+        self.surface = Some(surface);
+        self.resize(self.window.inner_size());
+        Ok(())
     }
 
     fn upload(&mut self, width: u32, height: u32, pixels: &[u32]) {
@@ -521,11 +533,14 @@ impl Gfx {
 
     fn draw(&mut self, ui: &UiFrame) {
         use wgpu::CurrentSurfaceTexture as Acquired;
-        let frame = match self.surface.get_current_texture() {
+        let Some(surface) = &self.surface else {
+            return;
+        };
+        let frame = match surface.get_current_texture() {
             Acquired::Success(frame) | Acquired::Suboptimal(frame) => frame,
             Acquired::Timeout | Acquired::Occluded => return,
             _ => {
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 return;
             }
         };
@@ -1045,7 +1060,7 @@ impl App {
     /// Step the core one frame and hand the result to the GPU. Does nothing
     /// without a surface: on Android that is the app being in the background.
     fn step(&mut self) {
-        if self.gfx.is_none() {
+        if !self.gfx.as_ref().is_some_and(|gfx| gfx.surface.is_some()) {
             return;
         }
         self.poll_loader();
@@ -1179,6 +1194,18 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(gfx) = self.gfx.as_mut() {
+            // The egui renderer has to outlive a suspend: egui only sends
+            // texture updates it has not sent before.
+            match gfx.recreate_surface() {
+                Ok(()) => self.audio.activate(),
+                Err(e) => {
+                    tracing::error!("Could not recreate the surface: {e:#}");
+                    event_loop.exit();
+                }
+            }
+            return;
+        }
         let attrs = Window::default_attributes()
             .with_title("demarc C64")
             .with_inner_size(PhysicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));
@@ -1200,7 +1227,9 @@ impl ApplicationHandler for App {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         self.cancel_touch();
-        self.gfx = None;
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.surface = None;
+        }
         self.audio.deactivate();
     }
 
@@ -1353,8 +1382,9 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         event_loop.run_app(&mut App::new(data.join(DB_ASSET)))?;
         Ok(())
     };
-    if let Err(e) = run() {
-        tracing::error!("{e:#}");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(Err(e)) => tracing::error!("{e:#}"),
+        Ok(Ok(())) | Err(_) => {}
     }
     // Android keeps the process after the activity is gone and would call
     // this again in it, where the logger, winit and the core are all set up.

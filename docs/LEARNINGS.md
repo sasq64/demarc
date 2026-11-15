@@ -1733,3 +1733,10 @@
   and the app closed at once, every time. `android_main` now ends in
   `process::exit`. Two `Load ... libminimarc.so` lines with one pid in logcat
   are the sign.
+
+- Dropping minimarc's whole `Gfx` on Android's `suspended` and building a new
+  one on `resumed` panicked in egui-wgpu ("update a texture that has not been
+  allocated"): the `egui::Context` only sends the font atlas once, so the
+  renderer (and its device) must survive a suspend; only the surface goes.
+  A panic also skipped `android_main`'s `process::exit`, so the next launch hit
+  the already-set tracing dispatcher — that was the visible crash, not the cause.
