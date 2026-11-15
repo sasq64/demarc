@@ -19,7 +19,7 @@ pkg-fmt = "txz"
 pkg-fmt = "zip"
 
 [workspace]
-members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/minimarc", "crates/navigator", "crates/newsys", "crates/release-io", "crates/retro-core", "crates/retro-ui", "crates/retroarc", "crates/rife", "crates/shadertoy"]
+members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/minimarc", "crates/navigator", "crates/newsys", "crates/release-io", "crates/retro-core", "crates/retro-ui", "crates/retroarc", "crates/rife"]
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
@@ -81,8 +81,8 @@ bevy = {
     "bevy_image",
     "bevy_log",
     "bevy_post_process",
-    "bevy_sprite_render",
     "bevy_render",
+    "bevy_sprite_render",
     "bevy_state",
     "bevy_window",
     "bevy_winit",
@@ -153,10 +153,10 @@ serde_json = "1.0.151"
 toml_edit = "0.25.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-raw-window-handle = "0.6"
 # Imports the gamescope core's dmabuf ring into the Vulkan device (src/dmabuf_import.rs).
 # The version wgpu-hal uses.
 ash = "0.38"
+raw-window-handle = "0.6"
 # Runtime that drives the MPRIS D-Bus listener in src/media_keys.rs.
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 # Preferred screen-saver inhibition path under Wayland: `zwp_idle_inhibit_v1`
@@ -190,6 +190,10 @@ strip = true
 lto = "thin"
 codegen-units = 1
 
+# Crinkler depacking tests take over a minute unoptimized.
+[profile.test.package.newsys]
+opt-level = 1
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
@@ -216,7 +220,3 @@ strip = false
 lto = "off"
 incremental = true
 codegen-units = 256
-
-# Crinkler depacking tests take over a minute unoptimized.
-[profile.test.package.newsys]
-opt-level = 1
