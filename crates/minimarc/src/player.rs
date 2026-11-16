@@ -5,7 +5,7 @@
 
 use retro_core::libretro;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,10 +35,20 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 /// and how long it may take to get there.
 const SWIPE_DIST: f64 = 80.0;
 /// Phone text is read at arm's length on a small screen.
-const UI_ZOOM: f32 = if cfg!(target_os = "android") { 2.0 } else { 1.0 };
+const UI_ZOOM: f32 = if cfg!(target_os = "android") {
+    2.0
+} else {
+    1.0
+};
 /// Window height in logical pixels past which the UI stops growing with it.
-const UI_MAX_HEIGHT: f32 = if cfg!(target_os = "android") { 600.0 } else { f32::INFINITY };
+const UI_MAX_HEIGHT: f32 = if cfg!(target_os = "android") {
+    600.0
+} else {
+    f32::INFINITY
+};
 const SWIPE_TIME: Duration = Duration::from_millis(500);
+/// Core frames a key is held at least, see `App::flush_keys`.
+const MIN_KEY_FRAMES: u32 = 3;
 
 // -------------------------------------------------------------------------
 // Keyboard
@@ -283,8 +293,8 @@ impl Gfx {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("c64"),
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits:
+                    wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
                 ..Default::default()
             }))?;
 
@@ -725,8 +735,11 @@ pub struct App {
     /// What each held physical key sent, so its release cancels that key even
     /// if the modifiers changed in between.
     pressed: HashMap<KeyCode, (libretro::retro_key, bool)>,
-    /// A shifted symbol held back for one frame, see `send`.
-    shift_pending: Option<(KeyCode, libretro::retro_key)>,
+    /// Key changes not yet given to the core, see `flush_keys`.
+    key_queue: VecDeque<(libretro::retro_key, bool, u16)>,
+    /// The core frame each key the core has down went down on.
+    keys_down: HashMap<libretro::retro_key, u32>,
+    last_key_frame: Option<u32>,
     /// Every finger currently down, so a second one can veto the swipe.
     touches: Vec<u64>,
     swipe: Option<Swipe>,
@@ -761,7 +774,9 @@ impl App {
             shift: false,
             ctrl: false,
             pressed: HashMap::new(),
-            shift_pending: None,
+            key_queue: VecDeque::new(),
+            keys_down: HashMap::new(),
+            last_key_frame: None,
             touches: Vec::new(),
             swipe: None,
             bar_key: None,
@@ -774,9 +789,8 @@ impl App {
     }
 
     fn press(&mut self, key: libretro::retro_key, down: bool, mods: u16) {
-        if let Some(core) = self.core.as_mut() {
-            core.press_key(key, down, mods);
-        }
+        self.key_queue.push_back((key, down, mods));
+        self.flush_keys();
     }
 
     /// Act on what the loader threads have finished.
@@ -799,7 +813,9 @@ impl App {
         let Demo { work, events, info } = demo;
         self.cancel_touch();
         self.pressed.clear();
-        self.shift_pending = None;
+        self.key_queue.clear();
+        self.keys_down.clear();
+        self.last_key_frame = None;
         // One core at a time: Android loads it in place, so the old instance
         // has to be gone before the new one starts.
         self.core = None;
@@ -897,18 +913,11 @@ impl App {
         self.send(code, down);
     }
 
-    /// A shifted symbol goes in as shift now and the key one frame later: VICE
-    /// only sees the shift if it was already down when the key arrived, and
-    /// pressing both in one frame yields the unshifted character.
     fn send(&mut self, code: KeyCode, down: bool) {
         if !down {
             if let Some((key, shifted)) = self.pressed.remove(&code) {
                 let mods = self.mods_with_shift(shifted);
-                if self.shift_pending.is_some_and(|(c, _)| c == code) {
-                    self.shift_pending = None;
-                } else {
-                    self.press(key, false, mods);
-                }
+                self.press(key, false, mods);
                 if shifted {
                     self.press(libretro::RETROK_LSHIFT, false, mods);
                 }
@@ -920,10 +929,36 @@ impl App {
             let mods = self.mods_with_shift(shifted);
             if shifted {
                 self.press(libretro::RETROK_LSHIFT, true, mods);
-                self.shift_pending = Some((code, key));
-            } else {
-                self.press(key, true, mods);
             }
+            self.press(key, true, mods);
+        }
+    }
+
+    /// Hand queued key changes to the core, one per frame: VICE only sees a
+    /// shift that was down before the key, and the soft keyboard sends shift,
+    /// key and both releases at once. A release also waits until its key has
+    /// been down for `MIN_KEY_FRAMES`, or the C64 never scans it.
+    fn flush_keys(&mut self) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        let now = self.core_frames;
+        while let Some(&(key, down, mods)) = self.key_queue.front() {
+            if self.last_key_frame == Some(now) {
+                break;
+            }
+            if down {
+                self.keys_down.insert(key, now);
+            } else if let Some(&at) = self.keys_down.get(&key) {
+                if at + MIN_KEY_FRAMES > now {
+                    break;
+                }
+                self.keys_down.remove(&key);
+            }
+            self.key_queue.pop_front();
+            tracing::info!("KEYDBG f{now} press {key} {down} {mods}");
+            core.press_key(key, down, mods);
+            self.last_key_frame = Some(now);
         }
     }
 
@@ -1130,13 +1165,7 @@ impl App {
             }
             frame > frames
         });
-        // After the run, so the shift gets a frame of its own first.
-        if let Some((_, key)) = self.shift_pending.take() {
-            let mods = self.mods_with_shift(true);
-            if let Some(core) = self.core.as_mut() {
-                core.press_key(key, true, mods);
-            }
-        }
+        self.flush_keys();
         let Some(core) = self.core.as_mut() else {
             return false;
         };
@@ -1262,6 +1291,15 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let WindowEvent::KeyboardInput { event: e, .. } = &event {
+            tracing::info!(
+                "KEYDBG f{} event {:?} {:?} {:?}",
+                self.core_frames,
+                e.physical_key,
+                e.logical_key,
+                e.state
+            );
+        }
         if self.ui_event(&event) {
             return;
         }
@@ -1341,7 +1379,10 @@ fn load_core(
 const ASSETS: [(&str, &str); 3] = [
     ("rr38ppal-auto.crt", "vice/C64/rr38ppal-auto.crt"),
     (DB_ASSET, DB_ASSET),
-    (database::overrides::FILE_NAME, database::overrides::FILE_NAME),
+    (
+        database::overrides::FILE_NAME,
+        database::overrides::FILE_NAME,
+    ),
 ];
 
 #[cfg(target_os = "android")]

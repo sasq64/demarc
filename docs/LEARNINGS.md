@@ -1773,3 +1773,9 @@
   which keeps cycling show/hide for minutes after the app is fixed or stopped;
   `ImeTracker` tokens named `com.demarc.c64:` with no request in the app's own
   log are that backlog, not a new bug. Don't use `input keyevent` as a delay.
+
+- minimarc's soft keyboard reaches winit as ordinary `KeyboardInput` events
+  with proper physical keys, but each key's press and release arrive 0.2 ms
+  apart, so VICE got both before running a frame and the C64 never saw the
+  key. `App::send` now holds a release until the key has been down for
+  `MIN_KEY_FRAMES` core frames.
