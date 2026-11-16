@@ -26,7 +26,7 @@ ABI="${ABI:-arm64-v8a}"
 # 26 is where AAudio — cpal's Android backend — starts.
 API=26
 PKG=com.demarc.c64
-ACTIVITY=android.app.NativeActivity
+ACTIVITY=.MiniActivity
 CORE=vice_x64sc
 JNILIBS=android/app/src/main/jniLibs/$ABI
 ASSETS=android/app/src/main/assets

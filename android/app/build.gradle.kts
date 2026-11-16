@@ -42,6 +42,6 @@ android {
     }
 }
 
-// android.app.NativeActivity is part of the platform: no AndroidX needed.
+// MiniActivity extends the platform NativeActivity: no AndroidX needed.
 dependencies {
 }
