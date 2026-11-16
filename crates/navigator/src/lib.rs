@@ -153,7 +153,7 @@ pub struct Navigator {
     showing: isize,
     pub stack: Vec<NavList>,
     pub files: IndexMap<String, &'static [EmuFile]>,
-    mapping: Vec<(Vec<Seg>, DbCallback)>,
+    mapping: Vec<(Option<String>, Vec<Seg>, DbCallback)>,
     pub playlists: HashSet<String>,
     pub current_launch: Option<Launch>,
 }
@@ -317,7 +317,10 @@ impl Navigator {
             return Some(Arc::new(PickerSource::new(files, None, IconMode::All)));
         }
         let joined = rest.join("/");
-        for (segs, val) in &self.mapping {
+        for (only_db, segs, val) in &self.mapping {
+            if only_db.as_ref().is_some_and(|d| d != db) {
+                continue;
+            }
             let mut groups = vec![joined.as_str()];
             // A callback returning None declines the path; keep looking.
             if match_segs(segs, rest, &mut groups)
@@ -473,6 +476,25 @@ impl Navigator {
         pattern: &str,
         callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
     ) -> Result<()> {
+        self.register_in(None, pattern, callback)
+    }
+
+    /// Like `register`, but only for the database `db`.
+    pub fn register_db<S: FuzzySource<EmuFile>>(
+        &mut self,
+        db: &str,
+        pattern: &str,
+        callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
+    ) -> Result<()> {
+        self.register_in(Some(db.to_string()), pattern, callback)
+    }
+
+    fn register_in<S: FuzzySource<EmuFile>>(
+        &mut self,
+        db: Option<String>,
+        pattern: &str,
+        callback: impl Fn(&[&str], &'static [EmuFile]) -> Option<S> + Send + Sync + 'static,
+    ) -> Result<()> {
         let segs = split_path(pattern)
             .into_iter()
             .map(|part| match part.as_str() {
@@ -482,6 +504,7 @@ impl Navigator {
             })
             .collect();
         self.mapping.push((
+            db,
             segs,
             Box::new(move |groups, files| Some(Arc::new(callback(groups, files)?) as ListSource)),
         ));
@@ -495,6 +518,8 @@ fn split_path(path: &str) -> Vec<String> {
         .map(String::from)
         .collect()
 }
+
+static DEMO_CATS: [&str; 3] = ["Demo", "One-File Demo", "Invitation"];
 
 static CATS: [&str; 10] = [
     "Demo",
@@ -550,6 +575,39 @@ fn awards(f: &EmuFile) -> impl Iterator<Item = (String, Award, bool)> {
     })
 }
 
+fn category_list(files: &'static [EmuFile]) -> WordsIconSource {
+    let mut cats: Vec<String> = files
+        .iter()
+        .filter_map(|f| match *f.categories {
+            [one] => Some(one),
+            _ => None,
+        })
+        .collect::<IndexSet<_>>()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    // Known categories in CATS order, the rest after in the order they appeared.
+    cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
+    WordsIconSource::new(
+        cats.into_iter()
+            .map(|c| {
+                let icon = picker_sources::category_list_icon(&c);
+                (c, icon)
+            })
+            .collect(),
+    )
+}
+
+fn category_entries(path: &[&str], files: &'static [EmuFile]) -> Option<PickerSource> {
+    let subset: Vec<u32> = files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| *f.categories == [path[1]])
+        .map(|(i, _)| i as u32)
+        .collect();
+    Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
+}
+
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,
@@ -588,26 +646,16 @@ pub fn setup_navigator(
         ))
     })?;
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
-        let mut cats: Vec<String> = files
+        Some(category_list(files))
+    })?;
+    navigator.register_db("CSDb", "Demos", |_path: &[&str], files: &'static [EmuFile]| {
+        let subset: Vec<u32> = files
             .iter()
-            .filter_map(|f| match *f.categories {
-                [one] => Some(one),
-                _ => None,
-            })
-            .collect::<IndexSet<_>>()
-            .into_iter()
-            .map(String::from)
+            .enumerate()
+            .filter(|(_, f)| matches!(*f.categories, [one] if DEMO_CATS.contains(&one)))
+            .map(|(i, _)| i as u32)
             .collect();
-        // Known categories in CATS order, the rest after in the order they appeared.
-        cats.sort_by_key(|c| CATS.iter().position(|n| n == c).unwrap_or(CATS.len()));
-        Some(WordsIconSource::new(
-            cats.into_iter()
-                .map(|c| {
-                    let icon = picker_sources::category_list_icon(&c);
-                    (c, icon)
-                })
-                .collect(),
-        ))
+        Some(PickerSource::new(files, Some(subset), IconMode::Categories))
     })?;
     navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
         let authors = files
@@ -649,18 +697,7 @@ pub fn setup_navigator(
         },
     )?;
 
-    navigator.register(
-        "Categories/{category}",
-        |path: &[&str], files: &'static [EmuFile]| {
-            let subset: Vec<u32> = files
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| *f.categories == [path[1]])
-                .map(|(i, _)| i as u32)
-                .collect();
-            Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
-        },
-    )?;
+    navigator.register("Categories/{category}", category_entries)?;
     navigator.register(
         "Parties/{name}",
         |path: &[&str], files: &'static [EmuFile]| {
@@ -740,6 +777,18 @@ pub fn setup_navigator(
         },
     )?;
 
+    navigator.register_db("CSDb", "", |_path: &[&str], _files: &'static [EmuFile]| {
+        Some(WordsIconSource::new(
+            [
+                ("Demos".into(), picker_sources::category_list_icon("Demo")),
+                ("All".into(), ListIcon::Glyph('', 0xffff00)),
+                ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
+                ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
+                ("Authors".into(), AUTHOR_ICON),
+            ]
+            .into(),
+        ))
+    })?;
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [

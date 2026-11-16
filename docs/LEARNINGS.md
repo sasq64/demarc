@@ -1779,3 +1779,7 @@
   apart, so VICE got both before running a frame and the C64 never saw the
   key. `App::send` now holds a release until the key has been down for
   `MIN_KEY_FRAMES` core frames.
+
+- Nerd Font glyphs (private-use codepoints) in `ListIcon::Glyph('…')` get
+  dropped when source is rewritten through a shell heredoc, leaving `''`.
+  Copy them from the file itself (e.g. read and reuse in Python) instead.

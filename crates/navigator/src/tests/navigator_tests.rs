@@ -81,6 +81,36 @@ fn every_db_gets_its_own_root_entry() {
 }
 
 #[test]
+fn csdb_root_starts_with_demos() {
+    let dbs: IndexMap<String, &'static [EmuFile]> = [
+        (
+            "CSDb".to_string(),
+            db("id:1\ttitle:A\tcategory:Intro\tdownload:http://x/a.zip\n\
+                id:2\ttitle:B\tcategory:Invitation\tdownload:http://x/b.zip\n\
+                id:3\ttitle:C\tcategory:Demo\tdownload:http://x/c.zip\n"),
+        ),
+        (
+            "Demozoo".to_string(),
+            db("id:1\ttitle:A\tcategory:Demo\tdownload:http://x/a.zip\n"),
+        ),
+    ]
+    .into();
+    let mut navigator = Navigator::new();
+    setup_navigator(&dbs, &mut navigator).unwrap();
+
+    navigator.goto("CSDb");
+    assert_eq!(
+        navigator.get_showing(),
+        vec!["Demos", "All", "Parties", "Categories", "Authors"]
+    );
+    navigator.goto("CSDb/Demos");
+    assert_eq!(navigator.get_showing(), vec!["B", "C"]);
+
+    navigator.goto("Demozoo");
+    assert!(navigator.get_showing().contains(&"Awards".to_string()));
+}
+
+#[test]
 fn playlist_shows_its_entries_directly() {
     let mut navigator = Navigator::new();
     navigator.add_playlist(
