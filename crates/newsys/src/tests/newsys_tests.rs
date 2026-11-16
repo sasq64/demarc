@@ -391,3 +391,19 @@ fn test_psx() {
     // dump, is recognised from the disc's own contents.
     test_load(&testdata.join("thisispsx"), "PSX");
 }
+
+#[test]
+fn loadable_files_are_what_some_system_can_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = dir.path().join("release");
+    fs::create_dir(&release).unwrap();
+    for name in ["demo.exe", "readme.txt", "side1.d64", "music.mod", "file_id.diz"] {
+        fs::write(release.join(name), [0u8; 16]).unwrap();
+    }
+    let names: Vec<_> = NewSys::loadable_files(&release)
+        .unwrap()
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["demo.exe", "music.mod", "side1.d64"]);
+}

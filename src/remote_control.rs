@@ -685,6 +685,7 @@ fn run_script(
                 loads.write(LoadFile {
                     emu_file: file.clone(),
                     target_emulator: Some(settings.current_emu),
+                    choose: false,
                 });
             }
             Action::AskNavigator(path) => {

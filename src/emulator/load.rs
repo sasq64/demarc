@@ -20,6 +20,12 @@ enum LoadPhase {
         job: Job<WorkFile>,
         over: Option<Override>,
     },
+    /// Unpacked, waiting for [`Emulator::choose_entry`].
+    Choosing {
+        work_file: WorkFile,
+        over: Option<Override>,
+        entries: Vec<std::path::PathBuf>,
+    },
     /// Tears the old core down and builds the new one.
     Creating(Job<LoadResult>),
 }
@@ -28,6 +34,7 @@ impl LoadPhase {
     fn cancel(&self) {
         match self {
             LoadPhase::Unpacking { job, .. } => job.cancel(),
+            LoadPhase::Choosing { .. } => {}
             LoadPhase::Creating(job) => job.cancel(),
         }
     }
@@ -40,6 +47,8 @@ pub(crate) struct PendingLoad {
     /// failure there is nowhere else left to read the title from.
     file: EmuFile,
     phase: LoadPhase,
+    /// Stop after the unpack and ask which file to start.
+    pub(crate) choose: bool,
 }
 
 /// What [`Emulator::update_load`] found this frame.
@@ -49,6 +58,9 @@ pub(crate) enum LoadStatus {
     /// A download is still running; the previously loaded core, if any, keeps
     /// running meanwhile.
     Pending,
+    /// The release is unpacked and these are its files to pick from, see
+    /// [`Emulator::choose_entry`].
+    Choose(Vec<String>),
     /// The load finished this frame — `result` is `Ok` when the new core is
     /// live.
     ///
@@ -126,6 +138,7 @@ pub fn load_async(
             job,
             over: over.cloned(),
         },
+        choose: false,
     }
 }
 
@@ -166,15 +179,40 @@ impl Emulator {
                 let Some(resolved) = job.poll() else {
                     return LoadStatus::Pending;
                 };
-                let PendingLoad { file, phase } =
-                    self.pending_load.take().expect("checked just above");
+                let PendingLoad {
+                    file,
+                    phase,
+                    choose,
+                } = self.pending_load.take().expect("checked just above");
                 let LoadPhase::Unpacking { over, .. } = phase else {
                     unreachable!("matched just above");
                 };
                 match resolved {
                     Ok(work_file) => {
-                        self.start_create(sys, file, work_file, over);
-                        LoadStatus::Pending
+                        let entries = if choose {
+                            NewSys::loadable_files(&work_file.path).unwrap_or_default()
+                        } else {
+                            vec![]
+                        };
+                        if entries.len() < 2 {
+                            self.start_create(sys, file, work_file, over);
+                            return LoadStatus::Pending;
+                        }
+                        let names = entries
+                            .iter()
+                            .map(|e| e.strip_prefix(&work_file.path).unwrap_or(e))
+                            .map(|e| e.to_string_lossy().into_owned())
+                            .collect();
+                        self.pending_load = Some(PendingLoad {
+                            file,
+                            phase: LoadPhase::Choosing {
+                                work_file,
+                                over,
+                                entries,
+                            },
+                            choose,
+                        });
+                        LoadStatus::Choose(names)
                     }
                     Err(err) => {
                         DOWNLOAD_COUNTER.ended();
@@ -188,6 +226,7 @@ impl Emulator {
                     }
                 }
             }
+            LoadPhase::Choosing { .. } => LoadStatus::Pending,
             LoadPhase::Creating(job) => {
                 let Some(resolved) = job.poll() else {
                     return LoadStatus::Pending;
@@ -267,6 +306,33 @@ impl Emulator {
     /// The cost is that a load which fails leaves nothing running rather than
     /// the previous entry; the frontend already draws that state (it skips an
     /// emulator with no core), and tv mode steps on to the next.
+    pub(crate) fn pending_title(&self) -> String {
+        let file = self.pending_load.as_ref().map(|p| &p.file);
+        file.map(|f| f.game_info.title.to_owned()).unwrap_or_default()
+    }
+
+    /// Go on with a load waiting in [`LoadStatus::Choose`], starting its file
+    /// `entry`, or the one the systems pick.
+    pub(crate) fn choose_entry(&mut self, sys: &Arc<NewSys>, entry: Option<usize>) {
+        let Some(PendingLoad {
+            file,
+            phase:
+                LoadPhase::Choosing {
+                    mut work_file,
+                    over,
+                    entries,
+                },
+            ..
+        }) = self.pending_load.take_if(|p| matches!(p.phase, LoadPhase::Choosing { .. }))
+        else {
+            return;
+        };
+        if let Some(path) = entry.and_then(|i| entries.get(i)) {
+            work_file.path = path.clone();
+        }
+        self.start_create(sys, file, work_file, over);
+    }
+
     fn start_create(
         &mut self,
         sys: &Arc<NewSys>,
@@ -292,6 +358,7 @@ impl Emulator {
         self.pending_load = Some(PendingLoad {
             file,
             phase: LoadPhase::Creating(job),
+            choose: false,
         });
     }
 
@@ -344,9 +411,10 @@ impl Emulator {
     /// multi-disk set and for a server that declares no size.
     #[allow(dead_code)]
     pub fn load_progress(&self) -> Option<&JobProgress> {
-        self.pending_load.as_ref().map(|p| match &p.phase {
-            LoadPhase::Unpacking { job, .. } => job.progress(),
-            LoadPhase::Creating(job) => job.progress(),
+        self.pending_load.as_ref().and_then(|p| match &p.phase {
+            LoadPhase::Unpacking { job, .. } => Some(job.progress()),
+            LoadPhase::Choosing { .. } => None,
+            LoadPhase::Creating(job) => Some(job.progress()),
         })
     }
 

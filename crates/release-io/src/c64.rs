@@ -37,6 +37,20 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
     start_addr + data_size <= 0x1_0000
 }
 
+/// The files under `dir` that [`prepare`] can boot on their own, sorted.
+pub fn bootable_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = vec![];
+    walk_dir(dir, 12, |path, ext, header| {
+        let tape = ext == "tap" && header.starts_with(b"C64-TAPE-RAW");
+        if ["d64", "d81", "crt"].contains(&ext) || tape || is_c64_prg(path, ext, header) {
+            files.push(path.to_owned());
+        }
+        Ok(())
+    })?;
+    files.sort();
+    Ok(files)
+}
+
 /// The core has no option for a third SID, but reads `<save dir>/vicerc`.
 fn three_sids(file: &mut WorkFile) -> Result<()> {
     file.make_temp()?;

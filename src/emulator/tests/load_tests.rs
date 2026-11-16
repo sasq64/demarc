@@ -196,3 +196,24 @@ fn a_second_load_replaces_the_first() {
         LoadStatus::Idle
     ));
 }
+
+#[test]
+fn a_choosing_load_stops_at_the_files_of_the_release() {
+    let _app = task_pools();
+    let mut emu = Emulator::default();
+    let zip = std::path::Path::new(env!("DEMARC_ROOT")).join("testdata/c64/Skaaneland.zip");
+    start_load(
+        &mut emu,
+        &EmuFile {
+            path: FileSource::Path(zip),
+            ..Default::default()
+        },
+        None,
+    );
+    emu.pending_load.as_mut().unwrap().choose = true;
+    let LoadStatus::Choose(names) = drive_load(&mut emu, &systems()) else {
+        panic!("no choice offered");
+    };
+    assert!(names.len() > 1 && names.iter().all(|n| n.ends_with(".d64")));
+    assert!(emu.is_loading(), "the load waits for the pick");
+}

@@ -36,3 +36,16 @@ fn three_sids_go_in_a_vicerc_in_the_save_dir() {
     assert!(rc.contains("SidStereo=2\n"));
     assert_eq!(file.path.extension().unwrap(), "prg");
 }
+
+#[test]
+fn bootable_files_skip_what_a_c64_cannot_start() {
+    let (_dir, file) = prg_release("");
+    fs::write(file.path.join("disk.d64"), [0; 16]).unwrap();
+    fs::write(file.path.join("readme.txt"), b"hello").unwrap();
+    let names: Vec<_> = bootable_files(&file.path)
+        .unwrap()
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["demo.prg", "disk.d64"]);
+}

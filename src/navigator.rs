@@ -145,7 +145,7 @@ fn handle_selection(
                     navigator.show(&mut list_writer);
                     continue;
                 }
-                if msg.alt {
+                if msg.alt && path.last().is_none_or(|p| p != "dls") {
                     let id = msg.item;
                     navigator.enter(&[&id.to_string(), "dls"]);
                     navigator.show(&mut list_writer);
@@ -158,6 +158,7 @@ fn handle_selection(
                 load_writer.write(LoadFile {
                     emu_file,
                     target_emulator: None,
+                    choose: msg.alt,
                 });
             } else if msg.alt
                 && path.is_empty()

@@ -1783,3 +1783,12 @@
 - Nerd Font glyphs (private-use codepoints) in `ListIcon::Glyph('…')` get
   dropped when source is rewritten through a shell heredoc, leaving `''`.
   Copy them from the file itself (e.g. read and reuse in Python) instead.
+
+- minimarc only hands window events to egui while the picker is open, so a
+  modifier released after a pick closed it stays held in egui's
+  `i.modifiers`. Don't trust it there for anything held across a pick.
+
+- A request that doesn't name the app may be about demarc even on the
+  `minimarc` branch: both share the picker and navigator, and a bug report
+  from "desktop" can be either binary. Ask, or check both handlers (demarc's
+  Shift pick is in `src/navigator.rs`, minimarc's in `crates/minimarc/src/ui.rs`).
