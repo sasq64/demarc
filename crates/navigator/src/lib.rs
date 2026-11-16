@@ -648,15 +648,6 @@ pub fn setup_navigator(
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
         Some(category_list(files))
     })?;
-    navigator.register_db("CSDb", "Demos", |_path: &[&str], files: &'static [EmuFile]| {
-        let subset: Vec<u32> = files
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| matches!(*f.categories, [one] if DEMO_CATS.contains(&one)))
-            .map(|(i, _)| i as u32)
-            .collect();
-        Some(PickerSource::new(files, Some(subset), IconMode::Categories))
-    })?;
     navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
         let authors = files
             .iter()
@@ -780,7 +771,6 @@ pub fn setup_navigator(
     navigator.register_db("CSDb", "", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [
-                ("Demos".into(), picker_sources::category_list_icon("Demo")),
                 ("All".into(), ListIcon::Glyph('', 0xffff00)),
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
