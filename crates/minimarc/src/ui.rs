@@ -16,6 +16,32 @@ pub const KEY_LABELS: [&str; 8] = [
 const KEY_SIZE: f32 = 26.0;
 const HUD_SCALE: f32 = 0.35;
 
+/// The CRT shader's mode; the discriminant is what the shader is handed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Filter {
+    None = 0,
+    Normal = 1,
+    Full = 2,
+}
+
+impl Filter {
+    pub fn next(self) -> Self {
+        match self {
+            Filter::None => Filter::Normal,
+            Filter::Normal => Filter::Full,
+            Filter::Full => Filter::None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Filter::None => "No",
+            Filter::Normal => "Normal",
+            Filter::Full => "Full",
+        }
+    }
+}
+
 pub enum Action {
     Play(EmuFile),
     FlipDisk,
@@ -32,7 +58,9 @@ pub struct Ui {
     pub keys_open: bool,
     /// Index into `KEY_LABELS` of the button a finger is on.
     pub key_held: Option<usize>,
+    /// One per `KEY_LABELS`, then the filter button.
     key_rects: Vec<egui::Rect>,
+    pub filter: Filter,
 }
 
 impl Ui {
@@ -55,6 +83,7 @@ impl Ui {
             keys_open: false,
             key_held: None,
             key_rects: Vec::new(),
+            filter: Filter::Full,
         }
     }
 
@@ -162,7 +191,8 @@ impl Ui {
         }
     }
 
-    /// Index into `KEY_LABELS` of the key bar button at a physical position.
+    /// Index into `KEY_LABELS` of the key bar button at a physical position;
+    /// `KEY_LABELS.len()` is the filter button.
     pub fn key_at(&self, x: f64, y: f64) -> Option<usize> {
         if !self.keys_open || self.picker.is_open() {
             return None;
@@ -178,11 +208,14 @@ impl Ui {
     fn draw_keys(&mut self, ctx: &egui::Context) {
         self.key_rects.clear();
         let gap = ctx.global_style().spacing.item_spacing.x;
-        let size = egui::vec2(ctx.content_rect().width() / 4.0 - gap, KEY_SIZE * 2.0);
+        let (first, second) = KEY_LABELS.split_at(4);
+        let second: Vec<&str> = second.iter().copied().chain([self.filter.label()]).collect();
         egui::Area::new(egui::Id::new("key_bar"))
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -gap))
             .show(ctx, |ui| {
-                for row in KEY_LABELS.chunks(4) {
+                for row in [first, &second[..]] {
+                    let width = ctx.content_rect().width() / row.len() as f32 - gap;
+                    let size = egui::vec2(width, KEY_SIZE * 2.0);
                     ui.horizontal(|ui| {
                         for label in row {
                             let text = egui::RichText::new(*label)

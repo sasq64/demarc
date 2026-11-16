@@ -13,8 +13,9 @@ record mistakes there, small changes, short comments, test layout).
 ## Where things are
 
 ```
-crates/minimarc/src/player.rs   window, wgpu 30, lottes CRT pass, egui pass, keys, touch,
+crates/minimarc/src/player.rs   window, wgpu 30, CRT pass, egui pass, keys, touch,
                                 android_main, asset unpacking
+crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one entry point per Filter
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
 crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
                                 overrides.toml
@@ -23,7 +24,7 @@ crates/navigator                the tree of lists, shared with demarc (src/navig
 crates/retro-ui                 the egui picker/HUD, shared with demarc
 crates/release-io               fetch, cache, unpack, WorkFile, c64::prepare
 crates/database                 db parsing, EmuFile; used with default-features = false
-android/                        Gradle project: NativeActivity, no Java code
+android/                        Gradle project: MiniActivity (NativeActivity + immersive mode)
 scripts/run-android.sh          the whole build-install-launch loop
 ```
 
@@ -80,7 +81,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Picker open: all input goes to egui. Closed: keys go to the core.
 - During a demo a sideways swipe is the next or previous release, a swipe up
   opens the key bar (`Ui::draw_keys`, `BAR_KEYS`) and a swipe down closes it.
-  Its buttons are hit-tested in `App::touch`, not by egui.
+  Its buttons are hit-tested in `App::touch`, not by egui. The last button of
+  its second row cycles the CRT filter (`ui::Filter`: No, Normal = scanlines,
+  Full = scanlines and bloom).
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

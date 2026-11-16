@@ -253,10 +253,11 @@ which is the thing to port here if it turns out to matter.
   that matters; GLES 3 is the fallback and is why the limits are `downlevel_defaults()`.
 - Handle rotation: `WindowEvent::Resized` reconfigures, and `Outdated`/`Lost` already
   reconfigure in `Gfx::render`.
-- **Cost.** lottes does ~40 texture fetches per output pixel. At 720x576 that is nothing;
-  at 2400x1080 on a phone GPU it is not. If it costs too much, render the CRT pass into a
-  fixed-size intermediate (say 1280x960) and blit that up, which is what demarc's
-  composite pass does for the same reason.
+- **Cost.** lottes does ~40 texture fetches per output pixel, each with an sRGB decode
+  in ALU: 18 ms a frame at full clock on a Mali-G615 MC2 at 1920x1200. minimarc's own
+  `crt.wgsl` samples an sRGB texture and shares 15 fetches between scanlines and bloom:
+  about 7.5 ms at under half the clock. A loop over arrays in WGSL was 3x slower on
+  Mali than the unrolled code.
 - Do not step the core while suspended: `step()` currently runs the emulator even with no
   `Gfx`. Gate it, or the app burns battery in the background.
 

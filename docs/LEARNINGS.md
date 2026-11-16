@@ -1740,3 +1740,19 @@
   renderer (and its device) must survive a suspend; only the surface goes.
   A panic also skipped `android_main`'s `process::exit`, so the next launch hit
   the already-set tracing dispatcher — that was the visible crash, not the cause.
+
+- Profiling minimarc on Android: wgpu's "EGL says it can present to the
+  window but not natively" is only its GLES probe; Vulkan is still in use
+  (log `adapter.get_info()` to be sure). `/sys/kernel/gpu/gpu_model` on the
+  SM-X230 claims "Mali-G720 MC12" but the GPU is a G615 MC2. `gpu_busy` is %
+  at the current clock (`gpu_clock`), so compare busy at equal clocks or use
+  wgpu timestamp queries. simpleperf needs `<profileable android:shell="true"/>`
+  inside `<application>` and `--app com.demarc.c64`; our .so files have no
+  build-id, so symbolize with `llvm-addr2line` on an unstripped
+  `CARGO_PROFILE_RELEASE_STRIP=false` build.
+
+- A WGSL shader that filled `var` arrays in loops and branched on a uniform
+  for its mode ran 3x slower on Mali-G615 than the 42-fetch original, and even
+  its passthrough branch got slow. Unrolled named values and one entry point
+  (pipeline) per mode fixed it. Measure shader changes with timestamp queries
+  on the device; `gpu_busy` alone hides it behind the clock.

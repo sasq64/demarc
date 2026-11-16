@@ -71,12 +71,25 @@ fn the_key_bar_finds_the_button_under_a_finger() {
     let screen = ctx.content_rect();
     let scale = ctx.pixels_per_point() as f64;
     let at = |x: f32, y: f32| ui.key_at(x as f64 * scale, y as f64 * scale);
-    let (w, bottom) = (screen.width() / 4.0, screen.bottom());
+    let (w, w2, bottom) = (screen.width() / 4.0, screen.width() / 5.0, screen.bottom());
     assert_eq!(at(w * 0.5, bottom - 90.0), Some(0));
     assert_eq!(at(w * 3.5, bottom - 90.0), Some(3));
-    assert_eq!(at(w * 0.5, bottom - 30.0), Some(4));
-    assert_eq!(at(w * 3.5, bottom - 30.0), Some(7));
+    assert_eq!(at(w2 * 0.5, bottom - 30.0), Some(4));
+    assert_eq!(at(w2 * 3.5, bottom - 30.0), Some(7));
+    assert_eq!(at(w2 * 4.5, bottom - 30.0), Some(KEY_LABELS.len()));
     assert_eq!(at(w * 0.5, screen.top() + 10.0), None);
+}
+
+#[test]
+fn the_crt_shader_validates() {
+    use wgpu::naga;
+    let module = naga::front::wgsl::parse_str(CRT_WGSL).unwrap();
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::empty(),
+    )
+    .validate(&module)
+    .unwrap();
 }
 
 #[test]

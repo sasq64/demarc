@@ -25,7 +25,7 @@ use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Demo, Loaded, Loader};
-use crate::ui::{Action, KEY_LABELS, Ui};
+use crate::ui::{Action, Filter, KEY_LABELS, Ui};
 use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
@@ -218,39 +218,10 @@ fn alt_symbol(key: KeyCode) -> Option<(libretro::retro_key, bool)> {
 // Rendering
 // -------------------------------------------------------------------------
 
-const LOTTES_WGSL: &str = include_str!("../../../system/shaders/lottes.wgsl");
+const CRT_WGSL: &str = include_str!("crt.wgsl");
 
-/// The one Bevy-ism in lottes.wgsl: a fullscreen vertex shader it imports.
-const BEVY_IMPORT: &str =
-    "#import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput";
-
-const FULLSCREEN_VS: &str = r#"
-struct FullscreenVertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@vertex
-fn vertex(@builtin(vertex_index) index: u32) -> FullscreenVertexOutput {
-    let uv = vec2<f32>(f32(index >> 1u), f32(index & 1u)) * 2.0;
-    let clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-    return FullscreenVertexOutput(clip, uv);
-}
-"#;
-
-/// `PostProcessUniform` as lottes.wgsl declares it, padded to the 16-byte
-/// stride a uniform buffer needs.
-fn uniform_bytes(uv_scale: [f32; 2], uv_offset: [f32; 2], crt_enabled: bool) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (i, v) in [uv_scale[0], uv_scale[1], uv_offset[0], uv_offset[1]]
-        .iter()
-        .enumerate()
-    {
-        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_ne_bytes());
-    }
-    out[16..20].copy_from_slice(&u32::from(crt_enabled).to_ne_bytes());
-    out
-}
+/// crt.wgsl's fragment entry point for each `Filter`, in discriminant order.
+const FRAGMENTS: [&str; 3] = ["fragment_none", "fragment_normal", "fragment_full"];
 
 /// Where the picture lands in a window of `win` pixels, at display aspect
 /// `aspect`: as large as fits, centred, aspect preserved.
@@ -278,10 +249,11 @@ struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    /// One per `Filter`.
+    pipelines: Vec<wgpu::RenderPipeline>,
+    filter: Filter,
     bind_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    uniform: wgpu::Buffer,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     /// Display aspect the frame is presented at.
@@ -293,7 +265,7 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>, ctx: &egui::Context) -> Result<Self> {
+    fn new(window: Arc<Window>, ctx: &egui::Context, filter: Filter) -> Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_without_display_handle_from_env()
@@ -336,10 +308,8 @@ impl Gfx {
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("lottes"),
-            source: wgpu::ShaderSource::Wgsl(
-                LOTTES_WGSL.replace(BEVY_IMPORT, FULLSCREEN_VS).into(),
-            ),
+            label: Some("crt"),
+            source: wgpu::ShaderSource::Wgsl(CRT_WGSL.into()),
         });
 
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -361,16 +331,6 @@ impl Gfx {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
 
@@ -379,27 +339,31 @@ impl Gfx {
             bind_group_layouts: &[Some(&bind_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("lottes"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vertex"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fragment"),
-                targets: &[Some(format.into())],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipelines = FRAGMENTS
+            .map(|fragment| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(fragment),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vertex"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(fragment),
+                        targets: &[Some(format.into())],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            })
+            .into();
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("frame"),
@@ -407,16 +371,9 @@ impl Gfx {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lottes settings"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&uniform, 0, &uniform_bytes([1.0, 1.0], [0.0, 0.0], true));
 
         let texture = create_frame_texture(&device, 1, 1);
-        let bind_group = create_bind_group(&device, &bind_layout, &texture, &sampler, &uniform);
+        let bind_group = create_bind_group(&device, &bind_layout, &texture, &sampler);
 
         let egui_state = egui_winit::State::new(
             ctx.clone(),
@@ -435,10 +392,10 @@ impl Gfx {
             device,
             queue,
             config,
-            pipeline,
+            pipelines,
+            filter,
             bind_layout,
             sampler,
-            uniform,
             texture,
             bind_group,
             aspect: 0.0,
@@ -472,7 +429,6 @@ impl Gfx {
                 &self.bind_layout,
                 &self.texture,
                 &self.sampler,
-                &self.uniform,
             );
         }
         self.queue.write_texture(
@@ -578,7 +534,7 @@ impl Gfx {
                 let win = (self.config.width as f32, self.config.height as f32);
                 let (x, y, w, h) = fit_rect(win, self.aspect);
                 pass.set_viewport(x, y, w, h, 0.0, 1.0);
-                pass.set_pipeline(&self.pipeline);
+                pass.set_pipeline(&self.pipelines[self.filter as usize]);
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -628,9 +584,8 @@ fn create_frame_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu:
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        // NON-sRGB on purpose: libretro cores deliver gamma-encoded pixels and
-        // the shader does the decode itself.
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        // libretro pixels are gamma-encoded: sampling decodes them to linear.
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
@@ -641,7 +596,6 @@ fn create_bind_group(
     layout: &wgpu::BindGroupLayout,
     texture: &wgpu::Texture,
     sampler: &wgpu::Sampler,
-    uniform: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let view = texture.create_view(&Default::default());
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -655,10 +609,6 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: uniform.as_entire_binding(),
             },
         ],
     })
@@ -965,6 +915,13 @@ impl App {
             TouchPhase::Started => {
                 if let Some(i) = self.ui.key_at(t.location.x, t.location.y) {
                     self.release_bar_key();
+                    if i == KEY_LABELS.len() {
+                        self.ui.filter = self.ui.filter.next();
+                        if let Some(gfx) = self.gfx.as_mut() {
+                            gfx.filter = self.ui.filter;
+                        }
+                        return;
+                    }
                     self.press(BAR_KEYS[i], true, self.mods());
                     self.bar_key = Some((t.id, BAR_KEYS[i]));
                     self.ui.key_held = Some(i);
@@ -1212,7 +1169,7 @@ impl ApplicationHandler for App {
         match event_loop
             .create_window(attrs)
             .map_err(anyhow::Error::from)
-            .and_then(|window| Gfx::new(Arc::new(window), &self.ui.ctx))
+            .and_then(|window| Gfx::new(Arc::new(window), &self.ui.ctx, self.ui.filter))
         {
             Ok(gfx) => {
                 self.gfx = Some(gfx);
