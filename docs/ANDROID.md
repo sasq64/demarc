@@ -32,8 +32,9 @@ retro-ui     the egui picker and HUD
   `<data>/vice/C64/`.
 - The data dir holds everything writable: `set_system_dir`, `set_cache_dir`
   and `TMPDIR` all point into it.
-- No RAR or LHA on Android: `unarc-rs` does not build there, so
-  `release-io/src/utils/plain.rs` unpacks zip, gzip and 7z only.
+- `unrar_sys` builds at API 26 (bionic has `lutimes` from there), but asks
+  for a `libpthread` bionic lacks and links no C++ runtime: `release-io`'s
+  `build.rs` supplies an empty `libpthread.a` and links `c++_static`.
 - Left out: `overrides.toml`, playlists, next/previous, an on-screen keyboard.
 
 The rest of this file is the log of how the port got here; `retro-core`'s

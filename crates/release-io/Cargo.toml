@@ -26,13 +26,10 @@ url = "2"
 base64 = "0.23.1"
 qbsdiff = "1.4.4"
 
-# Unpacking. `unarc-rs` covers every format but pulls in `unrar`, which does
-# not build for bionic, so Android gets by on these three alone.
+# Unpacking. `unrar` needs build.rs and `.cargo/config.toml` help on Android.
 zip.workspace = true
 flate2 = "1.1"
 sevenz-rust2 = "0.20.2"
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
 unarc-rs = "0.6.1"
 
 [build-dependencies]

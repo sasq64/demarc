@@ -91,6 +91,8 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   and forward in the tree.
 - The picker has a button row under the info box: the X closes the
   picker, play picks the highlighted row. The db is sorted by rating on load.
+- Reset is VICE's `vice_reset = hard` (set in `c64::prepare`), so it does not
+  autostart the release.
 - The screen is kept on for as long as the app is up (`android_main`).
 - `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The UI scales
   with the window height up to `UI_MAX_HEIGHT` logical pixels, so it keeps its
@@ -123,8 +125,8 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   (`release_io::set_cache_dir`) and the system dir.
 - `egui-wgpu` 0.36 needs wgpu 30; the rest of the workspace is on 29 for Bevy.
   Only this crate names 30.
-- `unarc-rs` does not build for bionic: no RAR or LHA on Android
-  (`release-io/src/utils/plain.rs` does zip, gzip, 7z).
+- `unarc-rs` (RAR, LHA) needs `release-io`'s `build.rs` Android link fixes;
+  see `docs/ANDROID.md`.
 - `cargo ndk -o` copies every cdylib it builds into `jniLibs`; the script
   removes the `sevenz_rust2` one.
 

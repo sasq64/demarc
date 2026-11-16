@@ -68,8 +68,8 @@ etc. still resolve inside demarc.
 Two rules keep the split honest: **nothing under `crates/` may mention Bevy**,
 and **`retro-core`, `release-io`, `navigator`, `minimarc` and `database`
 (without its `desktop` feature) may not gain a dependency that does not
-cross-compile to `aarch64-linux-android`** (`unarc-rs` does not build for
-bionic, so `release-io` only depends on it off Android).
+cross-compile to `aarch64-linux-android`** (`unarc-rs` does, with the link
+fixes in `release-io/build.rs`).
 
 ## Conventions
 
