@@ -65,6 +65,9 @@ pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
         file.set_meta("vice_ram_expansion_unit", "16384kB");
     }
 
+    // VICE's default reset autostarts the release again.
+    file.set_meta("vice_reset", "hard");
+
     if file.has_tag("3sid") {
         three_sids(file)?;
     } else if file.has_tag("2sid") {

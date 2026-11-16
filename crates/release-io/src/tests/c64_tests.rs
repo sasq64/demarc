@@ -22,6 +22,7 @@ fn two_sids_set_the_extra_sid_option() {
     assert!(prepare(&mut file, false).unwrap());
     assert_eq!(file.get_meta_or("vice_sid_extra", ""), "0xd420");
     assert!(!file.has_meta("save_dir"));
+    assert_eq!(file.get_meta_or("vice_reset", ""), "hard");
 }
 
 #[test]
