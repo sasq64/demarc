@@ -80,17 +80,23 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   result replaces the core (`App::start`). Stale results are dropped.
 - Picker open: all input goes to egui. Closed: keys go to the core.
 - During a demo a sideways swipe is the next or previous release, a swipe up
-  opens the key bar (`Ui::draw_keys`, `BAR_KEYS`) and a swipe down closes it.
-  Its buttons are hit-tested in `App::touch`, not by egui. The last button of
-  its second row cycles the CRT filter (`ui::Filter`: No, Normal = scanlines,
-  Full = scanlines and bloom).
+  opens the key bar (`Ui::draw_keys`, `ui::BUTTONS`) and a swipe down closes it.
+  Its buttons are hit-tested in `App::touch`, not by egui. Row one is
+  F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
+  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip, CRT
+  filter (`ui::Filter`: No, Normal = scanlines, Full = scanlines and bloom),
+  reset, pause, 10 s warp (audio dropped), next, prev and the info text.
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.
-- The picker has a button row under the info box: play picks the highlighted
-  row, the floppy inserts the next disk. The db is sorted by rating on load.
+- The picker has a button row under the info box: the X closes the
+  picker, play picks the highlighted row. The db is sorted by rating on load.
 - The screen is kept on for as long as the app is up (`android_main`).
-- `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The picker's list
+- `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The UI scales
+  with the window height up to `UI_MAX_HEIGHT` logical pixels, so it keeps its
+  physical size on a tablet. In portrait the soft keyboard's height (padding
+  `MiniActivity` puts on the content view, read from `content_rect`) becomes
+  egui's bottom safe-area inset, which moves the picker above it. The picker's list
   height is `visible_rows` in `retro-ui/src/picker.rs`, which gives up rows
   when the zoom leaves no room (`CHROME_HEIGHT`).
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
@@ -137,8 +143,7 @@ Not yet confirmed on the phone:
 - sound, touch scrolling of the list, a demo running past the loader.
 
 Known rough edges: the soft keyboard is only asked for after a tap on the
-search box (`Ui::soft_keyboard`), and then covers the picker's buttons until
-a tap elsewhere; no on-screen C64 keyboard; no playlists.
+search box (`Ui::soft_keyboard`), until a tap elsewhere; no on-screen C64 keyboard; no playlists.
 
 The shared audio sink, the overrides and the info text have only been run by
 the tests and the cross-compile check, not on the phone.

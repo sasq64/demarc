@@ -18,6 +18,13 @@ public class MiniActivity extends NativeActivity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
         hideSystemBars();
+        // The native side reads the keyboard's height off the content rect.
+        if (Build.VERSION.SDK_INT >= 30) {
+            findViewById(android.R.id.content).setOnApplyWindowInsetsListener((v, insets) -> {
+                v.setPadding(0, 0, 0, insets.getInsets(WindowInsets.Type.ime()).bottom);
+                return insets;
+            });
+        }
     }
 
     @Override

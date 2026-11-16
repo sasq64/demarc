@@ -71,12 +71,11 @@ fn the_key_bar_finds_the_button_under_a_finger() {
     let screen = ctx.content_rect();
     let scale = ctx.pixels_per_point() as f64;
     let at = |x: f32, y: f32| ui.key_at(x as f64 * scale, y as f64 * scale);
-    let (w, w2, bottom) = (screen.width() / 4.0, screen.width() / 5.0, screen.bottom());
+    let (w, bottom) = (screen.width() / 8.0, screen.bottom());
     assert_eq!(at(w * 0.5, bottom - 90.0), Some(0));
-    assert_eq!(at(w * 3.5, bottom - 90.0), Some(3));
-    assert_eq!(at(w2 * 0.5, bottom - 30.0), Some(4));
-    assert_eq!(at(w2 * 3.5, bottom - 30.0), Some(7));
-    assert_eq!(at(w2 * 4.5, bottom - 30.0), Some(KEY_LABELS.len()));
+    assert_eq!(at(w * 7.5, bottom - 90.0), Some(7));
+    assert_eq!(at(w * 0.5, bottom - 30.0), Some(8));
+    assert_eq!(at(w * 7.5, bottom - 30.0), Some(BUTTONS.len() - 1));
     assert_eq!(at(w * 0.5, screen.top() + 10.0), None);
 }
 

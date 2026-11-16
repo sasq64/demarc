@@ -25,7 +25,7 @@ use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Demo, Loaded, Loader};
-use crate::ui::{Action, Filter, KEY_LABELS, Ui};
+use crate::ui::{Action, BUTTONS, Button, Filter, Ui};
 use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
@@ -36,6 +36,8 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 const SWIPE_DIST: f64 = 80.0;
 /// Phone text is read at arm's length on a small screen.
 const UI_ZOOM: f32 = if cfg!(target_os = "android") { 2.0 } else { 1.0 };
+/// Window height in logical pixels past which the UI stops growing with it.
+const UI_MAX_HEIGHT: f32 = if cfg!(target_os = "android") { 600.0 } else { f32::INFINITY };
 const SWIPE_TIME: Duration = Duration::from_millis(500);
 
 // -------------------------------------------------------------------------
@@ -244,7 +246,7 @@ fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
 struct Gfx {
     window: Arc<Window>,
     instance: wgpu::Instance,
-    /// `None` while the app is suspended: Android destroys the native window.
+    /// None while the app is in the background on Android.
     surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -413,9 +415,10 @@ impl Gfx {
         }
     }
 
-    fn recreate_surface(&mut self) -> Result<()> {
-        let surface = self.instance.create_surface(self.window.clone())?;
-        self.surface = Some(surface);
+    /// A new surface for the resumed activity. The device and the egui
+    /// renderer stay, since the egui context won't send its textures again.
+    fn resume(&mut self) -> Result<()> {
+        self.surface = Some(self.instance.create_surface(self.window.clone())?);
         self.resize(self.window.inner_size());
         Ok(())
     }
@@ -451,14 +454,33 @@ impl Gfx {
     /// the entry the user picked.
     fn run_ui(&mut self, ui: &mut Ui) -> (UiFrame, Option<Action>) {
         let scale = self.window.scale_factor() as f32;
-        retro_ui::set_scale(&ui.ctx, self.config.height as f32 / scale, scale, UI_ZOOM);
-        let input = self.egui_state.take_egui_input(&self.window);
+        let height = (self.config.height as f32 / scale).min(UI_MAX_HEIGHT);
+        retro_ui::set_scale(&ui.ctx, height, scale, UI_ZOOM);
+        let mut input = self.egui_state.take_egui_input(&self.window);
+        // Android's focus event comes before there is an egui state to take it.
+        input.focused = self.window.has_focus();
+        let bottom = self.keyboard_height(ui) / ui.ctx.pixels_per_point();
+        input.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
+            bottom,
+            ..Default::default()
+        }));
         let ctx = ui.ctx.clone();
         let mut picked = None;
         let mut output = ctx.run_ui(input, |egui_ui| picked = ui.draw(egui_ui.ctx()));
         // The soft keyboard covers the picker's buttons.
-        if cfg!(target_os = "android") && !ui.soft_keyboard {
-            output.platform_output.ime = None;
+        if cfg!(target_os = "android") {
+            let ime = &mut output.platform_output.ime;
+            if !ui.soft_keyboard {
+                *ime = None;
+            } else if ime.is_none() {
+                // Asked for from the key bar, with no text field to focus.
+                *ime = Some(egui::output::IMEOutput {
+                    purpose: Default::default(),
+                    rect: egui::Rect::NOTHING,
+                    cursor_rect: egui::Rect::NOTHING,
+                    should_interrupt_composition: false,
+                });
+            }
         }
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);
@@ -468,6 +490,19 @@ impl Gfx {
             pixels_per_point: output.pixels_per_point,
         };
         (frame, picked)
+    }
+
+    /// Physical pixels the soft keyboard covers at the bottom, in portrait.
+    /// `MiniActivity` pads the content view by the keyboard's height.
+    fn keyboard_height(&self, ui: &Ui) -> f32 {
+        #[cfg(target_os = "android")]
+        if ui.soft_keyboard && self.config.height > self.config.width {
+            use winit::platform::android::WindowExtAndroid;
+            let covered = self.config.height as i32 - self.window.content_rect().bottom;
+            return covered.max(0) as f32;
+        }
+        let _ = ui;
+        0.0
     }
 
     fn render(&mut self, mut ui: UiFrame) {
@@ -633,18 +668,21 @@ struct Swipe {
     began: Instant,
 }
 
-/// What the key bar's buttons send, in the order of `KEY_LABELS`. The two
-/// cursor keys are the C64's own, which a held shift turns into left and up.
-const BAR_KEYS: [libretro::retro_key; KEY_LABELS.len()] = [
-    libretro::RETROK_F1,
-    libretro::RETROK_F3,
-    libretro::RETROK_F5,
-    libretro::RETROK_F7,
-    libretro::RETROK_RIGHT,
-    libretro::RETROK_DOWN,
-    libretro::RETROK_ESCAPE,
-    libretro::RETROK_HOME,
-];
+/// The key a key bar button holds down, if it is a key.
+fn bar_key(button: Button) -> Option<libretro::retro_key> {
+    use libretro::*;
+    Some(match button {
+        Button::F1 => RETROK_F1,
+        Button::F3 => RETROK_F3,
+        Button::F5 => RETROK_F5,
+        Button::F7 => RETROK_F7,
+        Button::Space => RETROK_SPACE,
+        Button::Return => RETROK_RETURN,
+        _ => return None,
+    })
+}
+
+const WARP_TIME: Duration = Duration::from_secs(10);
 
 /// The cursor key a movement of `(dx, dy)` means, once it is long enough.
 fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
@@ -675,7 +713,6 @@ pub struct App {
     /// Keys to press once `core` has run that many frames.
     startup_keys: Vec<(u32, libretro::retro_key, bool)>,
     core_frames: u32,
-    disk_no: u32,
     ui: Ui,
     loader: Loader,
     gfx: Option<Gfx>,
@@ -699,6 +736,8 @@ pub struct App {
     nav_swipe: Option<(u64, (f64, f64))>,
     frame_time: Duration,
     next_frame: Instant,
+    warp_until: Option<Instant>,
+    disk: u32,
 }
 
 impl App {
@@ -713,7 +752,6 @@ impl App {
             work: None,
             startup_keys: Vec::new(),
             core_frames: 0,
-            disk_no: 0,
             ui,
             loader,
             gfx: None,
@@ -730,6 +768,8 @@ impl App {
             nav_swipe: None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
+            warp_until: None,
+            disk: 0,
         }
     }
 
@@ -779,25 +819,13 @@ impl App {
         }
         self.core_frames = 0;
         self.audio_fill = 0.0;
-        self.disk_no = 0;
+        self.ui.paused = false;
+        self.warp_until = None;
+        self.disk = 0;
         self.core = Some(core);
         self.work = Some(work);
         self.ui.info(&info);
         Ok(())
-    }
-
-    fn flip_disk(&mut self) {
-        let Some(core) = self.core.as_mut() else {
-            return;
-        };
-        let disks = core.get_number_of_disks();
-        if disks > 0 {
-            self.disk_no = (self.disk_no + 1) % disks;
-            core.set_disk(self.disk_no);
-        }
-        self.ui.close();
-        self.ui
-            .note(&format!("Disk {}/{}", self.disk_no + 1, disks));
     }
 
     fn mods(&self) -> u16 {
@@ -915,16 +943,13 @@ impl App {
             TouchPhase::Started => {
                 if let Some(i) = self.ui.key_at(t.location.x, t.location.y) {
                     self.release_bar_key();
-                    if i == KEY_LABELS.len() {
-                        self.ui.filter = self.ui.filter.next();
-                        if let Some(gfx) = self.gfx.as_mut() {
-                            gfx.filter = self.ui.filter;
-                        }
-                        return;
+                    if let Some(key) = bar_key(BUTTONS[i]) {
+                        self.press(key, true, self.mods());
+                        self.bar_key = Some((t.id, key));
+                        self.ui.key_held = Some(i);
+                    } else {
+                        self.bar_button(BUTTONS[i]);
                     }
-                    self.press(BAR_KEYS[i], true, self.mods());
-                    self.bar_key = Some((t.id, BAR_KEYS[i]));
-                    self.ui.key_held = Some(i);
                     return;
                 }
                 self.swipe = None;
@@ -953,6 +978,7 @@ impl App {
                     Some(key) => {
                         self.swipe = None;
                         self.ui.keys_open = key == libretro::RETROK_UP;
+                        self.ui.soft_keyboard = false;
                     }
                     None => {}
                 }
@@ -966,6 +992,41 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    fn bar_button(&mut self, button: Button) {
+        match button {
+            Button::Keyboard => {
+                self.ui.keys_open = false;
+                self.ui.soft_keyboard = true;
+            }
+            Button::Disk => {
+                if let Some(core) = self.core.as_mut() {
+                    let disks = core.get_number_of_disks();
+                    if disks > 1 {
+                        self.disk = (self.disk + 1) % disks;
+                        core.set_disk(self.disk);
+                    }
+                }
+            }
+            Button::Crt => {
+                self.ui.filter = self.ui.filter.next();
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.filter = self.ui.filter;
+                }
+            }
+            Button::Reset => {
+                if let Some(core) = self.core.as_mut() {
+                    core.reset();
+                }
+            }
+            Button::Pause => self.ui.paused = !self.ui.paused,
+            Button::Warp => self.warp_until = Some(Instant::now() + WARP_TIME),
+            Button::Next => self.skip(1),
+            Button::Prev => self.skip(-1),
+            Button::Info => self.ui.show_info(),
+            _ => {}
         }
     }
 
@@ -1017,19 +1078,28 @@ impl App {
     /// Step the core one frame and hand the result to the GPU. Does nothing
     /// without a surface: on Android that is the app being in the background.
     fn step(&mut self) {
-        if !self.gfx.as_ref().is_some_and(|gfx| gfx.surface.is_some()) {
+        if self.gfx.as_ref().is_none_or(|gfx| gfx.surface.is_none()) {
             return;
         }
         self.poll_loader();
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
         }
-        if self.core.is_none() {
+        if self.core.is_none() || self.ui.paused {
             return;
         }
-        // Timer jitter and a late frame both drain the ring.
-        if self.run_frame() && self.audio.occupied_len() < AUDIO_BUF.0 {
-            self.run_frame();
+        let now = Instant::now();
+        if self.warp_until.is_some_and(|t| now < t) {
+            let end = now + self.frame_time.mul_f32(0.8);
+            while Instant::now() < end {
+                self.run_frame();
+            }
+        } else {
+            self.warp_until = None;
+            // Timer jitter and a late frame both drain the ring.
+            if self.run_frame() && self.audio.occupied_len() < AUDIO_BUF.0 {
+                self.run_frame();
+            }
         }
         self.audio_fill = smooth_fill(self.audio_fill, self.audio.occupied_len());
         let adjust = rate_adjust(self.audio_fill, AUDIO_BUF.0, AUDIO_BUF.1);
@@ -1072,10 +1142,13 @@ impl App {
         };
         let rate = core.sample_rate() as f32;
         let audio = &mut self.audio;
+        let warp = self.warp_until.is_some();
         let mut heard = false;
         core.with_audio(|samples| {
             heard = !samples.is_empty();
-            audio.push_audio(rate, samples);
+            if !warp {
+                audio.push_audio(rate, samples);
+            }
         });
         heard
     }
@@ -1152,9 +1225,7 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(gfx) = self.gfx.as_mut() {
-            // The egui renderer has to outlive a suspend: egui only sends
-            // texture updates it has not sent before.
-            match gfx.recreate_surface() {
+            match gfx.resume() {
                 Ok(()) => self.audio.activate(),
                 Err(e) => {
                     tracing::error!("Could not recreate the surface: {e:#}");
@@ -1222,7 +1293,6 @@ impl ApplicationHandler for App {
                             self.ui.status("Loading...");
                             self.loader.load_demo(file);
                         }
-                        Some(Action::FlipDisk) => self.flip_disk(),
                         None => {}
                     }
                 }
@@ -1339,9 +1409,9 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         event_loop.run_app(&mut App::new(data.join(DB_ASSET)))?;
         Ok(())
     };
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
-        Ok(Err(e)) => tracing::error!("{e:#}"),
-        Ok(Ok(())) | Err(_) => {}
+    // The panic hook has logged a panic already.
+    if let Ok(Err(e)) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        tracing::error!("{e:#}");
     }
     // Android keeps the process after the activity is gone and would call
     // this again in it, where the logger, winit and the core are all set up.

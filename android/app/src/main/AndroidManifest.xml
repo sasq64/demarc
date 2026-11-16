@@ -19,6 +19,7 @@
             android:exported="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|density|uiMode"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:resizeableActivity="true">
 
             <!-- The .so name without the "lib" prefix and ".so" suffix. -->

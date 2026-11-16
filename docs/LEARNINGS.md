@@ -1756,3 +1756,20 @@
   its passthrough branch got slow. Unrolled named values and one entry point
   (pipeline) per mode fixed it. Measure shader changes with timestamp queries
   on the device; `gpu_busy` alone hides it behind the clock.
+
+- The second "global default trace dispatcher" panic in minimarc was not the
+  same bug as the first: a panic on resume unwound out of `android_main` past
+  its `process::exit`. The panic came from building a new egui renderer on
+  `resumed` — the egui context had sent its font atlas to the old one and
+  never sends it again ("Missing texture: Managed(0)"). Keep the device and
+  renderer across suspend and recreate only the surface, as eframe does. Read
+  logcat from before the relaunch, not just the relaunch.
+
+- minimarc's soft keyboard flickered on a tablet: Android's focus event comes
+  before `Gfx` and its egui-winit state exist, so `RawInput::focused` stayed
+  false, egui dropped the search box's focus every frame, the picker asked for
+  it back, and each `request_focus` interrupts the IME (hide + show). The
+  Titan's hardware keyboard hid it. The flood also queues in the keyboard app,
+  which keeps cycling show/hide for minutes after the app is fixed or stopped;
+  `ImeTracker` tokens named `com.demarc.c64:` with no request in the app's own
+  log are that backlog, not a new bug. Don't use `input keyevent` as a delay.

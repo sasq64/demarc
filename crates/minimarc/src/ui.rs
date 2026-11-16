@@ -9,10 +9,59 @@ use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
 const FONT: &[u8] = include_bytes!("../../../system/font.ttf");
 
-/// The key bar's buttons, a row of four at a time.
-pub const KEY_LABELS: [&str; 8] = [
-    "F1", "F3", "F5", "F7", "\u{f07e}", "\u{f07d}", "STOP", "HOME",
-];
+/// What a key bar button does.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Button {
+    F1,
+    F3,
+    F5,
+    F7,
+    Space,
+    Return,
+    Keyboard,
+    Joy,
+    Disk,
+    Crt,
+    Reset,
+    Pause,
+    Warp,
+    Next,
+    Prev,
+    Info,
+}
+
+/// The key bar's buttons, two rows of eight.
+pub const BUTTONS: [Button; 16] = {
+    use Button::*;
+    [
+        F1, F3, F5, F7, Space, Return, Keyboard, Joy, Disk, Crt, Reset, Pause, Warp, Next, Prev,
+        Info,
+    ]
+};
+
+impl Button {
+    fn label(self, paused: bool) -> &'static str {
+        match self {
+            Button::F1 => "F1",
+            Button::F3 => "F3",
+            Button::F5 => "F5",
+            Button::F7 => "F7",
+            Button::Space => "\u{f1050}",
+            Button::Return => "\u{f0311}",
+            Button::Keyboard => "\u{f030c}",
+            Button::Joy => "\u{f0297}",
+            Button::Disk => "\u{f0249}",
+            Button::Crt => "\u{f26c}",
+            Button::Reset => "\u{f0709}",
+            Button::Pause if paused => "\u{f04b}",
+            Button::Pause => "\u{f04c}",
+            Button::Warp => "\u{f050}",
+            Button::Next => "\u{f051}",
+            Button::Prev => "\u{f048}",
+            Button::Info => "\u{f05a}",
+        }
+    }
+}
 const KEY_SIZE: f32 = 26.0;
 const HUD_SCALE: f32 = 0.35;
 
@@ -32,19 +81,10 @@ impl Filter {
             Filter::Full => Filter::None,
         }
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Filter::None => "No",
-            Filter::Normal => "Normal",
-            Filter::Full => "Full",
-        }
-    }
 }
 
 pub enum Action {
     Play(EmuFile),
-    FlipDisk,
 }
 
 pub struct Ui {
@@ -56,11 +96,13 @@ pub struct Ui {
     /// Set by a tap on the search box, until a tap elsewhere.
     pub soft_keyboard: bool,
     pub keys_open: bool,
-    /// Index into `KEY_LABELS` of the button a finger is on.
+    /// Index into `BUTTONS` of the button a finger is on.
     pub key_held: Option<usize>,
-    /// One per `KEY_LABELS`, then the filter button.
+    /// One per `BUTTONS`.
     key_rects: Vec<egui::Rect>,
     pub filter: Filter,
+    pub paused: bool,
+    info_text: String,
 }
 
 impl Ui {
@@ -68,7 +110,7 @@ impl Ui {
         let ctx = egui::Context::default();
         retro_ui::apply_style(&ctx, FONT.to_vec());
         let mut picker = Picker::default();
-        picker.buttons = vec!["\u{f04b}".into(), "\u{f0c7}".into()];
+        picker.buttons = vec!["\u{f00d}".into(), "\u{f04b}".into()];
         picker.info_lines = 2.0;
         picker.right_icons = false;
         picker.compact = true;
@@ -84,6 +126,8 @@ impl Ui {
             key_held: None,
             key_rects: Vec::new(),
             filter: Filter::Full,
+            paused: false,
+            info_text: String::new(),
         }
     }
 
@@ -137,17 +181,19 @@ impl Ui {
         self.status_for(text, Duration::from_secs(3600));
     }
 
-    pub fn note(&mut self, text: &str) {
-        self.status_for(text, Duration::from_secs(3));
-    }
-
     /// What is playing, in place of the status.
     pub fn info(&mut self, text: &str) {
+        self.info_text = text.to_owned();
+        self.show_info();
+    }
+
+    pub fn show_info(&mut self) {
+        let text = self.info_text.clone();
         self.status("");
         let now = self.now();
         self.hud.set_text(
             HudLocation::InfoText,
-            text,
+            &text,
             now,
             Duration::ZERO,
             Duration::from_secs(5),
@@ -191,8 +237,7 @@ impl Ui {
         }
     }
 
-    /// Index into `KEY_LABELS` of the key bar button at a physical position;
-    /// `KEY_LABELS.len()` is the filter button.
+    /// Index into `BUTTONS` of the key bar button at a physical position.
     pub fn key_at(&self, x: f64, y: f64) -> Option<usize> {
         if !self.keys_open || self.picker.is_open() {
             return None;
@@ -208,12 +253,11 @@ impl Ui {
     fn draw_keys(&mut self, ctx: &egui::Context) {
         self.key_rects.clear();
         let gap = ctx.global_style().spacing.item_spacing.x;
-        let (first, second) = KEY_LABELS.split_at(4);
-        let second: Vec<&str> = second.iter().copied().chain([self.filter.label()]).collect();
+        let labels: Vec<&str> = BUTTONS.iter().map(|b| b.label(self.paused)).collect();
         egui::Area::new(egui::Id::new("key_bar"))
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -gap))
             .show(ctx, |ui| {
-                for row in [first, &second[..]] {
+                for row in labels.chunks(8) {
                     let width = ctx.content_rect().width() / row.len() as f32 - gap;
                     let size = egui::vec2(width, KEY_SIZE * 2.0);
                     ui.horizontal(|ui| {
@@ -253,10 +297,12 @@ impl Ui {
             };
             self.show_changed();
         }
-        let mut flip = false;
         match self.picker.take_button_click() {
-            Some(0) => self.picker.pick_selected(),
-            Some(1) => flip = true,
+            Some(0) => {
+                self.close();
+                return None;
+            }
+            Some(1) => self.picker.pick_selected(),
             _ => {}
         }
         let picked = self.picker.show(ctx, |_, _, _| vec![]);
@@ -264,9 +310,6 @@ impl Ui {
             self.soft_keyboard = true;
         } else if ctx.input(|i| i.pointer.any_click()) {
             self.soft_keyboard = false;
-        }
-        if flip {
-            return Some(Action::FlipDisk);
         }
         let picked = picked?;
         match picked.data {
