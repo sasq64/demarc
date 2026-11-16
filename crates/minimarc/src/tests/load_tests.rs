@@ -95,6 +95,36 @@ fn an_override_sets_meta_and_adds_its_keys() {
 }
 
 #[test]
+fn a_sid_tag_from_the_db_or_an_override_is_honored() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("csdb.txt");
+    let zip = root("testdata/c64/Skaaneland.zip");
+    std::fs::write(
+        &db,
+        "# CSDb database\n# Platform:C64\n\
+         id:1\ttitle:A\tcategory:Demo\ttags:2sid\tdownload:https://x.org/a.zip\n",
+    )
+    .unwrap();
+    let (_, files) = read_db(&db).unwrap();
+    let mut file = files[0].clone();
+    file.path = FileSource::Path(zip.clone());
+    let demo = prepare_with(file, None).unwrap();
+    assert_eq!(demo.work.get_meta_or("vice_sid_extra", ""), "0xd420");
+
+    let file = EmuFile {
+        path: FileSource::Path(zip),
+        ..Default::default()
+    };
+    let over = Override {
+        meta: [("tags", "3sid")].into(),
+        ..Default::default()
+    };
+    let demo = prepare_with(file, Some(&over)).unwrap();
+    let saves = PathBuf::from(demo.work.get_meta_or("save_dir", ""));
+    assert!(saves.join("vicerc").exists());
+}
+
+#[test]
 fn a_db_entry_is_keyed_for_overrides_and_described() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("csdb.txt");

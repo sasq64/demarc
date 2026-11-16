@@ -47,6 +47,9 @@ for every release type CSDb offers), each cached on disk beside the id blocks.
 A toplist only lists releases with enough votes to rank -- a few thousand of
 them -- so most lines have no rating field at all.
 
+`tags` is "2sid" or "3sid" for releases in releases_with_hvsc.php (--hvsc)
+with an HVSC sid named *_2SID.sid or *_3SID.sid.
+
 Usage:
     ./csdb.py                       # everything CSDb has
     ./csdb.py --min 1 --max 263500  # a fixed id range
@@ -57,6 +60,7 @@ import json
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 import urllib.parse
 import urllib.request
 from collections import Counter
@@ -78,6 +82,7 @@ SEED_TYPE = 1  # C64 Demo
 
 _RELEASE_ID_RE = re.compile(r"/release/\?id=(\d+)")
 _SUBTYPE_RE = re.compile(r"\((\d+)\)")
+_MULTI_SID_RE = re.compile(r"_([23]SID)\.sid$", re.IGNORECASE)
 
 
 def fetch_block(min_id: int, max_id: int, release_type: int, retries: int = 3) -> list:
@@ -300,6 +305,28 @@ def load_ratings(cache_dir: Path, refresh: bool = False) -> dict[int, str]:
     return ratings
 
 
+def load_sid_tags(path: Path) -> dict[int, str]:
+    """{release id: '2sid' | '3sid'} from HVSC sid names ending _2SID / _3SID."""
+    if not path.exists():
+        print(f"  WARNING: {path} missing; no sid tags", file=sys.stderr)
+        return {}
+    tags: dict[int, str] = {}
+    for _, el in ET.iterparse(path):
+        if el.tag != "Release":
+            continue
+        found = [
+            m.group(1).lower()
+            for path_el in el.iterfind("Sids/HVSCPath")
+            if (m := _MULTI_SID_RE.search((path_el.text or "").strip()))
+        ]
+        rid = el.findtext("ID")
+        if found and rid:
+            tags[int(rid)] = max(found)
+        el.clear()
+    print(f"Sid tags: {len(tags)} releases", file=sys.stderr)
+    return tags
+
+
 def group_names(release: dict) -> str:
     """Comma-joined releasing groups, falling back to sceners if none.
 
@@ -387,7 +414,7 @@ def clean(value: str) -> str:
     return value.replace("\t", " ").replace("\n", " ").replace("\r", " ").strip()
 
 
-def to_row(release: dict, urls: list[str], rating: str = "") -> str:
+def to_row(release: dict, urls: list[str], rating: str = "", tags: str = "") -> str:
     """Format one release as a named-field, tab-separated csdb.txt line."""
     fields = [
         ("id", str(release.get("id", ""))),
@@ -397,6 +424,7 @@ def to_row(release: dict, urls: list[str], rating: str = "") -> str:
         ("party", party_field(release)),
         ("category", category(release)),
         ("rating", rating),
+        ("tags", tags),
         ("download", ";".join(urls)),
     ]
     # A field with nothing after its colon carries no information, so leave it
@@ -441,6 +469,9 @@ def main() -> int:
         action="store_true",
         help="refetch the toplist pages instead of reading the cached ones",
     )
+    parser.add_argument(
+        "--hvsc", type=Path, default=Path("releases_with_hvsc.php")
+    )
     args = parser.parse_args()
 
     args.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -448,6 +479,8 @@ def main() -> int:
     ratings: dict[int, str] = {}
     if not args.no_ratings:
         ratings = load_ratings(args.cache_dir, args.refresh_ratings)
+
+    sid_tags = load_sid_tags(args.hvsc)
 
     releases = load_releases(args.cache_dir, args.min, args.max, args.type)
 
@@ -468,7 +501,7 @@ def main() -> int:
             continue
         rating = ratings.get(rid, "")
         rated += bool(rating)
-        rows.append(to_row(rel, urls, rating))
+        rows.append(to_row(rel, urls, rating, sid_tags.get(rid, "")))
         categories[category(rel)] += 1
 
     if len(rows) == 1:

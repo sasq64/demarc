@@ -37,6 +37,24 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
     start_addr + data_size <= 0x1_0000
 }
 
+/// The core has no option for a third SID, but reads `<save dir>/vicerc`.
+fn three_sids(file: &mut WorkFile) -> Result<()> {
+    file.make_temp()?;
+    let Some(temp) = file.temp_dir() else {
+        warn!("No temp dir for the vicerc; playing with one SID");
+        return Ok(());
+    };
+    let saves = temp.join(".vice-saves");
+    fs::create_dir_all(&saves)?;
+    fs::write(
+        saves.join("vicerc"),
+        "[C64SC]\nSidStereo=2\nSid2AddressStart=54304\nSid3AddressStart=54336\n",
+    )
+    .context("Could not write vicerc")?;
+    file.set_meta("save_dir", saves.to_string_lossy());
+    Ok(())
+}
+
 /// Pick the file VICE should start out of `file` and set the options the
 /// release needs. `false` when there is nothing for a C64 in it.
 pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
@@ -47,7 +65,9 @@ pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
         file.set_meta("vice_ram_expansion_unit", "16384kB");
     }
 
-    if file.has_tag("2sid") {
+    if file.has_tag("3sid") {
+        three_sids(file)?;
+    } else if file.has_tag("2sid") {
         file.set_meta("vice_sid_extra", "0xd420");
     }
     if file.has_tag("6581") {
@@ -128,3 +148,7 @@ pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
     }
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "tests/c64_tests.rs"]
+mod tests;
