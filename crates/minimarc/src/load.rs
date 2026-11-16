@@ -117,15 +117,25 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
     } else if let Some(name) = over.and_then(|o| o.download) {
         file.path.pick_download(name);
     }
-    let (path, _) = file.path.resolve_with_progress(&|_, _| {})?;
-    let mut work = release_io::unpack_release(path, &meta)
-        .with_context(|| format!("Could not unpack {}", path.display()))?;
-    if let Some(over) = over {
-        release_io::apply_override(&mut work, over, &retro_core::system_dir())?;
-    }
-    if !release_io::c64::prepare(&mut work, false)? {
-        bail!("Nothing in this release runs on a C64");
-    }
+    let mut source = file.path.clone();
+    let mut work = loop {
+        let mut attempt = source.clone();
+        let (path, used) = attempt.resolve_with_progress(&|_, _| {})?;
+        let err = match unpack_for_c64(path, &meta, over) {
+            Ok(work) => break work,
+            Err(e) => e,
+        };
+        // Try the release's other downloads before giving up.
+        let FileSource::Url(urls) = &source else {
+            return Err(err);
+        };
+        let rest: Vec<_> = urls.iter().filter(|u| !used.contains(u)).collect();
+        if rest.is_empty() || rest.len() == urls.as_slice().len() {
+            return Err(err);
+        }
+        tracing::warn!("{err:#}; trying the next download");
+        source = FileSource::Url(UrlList::from(rest));
+    };
     let mut events = vec![];
     if let Some(over) = over {
         // Again, so it also beats what `prepare` derived.
@@ -137,6 +147,22 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
     }
     let info = info_text(&file);
     Ok(Demo { work, events, info })
+}
+
+fn unpack_for_c64(
+    path: &std::path::Path,
+    meta: &HashMap<String, String>,
+    over: Option<&Override>,
+) -> Result<WorkFile> {
+    let mut work = release_io::unpack_release(path, meta)
+        .with_context(|| format!("Could not unpack {}", path.display()))?;
+    if let Some(over) = over {
+        release_io::apply_override(&mut work, over, &retro_core::system_dir())?;
+    }
+    if !release_io::c64::prepare(&mut work, false)? {
+        bail!("Nothing in this release runs on a C64");
+    }
+    Ok(work)
 }
 
 fn info_text(file: &EmuFile) -> String {
