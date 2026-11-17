@@ -49,3 +49,16 @@ fn bootable_files_skip_what_a_c64_cannot_start() {
         .collect();
     assert_eq!(names, ["demo.prg", "disk.d64"]);
 }
+
+#[test]
+fn characters_map_to_the_c64_key_that_types_them() {
+    use retro_core::libretro::*;
+    assert_eq!(char_key('a'), Some((RETROK_a, false)));
+    assert_eq!(char_key('A'), Some((RETROK_a, true)));
+    assert_eq!(char_key('"'), Some((RETROK_2, true)));
+    assert_eq!(char_key('@'), Some((RETROK_LEFTBRACKET, false)));
+    assert_eq!(char_key('['), Some((RETROK_SEMICOLON, true)));
+    assert_eq!(char_key('_'), Some((RETROK_BACKQUOTE, false)));
+    assert_eq!(char_key('~'), Some((RETROK_DELETE, false)));
+    assert_eq!(char_key('{'), None);
+}

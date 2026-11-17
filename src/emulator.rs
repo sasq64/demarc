@@ -10,7 +10,7 @@ use bevy::{image::Image, prelude::*};
 use wgpu::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::audio::{AudioSink, rate_adjust, smooth_fill};
-use crate::backend::{Backend, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
+use crate::backend::{Backend, InputEvent, STATE_SKIPPING, VideoFrame, ViewFocus, frame_bytes};
 use crate::config::LatencySetting;
 use crate::emu_file::{EmuFile, GameInfo};
 use crate::libretro;
@@ -162,6 +162,8 @@ pub struct Emulator {
     /// The core pushes its audio into [`Self::sink`] from its own thread.
     pub self_audio: bool,
     pub key_map: HashMap<KeyCode, libretro::retro_key>,
+    /// C64 keys sent for typed characters, and the shift each forced.
+    typed: HashMap<KeyCode, (libretro::retro_key, Option<bool>)>,
     /// Multiplier on the resample ratio; `1.0` is no correction.
     pub audio_rate_adjust: f64,
     /// Smoothed fill of the audio sink, in samples; `0` until first measured.
@@ -543,6 +545,7 @@ impl Emulator {
     pub fn feed_inputs(
         &mut self,
         input: &ButtonInput<KeyCode>,
+        typed: &[(KeyCode, char)],
         mouse_buttons: &ButtonInput<MouseButton>,
         mouse_motion: &AccumulatedMouseMotion,
         // Absolute pointer in normalized frame coords when the cursor is over
@@ -574,6 +577,17 @@ impl Emulator {
         let joypad_port = self.input_mode.joypad_port();
         let frame = self.core.as_ref().unwrap().frames_stepped();
         let hot_key = input.any_pressed([KeyCode::AltRight, KeyCode::ControlRight]);
+        // Tab and Ctrl are the C64's CTRL and C= keys, so they type nothing.
+        let c64_text = self.work_file.get_meta_or("system", "").starts_with("C64")
+            && !input.any_pressed([
+                KeyCode::ControlLeft,
+                KeyCode::ControlRight,
+                KeyCode::AltLeft,
+                KeyCode::AltRight,
+                KeyCode::SuperLeft,
+                KeyCode::SuperRight,
+                KeyCode::Tab,
+            ]);
         for e in input.get_just_pressed() {
             if *e == KeyCode::F12 || *e == KeyCode::ControlRight || *e == KeyCode::AltRight {
                 continue;
@@ -588,6 +602,12 @@ impl Emulator {
                 && let Some(id) = Self::joypad_button(*e)
             {
                 self.core.as_mut().unwrap().set_joypad(port, id, true);
+            } else if let Some((key, shifted)) = typed
+                .iter()
+                .find(|(code, _)| c64_text && code == e)
+                .and_then(|&(_, c)| ::newsys::c64::char_key(c))
+            {
+                self.type_key(input, *e, key, shifted);
             } else if let Some(code) = self.key_map.get(e) {
                 self.core.as_mut().unwrap().press_key(*code, true, mods);
             }
@@ -600,6 +620,8 @@ impl Emulator {
                 && let Some(id) = Self::joypad_button(*e)
             {
                 self.core.as_mut().unwrap().set_joypad(port, id, false);
+            } else if let Some((key, shift)) = self.typed.remove(e) {
+                self.release_typed(input, key, shift);
             } else if let Some(code) = self.key_map.get(e) {
                 self.core.as_mut().unwrap().press_key(*code, false, mods);
             }
@@ -634,6 +656,52 @@ impl Emulator {
             mouse_buttons.pressed(MouseButton::Middle),
         );
         self.buttons = 0;
+    }
+
+    /// The C64 shift keys the held physical shifts send.
+    fn held_shifts(input: &ButtonInput<KeyCode>) -> Vec<u32> {
+        [
+            (KeyCode::ShiftLeft, libretro::RETROK_LSHIFT),
+            (KeyCode::ShiftRight, libretro::RETROK_RSHIFT),
+        ]
+        .into_iter()
+        .filter(|(code, _)| input.pressed(*code))
+        .map(|(_, key)| key)
+        .collect()
+    }
+
+    /// Type `key` for the physical `code`, with the shift it needs put in
+    /// place a frame ahead: VICE ignores a shift that arrives with the key.
+    fn type_key(&mut self, input: &ButtonInput<KeyCode>, code: KeyCode, key: u32, shifted: bool) {
+        let held = Self::held_shifts(input);
+        let shift = (shifted == held.is_empty()).then_some(shifted);
+        let mut events: Vec<_> = match shift {
+            Some(true) => vec![libretro::RETROK_LSHIFT],
+            Some(false) => held,
+            None => vec![],
+        }
+        .into_iter()
+        .map(|k| (0, InputEvent::KeyState(k, shifted)))
+        .collect();
+        events.push((shift.is_some() as u32, InputEvent::KeyState(key, true)));
+        self.core.as_mut().unwrap().send_events(&events);
+        self.typed.insert(code, (key, shift));
+    }
+
+    /// Release a typed key and give the C64 back the shift the keyboard has.
+    fn release_typed(&mut self, input: &ButtonInput<KeyCode>, key: u32, shift: Option<bool>) {
+        let mut events = vec![(0, InputEvent::KeyState(key, false))];
+        let restore = match shift {
+            Some(true) if !input.pressed(KeyCode::ShiftLeft) => vec![libretro::RETROK_LSHIFT],
+            Some(false) => Self::held_shifts(input),
+            _ => vec![],
+        };
+        events.extend(
+            restore
+                .into_iter()
+                .map(|k| (1, InputEvent::KeyState(k, shift == Some(false)))),
+        );
+        self.core.as_mut().unwrap().send_events(&events);
     }
 
     pub fn set_mouse_buttons(&mut self, buttons: u32) {

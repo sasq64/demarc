@@ -20,6 +20,7 @@ fn world() -> World {
     world.init_resource::<Time>();
     world.init_resource::<Messages<SetHudText>>();
     world.init_resource::<Messages<crate::ui::ShowFuzzyList>>();
+    world.init_resource::<Messages<bevy::input::keyboard::KeyboardInput>>();
     world.insert_resource(crate::navigator::Navigator::new());
     world.init_resource::<UiState>();
     world.init_resource::<HideMouse>();

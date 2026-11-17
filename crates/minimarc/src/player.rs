@@ -165,6 +165,13 @@ pub(crate) fn key_by_name(key: &str) -> Option<libretro::retro_key> {
     Some(*code)
 }
 
+/// The character a key types, if it types exactly one.
+fn typed_char(key: &Key) -> Option<char> {
+    let Key::Character(s) = key else { return None };
+    let mut chars = s.chars();
+    chars.next().filter(|_| chars.next().is_none())
+}
+
 /// The keys a C64 needs that a compact keyboard does not have: Alt picks a
 /// digit, Shift+Alt the function key above it.
 fn alt_key(key: KeyCode, shift: bool) -> Option<libretro::retro_key> {
@@ -733,8 +740,8 @@ pub struct App {
     shift: bool,
     ctrl: bool,
     /// What each held physical key sent, so its release cancels that key even
-    /// if the modifiers changed in between.
-    pressed: HashMap<KeyCode, (libretro::retro_key, bool)>,
+    /// if the modifiers changed in between, and the shift it forced on the C64.
+    pressed: HashMap<KeyCode, (libretro::retro_key, Option<bool>)>,
     /// Key changes not yet given to the core, see `flush_keys`.
     key_queue: VecDeque<(libretro::retro_key, bool, u16)>,
     /// The core frame each key the core has down went down on.
@@ -858,32 +865,41 @@ impl App {
         out as u16
     }
 
-    fn mods_with_shift(&self, shifted: bool) -> u16 {
-        let extra = if shifted {
-            libretro::RETROKMOD_SHIFT
-        } else {
-            0
-        };
-        self.mods() | extra as u16
+    fn mods_with(&self, shift: Option<bool>) -> u16 {
+        let bit = libretro::RETROKMOD_SHIFT as u16;
+        match shift {
+            Some(true) => self.mods() | bit,
+            Some(false) => self.mods() & !bit,
+            None => self.mods(),
+        }
     }
 
-    /// The key to send for `code`, and whether a shift has to go with it.
-    fn key_for(&self, code: KeyCode) -> Option<(libretro::retro_key, bool)> {
+    /// The key to send for `code`, typing `text`, and the shift it needs.
+    fn key_for(
+        &self,
+        code: KeyCode,
+        text: Option<char>,
+    ) -> Option<(libretro::retro_key, Option<bool>)> {
         if self.alt {
             return alt_key(code, self.shift)
-                .map(|key| (key, false))
-                .or_else(|| alt_symbol(code));
+                .map(|key| (key, None))
+                .or_else(|| alt_symbol(code).map(|(key, shifted)| (key, shifted.then_some(true))));
         }
         // A C64 has one Ctrl and no right shift.
         if code == KeyCode::ShiftRight {
-            return Some((libretro::RETROK_LCTRL, false));
+            return Some((libretro::RETROK_LCTRL, None));
         }
-        retro_key(code).map(|key| (key, false))
+        if !self.ctrl
+            && let Some((key, shifted)) = text.and_then(release_io::c64::char_key)
+        {
+            return Some((key, Some(shifted)));
+        }
+        retro_key(code).map(|key| (key, None))
     }
 
     /// Modifiers are tracked here rather than taken from `ModifiersChanged`,
     /// which never arrives.
-    fn key(&mut self, code: KeyCode, down: bool) {
+    fn key(&mut self, code: KeyCode, text: Option<char>, down: bool) {
         // The touchpad is over the keyboard, so typing drags fingers across it
         // and the lift of such a finger may never arrive. Drop the gesture and
         // everything it was waiting for rather than leave a cursor key down.
@@ -894,9 +910,9 @@ impl App {
                 // Alt is a prefix, not a key, so a shift held across it has to
                 // be lifted and put back.
                 if down {
-                    self.send(KeyCode::ShiftLeft, false);
+                    self.send(KeyCode::ShiftLeft, None, false);
                 } else if self.shift {
-                    self.send(KeyCode::ShiftLeft, true);
+                    self.send(KeyCode::ShiftLeft, None, true);
                 }
                 return;
             }
@@ -910,25 +926,26 @@ impl App {
             }
             _ => {}
         }
-        self.send(code, down);
+        self.send(code, text, down);
     }
 
-    fn send(&mut self, code: KeyCode, down: bool) {
+    fn send(&mut self, code: KeyCode, text: Option<char>, down: bool) {
+        let held = self.shift && !self.alt;
         if !down {
-            if let Some((key, shifted)) = self.pressed.remove(&code) {
-                let mods = self.mods_with_shift(shifted);
-                self.press(key, false, mods);
-                if shifted {
-                    self.press(libretro::RETROK_LSHIFT, false, mods);
+            if let Some((key, shift)) = self.pressed.remove(&code) {
+                self.press(key, false, self.mods_with(shift));
+                if shift.is_some_and(|want| want != held) {
+                    self.press(libretro::RETROK_LSHIFT, held, self.mods());
                 }
             }
         } else if !self.pressed.contains_key(&code)
-            && let Some((key, shifted)) = self.key_for(code)
+            && let Some((key, shift)) = self.key_for(code, text)
         {
-            self.pressed.insert(code, (key, shifted));
-            let mods = self.mods_with_shift(shifted);
-            if shifted {
-                self.press(libretro::RETROK_LSHIFT, true, mods);
+            let shift = shift.filter(|&want| want != held);
+            self.pressed.insert(code, (key, shift));
+            let mods = self.mods_with(shift);
+            if let Some(want) = shift {
+                self.press(libretro::RETROK_LSHIFT, want, mods);
             }
             self.press(key, true, mods);
         }
@@ -1314,12 +1331,17 @@ impl ApplicationHandler for App {
                 event:
                     KeyEvent {
                         physical_key: PhysicalKey::Code(code),
+                        logical_key,
                         state,
                         repeat: false,
                         ..
                     },
                 ..
-            } => self.key(code, state == ElementState::Pressed),
+            } => self.key(
+                code,
+                typed_char(&logical_key),
+                state == ElementState::Pressed,
+            ),
             WindowEvent::Touch(touch) => self.touch(touch),
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {

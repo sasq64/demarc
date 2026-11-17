@@ -39,6 +39,8 @@ impl VideoFrame {
 pub enum InputEvent {
     /// A retro keycode, released two frames after it is pressed.
     Key(u32),
+    /// A retro keycode going down or up, with no release to follow.
+    KeyState(u32, bool),
     /// A left click at a position normalized 0..1 over the frame.
     Click(f32, f32),
 }
