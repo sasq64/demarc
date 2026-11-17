@@ -476,11 +476,9 @@ impl Gfx {
         let mut input = self.egui_state.take_egui_input(&self.window);
         // Android's focus event comes before there is an egui state to take it.
         input.focused = self.window.has_focus();
-        let bottom = self.keyboard_height(ui) / ui.ctx.pixels_per_point();
-        input.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
-            bottom,
-            ..Default::default()
-        }));
+        input.safe_area_insets = Some(egui::SafeAreaInsets(
+            self.safe_area() / ui.ctx.pixels_per_point(),
+        ));
         let ppp = ui.ctx.pixels_per_point();
         ui.picture = self.has_frame.then(|| {
             let win = (self.config.width as f32, self.config.height as f32);
@@ -507,7 +505,12 @@ impl Gfx {
         }
         self.egui_state
             .handle_platform_output(&self.window, output.platform_output);
+        let repaint = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| v.repaint_delay.is_zero());
         let frame = UiFrame {
+            repaint,
             jobs: ctx.tessellate(output.shapes, output.pixels_per_point),
             textures: output.textures_delta,
             pixels_per_point: output.pixels_per_point,
@@ -515,17 +518,24 @@ impl Gfx {
         (frame, picked)
     }
 
-    /// Physical pixels the soft keyboard covers at the bottom, in portrait.
-    /// `MiniActivity` pads the content view by the keyboard's height.
-    fn keyboard_height(&self, ui: &Ui) -> f32 {
+    /// Physical pixels on each side covered by the camera cutout, rounded
+    /// corners or (in portrait) the soft keyboard: `MiniActivity` pads the
+    /// content view by them.
+    fn safe_area(&self) -> egui::epaint::MarginF32 {
         #[cfg(target_os = "android")]
-        if ui.soft_keyboard && self.config.height > self.config.width {
+        {
             use winit::platform::android::WindowExtAndroid;
-            let covered = self.config.height as i32 - self.window.content_rect().bottom;
-            return covered.max(0) as f32;
+            let r = self.window.content_rect();
+            let px = |v: i32| v.max(0) as f32;
+            return egui::epaint::MarginF32 {
+                left: px(r.left),
+                top: px(r.top),
+                right: px(self.config.width as i32 - r.right),
+                bottom: px(self.config.height as i32 - r.bottom),
+            };
         }
-        let _ = ui;
-        0.0
+        #[allow(unreachable_code)]
+        Default::default()
     }
 
     fn render(&mut self, mut ui: UiFrame) {
@@ -626,6 +636,8 @@ impl Gfx {
 
 /// What one egui frame left to draw.
 struct UiFrame {
+    /// egui wants the next frame at once, e.g. a list still scrolling.
+    repaint: bool,
     jobs: Vec<egui::ClippedPrimitive>,
     textures: egui::TexturesDelta,
     pixels_per_point: f32,
@@ -1143,17 +1155,18 @@ impl App {
         }
     }
 
-    /// Step the core one frame and hand the result to the GPU. Does nothing
-    /// without a surface: on Android that is the app being in the background.
+    /// Step the core one frame and hand the result to the GPU. Without a
+    /// surface (on Android, in the background) the core only plays its sound.
     fn step(&mut self) {
-        if self.gfx.as_ref().is_none_or(|gfx| gfx.surface.is_none()) {
+        let Some(gfx) = self.gfx.as_ref() else {
             return;
+        };
+        let visible = gfx.surface.is_some();
+        if visible {
+            gfx.window.request_redraw();
+            self.check_long_press();
         }
         self.poll_loader();
-        self.check_long_press();
-        if let Some(gfx) = self.gfx.as_ref() {
-            gfx.window.request_redraw();
-        }
         if self.core.is_none() || self.ui.paused {
             return;
         }
@@ -1177,6 +1190,9 @@ impl App {
         let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
             return;
         };
+        if !visible {
+            return;
+        }
         gfx.aspect = core.aspect_ratio();
         let (width, height) = core.get_frame_size();
         if width == 0 || height == 0 {
@@ -1289,7 +1305,11 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(gfx) = self.gfx.as_mut() {
             match gfx.resume() {
-                Ok(()) => self.audio.activate(),
+                Ok(()) if self.audio.failed() => {
+                    self.audio.deactivate();
+                    self.audio.activate();
+                }
+                Ok(()) => {}
                 Err(e) => {
                     tracing::error!("Could not recreate the surface: {e:#}");
                     event_loop.exit();
@@ -1321,7 +1341,6 @@ impl ApplicationHandler for App {
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.surface = None;
         }
-        self.audio.deactivate();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -1335,6 +1354,9 @@ impl ApplicationHandler for App {
             );
         }
         if self.ui_event(&event) {
+            if let Some(gfx) = self.gfx.as_ref() {
+                gfx.window.request_redraw();
+            }
             return;
         }
         match event {
@@ -1364,6 +1386,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
                     let (frame, picked) = gfx.run_ui(&mut self.ui);
+                    if frame.repaint {
+                        gfx.window.request_redraw();
+                    }
                     gfx.render(frame);
                     match picked {
                         Some(Action::Play(file)) => {

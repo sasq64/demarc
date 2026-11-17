@@ -96,11 +96,18 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Reset is VICE's `vice_reset = hard` (set in `c64::prepare`), so it does not
   autostart the release.
 - The screen is kept on for as long as the app is up (`android_main`).
+- In the background (or with the screen off) the core keeps running without
+  a surface, so the sound goes on; `MiniActivity` starts `PlaybackService`, a
+  media foreground service, in `onPause` and stops it in `onResume`, or the
+  process would be frozen.
+- The picker redraws on input and while egui asks for a repaint, not only on
+  the core's frame tick.
 - `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The UI scales
   with the window height up to `UI_MAX_HEIGHT` logical pixels, so it keeps its
-  physical size on a tablet. In portrait the soft keyboard's height (padding
-  `MiniActivity` puts on the content view, read from `content_rect`) becomes
-  egui's bottom safe-area inset, which moves the picker above it. The picker's list
+  physical size on a tablet. `MiniActivity` pads the content view by the
+  camera cutout, the rounded corners and (in portrait) the soft keyboard;
+  `Gfx::safe_area` reads that back from `content_rect` as egui's safe-area
+  insets. The picker's list
   height is `visible_rows` in `retro-ui/src/picker.rs`, which gives up rows
   when the zoom leaves no room (`CHROME_HEIGHT`).
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
