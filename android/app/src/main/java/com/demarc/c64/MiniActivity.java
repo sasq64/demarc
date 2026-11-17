@@ -4,8 +4,11 @@ import android.app.NativeActivity;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.RoundedCorner;
 import android.view.View;
 import android.view.WindowInsets;
@@ -14,9 +17,17 @@ import android.view.WindowManager;
 
 /** NativeActivity in immersive mode: the theme alone cannot hide the navigation bar. */
 public class MiniActivity extends NativeActivity {
+    private MediaSession session;
+
+    /** Hands an Android keycode to minimarc's media handling; false if it is not a media key. */
+    private static native boolean nativeMediaKey(int keyCode);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // NativeActivity's own load does not register the library for JNI lookups.
+        System.loadLibrary("minimarc");
         super.onCreate(savedInstanceState);
+        startMediaSession();
         if (Build.VERSION.SDK_INT >= 28) {
             getWindow().getAttributes().layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
@@ -60,6 +71,31 @@ public class MiniActivity extends NativeActivity {
         return c == null ? 0 : (int) Math.ceil(c.getRadius() * (1 - Math.sqrt(0.5)));
     }
 
+    /** Headset buttons in the background; in the foreground they come in as keys. */
+    private void startMediaSession() {
+        session = new MediaSession(this, "minimarc");
+        session.setCallback(new MediaSession.Callback() {
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean onMediaButtonEvent(Intent intent) {
+                KeyEvent e = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                if (e == null) {
+                    return false;
+                }
+                if (e.getAction() != KeyEvent.ACTION_DOWN || e.getRepeatCount() != 0) {
+                    return true;
+                }
+                return nativeMediaKey(e.getKeyCode());
+            }
+        });
+        session.setPlaybackState(new PlaybackState.Builder()
+                .setActions(PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT
+                        | PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+                .setState(PlaybackState.STATE_PLAYING, 0, 1)
+                .build());
+        session.setActive(true);
+    }
+
     // Started while hidden so the process is not frozen and the demo keeps playing.
     @Override
     protected void onPause() {
@@ -75,6 +111,7 @@ public class MiniActivity extends NativeActivity {
 
     @Override
     protected void onDestroy() {
+        session.release();
         stopService(new Intent(this, PlaybackService.class));
         super.onDestroy();
     }

@@ -100,6 +100,12 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   a surface, so the sound goes on; `MiniActivity` starts `PlaybackService`, a
   media foreground service, in `onPause` and stops it in `onResume`, or the
   process would be frozen.
+- Headset/media buttons (`media.rs`): a tap of play-pause or the headset
+  button toggles pause after `DOUBLE_TAP`, a second tap within it skips to the
+  next release; play and pause both toggle (a Bluetooth headset sends
+  those, see `docs/LEARNINGS.md`). In the foreground they are winit keys; in the background
+  `MiniActivity`'s `MediaSession` passes the keycode in over JNI
+  (`nativeMediaKey`), and `App::step` drains them.
 - The picker redraws on input and while egui asks for a repaint, not only on
   the core's frame tick.
 - `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The UI scales

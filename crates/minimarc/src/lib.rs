@@ -3,5 +3,6 @@
 //! is the stack the Android build needs — see `docs/ANDROID.md`.
 
 mod load;
+mod media;
 pub mod player;
 mod ui;

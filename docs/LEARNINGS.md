@@ -1,5 +1,12 @@
 # Learnings
 
+- A Bluetooth headset does not send play-pause to a MediaSession: it sends
+  `MEDIA_PAUSE` or `MEDIA_PLAY` according to the session's `PlaybackState`,
+  and does the double tap itself (`MEDIA_NEXT`). minimarc's session always
+  says playing, so mapping pause to "pause" meant the headset could never
+  resume; play and pause are both a toggle now. `MediaSessionService` logs
+  every key it forwards, which showed it at once.
+
 - Android's Back never reached minimarc: with `targetSdk` 36 the system
   finishes the activity itself unless the manifest sets
   `android:enableOnBackInvokedCallback="false"`. Once it does arrive, winit

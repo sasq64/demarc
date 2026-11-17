@@ -25,6 +25,7 @@ use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Demo, Loaded, Loader};
+use crate::media::{self, Media};
 use crate::ui::{Action, BUTTONS, Button, Filter, Ui};
 use release_io::workfile::WorkFile;
 
@@ -47,6 +48,8 @@ const UI_MAX_HEIGHT: f32 = if cfg!(target_os = "android") {
     f32::INFINITY
 };
 const SWIPE_TIME: Duration = Duration::from_millis(500);
+/// A second headset tap within this skips to the next release.
+const DOUBLE_TAP: Duration = Duration::from_millis(400);
 /// Core frames a key is held at least, see `App::flush_keys`.
 const MIN_KEY_FRAMES: u32 = 3;
 
@@ -776,6 +779,8 @@ pub struct App {
     next_frame: Instant,
     warp_until: Option<Instant>,
     disk: u32,
+    /// A headset tap waiting to see if a second one follows.
+    tap_at: Option<Instant>,
 }
 
 impl App {
@@ -810,6 +815,7 @@ impl App {
             next_frame: Instant::now(),
             warp_until: None,
             disk: 0,
+            tap_at: None,
         }
     }
 
@@ -1111,6 +1117,16 @@ impl App {
         }
     }
 
+    fn media(&mut self, m: Media) {
+        match m {
+            Media::Tap if self.tap_at.take().is_some() => self.skip(1),
+            Media::Tap => self.tap_at = Some(Instant::now()),
+            Media::Toggle => self.ui.paused = !self.ui.paused,
+            Media::Next => self.skip(1),
+            Media::Prev => self.skip(-1),
+        }
+    }
+
     /// Load the release `d` steps along the list the running one was picked from.
     fn skip(&mut self, d: isize) {
         if let Some(file) = self.ui.step(d) {
@@ -1167,6 +1183,13 @@ impl App {
             self.check_long_press();
         }
         self.poll_loader();
+        for m in media::take() {
+            self.media(m);
+        }
+        if self.tap_at.is_some_and(|t| t.elapsed() >= DOUBLE_TAP) {
+            self.tap_at = None;
+            self.ui.paused = !self.ui.paused;
+        }
         if self.core.is_none() || self.ui.paused {
             return;
         }
@@ -1247,6 +1270,12 @@ impl App {
         } = event
         {
             let down = *state == ElementState::Pressed;
+            if let Some(m) = media::from_key(logical_key) {
+                if down && !repeat {
+                    self.media(m);
+                }
+                return true;
+            }
             // Android's Back has a logical key only.
             let toggle = *logical_key == Key::Named(NamedKey::BrowserBack)
                 || *physical_key == PhysicalKey::Code(KeyCode::Escape);
