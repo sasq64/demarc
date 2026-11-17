@@ -328,7 +328,7 @@ def load_sid_tags(path: Path) -> dict[int, str]:
 
 
 def group_names(release: dict) -> str:
-    """Comma-joined releasing groups, falling back to sceners if none.
+    """The releasing groups, falling back to sceners if none.
 
     For "C64 Graphics" / "C64 Music" releases the "group" is instead the
     artist: the handle(s) credited with credittype "Graphics" / "Music".
@@ -343,12 +343,17 @@ def group_names(release: dict) -> str:
             if c.get("credittype") == credit_type
         ]
         if names:
-            return ", ".join(n for n in names if n)
+            return join_names(names)
     by = release.get("released_by") or {}
     names = [g.get("name", "") for g in by.get("groups") or []]
     if not names:
         names = [s.get("name", s.get("handle", "")) for s in by.get("sceners") or []]
-    return ", ".join(n for n in names if n)
+    return join_names(names)
+
+
+def join_names(names: list[str]) -> str:
+    """" & "-joined, with a " & " inside a name written "&" so it stays one."""
+    return " & ".join(n.replace(" & ", "&") for n in names if n)
 
 
 def category(release: dict) -> str:

@@ -32,8 +32,7 @@ pub struct ShowList {
     pub title_select: i32,
 }
 
-/// Icons for the root list, as nerd font glyphs: the favorites playlist, the
-/// other playlists, and the databases.
+/// Icons for the  picker
 const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
@@ -651,8 +650,8 @@ pub fn setup_navigator(
     navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
         let authors = files
             .iter()
-            .map(|f| f.get_meta("author"))
-            .filter(|p| !p.is_empty() && !p.contains(" & "))
+            .flat_map(|f| f.get_meta("author").split(" & "))
+            .filter(|p| !p.is_empty())
             .collect::<IndexSet<_>>()
             .into_iter()
             .map(|a| (a.to_string(), AUTHOR_ICON))
