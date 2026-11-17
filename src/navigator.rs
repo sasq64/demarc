@@ -56,7 +56,7 @@ fn setup_navigator_bevy(
     playlists: Res<Playlists>,
     mut navigator: ResMut<Navigator>,
 ) -> Result<()> {
-    setup_navigator(&settings.files, &mut navigator)?;
+    setup_navigator(&settings.files, &mut navigator, ::newsys::system_dir())?;
     for list in &playlists.lists {
         navigator.add_playlist(&list.name, list.files);
     }

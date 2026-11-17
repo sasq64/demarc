@@ -237,6 +237,7 @@ pub struct Picker<T> {
     pub dir_buttons: Vec<String>,
     /// Colors of `buttons` by index, the theme's text color past its end.
     pub button_colors: Vec<egui::Color32>,
+    pub dir_button_colors: Vec<egui::Color32>,
     pub info_lines: f32,
     pub right_icons: bool,
     /// Fills the screen's width, with no border on the search and info boxes.
@@ -272,6 +273,7 @@ impl<T> Default for Picker<T> {
             buttons: Vec::new(),
             dir_buttons: Vec::new(),
             button_colors: Vec::new(),
+            dir_button_colors: Vec::new(),
             info_lines: INFO_LINES,
             right_icons: true,
             compact: false,
@@ -320,15 +322,29 @@ impl<T: 'static> Picker<T> {
     }
 
     /// Height of the info box, grown to fit the button column beside it.
-    fn info_height(&self) -> f32 {
+    /// With buttons, the info box's frame is as tall as their column.
+    fn info_height(&self, ctx: &egui::Context) -> f32 {
+        if self.buttons.is_empty() {
+            return self.info_lines * INFO_SIZE * 1.3;
+        }
         let n = self.buttons.len() as f32;
-        let column = n * BUTTON_HEIGHT + (n - 1.0).max(0.0) * PANEL_GAP;
-        (self.info_lines * INFO_SIZE * 1.3).max(column)
+        let column = n * BUTTON_HEIGHT + (n - 1.0) * PANEL_GAP;
+        let margin = self.field(ctx).frame().total_margin().sum().y;
+        (column - margin).max(0.0)
+    }
+
+    fn field(&self, ctx: &egui::Context) -> crate::theme::Panel {
+        let mut field = theme(ctx).panel.clone();
+        if self.compact {
+            field.border = egui::Stroke::NONE;
+            field.glow = None;
+        }
+        field
     }
 
     /// What the buttons and a non-default info box add to [`CHROME_HEIGHT`].
-    fn extra_chrome(&self) -> f32 {
-        self.info_height() - INFO_LINES * INFO_SIZE * 1.3
+    fn extra_chrome(&self, ctx: &egui::Context) -> f32 {
+        self.info_height(ctx) - INFO_LINES * INFO_SIZE * 1.3
     }
 
     /// Opens the list over `source`. Re-opening the same `id` restores the
@@ -474,7 +490,7 @@ impl<T: 'static> Picker<T> {
             self.show_list = false;
             return None;
         }
-        let extra = self.extra_chrome();
+        let extra = self.extra_chrome(ctx);
         let delta = row_steps + page_steps * visible_rows(ctx, extra) as i64;
         let selected = if len == 0 {
             0
@@ -511,11 +527,7 @@ impl<T: 'static> Picker<T> {
         }
 
         let theme = theme(ctx);
-        let mut field = theme.panel.clone();
-        if self.compact {
-            field.border = egui::Stroke::NONE;
-            field.glow = None;
-        }
+        let field = self.field(ctx);
         let clicked = egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -625,9 +637,9 @@ impl<T: 'static> Picker<T> {
                 self.list_scroll = scrolled.state.offset.y;
                 let clicked = scrolled.inner;
 
-                let info_height = self.info_height();
+                let info_height = self.info_height(ctx);
                 let (buttons, colors) = if self.list_info_dir && !self.dir_buttons.is_empty() {
-                    (&self.dir_buttons, &[][..])
+                    (&self.dir_buttons, &self.dir_button_colors[..])
                 } else {
                     (&self.buttons, &self.button_colors[..])
                 };
@@ -682,12 +694,14 @@ impl<T: 'static> Picker<T> {
 }
 
 /// How many rows the list shows at once: whole rows filling
-/// [`LIST_HEIGHT_FRACTION`] of the screen, less when zoomed in so far that
-/// the rest would not fit. Also the PageUp/PageDown step, so
+/// [`LIST_HEIGHT_FRACTION`] of the screen (all of it in portrait), less when
+/// zoomed in so far that the rest would not fit. Also the PageUp/PageDown step, so
 /// the key moves the selection exactly one screenful.
 fn visible_rows(ctx: &egui::Context, extra: f32) -> f32 {
-    let height = ctx.content_rect().height();
-    ((height * LIST_HEIGHT_FRACTION).min(height - CHROME_HEIGHT - extra) / ROW_HEIGHT)
+    let screen = ctx.content_rect();
+    let height = screen.height();
+    let fraction = if height > screen.width() { 1.0 } else { LIST_HEIGHT_FRACTION };
+    ((height * fraction).min(height - CHROME_HEIGHT - extra) / ROW_HEIGHT)
         .floor()
         .max(1.0)
 }

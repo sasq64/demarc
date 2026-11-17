@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -37,6 +38,7 @@ const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
 const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
+const SYSTEM_ICON: ListIcon = ListIcon::Glyph('󰒔', 0xa02020);
 
 const PARTY_ICON: char = '󰍖';
 /// Saturation and brightness of the per-party colours; tweak to taste.
@@ -610,6 +612,7 @@ fn category_entries(path: &[&str], files: &'static [EmuFile]) -> Option<PickerSo
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,
+    system_dir: &Path,
 ) -> Result<()> {
     for (name, files) in dbs {
         navigator.add_db(name, files);
@@ -774,10 +777,25 @@ pub fn setup_navigator(
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
                 ("Authors".into(), AUTHOR_ICON),
+                ("System".into(), SYSTEM_ICON),
             ]
             .into(),
         ))
     })?;
+
+    let p0 = system_dir.to_owned().join("vice/C64/rr38ppal.crt");
+    let p1 = system_dir.to_owned().join("vice/C64/tar_v2_pal.crt");
+    let b = Box::leak(Box::new([
+        EmuFile::new("Retro Replay", p0),
+        EmuFile::new("Turbo Action Rom", p1),
+    ]));
+    navigator.register_db(
+        "CSDb",
+        "System",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            Some(PickerSource::new(b, None, IconMode::Platforms))
+        },
+    )?;
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [

@@ -38,7 +38,7 @@ impl System for C64System {
         let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         let mut core =
             retro_emu::create_core(&core, system_dir(), Some(path), path.get_all_meta(), false)?;
-        if !path.is_disabled("c64_fast_load") {
+        if path.has_meta("vice_cartridge") {
             core.send_events(&release_io::c64::FAST_LOAD_EVENTS);
         }
         Ok(core)

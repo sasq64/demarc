@@ -1803,3 +1803,7 @@
 - `cargo fmt` (even `cargo fmt -- <files>`) reformats the whole workspace, and
   several files are not rustfmt-clean, so it drags unrelated diffs in. Run
   `rustfmt --edition 2024 <files>` on just the files you changed.
+
+- `cargo fmt -p <crate>` reformats code nobody touched (e.g. `retro-ui`'s
+  picker and tests aren't fmt-clean), burying a small change in noise. Check
+  with `rustfmt --edition 2024 --check <file>` and format by hand instead.

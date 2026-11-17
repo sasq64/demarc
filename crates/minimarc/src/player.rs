@@ -26,7 +26,7 @@ use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Demo, Loaded, Loader};
 use crate::media::{self, Media};
-use crate::ui::{Action, BUTTONS, Button, Filter, Ui};
+use crate::ui::{Action, BUTTONS, Button, Ui};
 use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
@@ -242,11 +242,13 @@ fn alt_symbol(key: KeyCode) -> Option<(libretro::retro_key, bool)> {
 
 const CRT_WGSL: &str = include_str!("crt.wgsl");
 
-/// crt.wgsl's fragment entry point for each `Filter`, in discriminant order.
-const FRAGMENTS: [&str; 3] = ["fragment_none", "fragment_normal", "fragment_full"];
+const FRAGMENT: &str = "fragment_normal";
 
 /// Where the picture lands in a window of `win` pixels, at display aspect
 /// `aspect`: as large as fits, centred, aspect preserved.
+/// Gap, in points, between the key bar and the soft keyboard.
+const KEYBOARD_MARGIN: f32 = 16.0;
+
 fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
     let (win_w, win_h) = win;
     let aspect = if aspect > 0.0 { aspect } else { win_w / win_h };
@@ -271,9 +273,7 @@ struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    /// One per `Filter`.
-    pipelines: Vec<wgpu::RenderPipeline>,
-    filter: Filter,
+    pipeline: wgpu::RenderPipeline,
     bind_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     texture: wgpu::Texture,
@@ -287,7 +287,7 @@ struct Gfx {
 }
 
 impl Gfx {
-    fn new(window: Arc<Window>, ctx: &egui::Context, filter: Filter) -> Result<Self> {
+    fn new(window: Arc<Window>, ctx: &egui::Context) -> Result<Self> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_without_display_handle_from_env()
@@ -361,31 +361,27 @@ impl Gfx {
             bind_group_layouts: &[Some(&bind_layout)],
             immediate_size: 0,
         });
-        let pipelines = FRAGMENTS
-            .map(|fragment| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(fragment),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vertex"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fragment),
-                        targets: &[Some(format.into())],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-            .into();
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(FRAGMENT),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vertex"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(FRAGMENT),
+                targets: &[Some(format.into())],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("frame"),
@@ -414,8 +410,7 @@ impl Gfx {
             device,
             queue,
             config,
-            pipelines,
-            filter,
+            pipeline,
             bind_layout,
             sampler,
             texture,
@@ -483,11 +478,9 @@ impl Gfx {
             self.safe_area() / ui.ctx.pixels_per_point(),
         ));
         let ppp = ui.ctx.pixels_per_point();
-        ui.picture = self.has_frame.then(|| {
-            let win = (self.config.width as f32, self.config.height as f32);
-            let (x, y, w, h) = fit_rect(win, self.aspect);
-            egui::Rect::from_min_size(egui::pos2(x, y) / ppp, egui::vec2(w, h) / ppp)
-        });
+        let frame_rect = self.frame_rect(ui.key_bar_height() * ppp);
+        let portrait = self.config.height > self.config.width;
+        ui.bar_top = (portrait && self.has_frame).then(|| (frame_rect.1 + frame_rect.3) / ppp);
         let ctx = ui.ctx.clone();
         let mut picked = None;
         let mut output = ctx.run_ui(input, |egui_ui| picked = ui.draw(egui_ui.ctx()));
@@ -514,11 +507,25 @@ impl Gfx {
             .is_some_and(|v| v.repaint_delay.is_zero());
         let frame = UiFrame {
             repaint,
+            frame_rect,
             jobs: ctx.tessellate(output.shapes, output.pixels_per_point),
             textures: output.textures_delta,
             pixels_per_point: output.pixels_per_point,
         };
         (frame, picked)
+    }
+
+    /// Where the frame goes, in pixels: in portrait, high enough that the key
+    /// bar, `bar` pixels tall, fits under it above the soft keyboard.
+    fn frame_rect(&self, bar: f32) -> (f32, f32, f32, f32) {
+        let win = (self.config.width as f32, self.config.height as f32);
+        let (x, mut y, w, h) = fit_rect(win, self.aspect);
+        if win.1 > win.0 {
+            let margin = KEYBOARD_MARGIN * self.window.scale_factor() as f32;
+            let bottom = win.1 - self.safe_area().bottom - margin - bar;
+            y = y.min((bottom - h).floor()).max(0.0);
+        }
+        (x, y, w, h)
     }
 
     /// Physical pixels on each side covered by the camera cutout, rounded
@@ -602,10 +609,9 @@ impl Gfx {
                 multiview_mask: None,
             });
             if self.has_frame {
-                let win = (self.config.width as f32, self.config.height as f32);
-                let (x, y, w, h) = fit_rect(win, self.aspect);
+                let (x, y, w, h) = ui.frame_rect;
                 pass.set_viewport(x, y, w, h, 0.0, 1.0);
-                pass.set_pipeline(&self.pipelines[self.filter as usize]);
+                pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -641,6 +647,8 @@ impl Gfx {
 struct UiFrame {
     /// egui wants the next frame at once, e.g. a list still scrolling.
     repaint: bool,
+    /// Where the emulator frame goes, in pixels.
+    frame_rect: (f32, f32, f32, f32),
     jobs: Vec<egui::ClippedPrimitive>,
     textures: egui::TexturesDelta,
     pixels_per_point: f32,
@@ -1061,7 +1069,7 @@ impl App {
                     && t.phase == TouchPhase::Ended
                 {
                     if swipe.began.elapsed() < SWIPE_TIME {
-                        self.ui.open();
+                        self.toggle_keys();
                     } else {
                         self.toggle_keys();
                     }
@@ -1085,8 +1093,7 @@ impl App {
     fn bar_button(&mut self, button: Button) {
         match button {
             Button::Keyboard => {
-                self.ui.keys_open = false;
-                self.ui.soft_keyboard = true;
+                self.ui.soft_keyboard = !self.ui.soft_keyboard;
             }
             Button::Disk => {
                 if let Some(core) = self.core.as_mut() {
@@ -1095,12 +1102,6 @@ impl App {
                         self.disk = (self.disk + 1) % disks;
                         core.set_disk(self.disk);
                     }
-                }
-            }
-            Button::Crt => {
-                self.ui.filter = self.ui.filter.next();
-                if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.filter = self.ui.filter;
                 }
             }
             Button::Reset => {
@@ -1112,7 +1113,7 @@ impl App {
             Button::Warp => self.warp_until = Some(Instant::now() + WARP_TIME),
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),
-            Button::Info => self.ui.show_info(),
+            Button::Back => self.ui.open(),
             _ => {}
         }
     }
@@ -1352,7 +1353,7 @@ impl ApplicationHandler for App {
         match event_loop
             .create_window(attrs)
             .map_err(anyhow::Error::from)
-            .and_then(|window| Gfx::new(Arc::new(window), &self.ui.ctx, self.ui.filter))
+            .and_then(|window| Gfx::new(Arc::new(window), &self.ui.ctx))
         {
             Ok(gfx) => {
                 self.gfx = Some(gfx);
@@ -1469,8 +1470,10 @@ fn load_core(
 /// one is unpacked under the app's data directory. A core cannot read out of
 /// the APK, and VICE looks for cartridge images in `<system dir>/vice/<machine>`.
 #[cfg(target_os = "android")]
-const ASSETS: [(&str, &str); 3] = [
+const ASSETS: [(&str, &str); 5] = [
     ("rr38ppal-auto.crt", "vice/C64/rr38ppal-auto.crt"),
+    ("rr38ppal.crt", "vice/C64/rr38ppal.crt"),
+    ("tar_v2_pal.crt", "vice/C64/tar_v2_pal.crt"),
     (DB_ASSET, DB_ASSET),
     (
         database::overrides::FILE_NAME,

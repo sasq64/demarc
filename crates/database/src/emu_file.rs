@@ -920,6 +920,19 @@ pub fn split_values(val: &'static str) -> Box<[&'static str]> {
 }
 
 impl EmuFile {
+    pub fn new(title: &'static str, path: PathBuf) -> Self {
+        EmuFile {
+            path: FileSource::Path(path),
+            meta: Meta(Box::new([])),
+            game_info: GameInfo {
+                title,
+                ..Default::default()
+            },
+            platforms: Box::new([]),
+            categories: Box::new([]),
+        }
+    }
+
     /// The meta plus `platform` and `category`, joined with `;`.
     pub fn meta_strings(&self) -> impl Iterator<Item = (&'static str, Cow<'static, str>)> + '_ {
         let lists = [

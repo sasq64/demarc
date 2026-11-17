@@ -54,8 +54,33 @@ VERSION_CODE=2 scripts/run-android.sh --bundle
 ```
 
 `versionCode` must go up with every upload (1 is used). Bump `versionName`
-in `app/build.gradle.kts` for user-visible releases. Upload the `.aab` in
-Play Console → Test and release → the track → Create new release.
+in `app/build.gradle.kts` for user-visible releases.
+
+### Publishing from the command line
+
+`scripts/play.py` (run through `uv`) talks to the Play Developer API with a
+service account key at `~/.android/demarc-play.json` (or `$PLAY_CREDENTIALS`):
+
+```sh
+scripts/play.py status
+VERSION_CODE=$(scripts/play.py next-code) scripts/run-android.sh --bundle
+scripts/play.py upload --track internal --notes "What changed"
+scripts/play.py promote --from internal --to alpha
+```
+
+Tracks are `internal`, `alpha` (closed testing), `beta` (open) and
+`production`. `--draft` leaves the release for finishing in the console.
+
+One-time setup of the key:
+
+1. console.cloud.google.com → create (or pick) a project → APIs & Services →
+   enable **Google Play Android Developer API**.
+2. IAM & Admin → Service accounts → create one (no roles needed) → Keys →
+   Add key → JSON. Save it as `~/.android/demarc-play.json`, `chmod 600`.
+3. Play Console → Users and permissions → Invite new users → the service
+   account's email → App permissions → the app, with *Release to testing
+   tracks* (and *Release to production* if wanted) → Invite. It can take a
+   while before the API accepts the account.
 
 Licences to keep in order for distribution: the bundled VICE core is GPL-2
 (link its source in the listing/about), and it contains the C64 ROMs; the
@@ -126,7 +151,7 @@ retro-ui     the egui picker and HUD
   tap opens it; Left/Right go back and forward in the tree.
 - Only the demo categories are read (`CATEGORIES` in `load.rs`).
 - APK assets, both copied in by the script and not checked in: `csdb.txt`
-  (from `demodb/`; gradle would gunzip a `.gz` asset and drop the suffix) and `rr38ppal-auto.crt`, unpacked to
+  (from `demodb/`; gradle would gunzip a `.gz` asset and drop the suffix) and the carts in `system/vice/C64/`, unpacked to
   `<data>/vice/C64/`.
 - The data dir holds everything writable: `set_system_dir`, `set_cache_dir`
   and `TMPDIR` all point into it.

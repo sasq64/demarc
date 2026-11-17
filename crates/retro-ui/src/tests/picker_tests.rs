@@ -364,6 +364,8 @@ fn buttons_report_clicks_and_can_pick() {
     picker.buttons = vec!["Start".into(), "Disk".into()];
     step(&mut h, &mut picker, vec![]);
     step(&mut h, &mut picker, vec![key(egui::Key::ArrowDown)]);
+    // The width follows the height the buttons changed, a frame late.
+    step(&mut h, &mut picker, vec![]);
     h.click_text("Disk", |ctx| picker.show(ctx, |_, _, _| Vec::new()));
     assert_eq!(picker.take_button_click(), Some(1));
     assert_eq!(picker.take_button_click(), None);

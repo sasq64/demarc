@@ -100,6 +100,7 @@ impl Hud {
 
         egui::Area::new(egui::Id::new("overlay"))
             .fixed_pos(rect.min)
+            .constrain_to(ctx.viewport_rect())
             .order(egui::Order::Background)
             .show(ctx, |ui| {
                 ui.set_min_size(rect.size());
@@ -130,9 +131,7 @@ impl Hud {
                     let (info, t) = self.fade(ctx, text, now);
                     if t > 0.0 {
                         let (rect, corner) = match self.info_place {
-                            Some((place, corner)) if text == HudLocation::InfoText => {
-                                (place.shrink2(MARGIN), corner)
-                            }
+                            Some(place) if text == HudLocation::InfoText => place,
                             _ => (rect, corner),
                         };
                         let quad =
