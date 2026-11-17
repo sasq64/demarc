@@ -79,8 +79,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Starts in the picker with no core. A pick goes to a loader thread; the
   result replaces the core (`App::start`). Stale results are dropped.
 - Picker open: all input goes to egui. Closed: keys go to the core.
-- During a demo a sideways swipe is the next or previous release, a swipe up
-  opens the key bar (`Ui::draw_keys`, `ui::BUTTONS`) and a swipe down closes it.
+- During a demo a swipe in any direction is that cursor key, and a long press
+  (held past `SWIPE_TIME` without moving) opens or closes the key bar
+  (`Ui::draw_keys`, `ui::BUTTONS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
   F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
   the bar) and Joy (unused); row two (`App::bar_button`) is disk flip, CRT
@@ -89,8 +90,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.
-- The picker has a button row under the info box: the X closes the
-  picker, play picks the highlighted row. The db is sorted by rating on load.
+- The picker has a button column left of the info box: back closes the
+  picker, play picks the highlighted row (an arrow when it is a directory,
+  `Picker::dir_buttons`). The db is sorted by rating on load.
 - Reset is VICE's `vice_reset = hard` (set in `c64::prepare`), so it does not
   autostart the release.
 - The screen is kept on for as long as the app is up (`android_main`).
@@ -106,8 +108,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - The `[csdb.<id>]` entries of `overrides.toml` (an APK asset on Android, the
   system dir elsewhere) are applied in `load.rs`: download, meta, patches,
   boot file and key events. Other sections are skipped unparsed.
-- A started release shows title, author and "C64 <category>" bottom right for
-  five seconds (`Ui::info`).
+- A started release shows title, author and "C64 <category>" for five seconds
+  (`Ui::info`): top left of the window in portrait, bottom right of the
+  picture in landscape (`Hud::info_place`).
 - Sound goes through `retro_core::audio::AudioSink`; `App::step` steers the
   resample ratio by the ring fill (`AUDIO_BUF`) and runs an extra frame when
   the ring is nearly dry.

@@ -226,12 +226,17 @@ pub struct Picker<T> {
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
+    list_info_dir: bool,
     list_source: Option<ListSource<T>>,
     /// Built rows by item id, for the current `list_source`.
     rows: HashMap<usize, Row>,
     edit_id: egui::Id,
-    /// Labels of the buttons drawn under the info box.
+    /// Labels of the buttons drawn in a column left of the info box.
     pub buttons: Vec<String>,
+    /// Replaces `buttons` while the highlighted row has no data (a directory).
+    pub dir_buttons: Vec<String>,
+    /// Colors of `buttons` by index, the theme's text color past its end.
+    pub button_colors: Vec<egui::Color32>,
     pub info_lines: f32,
     pub right_icons: bool,
     /// Fills the screen's width, with no border on the search and info boxes.
@@ -260,10 +265,13 @@ impl<T> Default for Picker<T> {
             title_click: None,
             list_info: String::new(),
             list_info_item: None,
+            list_info_dir: false,
             list_source: None,
             rows: HashMap::new(),
             edit_id: egui::Id::new("edit_id"),
             buttons: Vec::new(),
+            dir_buttons: Vec::new(),
+            button_colors: Vec::new(),
             info_lines: INFO_LINES,
             right_icons: true,
             compact: false,
@@ -311,14 +319,16 @@ impl<T: 'static> Picker<T> {
         self.pick_requested = true;
     }
 
+    /// Height of the info box, grown to fit the button column beside it.
+    fn info_height(&self) -> f32 {
+        let n = self.buttons.len() as f32;
+        let column = n * BUTTON_HEIGHT + (n - 1.0).max(0.0) * PANEL_GAP;
+        (self.info_lines * INFO_SIZE * 1.3).max(column)
+    }
+
     /// What the buttons and a non-default info box add to [`CHROME_HEIGHT`].
     fn extra_chrome(&self) -> f32 {
-        let toolbar = if self.buttons.is_empty() {
-            0.0
-        } else {
-            BUTTON_HEIGHT + PANEL_GAP
-        };
-        toolbar + (self.info_lines - INFO_LINES) * INFO_SIZE * 1.3
+        self.info_height() - INFO_LINES * INFO_SIZE * 1.3
     }
 
     /// Opens the list over `source`. Re-opening the same `id` restores the
@@ -496,6 +506,7 @@ impl<T: 'static> Picker<T> {
         let info_item = self.list_items.get(selected).copied();
         if info_item != self.list_info_item {
             self.list_info = info_item.map(|id| source.get_info(id)).unwrap_or_default();
+            self.list_info_dir = info_item.is_some_and(|id| source.get_data(id).is_none());
             self.list_info_item = info_item;
         }
 
@@ -614,33 +625,40 @@ impl<T: 'static> Picker<T> {
                 self.list_scroll = scrolled.state.offset.y;
                 let clicked = scrolled.inner;
 
-                field.show(ui, |ui| {
-                    let size = egui::vec2(ui.available_width(), self.info_lines * INFO_SIZE * 1.3);
-                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                    let galley = ui.painter().layout(
-                        self.list_info.clone(),
-                        picker_font(ctx, INFO_SIZE),
-                        theme.picker.info,
-                        rect.width(),
-                    );
-                    ui.painter()
-                        .with_clip_rect(rect.intersect(ui.clip_rect()))
-                        .galley(rect.min, galley, theme.picker.info);
-                });
-                if !self.buttons.is_empty() {
-                    ui.horizontal(|ui| {
-                        for (i, label) in self.buttons.iter().enumerate() {
-                            let text = egui::RichText::new(label)
-                                .font(picker_font(ctx, BUTTON_SIZE))
-                                .color(theme.picker.text);
-                            let button = egui::Button::new(text)
-                                .min_size(egui::vec2(BUTTON_HEIGHT * 2.5, BUTTON_HEIGHT));
-                            if ui.add(button).clicked() {
-                                self.button_click = Some(i);
+                let info_height = self.info_height();
+                let (buttons, colors) = if self.list_info_dir && !self.dir_buttons.is_empty() {
+                    (&self.dir_buttons, &[][..])
+                } else {
+                    (&self.buttons, &self.button_colors[..])
+                };
+                ui.horizontal_top(|ui| {
+                    if !buttons.is_empty() {
+                        ui.vertical(|ui| {
+                            for (i, label) in buttons.iter().enumerate() {
+                                let text = egui::RichText::new(label)
+                                    .font(picker_font(ctx, BUTTON_SIZE))
+                                    .color(colors.get(i).copied().unwrap_or(theme.picker.text));
+                                let size = egui::vec2(BUTTON_HEIGHT * 1.5, BUTTON_HEIGHT);
+                                if ui.add_sized(size, egui::Button::new(text)).clicked() {
+                                    self.button_click = Some(i);
+                                }
                             }
-                        }
+                        });
+                    }
+                    field.show(ui, |ui| {
+                        let size = egui::vec2(ui.available_width(), info_height);
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        let galley = ui.painter().layout(
+                            self.list_info.clone(),
+                            picker_font(ctx, INFO_SIZE),
+                            theme.picker.info,
+                            rect.width(),
+                        );
+                        ui.painter()
+                            .with_clip_rect(rect.intersect(ui.clip_rect()))
+                            .galley(rect.min, galley, theme.picker.info);
                     });
-                }
+                });
                 clicked
             })
             .inner;

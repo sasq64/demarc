@@ -103,6 +103,8 @@ pub struct Ui {
     pub filter: Filter,
     pub paused: bool,
     info_text: String,
+    /// Where the picture is drawn, in points.
+    pub picture: Option<egui::Rect>,
 }
 
 impl Ui {
@@ -110,7 +112,9 @@ impl Ui {
         let ctx = egui::Context::default();
         retro_ui::apply_style(&ctx, FONT.to_vec());
         let mut picker = Picker::default();
-        picker.buttons = vec!["\u{f00d}".into(), "\u{f04b}".into()];
+        picker.buttons = vec!["\u{f112}".into(), "\u{f04b}".into()];
+        picker.dir_buttons = vec!["\u{f112}".into(), "\u{f061}".into()];
+        picker.button_colors = vec![egui::Color32::WHITE, egui::Color32::from_rgb(0x33, 0xdd, 0x55)];
         picker.info_lines = 2.0;
         picker.right_icons = false;
         picker.compact = true;
@@ -128,6 +132,7 @@ impl Ui {
             filter: Filter::Full,
             paused: false,
             info_text: String::new(),
+            picture: None,
         }
     }
 
@@ -276,6 +281,12 @@ impl Ui {
 
     /// Draw one frame, and return what the user asked for.
     pub fn draw(&mut self, ctx: &egui::Context) -> Option<Action> {
+        let screen = ctx.content_rect();
+        self.hud.info_place = match self.picture {
+            _ if screen.height() > screen.width() => Some((screen, egui::Align2::LEFT_TOP)),
+            Some(picture) => Some((picture, egui::Align2::RIGHT_BOTTOM)),
+            None => None,
+        };
         self.hud.show(ctx, self.now(), bytes_in_progress(), None);
         if !self.picker.is_open() {
             if self.keys_open {

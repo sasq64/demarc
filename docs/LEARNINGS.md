@@ -1792,3 +1792,7 @@
   `minimarc` branch: both share the picker and navigator, and a bug report
   from "desktop" can be either binary. Ask, or check both handlers (demarc's
   Shift pick is in `src/navigator.rs`, minimarc's in `crates/minimarc/src/ui.rs`).
+
+- `cargo fmt` (even `cargo fmt -- <files>`) reformats the whole workspace, and
+  several files are not rustfmt-clean, so it drags unrelated diffs in. Run
+  `rustfmt --edition 2024 <files>` on just the files you changed.

@@ -481,6 +481,12 @@ impl Gfx {
             bottom,
             ..Default::default()
         }));
+        let ppp = ui.ctx.pixels_per_point();
+        ui.picture = self.has_frame.then(|| {
+            let win = (self.config.width as f32, self.config.height as f32);
+            let (x, y, w, h) = fit_rect(win, self.aspect);
+            egui::Rect::from_min_size(egui::pos2(x, y) / ppp, egui::vec2(w, h) / ppp)
+        });
         let ctx = ui.ctx.clone();
         let mut picked = None;
         let mut output = ctx.run_ui(input, |egui_ui| picked = ui.draw(egui_ui.ctx()));
@@ -750,7 +756,7 @@ pub struct App {
     /// Every finger currently down, so a second one can veto the swipe.
     touches: Vec<u64>,
     swipe: Option<Swipe>,
-    /// The finger on a key bar button, and the key it holds down.
+    /// The finger on a key bar button or after a swipe, and the key it holds down.
     bar_key: Option<(u64, libretro::retro_key)>,
     /// The finger that went down on the open picker, and where.
     nav_swipe: Option<(u64, (f64, f64))>,
@@ -979,14 +985,14 @@ impl App {
         }
     }
 
-    /// A sideways swipe is the next or previous release, one up or down opens
-    /// or closes the key bar, whose buttons are held for as long as the finger
-    /// is on them. A second finger cancels a swipe and blocks
+    /// A swipe is a cursor key, a long press opens or closes the key bar;
+    /// keys are held for as long as the finger is on them. A second finger cancels a swipe and blocks
     /// another until the screen is clear: the touchpad sits on the keyboard, so
     /// typing drags fingers across it.
     fn touch(&mut self, t: Touch) {
         if self.bar_key.is_some_and(|(id, _)| id == t.id) {
             if matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                self.touches.retain(|&id| id != t.id);
                 self.release_bar_key();
             }
             return;
@@ -1024,26 +1030,37 @@ impl App {
                     return;
                 }
                 let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
-                match swipe_key(dx, dy) {
-                    Some(libretro::RETROK_LEFT) => self.skip(1),
-                    Some(libretro::RETROK_RIGHT) => self.skip(-1),
-                    Some(key) => {
-                        self.swipe = None;
-                        self.ui.keys_open = key == libretro::RETROK_UP;
-                        self.ui.soft_keyboard = false;
-                    }
-                    None => {}
+                if let Some(key) = swipe_key(dx, dy) {
+                    self.swipe = None;
+                    self.release_bar_key();
+                    self.press(key, true, self.mods());
+                    self.bar_key = Some((t.id, key));
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&id| id != t.id);
-                if let Some(swipe) = self.swipe.take_if(|s| s.id == t.id) {
-                    let tap = swipe.began.elapsed() < SWIPE_TIME;
-                    if tap && t.phase == TouchPhase::Ended {
+                if let Some(swipe) = self.swipe.take_if(|s| s.id == t.id)
+                    && t.phase == TouchPhase::Ended
+                {
+                    if swipe.began.elapsed() < SWIPE_TIME {
                         self.ui.open();
+                    } else {
+                        self.toggle_keys();
                     }
                 }
             }
+        }
+    }
+
+    fn toggle_keys(&mut self) {
+        self.ui.keys_open = !self.ui.keys_open;
+        self.ui.soft_keyboard = false;
+    }
+
+    /// A finger held still past `SWIPE_TIME` is a long press.
+    fn check_long_press(&mut self) {
+        if self.swipe.take_if(|s| s.began.elapsed() >= SWIPE_TIME).is_some() {
+            self.toggle_keys();
         }
     }
 
@@ -1084,7 +1101,6 @@ impl App {
 
     /// Load the release `d` steps along the list the running one was picked from.
     fn skip(&mut self, d: isize) {
-        self.swipe = None;
         if let Some(file) = self.ui.step(d) {
             self.ui.status("Loading...");
             self.loader.load_demo(file);
@@ -1134,6 +1150,7 @@ impl App {
             return;
         }
         self.poll_loader();
+        self.check_long_press();
         if let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
         }
