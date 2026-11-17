@@ -58,7 +58,7 @@ adb logcat -d | grep -E " demarc *:" | grep -v spurious | tail -30
 adb shell input tap X Y
 adb shell input swipe X1 Y1 X2 Y2 150
 adb shell input keyevent 4                             # Back
-adb shell pidof com.demarc.c64
+adb shell pidof se.minnberg.demarc
 adb shell dumpsys activity activities | grep -m1 ResumedActivity
 ```
 

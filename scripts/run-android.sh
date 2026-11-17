@@ -7,6 +7,8 @@
 #                                     wgpu is still slow, and the .so is huge)
 #   scripts/run-android.sh --debug    debug build
 #   scripts/run-android.sh --logcat   also stream the app's log until ctrl-c
+#   scripts/run-android.sh --bundle   build the Play Store .aab instead; no install
+#                                     (VERSION_CODE=N sets its versionCode)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -25,8 +27,8 @@ ADB="$ANDROID_HOME/platform-tools/adb"
 ABI="${ABI:-arm64-v8a}"
 # 26 is where AAudio — cpal's Android backend — starts.
 API=26
-PKG=com.demarc.c64
-ACTIVITY=.MiniActivity
+PKG=se.minnberg.demarc
+ACTIVITY=com.demarc.c64.MiniActivity
 CORE=vice_x64sc
 JNILIBS=android/app/src/main/jniLibs/$ABI
 ASSETS=android/app/src/main/assets
@@ -35,6 +37,7 @@ CARGO_PROFILE=(--release)
 GRADLE_TASK=assembleRelease
 APK=android/app/build/outputs/apk/release/app-release.apk
 LOGCAT=0
+BUNDLE=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -44,6 +47,7 @@ for arg in "$@"; do
             APK=android/app/build/outputs/apk/debug/app-debug.apk
             ;;
         --logcat) LOGCAT=1 ;;
+        --bundle) BUNDLE=1; GRADLE_TASK=bundleRelease ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -79,10 +83,20 @@ cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \
 rm -f "$JNILIBS"/libsevenz_rust2-*.so "$JNILIBS/libretro_core.so"
 
 echo "==> gradle $GRADLE_TASK"
-(cd android && ./gradlew --console=plain -Pabi="$ABI" "$GRADLE_TASK")
+(cd android && ./gradlew --console=plain -Pabi="$ABI" -PversionCode="${VERSION_CODE:-1}" "$GRADLE_TASK")
+
+if [[ "$BUNDLE" == 1 ]]; then
+    echo "==> android/app/build/outputs/bundle/release/app-release.aab"
+    exit 0
+fi
 
 echo "==> install ($(du -h "$APK" | cut -f1))"
-"$ADB" install -r "$APK"
+# A Play install is signed with a different key and cannot be updated over.
+if ! "$ADB" install -r "$APK"; then
+    echo "==> uninstalling the existing $PKG and retrying"
+    "$ADB" uninstall "$PKG" || true
+    "$ADB" install "$APK"
+fi
 
 echo "==> launch"
 "$ADB" logcat -c || true
