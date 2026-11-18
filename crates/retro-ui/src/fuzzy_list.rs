@@ -51,6 +51,11 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         id
     }
 
+    /// The two lines of the item's row in phone mode: title and author.
+    fn get_lines(&self, id: usize) -> (String, String) {
+        (self.get_text(id), String::new())
+    }
+
     fn get_all_strings(&self) -> Vec<String> {
         let mut result = vec![];
         for i in self.search("", usize::MAX) {

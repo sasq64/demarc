@@ -35,6 +35,8 @@ struct HudText {
 pub struct Hud {
     current_texts: HashMap<HudLocation, HudText>,
     scale: f32,
+    /// Where [`HudLocation::InfoText`] goes instead of the screen's bottom right.
+    pub info_place: Option<(egui::Rect, egui::Align2)>,
 }
 
 impl Default for Hud {
@@ -49,6 +51,7 @@ impl Hud {
         Self {
             current_texts: HashMap::new(),
             scale,
+            info_place: None,
         }
     }
 
@@ -97,6 +100,7 @@ impl Hud {
 
         egui::Area::new(egui::Id::new("overlay"))
             .fixed_pos(rect.min)
+            .constrain_to(ctx.viewport_rect())
             .order(egui::Order::Background)
             .show(ctx, |ui| {
                 ui.set_min_size(rect.size());
@@ -126,6 +130,10 @@ impl Hud {
                 ] {
                     let (info, t) = self.fade(ctx, text, now);
                     if t > 0.0 {
+                        let (rect, corner) = match self.info_place {
+                            Some(place) if text == HudLocation::InfoText => place,
+                            _ => (rect, corner),
+                        };
                         let quad =
                             egui::Rect::from_two_pos(corner.pos_in_rect(&rect), rect.center());
                         let layout = if corner.y() == egui::Align::Min {

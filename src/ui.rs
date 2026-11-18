@@ -67,6 +67,13 @@ pub struct UiState {
     pub modal: bool,
 }
 
+/// The character a key types, if it types exactly one.
+pub(crate) fn typed_char(key: &Key) -> Option<char> {
+    let Key::Character(s) = key else { return None };
+    let mut chars = s.chars();
+    chars.next().filter(|_| chars.next().is_none())
+}
+
 /// Best-effort logical key for an injected press. The egui dialogs read this
 /// for text entry; the emulator only looks at `key_code`.
 fn logical_key(key: KeyCode) -> Key {

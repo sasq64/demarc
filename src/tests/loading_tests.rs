@@ -19,6 +19,9 @@ fn world(db: &[&'static str]) -> (World, tempfile::TempDir) {
     world.init_resource::<Messages<SetHudText>>();
     world.init_resource::<Messages<LoadFile>>();
     world.init_resource::<Messages<LoadFinished>>();
+    world.init_resource::<ButtonInput<KeyCode>>();
+    world.init_resource::<Messages<crate::ui::ShowFuzzyList>>();
+    world.init_resource::<Messages<crate::ui::FuzzyListSelect>>();
     world.insert_resource(Navigator::new());
     world.insert_resource(Playlists::load(dir.path()));
     let files: Vec<EmuFile> = db.iter().map(|title| entry(title)).collect();
@@ -170,6 +173,7 @@ fn load_file_starts_a_load_in_the_targeted_view_only() {
     world.write_message(LoadFile {
         emu_file: entry("a"),
         target_emulator: None,
+        choose: false,
     });
     world.run_system_once(load_file).unwrap();
 
@@ -185,6 +189,7 @@ fn load_file_starts_a_load_in_the_targeted_view_only() {
     world.write_message(LoadFile {
         emu_file: entry("b"),
         target_emulator: Some(0),
+        choose: false,
     });
     world.run_system_once(load_file).unwrap();
     assert!(matches!(

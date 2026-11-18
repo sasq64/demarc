@@ -8,18 +8,10 @@ use std::{
 
 pub use retro_core::strip_verbatim_prefix;
 
-// `unarc-rs` does not build for Android (its `unrar` dependency), so the
-// archive entry points have a zip/gzip/7z-only twin there.
-#[cfg(any(test, target_os = "android"))]
-mod plain;
-#[cfg(not(target_os = "android"))]
 mod unarc;
 
-#[cfg(target_os = "android")]
-pub use plain::{has_archive_filename, is_archive, unpack_if_packed, unpack_into, unpack_sfx};
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 use unarc::strip_lha_comment;
-#[cfg(not(target_os = "android"))]
 pub use unarc::{has_archive_filename, is_archive, unpack_if_packed, unpack_into, unpack_sfx};
 
 pub fn has_extension(path: &Path, ext: &str) -> bool {

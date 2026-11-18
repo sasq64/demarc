@@ -31,6 +31,7 @@ pub type RowImage = (egui::TextureId, f32);
 /// per item rather than every frame.
 struct Row {
     job: egui::text::LayoutJob,
+    sub: Option<egui::text::LayoutJob>,
     icons: (Option<ListIcon>, Option<ListIcon>),
     images: Vec<RowImage>,
 }
@@ -42,6 +43,9 @@ const QUERY_SIZE: f32 = 32.0;
 /// Fixed height of every row, so the box does not resize as the list is
 /// filtered or emptied.
 const ROW_HEIGHT: f32 = ROW_SIZE * 1.3;
+/// The second, smaller line of a row in phone mode.
+const SUB_SIZE: f32 = 20.0;
+const PHONE_ROW_HEIGHT: f32 = (ROW_SIZE + SUB_SIZE) * 1.3;
 /// Fraction of the screen height the list box is allowed to take up.
 const LIST_HEIGHT_FRACTION: f32 = 0.6;
 /// Height of everything in the picker but the list: title, query and info.
@@ -135,14 +139,20 @@ fn draw_row(
     ui: &Ui,
     rect: egui::Rect,
     job: egui::text::LayoutJob,
+    sub: Option<egui::text::LayoutJob>,
     icons: (Option<ListIcon>, Option<ListIcon>),
     images: &[RowImage],
 ) {
     let clip = egui::Rect::from_x_y_ranges(rect.x_range(), ui.clip_rect().y_range());
     let galley = ui.painter().layout_job(job);
-    let text_left = rect.left_center() + egui::vec2(ICON_SIZE + ICON_GAP, 0.0);
+    let sub = sub.map(|job| ui.painter().layout_job(job));
+    let sub_height = sub.as_ref().map_or(0.0, |g| g.size().y);
+    let text_left = rect.left_center() + egui::vec2(ICON_SIZE + ICON_GAP, -sub_height / 2.0);
     let text_rect = egui::Align2::LEFT_CENTER.anchor_size(text_left, galley.size());
     let painter = ui.painter().with_clip_rect(clip);
+    if let Some(sub) = sub {
+        painter.galley(text_rect.left_bottom(), sub, theme(ui.ctx()).picker.info);
+    }
     for (icon, x) in [
         (icons.0, rect.left() + ICON_SIZE / 2.0),
         (icons.1, rect.right() - ICON_SIZE),
@@ -226,17 +236,27 @@ pub struct Picker<T> {
     /// Item `list_info` describes, so the source is only asked when the
     /// highlighted item changes. `None` when nothing is highlighted.
     list_info_item: Option<usize>,
+    list_info_dir: bool,
     list_source: Option<ListSource<T>>,
     /// Built rows by item id, for the current `list_source`.
     rows: HashMap<usize, Row>,
     edit_id: egui::Id,
-    /// Labels of the buttons drawn under the info box.
+    /// Labels of the buttons drawn in a column left of the info box.
     pub buttons: Vec<String>,
+    /// Replaces `buttons` while the highlighted row has no data (a directory).
+    pub dir_buttons: Vec<String>,
+    /// Colors of `buttons` by index, the theme's text color past its end.
+    pub button_colors: Vec<egui::Color32>,
+    pub dir_button_colors: Vec<egui::Color32>,
     pub info_lines: f32,
     pub right_icons: bool,
     /// Fills the screen's width, with no border on the search and info boxes.
     pub compact: bool,
+    /// Two-line rows, title over author, and a single tap picks.
+    pub phone: bool,
     button_click: Option<usize>,
+    /// The button a pointer was pressed on last frame.
+    button_down: Option<usize>,
     pick_requested: bool,
     query_clicked: bool,
 }
@@ -260,14 +280,20 @@ impl<T> Default for Picker<T> {
             title_click: None,
             list_info: String::new(),
             list_info_item: None,
+            list_info_dir: false,
             list_source: None,
             rows: HashMap::new(),
             edit_id: egui::Id::new("edit_id"),
             buttons: Vec::new(),
+            dir_buttons: Vec::new(),
+            button_colors: Vec::new(),
+            dir_button_colors: Vec::new(),
             info_lines: INFO_LINES,
             right_icons: true,
             compact: false,
+            phone: false,
             button_click: None,
+            button_down: None,
             pick_requested: false,
             query_clicked: false,
         }
@@ -311,14 +337,42 @@ impl<T: 'static> Picker<T> {
         self.pick_requested = true;
     }
 
-    /// What the buttons and a non-default info box add to [`CHROME_HEIGHT`].
-    fn extra_chrome(&self) -> f32 {
-        let toolbar = if self.buttons.is_empty() {
-            0.0
+    fn row_height(&self) -> f32 {
+        if self.phone {
+            PHONE_ROW_HEIGHT
         } else {
-            BUTTON_HEIGHT + PANEL_GAP
-        };
-        toolbar + (self.info_lines - INFO_LINES) * INFO_SIZE * 1.3
+            ROW_HEIGHT
+        }
+    }
+
+    /// Height of the info box, grown to fit the button column beside it.
+    /// With buttons, the info box's frame is as tall as their column.
+    fn info_height(&self, ctx: &egui::Context) -> f32 {
+        if self.buttons.is_empty() {
+            return self.info_lines * INFO_SIZE * 1.3;
+        }
+        let n = self.buttons.len() as f32;
+        let column = n * BUTTON_HEIGHT + (n - 1.0) * PANEL_GAP;
+        let margin = self.field(ctx).frame().total_margin().sum().y;
+        (column - margin).max(0.0)
+    }
+
+    fn field(&self, ctx: &egui::Context) -> crate::theme::Panel {
+        let mut field = theme(ctx).panel.clone();
+        if self.compact {
+            field.border = egui::Stroke::NONE;
+            field.glow = None;
+        }
+        field
+    }
+
+    /// What the buttons and a non-default info box add to [`CHROME_HEIGHT`].
+    fn extra_chrome(&self, ctx: &egui::Context) -> f32 {
+        if self.phone {
+            let margin = self.field(ctx).frame().total_margin().sum().y;
+            return -(INFO_LINES * INFO_SIZE * 1.3 + margin + PANEL_GAP);
+        }
+        self.info_height(ctx) - INFO_LINES * INFO_SIZE * 1.3
     }
 
     /// Opens the list over `source`. Re-opening the same `id` restores the
@@ -352,7 +406,7 @@ impl<T: 'static> Picker<T> {
 
         let len = parts.len() as i32;
         parts.insert(0, "  ".into());
-        if title_select >= 0 {
+        if title_select >= 0 && !self.phone {
             if title_select > 0 {
                 parts.push(" 󰜲".into());
             } else {
@@ -464,8 +518,9 @@ impl<T: 'static> Picker<T> {
             self.show_list = false;
             return None;
         }
-        let extra = self.extra_chrome();
-        let delta = row_steps + page_steps * visible_rows(ctx, extra) as i64;
+        let extra = self.extra_chrome(ctx);
+        let delta = row_steps
+            + page_steps * visible_rows(ctx, extra, self.row_height(), self.compact) as i64;
         let selected = if len == 0 {
             0
         } else {
@@ -496,15 +551,12 @@ impl<T: 'static> Picker<T> {
         let info_item = self.list_items.get(selected).copied();
         if info_item != self.list_info_item {
             self.list_info = info_item.map(|id| source.get_info(id)).unwrap_or_default();
+            self.list_info_dir = info_item.is_some_and(|id| source.get_data(id).is_none());
             self.list_info_item = info_item;
         }
 
         let theme = theme(ctx);
-        let mut field = theme.panel.clone();
-        if self.compact {
-            field.border = egui::Stroke::NONE;
-            field.glow = None;
-        }
+        let field = self.field(ctx);
         let clicked = egui::Area::new(egui::Id::new(AREA_ID))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -514,43 +566,60 @@ impl<T: 'static> Picker<T> {
 
                 let (index, title) = &self.list_title;
                 if !title.is_empty() {
-                    // Clipped to the picker's width, showing the right end.
+                    // Clipped to the picker's width, showing the right end
+                    // unless that would hide the current part's parent.
+                    let font = picker_font(ctx, TITLE_SIZE);
+                    let gap = ui.spacing().item_spacing.x;
+                    let mut lefts = Vec::with_capacity(title.len());
+                    let mut right = 10.0;
+                    for part in title {
+                        lefts.push(right);
+                        let galley =
+                            ui.painter()
+                                .layout_no_wrap(part.clone(), font.clone(), egui::Color32::WHITE);
+                        right += galley.size().x + gap;
+                    }
+                    let current = if *index >= 0 {
+                        *index as usize + 1
+                    } else {
+                        self.list_title_depth
+                    };
+                    let parent = lefts[current.saturating_sub(1).min(lefts.len() - 1)];
+                    let offset = (right - gap - ui.available_width()).min(parent).max(0.0);
                     egui::ScrollArea::horizontal()
                         .id_salt("title")
-                        .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                        )
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                         .scroll_source(egui::scroll_area::ScrollSource::NONE)
-                        .stick_to_right(true)
+                        .horizontal_scroll_offset(offset)
                         .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(10.0);
-                        for (i, part) in title.iter().enumerate() {
-                            let bg = if (i as i32) == (*index + 1) {
-                                theme.picker.title_selected_fill
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            };
-                            let response = ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(part)
-                                        .font(picker_font(ctx, TITLE_SIZE))
-                                        .background_color(bg)
-                                        .color(theme.picker.title),
-                                )
-                                .selectable(false)
-                                .sense(egui::Sense::click()),
-                            );
-                            if response.clicked() {
-                                let depth = self.list_title_depth;
-                                self.title_click = Some(match i {
-                                    i if i <= depth => TitleClick::Depth(i),
-                                    i if i == depth + 1 => TitleClick::Back,
-                                    _ => TitleClick::Forward,
-                                });
-                            }
-                        }
-                    });
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                for (i, part) in title.iter().enumerate() {
+                                    let bg = if (i as i32) == (*index + 1) {
+                                        theme.picker.title_selected_fill
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
+                                    let response = ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(part)
+                                                .font(picker_font(ctx, TITLE_SIZE))
+                                                .background_color(bg)
+                                                .color(theme.picker.title),
+                                        )
+                                        .selectable(false)
+                                        .sense(egui::Sense::click()),
+                                    );
+                                    if response.clicked() {
+                                        let depth = self.list_title_depth;
+                                        self.title_click = Some(match i {
+                                            i if i <= depth => TitleClick::Depth(i),
+                                            i if i == depth + 1 => TitleClick::Back,
+                                            _ => TitleClick::Forward,
+                                        });
+                                    }
+                                }
+                            });
                         });
                     ui.add_space(TITLE_GAP);
                 }
@@ -579,6 +648,7 @@ impl<T: 'static> Picker<T> {
 
                 let follow = self.list_reopened || self.list_followed != Some(selected);
                 self.list_followed = Some(selected);
+                let phone = self.phone;
                 let scrolled = scroll_area(
                     ui,
                     selected,
@@ -586,17 +656,31 @@ impl<T: 'static> Picker<T> {
                     follow,
                     &self.list_items,
                     extra,
+                    self.row_height(),
+                    self.compact,
                     |ui, rect, &id| {
                         let row = self.rows.entry(id).or_insert_with(|| {
+                            let (text, sub) = if phone {
+                                source.get_lines(id)
+                            } else {
+                                (source.get_text(id), String::new())
+                            };
                             let mut job = egui::text::LayoutJob::default();
                             job.append(
-                                &source.get_text(id),
+                                &text,
                                 0.0,
                                 egui::TextFormat::simple(
                                     picker_font(ctx, ROW_SIZE),
                                     theme.picker.text,
                                 ),
                             );
+                            let sub = (!sub.is_empty()).then(|| {
+                                egui::text::LayoutJob::simple_singleline(
+                                    sub,
+                                    picker_font(ctx, SUB_SIZE),
+                                    theme.picker.info,
+                                )
+                            });
                             let images = render(&mut job, source.as_ref(), id);
                             let mut icons = source.get_icon(id);
                             if !self.right_icons {
@@ -604,43 +688,69 @@ impl<T: 'static> Picker<T> {
                             }
                             Row {
                                 job,
+                                sub,
                                 icons,
                                 images,
                             }
                         });
-                        draw_row(ui, rect, row.job.clone(), row.icons, &row.images);
+                        draw_row(
+                            ui,
+                            rect,
+                            row.job.clone(),
+                            row.sub.clone(),
+                            row.icons,
+                            &row.images,
+                        );
                     },
                 );
                 self.list_scroll = scrolled.state.offset.y;
                 let clicked = scrolled.inner;
 
-                field.show(ui, |ui| {
-                    let size = egui::vec2(ui.available_width(), self.info_lines * INFO_SIZE * 1.3);
-                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                    let galley = ui.painter().layout(
-                        self.list_info.clone(),
-                        picker_font(ctx, INFO_SIZE),
-                        theme.picker.info,
-                        rect.width(),
-                    );
-                    ui.painter()
-                        .with_clip_rect(rect.intersect(ui.clip_rect()))
-                        .galley(rect.min, galley, theme.picker.info);
-                });
-                if !self.buttons.is_empty() {
-                    ui.horizontal(|ui| {
-                        for (i, label) in self.buttons.iter().enumerate() {
-                            let text = egui::RichText::new(label)
-                                .font(picker_font(ctx, BUTTON_SIZE))
-                                .color(theme.picker.text);
-                            let button = egui::Button::new(text)
-                                .min_size(egui::vec2(BUTTON_HEIGHT * 2.5, BUTTON_HEIGHT));
-                            if ui.add(button).clicked() {
-                                self.button_click = Some(i);
-                            }
-                        }
-                    });
+                let info_height = self.info_height(ctx);
+                let (buttons, colors) = if self.list_info_dir && !self.dir_buttons.is_empty() {
+                    (&self.dir_buttons, &self.dir_button_colors[..])
+                } else {
+                    (&self.buttons, &self.button_colors[..])
+                };
+                if self.phone {
+                    return clicked;
                 }
+                ui.horizontal_top(|ui| {
+                    if !buttons.is_empty() {
+                        ui.vertical(|ui| {
+                            let was_down = self.button_down.take();
+                            for (i, label) in buttons.iter().enumerate() {
+                                let text = egui::RichText::new(label)
+                                    .font(picker_font(ctx, BUTTON_SIZE))
+                                    .color(colors.get(i).copied().unwrap_or(theme.picker.text));
+                                let size = egui::vec2(BUTTON_HEIGHT * 1.5, BUTTON_HEIGHT);
+                                let button =
+                                    egui::Button::new(text).selected(was_down == Some(i));
+                                let response = ui.add_sized(size, button);
+                                if response.clicked() {
+                                    self.button_click = Some(i);
+                                }
+                                if response.is_pointer_button_down_on() {
+                                    self.button_down = Some(i);
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        });
+                    }
+                    field.show(ui, |ui| {
+                        let size = egui::vec2(ui.available_width(), info_height);
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        let galley = ui.painter().layout(
+                            self.list_info.clone(),
+                            picker_font(ctx, INFO_SIZE),
+                            theme.picker.info,
+                            rect.width(),
+                        );
+                        ui.painter()
+                            .with_clip_rect(rect.intersect(ui.clip_rect()))
+                            .galley(rect.min, galley, theme.picker.info);
+                    });
+                });
                 clicked
             })
             .inner;
@@ -648,7 +758,9 @@ impl<T: 'static> Picker<T> {
         self.list_reopened = false;
         if let Some((row, double)) = clicked {
             self.list_selected = row;
-            if double && let Some(&item) = self.list_items.get(row) {
+            if (double || self.phone)
+                && let Some(&item) = self.list_items.get(row)
+            {
                 self.show_list = self.keep_open;
                 return Some(Picked {
                     id: self.list_id,
@@ -664,12 +776,18 @@ impl<T: 'static> Picker<T> {
 }
 
 /// How many rows the list shows at once: whole rows filling
-/// [`LIST_HEIGHT_FRACTION`] of the screen, less when zoomed in so far that
-/// the rest would not fit. Also the PageUp/PageDown step, so
+/// [`LIST_HEIGHT_FRACTION`] of the screen (all of it in portrait or when
+/// `fill`), less when zoomed in so far that the rest would not fit. Also the PageUp/PageDown step, so
 /// the key moves the selection exactly one screenful.
-fn visible_rows(ctx: &egui::Context, extra: f32) -> f32 {
-    let height = ctx.content_rect().height();
-    ((height * LIST_HEIGHT_FRACTION).min(height - CHROME_HEIGHT - extra) / ROW_HEIGHT)
+fn visible_rows(ctx: &egui::Context, extra: f32, row_height: f32, fill: bool) -> f32 {
+    let screen = ctx.content_rect();
+    let height = screen.height();
+    let fraction = if fill || height > screen.width() {
+        1.0
+    } else {
+        LIST_HEIGHT_FRACTION
+    };
+    ((height * fraction).min(height - CHROME_HEIGHT - extra) / row_height)
         .floor()
         .max(1.0)
 }
@@ -689,9 +807,11 @@ fn scroll_area<T>(
     follow: bool,
     items: &[T],
     extra: f32,
+    row_height: f32,
+    fill: bool,
     mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
-    let view_height = visible_rows(ui.ctx(), extra) * ROW_HEIGHT;
+    let view_height = visible_rows(ui.ctx(), extra, row_height, fill) * row_height;
     let id = ui.id();
     let theme = theme(ui.ctx());
     theme
@@ -707,12 +827,12 @@ fn scroll_area<T>(
                 .min_scrolled_height(view_height)
                 .auto_shrink([false, false]);
 
-            let top = selected as f32 * ROW_HEIGHT;
+            let top = selected as f32 * row_height;
             // Clamped to the end of the content as well, the same way egui
             // clamps whatever offset it is handed.
-            let max_offset = (items.len() as f32 * ROW_HEIGHT - view_height).max(0.0);
+            let max_offset = (items.len() as f32 * row_height - view_height).max(0.0);
             let offset = if follow {
-                list_scroll.min(top).max(top + ROW_HEIGHT - view_height)
+                list_scroll.min(top).max(top + row_height - view_height)
             } else {
                 list_scroll
             };
@@ -722,11 +842,11 @@ fn scroll_area<T>(
             // Manual text rendering below, spacing > 0 will make it incorrect
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            scroll.show_rows(ui, ROW_HEIGHT, items.len(), |ui, rows| {
+            scroll.show_rows(ui, row_height, items.len(), |ui, rows| {
                 let mut clicked = None;
                 for row in rows {
                     let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), ROW_HEIGHT),
+                        egui::vec2(ui.available_width(), row_height),
                         egui::Sense::click(),
                     );
                     if response.double_clicked() {
@@ -739,7 +859,7 @@ fn scroll_area<T>(
                     // their row when the list scrolls -- and keep decaying on
                     // wall-clock time while the row is scrolled out of sight.
                     let row_id = id.with(row);
-                    let level = if row == selected {
+                    let level = if row == selected || response.is_pointer_button_down_on() {
                         // Zero time snaps the stored value, so the highlight
                         // appears at once and the fade later starts from full.
                         ui.ctx().animate_value_with_time(row_id, 1.0, 0.0);

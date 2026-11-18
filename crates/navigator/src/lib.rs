@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -32,12 +33,12 @@ pub struct ShowList {
     pub title_select: i32,
 }
 
-/// Icons for the root list, as nerd font glyphs: the favorites playlist, the
-/// other playlists, and the databases.
+/// Icons for the  picker
 const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
 const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
+const SYSTEM_ICON: ListIcon = ListIcon::Glyph('󰒔', 0xa02020);
 
 const PARTY_ICON: char = '󰍖';
 /// Saturation and brightness of the per-party colours; tweak to taste.
@@ -611,6 +612,7 @@ fn category_entries(path: &[&str], files: &'static [EmuFile]) -> Option<PickerSo
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,
+    system_dir: &Path,
 ) -> Result<()> {
     for (name, files) in dbs {
         navigator.add_db(name, files);
@@ -648,20 +650,11 @@ pub fn setup_navigator(
     navigator.register("Categories", |_path: &[&str], files: &'static [EmuFile]| {
         Some(category_list(files))
     })?;
-    navigator.register_db("CSDb", "Demos", |_path: &[&str], files: &'static [EmuFile]| {
-        let subset: Vec<u32> = files
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| matches!(*f.categories, [one] if DEMO_CATS.contains(&one)))
-            .map(|(i, _)| i as u32)
-            .collect();
-        Some(PickerSource::new(files, Some(subset), IconMode::Categories))
-    })?;
     navigator.register("Authors", |_path: &[&str], files: &'static [EmuFile]| {
         let authors = files
             .iter()
-            .map(|f| f.get_meta("author"))
-            .filter(|p| !p.is_empty() && !p.contains(" & "))
+            .flat_map(|f| f.get_meta("author").split(" & "))
+            .filter(|p| !p.is_empty())
             .collect::<IndexSet<_>>()
             .into_iter()
             .map(|a| (a.to_string(), AUTHOR_ICON))
@@ -780,15 +773,29 @@ pub fn setup_navigator(
     navigator.register_db("CSDb", "", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [
-                ("Demos".into(), picker_sources::category_list_icon("Demo")),
                 ("All".into(), ListIcon::Glyph('', 0xffff00)),
                 ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
                 ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
                 ("Authors".into(), AUTHOR_ICON),
+                ("System".into(), SYSTEM_ICON),
             ]
             .into(),
         ))
     })?;
+
+    let p0 = system_dir.to_owned().join("vice/C64/rr38ppal.crt");
+    let p1 = system_dir.to_owned().join("vice/C64/tar_v2_pal.crt");
+    let b = Box::leak(Box::new([
+        EmuFile::new("Retro Replay", p0),
+        EmuFile::new("Turbo Action Rom", p1),
+    ]));
+    navigator.register_db(
+        "CSDb",
+        "System",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            Some(PickerSource::new(b, None, IconMode::Platforms))
+        },
+    )?;
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [

@@ -64,7 +64,7 @@ fn keys_reach_the_core_with_the_held_modifiers() {
     input.press(KeyCode::ShiftLeft);
     input.press(KeyCode::KeyA);
 
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
 
     let shift = libretro::RETROKMOD_SHIFT as u16;
     assert!(
@@ -77,7 +77,7 @@ fn keys_reach_the_core_with_the_held_modifiers() {
     input.clear();
     input.release(KeyCode::KeyA);
     core.lock().keys.clear();
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
     assert_eq!(core.lock().keys, [(libretro::RETROK_a, false, shift)]);
 }
 
@@ -99,7 +99,7 @@ fn every_modifier_is_reported() {
     input.clear();
     input.press(KeyCode::Space);
 
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
 
     let mods = libretro::RETROKMOD_CTRL
         | libretro::RETROKMOD_ALT
@@ -122,11 +122,11 @@ fn frontend_hotkeys_never_reach_the_core() {
     for key in [KeyCode::F12, KeyCode::ControlRight, KeyCode::AltRight] {
         input.press(key);
     }
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
 
     input.clear();
     input.release_all();
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
 
     assert!(core.lock().keys.is_empty());
 }
@@ -140,7 +140,7 @@ fn joystick_mode_turns_cursor_keys_into_a_joypad() {
     input.press(KeyCode::ArrowUp);
     input.press(KeyCode::KeyQ);
 
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
 
     assert_eq!(
         core.lock().joypad,
@@ -151,7 +151,7 @@ fn joystick_mode_turns_cursor_keys_into_a_joypad() {
 
     input.clear();
     input.release(KeyCode::ArrowUp);
-    emu.feed_inputs(&input, &default(), &default(), None);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
     assert_eq!(
         core.lock().joypad.last(),
         Some(&(1, libretro::RETRO_DEVICE_ID_JOYPAD_UP, false))
@@ -186,7 +186,7 @@ fn mouse_motion_position_and_buttons_are_forwarded() {
         delta: Vec2::new(3.0, -2.0),
     };
 
-    emu.feed_inputs(&keys, &buttons, &motion, Some(Vec2::new(0.25, 0.75)));
+    emu.feed_inputs(&keys, &[], &buttons, &motion, Some(Vec2::new(0.25, 0.75)));
 
     let state = core.lock();
     assert_eq!(state.motion, [(3.0, -2.0)]);
@@ -199,7 +199,7 @@ fn a_still_mouse_sends_no_motion() {
     let core = FakeBackend::default();
     let mut emu = emulator(&core);
 
-    emu.feed_inputs(&default(), &default(), &default(), None);
+    emu.feed_inputs(&default(), &[], &default(), &default(), None);
 
     let state = core.lock();
     assert!(state.motion.is_empty());
@@ -214,8 +214,8 @@ fn an_injected_click_lasts_one_frame() {
     let mut emu = emulator(&core);
     emu.set_mouse_buttons(1);
 
-    emu.feed_inputs(&default(), &default(), &default(), None);
-    emu.feed_inputs(&default(), &default(), &default(), None);
+    emu.feed_inputs(&default(), &[], &default(), &default(), None);
+    emu.feed_inputs(&default(), &[], &default(), &default(), None);
 
     assert_eq!(
         core.lock().buttons,
@@ -753,4 +753,45 @@ fn a_conversion_holds_its_source_frame_while_the_queue_is_short() {
     // Eight frames queued, and a move needs seven: two moves, where running
     // the queue down to two frames would have made six.
     assert_eq!(fronts.len(), 3, "{} source frames shown", fronts.len());
+}
+
+#[test]
+fn typed_characters_reach_a_c64_with_the_shift_they_need() {
+    use libretro::*;
+    let core = FakeBackend::default();
+    let mut emu = emulator(&core);
+    emu.work_file.set_meta("system", "C64");
+    let mut input = ButtonInput::<KeyCode>::default();
+    input.press(KeyCode::ShiftLeft);
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
+    input.clear();
+
+    // Shift+2 types '@' here, which a C64 has unshifted.
+    input.press(KeyCode::Digit2);
+    emu.feed_inputs(
+        &input,
+        &[(KeyCode::Digit2, '@')],
+        &default(),
+        &default(),
+        None,
+    );
+    assert_eq!(
+        core.lock().events,
+        [
+            (0, InputEvent::KeyState(RETROK_LSHIFT, false)),
+            (1, InputEvent::KeyState(RETROK_LEFTBRACKET, true)),
+        ]
+    );
+
+    input.clear();
+    input.release(KeyCode::Digit2);
+    core.lock().events.clear();
+    emu.feed_inputs(&input, &[], &default(), &default(), None);
+    assert_eq!(
+        core.lock().events,
+        [
+            (0, InputEvent::KeyState(RETROK_LEFTBRACKET, false)),
+            (1, InputEvent::KeyState(RETROK_LSHIFT, true)),
+        ]
+    );
 }

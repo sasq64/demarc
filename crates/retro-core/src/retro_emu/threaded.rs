@@ -593,6 +593,9 @@ pub(super) fn apply_cmd(
                         key_queue.push((at, Scheduled::Key(code, true)));
                         key_queue.push((at + KEY_HOLD_FRAMES, Scheduled::Key(code, false)));
                     }
+                    InputEvent::KeyState(code, down) => {
+                        key_queue.push((at, Scheduled::Key(code, down)));
+                    }
                     InputEvent::Click(x, y) => {
                         key_queue.push((at, Scheduled::Pointer(x, y, false)));
                         key_queue.push((at + KEY_HOLD_FRAMES, Scheduled::Pointer(x, y, true)));

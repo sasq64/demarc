@@ -521,6 +521,7 @@ impl Backend for RetroCoreProcess {
         for &(frame, event) in events {
             self.send(match event {
                 InputEvent::Key(code) => Msg::new(MSG_KEY, frame, code, 0),
+                InputEvent::KeyState(code, down) => Msg::new(MSG_KEY, frame, code, 1 + down as u32),
                 InputEvent::Click(x, y) => Msg {
                     tag: MSG_CLICK,
                     a: frame,
@@ -790,7 +791,13 @@ fn worker_loop(
                     let mut events = Vec::with_capacity(msg.a as usize);
                     for _ in 0..msg.a {
                         match chan.recv_blocking() {
-                            Ok(m) if m.tag == MSG_KEY => events.push((m.a, InputEvent::Key(m.b))),
+                            Ok(m) if m.tag == MSG_KEY => events.push((
+                                m.a,
+                                match m.c {
+                                    0 => InputEvent::Key(m.b),
+                                    c => InputEvent::KeyState(m.b, c == 2),
+                                },
+                            )),
                             Ok(m) if m.tag == MSG_CLICK => {
                                 events.push((m.a, InputEvent::Click(m.x, m.y)))
                             }

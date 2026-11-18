@@ -13,7 +13,9 @@ use crate::emulator::{EmuState, Emulator, LoadStatus};
 use crate::frontend::{EmuView, FrontendSet};
 use crate::navigator::Navigator;
 use crate::playlists::Playlists;
-use crate::ui::{HudLocation, SetHudText};
+use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList};
+use retro_ui::fuzzy_list::IndexedSource;
+use std::sync::Arc;
 
 /// One emulator finished a load this frame.
 #[derive(Message)]
@@ -23,7 +25,13 @@ pub struct LoadFinished(pub Entity);
 pub struct LoadFile {
     pub emu_file: EmuFile,
     pub target_emulator: Option<usize>,
+    /// Ask which of the release's files to start if Shift is still held when
+    /// it is unpacked.
+    pub choose: bool,
 }
+
+/// [`ShowFuzzyList`] id of the list of a release's files.
+const ENTRY_LIST: usize = 96;
 
 pub struct LoadingPlugin;
 
@@ -47,6 +55,9 @@ pub fn load_file(
         for (_, mut emu, view, ..) in &mut emus {
             if view.index == emu_index {
                 emu.start_load(&game.emu_file, over.as_ref(), &global);
+                if let Some(pending) = emu.pending_load.as_mut() {
+                    pending.choose = game.choose;
+                }
             }
         }
     }
@@ -62,7 +73,16 @@ pub(crate) fn handle_loading(
     playlists: Res<Playlists>,
     demo_settings: Res<DemarcSettings>,
     time: Res<Time>,
+    input: Res<ButtonInput<KeyCode>>,
+    mut show_list: MessageWriter<ShowFuzzyList>,
+    mut picks: MessageReader<FuzzyListSelect>,
+    mut choosing: Local<Option<Entity>>,
 ) {
+    for pick in picks.read().filter(|p| p.id == ENTRY_LIST) {
+        if let Some(Ok((_, _, mut emu))) = choosing.take().map(|e| emus.get_mut(e)) {
+            emu.choose_entry(&settings.system, Some(pick.item));
+        }
+    }
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
         let next = if let Some(launch) = navigator.current_launch.as_mut() {
             let d = if emu.run_next {
@@ -106,6 +126,7 @@ pub(crate) fn handle_loading(
             load_writer.write(LoadFile {
                 emu_file,
                 target_emulator: Some(emuview.index),
+                choose: false,
             });
             continue;
         }
@@ -113,6 +134,22 @@ pub(crate) fn handle_loading(
         let status = emu.update_load(&time, &settings.system);
         match status {
             LoadStatus::Idle | LoadStatus::Pending => {}
+            LoadStatus::Choose(names) => {
+                if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+                    *choosing = Some(entity);
+                    show_list.write(ShowFuzzyList {
+                        id: ENTRY_LIST,
+                        source: Arc::new(IndexedSource::new(names)),
+                        prompt: None,
+                        selected: None,
+                        title: vec![emu.pending_title()],
+                        title_select: -1,
+                        keep_open: false,
+                    });
+                } else {
+                    emu.choose_entry(&settings.system, None);
+                }
+            }
             LoadStatus::Done {
                 title,
                 result: Err(e),

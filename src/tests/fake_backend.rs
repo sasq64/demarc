@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::backend::{Backend, MediaCmd, MediaKind, VideoFrame, ViewFocus};
+use crate::backend::{Backend, InputEvent, MediaCmd, MediaKind, VideoFrame, ViewFocus};
 
 /// What a [`FakeBackend`] was told, and what it answers with.
 pub struct FakeState {
@@ -10,6 +10,7 @@ pub struct FakeState {
     pub disks: u32,
     pub skipped: u32,
     pub keys: Vec<(u32, bool, u16)>,
+    pub events: Vec<(u32, InputEvent)>,
     pub joypad: Vec<(u32, u32, bool)>,
     pub motion: Vec<(f32, f32)>,
     pub pointer: Vec<(f32, f32)>,
@@ -39,6 +40,7 @@ impl Default for FakeState {
             disks: 1,
             skipped: 0,
             keys: Vec::new(),
+            events: Vec::new(),
             joypad: Vec::new(),
             motion: Vec::new(),
             pointer: Vec::new(),
@@ -109,6 +111,10 @@ impl Backend for FakeBackend {
 
     fn press_key(&mut self, code: u32, down: bool, mods: u16) {
         self.lock().keys.push((code, down, mods));
+    }
+
+    fn send_events(&mut self, events: &[(u32, InputEvent)]) {
+        self.lock().events.extend_from_slice(events);
     }
 
     fn add_mouse_motion(&mut self, dx: f32, dy: f32) {

@@ -9,7 +9,7 @@
 // `crate::backend` / `crate::retro_emu` paths.
 pub use retro_core::{backend, libretro, pixels, retro_emu};
 // Likewise for the release plumbing, which lives where Android can build it.
-pub use release_io::{cache, cbmconvert, fetch, m3u, release_override, utils, workfile};
+pub use release_io::{c64, cache, cbmconvert, fetch, m3u, release_override, utils, workfile};
 
 pub mod boxedapp;
 pub mod com_dropper;

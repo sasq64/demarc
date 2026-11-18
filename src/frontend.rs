@@ -523,11 +523,17 @@ pub(crate) fn run_frontend(
     // and mouse on the window that has focus -- see `crate::dj`.
     dj: Option<Res<crate::dj::DjWindow>>,
     demo_settings: Res<crate::demarc_settings::DemarcSettings>,
-    (mut navigator, mut show_list): (
+    (mut navigator, mut show_list, mut key_events): (
         ResMut<crate::navigator::Navigator>,
         MessageWriter<crate::ui::ShowFuzzyList>,
+        MessageReader<bevy::input::keyboard::KeyboardInput>,
     ),
 ) {
+    let typed: Vec<(KeyCode, char)> = key_events
+        .read()
+        .filter(|k| k.state.is_pressed())
+        .filter_map(|k| crate::ui::typed_char(&k.logical_key).map(|c| (k.key_code, c)))
+        .collect();
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let cursor = cursor_pos(window.as_deref().copied());
     let mut no_input =
@@ -645,7 +651,7 @@ pub(crate) fn run_frontend(
             let abs = (!dj_focused)
                 .then(|| cursor_frame_uv(cursor, &pp, &images, render.scale_mode))
                 .flatten();
-            emu.feed_inputs(&input, &mouse_buttons, &mouse_motion, abs);
+            emu.feed_inputs(&input, &typed, &mouse_buttons, &mouse_motion, abs);
         }
         // RIFE gets as far ahead as the sound is, so it needs a deep audio buffer.
         let latency = match settings.frame_convert {

@@ -5,7 +5,7 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use retro_core::backend::InputEvent;
-use retro_core::libretro::{RETROK_F1, RETROK_RETURN};
+use retro_core::libretro::{RETROK_F1, RETROK_RETURN, retro_key};
 
 use crate::cbmconvert;
 use crate::release::{collect_disk_images, walk_dir};
@@ -37,6 +37,20 @@ fn is_c64_prg(path: &Path, ext: &str, header: &[u8]) -> bool {
     start_addr + data_size <= 0x1_0000
 }
 
+/// The files under `dir` that [`prepare`] can boot on their own, sorted.
+pub fn bootable_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = vec![];
+    walk_dir(dir, 12, |path, ext, header| {
+        let tape = ext == "tap" && header.starts_with(b"C64-TAPE-RAW");
+        if ["d64", "d81", "crt"].contains(&ext) || tape || is_c64_prg(path, ext, header) {
+            files.push(path.to_owned());
+        }
+        Ok(())
+    })?;
+    files.sort();
+    Ok(files)
+}
+
 /// The core has no option for a third SID, but reads `<save dir>/vicerc`.
 fn three_sids(file: &mut WorkFile) -> Result<()> {
     file.make_temp()?;
@@ -64,6 +78,9 @@ pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
     if reu || file.has_tag("reu") || file.get_meta_or("category", "").contains("REU") {
         file.set_meta("vice_ram_expansion_unit", "16384kB");
     }
+
+    // VICE's default reset autostarts the release again.
+    file.set_meta("vice_reset", "hard");
 
     if file.has_tag("3sid") {
         three_sids(file)?;
@@ -147,6 +164,44 @@ pub fn prepare(file: &mut WorkFile, reu: bool) -> Result<bool> {
         }
     }
     Ok(true)
+}
+
+/// The key VICE's positional keymap needs to type `c` on a C64, and whether
+/// shift has to be down with it.
+pub fn char_key(c: char) -> Option<(retro_key, bool)> {
+    use retro_core::libretro::*;
+    Some(match c {
+        'a'..='z' | '0'..='9' => (c as retro_key, false),
+        'A'..='Z' => (c.to_ascii_lowercase() as retro_key, true),
+        '!' => (RETROK_1, true),
+        '"' => (RETROK_2, true),
+        '#' => (RETROK_3, true),
+        '$' => (RETROK_4, true),
+        '%' => (RETROK_5, true),
+        '&' => (RETROK_6, true),
+        '\'' => (RETROK_7, true),
+        '(' => (RETROK_8, true),
+        ')' => (RETROK_9, true),
+        '+' => (RETROK_MINUS, false),
+        '-' => (RETROK_EQUALS, false),
+        '@' => (RETROK_LEFTBRACKET, false),
+        '*' => (RETROK_RIGHTBRACKET, false),
+        ':' => (RETROK_SEMICOLON, false),
+        ';' => (RETROK_QUOTE, false),
+        '=' => (RETROK_BACKSLASH, false),
+        ',' => (RETROK_COMMA, false),
+        '.' => (RETROK_PERIOD, false),
+        '/' => (RETROK_SLASH, false),
+        '<' => (RETROK_COMMA, true),
+        '>' => (RETROK_PERIOD, true),
+        '?' => (RETROK_SLASH, true),
+        '[' => (RETROK_SEMICOLON, true),
+        ']' => (RETROK_QUOTE, true),
+        '\\' => (RETROK_INSERT, false),
+        '_' => (RETROK_BACKQUOTE, false),
+        '~' | '^' => (RETROK_DELETE, false),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

@@ -23,8 +23,17 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                     crate::show_panel(ui, |ui| {
                         ui.label(egui::RichText::new("query").size(QUERY_SIZE));
                     });
-                    let out =
-                        scroll_area(ui, items.saturating_sub(1), 0.0, true, &ids, 0.0, |_, _, _| {});
+                    let out = scroll_area(
+                        ui,
+                        items.saturating_sub(1),
+                        0.0,
+                        true,
+                        &ids,
+                        0.0,
+                        ROW_HEIGHT,
+                        false,
+                        |_, _, _| {},
+                    );
                     height = out.inner_rect.height();
                 });
         }
@@ -148,7 +157,7 @@ fn arrows_move_the_selection_and_clamp() {
 fn page_keys_move_a_screenful() {
     let mut h = Harness::new();
     let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
-    let page = visible_rows(&h.ctx, 0.0) as usize;
+    let page = visible_rows(&h.ctx, 0.0, ROW_HEIGHT, false) as usize;
     assert!(h.has("row 0") && !h.has("row 150"));
     assert!(h.has("about 0"), "the info box describes the selection");
 
@@ -301,6 +310,21 @@ fn side_margins_are_twice_the_vertical_ones() {
     );
 }
 
+#[test]
+fn phone_mode_picks_on_a_single_tap() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    picker.phone = true;
+    picker.open(1, fruit(), None, None, &["Title".into()], -1, false);
+    for _ in 0..5 {
+        step(&mut h, &mut picker, vec![]);
+    }
+    let pos = h.find("cherry").center();
+    let results = h.click(pos, |ctx| picker.show(ctx, |_, _, _| Vec::new()));
+    let picked = results.into_iter().flatten().next().expect("a pick");
+    assert_eq!(picked.text, "cherry");
+}
+
 /// A click highlights the row, a double click picks it.
 #[test]
 fn click_selects_and_double_click_picks() {
@@ -364,6 +388,8 @@ fn buttons_report_clicks_and_can_pick() {
     picker.buttons = vec!["Start".into(), "Disk".into()];
     step(&mut h, &mut picker, vec![]);
     step(&mut h, &mut picker, vec![key(egui::Key::ArrowDown)]);
+    // The width follows the height the buttons changed, a frame late.
+    step(&mut h, &mut picker, vec![]);
     h.click_text("Disk", |ctx| picker.show(ctx, |_, _, _| Vec::new()));
     assert_eq!(picker.take_button_click(), Some(1));
     assert_eq!(picker.take_button_click(), None);
@@ -408,4 +434,24 @@ fn a_long_title_is_clipped_to_its_right_end() {
         .unwrap();
     assert!(area.x_range().contains(h.find(" part39 ").right()));
     assert!(!h.has(" part0 "));
+}
+
+/// A long title whose current part is far from its end still shows that
+/// part's parent, so it can be clicked to go up.
+#[test]
+fn a_long_title_keeps_the_current_parts_parent_in_view() {
+    let mut h = Harness::new();
+    let mut picker = opened(&mut h, fruit());
+    let title: Vec<String> = (0..40).map(|i| format!("part{i}")).collect();
+    picker.open(1, fruit(), None, None, &title, 11, false);
+    for _ in 0..4 {
+        step(&mut h, &mut picker, vec![]);
+    }
+    let area = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(AREA_ID)))
+        .unwrap();
+    assert!(area.x_range().contains(h.find(" part9 ").left()));
+    assert!(area.x_range().contains(h.find(" part10 ").right()));
+    assert!(!h.has(" part39 "));
 }

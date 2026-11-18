@@ -10,14 +10,28 @@ android {
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "com.demarc.c64"
+        applicationId = "se.minnberg.demarc"
         // Matches the `-P` handed to cargo-ndk in scripts/run-android.sh.
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // Play rejects an upload whose versionCode it has seen: -PversionCode=N.
+        versionCode = project.findProperty("versionCode")?.toString()?.toInt() ?: 1
         versionName = "0.1.0"
         ndk {
             abiFilters += listOf(project.findProperty("abi")?.toString() ?: "arm64-v8a")
+        }
+    }
+
+    // The Play upload key; its location and password live in ~/.gradle/gradle.properties.
+    val uploadStore = project.findProperty("demarcUploadStoreFile")?.toString()
+    signingConfigs {
+        if (uploadStore != null) {
+            create("upload") {
+                storeFile = file(uploadStore)
+                storePassword = project.property("demarcUploadStorePassword").toString()
+                keyAlias = project.property("demarcUploadKeyAlias").toString()
+                keyPassword = storePassword
+            }
         }
     }
 
@@ -27,9 +41,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            // `adb install` rejects an unsigned APK, so sign release with the
-            // keystore AGP generates for debug builds.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
 

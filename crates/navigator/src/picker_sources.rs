@@ -83,6 +83,15 @@ impl FuzzySource<EmuFile> for PickerSource {
         self.index(id).unwrap_or(id)
     }
 
+    fn get_lines(&self, id: usize) -> (String, String) {
+        match self.file(id) {
+            Some(file) if !file.game_info.title.is_empty() => {
+                (file.game_info.title.into(), file.game_info.group.into())
+            }
+            _ => (self.get_text(id), String::new()),
+        }
+    }
+
     fn file_index(&self, id: usize) -> Option<usize> {
         self.index(id)
     }

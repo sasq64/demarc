@@ -63,7 +63,7 @@ echo "==> bundle"
 rm -rf "$APP"
 mkdir -p "$APP"
 cp "target/$TARGET/$PROFILE/minimarc" ios/Info.plist "$APP/"
-cp "$OUT/${CORE}_libretro.dylib" demodb/csdb.txt system/vice/C64/rr38ppal-auto.crt "$APP/"
+cp "$OUT/${CORE}_libretro.dylib" demodb/csdb.txt system/vice/C64/*.crt "$APP/"
 # Only the csdb entries, each with the comment lines right above it.
 awk '
     /^\[[a-z]+\.[0-9]+\]$/ { keep = /^\[csdb\./; if (keep) printf "%s", pend; pend = "" }

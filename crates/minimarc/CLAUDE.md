@@ -60,7 +60,7 @@ adb logcat -d | grep -E " demarc *:" | grep -v spurious | tail -30
 adb shell input tap X Y
 adb shell input swipe X1 Y1 X2 Y2 150
 adb shell input keyevent 4                             # Back
-adb shell pidof com.demarc.c64
+adb shell pidof se.minnberg.demarc
 adb shell dumpsys activity activities | grep -m1 ResumedActivity
 ```
 
@@ -81,24 +81,42 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Starts in the picker with no core. A pick goes to a loader thread; the
   result replaces the core (`App::start`). Stale results are dropped.
 - Picker open: all input goes to egui. Closed: keys go to the core.
-- During a demo a sideways swipe is the next or previous release, a swipe up
-  opens the key bar (`Ui::draw_keys`, `ui::BUTTONS`) and a swipe down closes it.
+- During a demo a swipe in any direction is that cursor key, and a long press
+  (held past `SWIPE_TIME` without moving) opens or closes the key bar
+  (`Ui::draw_keys`, `ui::BUTTONS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
   F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
-  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip, CRT
-  filter (`ui::Filter`: No, Normal = scanlines, Full = scanlines and bloom),
-  reset, pause, 10 s warp (audio dropped), next, prev and the info text.
+  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip (shows
+  the disk number), stop (unloads the core, back to the picker), reset, pause,
+  warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
+  says which buttons close the bar: for now all of row two.
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.
-- The picker has a button row under the info box: the X closes the
-  picker, play picks the highlighted row. The db is sorted by rating on load.
+- The picker has a button column left of the info box: back closes the
+  picker, play picks the highlighted row (an arrow when it is a directory,
+  `Picker::dir_buttons`). The db is sorted by rating on load.
+- Reset is VICE's `vice_reset = hard` (set in `c64::prepare`), so it does not
+  autostart the release.
 - The screen is kept on for as long as the app is up (`android_main`).
+- In the background (or with the screen off) the core keeps running without
+  a surface, so the sound goes on; `MiniActivity` starts `PlaybackService`, a
+  media foreground service, in `onPause` and stops it in `onResume`, or the
+  process would be frozen.
+- Headset/media buttons (`media.rs`): a tap of play-pause or the headset
+  button toggles pause after `DOUBLE_TAP`, a second tap within it skips to the
+  next release; play and pause both toggle (a Bluetooth headset sends
+  those, see `docs/LEARNINGS.md`). In the foreground they are winit keys; in the background
+  `MiniActivity`'s `MediaSession` passes the keycode in over JNI
+  (`nativeMediaKey`), and `App::step` drains them.
+- The picker redraws on input and while egui asks for a repaint, not only on
+  the core's frame tick.
 - `UI_ZOOM` in `player.rs` is 2.0 on Android, 1.0 elsewhere. The UI scales
   with the window height up to `UI_MAX_HEIGHT` logical pixels, so it keeps its
-  physical size on a tablet. In portrait the soft keyboard's height (padding
-  `MiniActivity` puts on the content view, read from `content_rect`) becomes
-  egui's bottom safe-area inset, which moves the picker above it. The picker's list
+  physical size on a tablet. `MiniActivity` pads the content view by the
+  camera cutout, the rounded corners and (in portrait) the soft keyboard;
+  `Gfx::safe_area` reads that back from `content_rect` as egui's safe-area
+  insets. The picker's list
   height is `visible_rows` in `retro-ui/src/picker.rs`, which gives up rows
   when the zoom leaves no room (`CHROME_HEIGHT`).
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
@@ -106,8 +124,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - The `[csdb.<id>]` entries of `overrides.toml` (an APK asset on Android, the
   system dir elsewhere) are applied in `load.rs`: download, meta, patches,
   boot file and key events. Other sections are skipped unparsed.
-- A started release shows title, author and "C64 <category>" bottom right for
-  five seconds (`Ui::info`).
+- A started release shows title, author and "C64 <category>" for five seconds
+  (`Ui::info`): top left of the window in portrait, bottom right of the
+  picture in landscape (`Hud::info_place`).
 - Sound goes through `retro_core::audio::AudioSink`; `App::step` steers the
   resample ratio by the ring fill (`AUDIO_BUF`) and runs an extra frame when
   the ring is nearly dry.
@@ -125,8 +144,8 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   (`release_io::set_cache_dir`) and the system dir.
 - `egui-wgpu` 0.36 needs wgpu 30; the rest of the workspace is on 29 for Bevy.
   Only this crate names 30.
-- `unarc-rs` does not build for bionic: no RAR or LHA on Android
-  (`release-io/src/utils/plain.rs` does zip, gzip, 7z).
+- `unarc-rs` (RAR, LHA) needs `release-io`'s `build.rs` Android link fixes;
+  see `docs/ANDROID.md`.
 - `cargo ndk -o` copies every cdylib it builds into `jniLibs`; the script
   removes the `sevenz_rust2` one.
 

@@ -1,5 +1,12 @@
 # Learnings
 
+- A Bluetooth headset does not send play-pause to a MediaSession: it sends
+  `MEDIA_PAUSE` or `MEDIA_PLAY` according to the session's `PlaybackState`,
+  and does the double tap itself (`MEDIA_NEXT`). minimarc's session always
+  says playing, so mapping pause to "pause" meant the headset could never
+  resume; play and pause are both a toggle now. `MediaSessionService` logs
+  every key it forwards, which showed it at once.
+
 - Android's Back never reached minimarc: with `targetSdk` 36 the system
   finishes the activity itself unless the manifest sets
   `android:enableOnBackInvokedCallback="false"`. Once it does arrive, winit
@@ -1783,6 +1790,23 @@
 - Nerd Font glyphs (private-use codepoints) in `ListIcon::Glyph('…')` get
   dropped when source is rewritten through a shell heredoc, leaving `''`.
   Copy them from the file itself (e.g. read and reuse in Python) instead.
+
+- minimarc only hands window events to egui while the picker is open, so a
+  modifier released after a pick closed it stays held in egui's
+  `i.modifiers`. Don't trust it there for anything held across a pick.
+
+- A request that doesn't name the app may be about demarc even on the
+  `minimarc` branch: both share the picker and navigator, and a bug report
+  from "desktop" can be either binary. Ask, or check both handlers (demarc's
+  Shift pick is in `src/navigator.rs`, minimarc's in `crates/minimarc/src/ui.rs`).
+
+- `cargo fmt` (even `cargo fmt -- <files>`) reformats the whole workspace, and
+  several files are not rustfmt-clean, so it drags unrelated diffs in. Run
+  `rustfmt --edition 2024 <files>` on just the files you changed.
+
+- `cargo fmt -p <crate>` reformats code nobody touched (e.g. `retro-ui`'s
+  picker and tests aren't fmt-clean), burying a small change in noise. Check
+  with `rustfmt --edition 2024 --check <file>` and format by hand instead.
 
 - On iOS winit's `with_inner_size` sizes the view itself, so minimarc's desktop
   window size left the app in a 720x576 corner of the phone. `inner_size()`

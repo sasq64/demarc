@@ -16,7 +16,7 @@ fn test_navigator() {
     let files: &'static [EmuFile] = files.leak();
     let dbs: IndexMap<String, &'static [EmuFile]> = [(name, files)].into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("");
     println!(">>Root");
@@ -68,7 +68,7 @@ fn every_db_gets_its_own_root_entry() {
     ]
     .into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("");
     assert_eq!(navigator.get_showing(), vec!["Demozoo", "CSDb"]);
@@ -96,7 +96,7 @@ fn csdb_root_starts_with_demos() {
     ]
     .into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("CSDb");
     assert_eq!(
@@ -117,7 +117,7 @@ fn playlist_shows_its_entries_directly() {
         "Favorites",
         db("id:1\ttitle:A\tauthor:G\tdownload:http://x/a.zip\n"),
     );
-    setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+    setup_navigator(&IndexMap::new(), &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("");
     assert_eq!(navigator.get_showing(), vec!["Favorites"]);
@@ -132,7 +132,7 @@ fn playlist_menu_and_refresh() {
         "Broken",
         db("id:1\ttitle:A\tauthor:G\tdownload:http://x/a.zip\n"),
     );
-    setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+    setup_navigator(&IndexMap::new(), &mut navigator, &system_dir()).unwrap();
     navigator.go_root();
     navigator.goto("Broken");
     navigator.open_playlist_menu(0);
@@ -154,7 +154,7 @@ fn playlist_root_menu_deletes() {
     let mut navigator = Navigator::new();
     navigator.add_playlist("Old", &[]);
     navigator.add_playlist("Keep", &[]);
-    setup_navigator(&IndexMap::new(), &mut navigator).unwrap();
+    setup_navigator(&IndexMap::new(), &mut navigator, &system_dir()).unwrap();
     navigator.go_root();
     navigator.open_playlist_root_menu("Old");
     assert_eq!(navigator.current_path(), ["Old"]);
@@ -172,7 +172,7 @@ fn files_at_lists_entries_without_navigating() {
     )]
     .into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
     navigator.go_root();
 
     let files = navigator.files_at("Demozoo/Platforms/C64").unwrap();
@@ -194,7 +194,7 @@ fn awards_by_event_and_category() {
     )]
     .into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("Demozoo/Awards");
     assert_eq!(
@@ -230,7 +230,7 @@ fn compo_with_slash_in_name() {
     )]
     .into();
     let mut navigator = Navigator::new();
-    setup_navigator(&dbs, &mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
 
     navigator.goto("Demozoo/Parties/Evoke 2005");
     assert_eq!(navigator.get_showing(), vec!["Oldskool 4k/Intro"]);
@@ -250,4 +250,8 @@ fn glob() {
     assert!(glob_match("*", ""));
     assert!(!glob_match("a*b", "ab b c"));
     assert!(glob_match("exact", "exact"));
+}
+
+fn system_dir() -> PathBuf {
+    PathBuf::from(env!("DEMARC_ROOT")).join("system")
 }

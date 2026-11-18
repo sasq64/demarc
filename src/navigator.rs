@@ -56,7 +56,7 @@ fn setup_navigator_bevy(
     playlists: Res<Playlists>,
     mut navigator: ResMut<Navigator>,
 ) -> Result<()> {
-    setup_navigator(&settings.files, &mut navigator)?;
+    setup_navigator(&settings.files, &mut navigator, ::newsys::system_dir())?;
     for list in &playlists.lists {
         navigator.add_playlist(&list.name, list.files);
     }
@@ -145,7 +145,7 @@ fn handle_selection(
                     navigator.show(&mut list_writer);
                     continue;
                 }
-                if msg.alt {
+                if msg.alt && path.last().is_none_or(|p| p != "dls") {
                     let id = msg.item;
                     navigator.enter(&[&id.to_string(), "dls"]);
                     navigator.show(&mut list_writer);
@@ -158,6 +158,7 @@ fn handle_selection(
                 load_writer.write(LoadFile {
                     emu_file,
                     target_emulator: None,
+                    choose: msg.alt,
                 });
             } else if msg.alt
                 && path.is_empty()

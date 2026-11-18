@@ -333,6 +333,19 @@ impl NewSys {
         })
     }
 
+    /// The files under `dir` some system could start on their own, sorted.
+    pub fn loadable_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = release_io::c64::bootable_files(dir)?;
+        walk_dir(dir, 0, |path, ext, _| {
+            if Self::supported_extensions().contains(ext) && !files.iter().any(|f| f == path) {
+                files.push(path.to_owned());
+            }
+            Ok(())
+        })?;
+        files.sort();
+        Ok(files)
+    }
+
     pub fn new(args: &SysOpts) -> Self {
         let mut meta = HashMap::<String, String>::new();
         for opt in &args.extra_options {

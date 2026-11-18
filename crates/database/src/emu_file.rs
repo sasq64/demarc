@@ -821,6 +821,19 @@ impl<const N: usize> From<[(&'static str, &'static str); N]> for Meta {
     }
 }
 
+const TWEAK_CAT: &[(&str, f32)] = &[
+    ("Demo", 1.07),
+    ("One-File Demo", 1.07),
+    ("Invitation", 1.03),
+    ("Crack", 0.8),
+    ("Game", 0.9),
+    ("Game Preview", 0.9),
+    ("EasyFlash Release", 0.9),
+    ("REU Release", 0.9),
+    ("Tool", 0.5),
+    ("Other Platform C64 Tool", 0.5),
+];
+
 impl GameInfo {
     pub fn new(meta: &Meta, categories: &[&'static str]) -> Self {
         let title = meta.get("title").unwrap_or("");
@@ -828,6 +841,11 @@ impl GameInfo {
         let category = categories.first().copied().unwrap_or("");
 
         let date = CompactDate::parse(meta.get("date").unwrap_or("")).unwrap_or_default();
+
+        let tweak = TWEAK_CAT
+            .iter()
+            .find(|(c, _)| *c == category)
+            .map_or(1.0, |(_, t)| *t);
 
         let mut rank = 0;
         let mut cdc = 0;
@@ -841,8 +859,8 @@ impl GameInfo {
         } else if let Some(rating) = meta.get("rating") {
             // A 0-10 rating mapped onto pouet's rank, where lower is better:
             // 10 → 10, 0 → 1010. Ratings above 10.1 saturate to 0.
-            let rating = rating.parse::<f32>().unwrap_or(0.0);
-            rank = ((10.1 - rating) * 100.0) as u32;
+            let rating = rating.parse::<f32>().unwrap_or(0.0) * tweak;
+            rank = ((12.0 - rating) * 100.0) as u32;
         }
 
         GameInfo {
@@ -902,6 +920,19 @@ pub fn split_values(val: &'static str) -> Box<[&'static str]> {
 }
 
 impl EmuFile {
+    pub fn new(title: &'static str, path: PathBuf) -> Self {
+        EmuFile {
+            path: FileSource::Path(path),
+            meta: Meta(Box::new([])),
+            game_info: GameInfo {
+                title,
+                ..Default::default()
+            },
+            platforms: Box::new([]),
+            categories: Box::new([]),
+        }
+    }
+
     /// The meta plus `platform` and `category`, joined with `;`.
     pub fn meta_strings(&self) -> impl Iterator<Item = (&'static str, Cow<'static, str>)> + '_ {
         let lists = [

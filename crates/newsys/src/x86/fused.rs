@@ -24,7 +24,6 @@ const MATCH_1K: &[u16] = &[
     0x75, 0xf1, // jnz dec
     0xeb, 0x5a, // jmp popa
 ];
-const MATCH_1K_IMM: u32 = 14;
 const MATCH_1K_LOOP: &[u16] = &[
     0xeb, 0x8c, // jmp pusha
     0x61, // popa

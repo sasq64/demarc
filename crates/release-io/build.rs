@@ -1,9 +1,21 @@
 fn main() {
     build_cbmconvert();
-    // `unrar_sys` is C++ and does not ask for the runtime on iOS.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
-        println!("cargo:rustc-link-lib=c++");
+    match std::env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
+        "android" => android_unrar_link(),
+        // `unrar_sys` is C++ and does not ask for the runtime on iOS.
+        "ios" => println!("cargo:rustc-link-lib=c++"),
+        _ => {}
     }
+}
+
+/// `unrar_sys` asks for `-lpthread`, which bionic folds into libc, and links
+/// no C++ runtime of its own.
+fn android_unrar_link() {
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    std::fs::write(out.join("libpthread.a"), b"!<arch>\n").unwrap();
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=c++_static");
+    println!("cargo:rustc-link-lib=c++abi");
 }
 
 /// Compile the `cbmconvert` command-line tool as a static library linked into

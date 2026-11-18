@@ -11,7 +11,7 @@ pouet_dump:
     ./fetch_dumps.py pouet
 
 csdb: csdb_cache
-    ./csdb.py
+    ./csdb.py --hvsc releases_with_hvsc.php
 
 demozoo: demozoo_export pouet_dump
     ./demozoo.py --pouet-prods
