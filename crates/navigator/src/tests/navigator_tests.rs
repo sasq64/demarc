@@ -81,7 +81,7 @@ fn every_db_gets_its_own_root_entry() {
 }
 
 #[test]
-fn csdb_root_starts_with_demos() {
+fn csdb_root_lists_its_views() {
     let dbs: IndexMap<String, &'static [EmuFile]> = [
         (
             "CSDb".to_string(),
@@ -101,10 +101,8 @@ fn csdb_root_starts_with_demos() {
     navigator.goto("CSDb");
     assert_eq!(
         navigator.get_showing(),
-        vec!["Demos", "All", "Parties", "Categories", "Authors"]
+        vec!["All", "Parties", "Categories", "Authors", "System"]
     );
-    navigator.goto("CSDb/Demos");
-    assert_eq!(navigator.get_showing(), vec!["B", "C"]);
 
     navigator.goto("Demozoo");
     assert!(navigator.get_showing().contains(&"Awards".to_string()));

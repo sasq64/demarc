@@ -37,17 +37,9 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 const SWIPE_DIST: f64 = 80.0;
 /// Phone text is read at arm's length on a small screen.
 const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
-const UI_ZOOM: f32 = if MOBILE {
-    2.0
-} else {
-    1.0
-};
+const UI_ZOOM: f32 = if MOBILE { 2.0 } else { 1.0 };
 /// Window height in logical pixels past which the UI stops growing with it.
-const UI_MAX_HEIGHT: f32 = if MOBILE {
-    600.0
-} else {
-    f32::INFINITY
-};
+const UI_MAX_HEIGHT: f32 = if MOBILE { 600.0 } else { f32::INFINITY };
 const SWIPE_TIME: Duration = Duration::from_millis(500);
 /// A second headset tap within this skips to the next release.
 const DOUBLE_TAP: Duration = Duration::from_millis(400);
@@ -556,11 +548,9 @@ impl Gfx {
             };
         }
         #[cfg(target_os = "ios")]
-        if let (Ok(inner), Ok(outer)) =
-            (self.window.inner_position(), self.window.outer_position())
+        if let (Ok(inner), Ok(outer)) = (self.window.inner_position(), self.window.outer_position())
         {
-            let (inner_size, outer_size) =
-                (self.window.inner_size(), self.window.outer_size());
+            let (inner_size, outer_size) = (self.window.inner_size(), self.window.outer_size());
             let left = (inner.x - outer.x) as f32;
             let top = (inner.y - outer.y) as f32;
             return egui::epaint::MarginF32 {

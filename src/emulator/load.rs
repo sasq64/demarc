@@ -308,7 +308,8 @@ impl Emulator {
     /// emulator with no core), and tv mode steps on to the next.
     pub(crate) fn pending_title(&self) -> String {
         let file = self.pending_load.as_ref().map(|p| &p.file);
-        file.map(|f| f.game_info.title.to_owned()).unwrap_or_default()
+        file.map(|f| f.game_info.title.to_owned())
+            .unwrap_or_default()
     }
 
     /// Go on with a load waiting in [`LoadStatus::Choose`], starting its file
@@ -323,7 +324,9 @@ impl Emulator {
                     entries,
                 },
             ..
-        }) = self.pending_load.take_if(|p| matches!(p.phase, LoadPhase::Choosing { .. }))
+        }) = self
+            .pending_load
+            .take_if(|p| matches!(p.phase, LoadPhase::Choosing { .. }))
         else {
             return;
         };

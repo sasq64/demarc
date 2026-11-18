@@ -44,7 +44,10 @@ const BACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xb8, 0x6c);
 impl Button {
     /// Whether pressing it closes the key bar.
     pub fn closes_bar(self) -> bool {
-        BUTTONS.iter().position(|&b| b == self).is_some_and(|i| i >= 8)
+        BUTTONS
+            .iter()
+            .position(|&b| b == self)
+            .is_some_and(|i| i >= 8)
     }
 
     fn label(self, paused: bool) -> &'static str {

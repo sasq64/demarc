@@ -397,7 +397,13 @@ fn loadable_files_are_what_some_system_can_start() {
     let dir = tempfile::tempdir().unwrap();
     let release = dir.path().join("release");
     fs::create_dir(&release).unwrap();
-    for name in ["demo.exe", "readme.txt", "side1.d64", "music.mod", "file_id.diz"] {
+    for name in [
+        "demo.exe",
+        "readme.txt",
+        "side1.d64",
+        "music.mod",
+        "file_id.diz",
+    ] {
         fs::write(release.join(name), [0u8; 16]).unwrap();
     }
     let names: Vec<_> = NewSys::loadable_files(&release)

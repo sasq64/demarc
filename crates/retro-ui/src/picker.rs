@@ -574,9 +574,11 @@ impl<T: 'static> Picker<T> {
                     let mut right = 10.0;
                     for part in title {
                         lefts.push(right);
-                        let galley =
-                            ui.painter()
-                                .layout_no_wrap(part.clone(), font.clone(), egui::Color32::WHITE);
+                        let galley = ui.painter().layout_no_wrap(
+                            part.clone(),
+                            font.clone(),
+                            egui::Color32::WHITE,
+                        );
                         right += galley.size().x + gap;
                     }
                     let current = if *index >= 0 {
@@ -724,8 +726,7 @@ impl<T: 'static> Picker<T> {
                                     .font(picker_font(ctx, BUTTON_SIZE))
                                     .color(colors.get(i).copied().unwrap_or(theme.picker.text));
                                 let size = egui::vec2(BUTTON_HEIGHT * 1.5, BUTTON_HEIGHT);
-                                let button =
-                                    egui::Button::new(text).selected(was_down == Some(i));
+                                let button = egui::Button::new(text).selected(was_down == Some(i));
                                 let response = ui.add_sized(size, button);
                                 if response.clicked() {
                                     self.button_click = Some(i);
