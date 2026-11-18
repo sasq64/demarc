@@ -519,7 +519,8 @@ impl<T: 'static> Picker<T> {
             return None;
         }
         let extra = self.extra_chrome(ctx);
-        let delta = row_steps + page_steps * visible_rows(ctx, extra, self.row_height()) as i64;
+        let delta = row_steps
+            + page_steps * visible_rows(ctx, extra, self.row_height(), self.compact) as i64;
         let selected = if len == 0 {
             0
         } else {
@@ -656,6 +657,7 @@ impl<T: 'static> Picker<T> {
                     &self.list_items,
                     extra,
                     self.row_height(),
+                    self.compact,
                     |ui, rect, &id| {
                         let row = self.rows.entry(id).or_insert_with(|| {
                             let (text, sub) = if phone {
@@ -774,13 +776,13 @@ impl<T: 'static> Picker<T> {
 }
 
 /// How many rows the list shows at once: whole rows filling
-/// [`LIST_HEIGHT_FRACTION`] of the screen (all of it in portrait), less when
-/// zoomed in so far that the rest would not fit. Also the PageUp/PageDown step, so
+/// [`LIST_HEIGHT_FRACTION`] of the screen (all of it in portrait or when
+/// `fill`), less when zoomed in so far that the rest would not fit. Also the PageUp/PageDown step, so
 /// the key moves the selection exactly one screenful.
-fn visible_rows(ctx: &egui::Context, extra: f32, row_height: f32) -> f32 {
+fn visible_rows(ctx: &egui::Context, extra: f32, row_height: f32, fill: bool) -> f32 {
     let screen = ctx.content_rect();
     let height = screen.height();
-    let fraction = if height > screen.width() {
+    let fraction = if fill || height > screen.width() {
         1.0
     } else {
         LIST_HEIGHT_FRACTION
@@ -806,9 +808,10 @@ fn scroll_area<T>(
     items: &[T],
     extra: f32,
     row_height: f32,
+    fill: bool,
     mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
-    let view_height = visible_rows(ui.ctx(), extra, row_height) * row_height;
+    let view_height = visible_rows(ui.ctx(), extra, row_height, fill) * row_height;
     let id = ui.id();
     let theme = theme(ui.ctx());
     theme

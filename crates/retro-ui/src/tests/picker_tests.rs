@@ -31,6 +31,7 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                         &ids,
                         0.0,
                         ROW_HEIGHT,
+                        false,
                         |_, _, _| {},
                     );
                     height = out.inner_rect.height();
@@ -156,7 +157,7 @@ fn arrows_move_the_selection_and_clamp() {
 fn page_keys_move_a_screenful() {
     let mut h = Harness::new();
     let mut picker = opened(&mut h, Arc::new(Numbers) as ListSource<u32>);
-    let page = visible_rows(&h.ctx, 0.0, ROW_HEIGHT) as usize;
+    let page = visible_rows(&h.ctx, 0.0, ROW_HEIGHT, false) as usize;
     assert!(h.has("row 0") && !h.has("row 150"));
     assert!(h.has("about 0"), "the info box describes the selection");
 
