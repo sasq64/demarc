@@ -1489,6 +1489,25 @@ impl ApplicationHandler for App {
                 typed_char(&logical_key),
                 state == ElementState::Pressed,
             ),
+            // The iOS soft keyboard only says which character it typed.
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Unidentified(_),
+                        logical_key,
+                        state,
+                        repeat: false,
+                        ..
+                    },
+                ..
+            } if let Some(c) = typed_char(&logical_key) => {
+                let code = match c {
+                    '\n' => KeyCode::Enter,
+                    ' ' => KeyCode::Space,
+                    _ => KeyCode::F35,
+                };
+                self.key(code, Some(c), state == ElementState::Pressed);
+            }
             WindowEvent::Touch(touch) => self.touch(touch),
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
@@ -1661,7 +1680,31 @@ pub fn ios_setup() -> Result<std::path::PathBuf> {
         std::fs::copy(bundle.join(name), &path)
             .with_context(|| format!("no {name} in the app bundle"))?;
     }
+    play_audio();
     Ok(bundle.join(DB_ASSET))
+}
+
+/// The default audio session is muted by the silent switch and stops in the
+/// background.
+#[cfg(target_os = "ios")]
+fn play_audio() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    #[link(name = "AVFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static AVAudioSessionCategoryPlayback: *const AnyObject;
+    }
+    let no_error = std::ptr::null_mut::<*mut AnyObject>();
+    // SAFETY: plain AVAudioSession calls with valid arguments.
+    unsafe {
+        let session: *mut AnyObject = msg_send![class!(AVAudioSession), sharedInstance];
+        let category: bool =
+            msg_send![session, setCategory: AVAudioSessionCategoryPlayback, error: no_error];
+        let active: bool = msg_send![session, setActive: true, error: no_error];
+        if !(category && active) {
+            tracing::warn!("could not set up the audio session");
+        }
+    }
 }
 
 /// A locked screen stops the demo.

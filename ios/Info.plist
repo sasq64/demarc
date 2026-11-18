@@ -34,6 +34,11 @@
     <!-- Without a launch screen iOS runs the app letterboxed at 320x480. -->
     <key>UILaunchScreen</key>
     <dict/>
+    <!-- Keep playing with the screen off or another app in front. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
     <key>UIStatusBarHidden</key>
     <true/>
     <key>UIRequiresFullScreen</key>
