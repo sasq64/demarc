@@ -32,6 +32,7 @@ fn list_heights(size: egui::Vec2, items: usize, frames: usize) -> Vec<f32> {
                         0.0,
                         ROW_HEIGHT,
                         false,
+                        true,
                         |_, _, _| {},
                     );
                     height = out.inner_rect.height();

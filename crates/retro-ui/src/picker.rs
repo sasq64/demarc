@@ -660,6 +660,7 @@ impl<T: 'static> Picker<T> {
                     extra,
                     self.row_height(),
                     self.compact,
+                    !phone,
                     |ui, rect, &id| {
                         let row = self.rows.entry(id).or_insert_with(|| {
                             let (text, sub) = if phone {
@@ -810,6 +811,7 @@ fn scroll_area<T>(
     extra: f32,
     row_height: f32,
     fill: bool,
+    highlight: bool,
     mut render: impl FnMut(&mut Ui, egui::Rect, &T),
 ) -> ScrollAreaOutput<Option<(usize, bool)>> {
     let view_height = visible_rows(ui.ctx(), extra, row_height, fill) * row_height;
@@ -860,7 +862,7 @@ fn scroll_area<T>(
                     // their row when the list scrolls -- and keep decaying on
                     // wall-clock time while the row is scrolled out of sight.
                     let row_id = id.with(row);
-                    let level = if row == selected || response.is_pointer_button_down_on() {
+                    let level = if (highlight && row == selected) || response.is_pointer_button_down_on() {
                         // Zero time snaps the stored value, so the highlight
                         // appears at once and the fade later starts from full.
                         ui.ctx().animate_value_with_time(row_id, 1.0, 0.0);
