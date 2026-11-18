@@ -84,9 +84,10 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   (`Ui::draw_keys`, `ui::BUTTONS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
   F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
-  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip, CRT
-  filter (`ui::Filter`: No, Normal = scanlines, Full = scanlines and bloom),
-  reset, pause, 10 s warp (audio dropped), next, prev and the info text.
+  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip (shows
+  the disk number), stop (unloads the core, back to the picker), reset, pause,
+  warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
+  says which buttons close the bar: for now all of row two.
 - Escape or Back toggles the picker; a tap on a running demo opens it;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

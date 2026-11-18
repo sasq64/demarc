@@ -728,8 +728,6 @@ fn bar_key(button: Button) -> Option<libretro::retro_key> {
     })
 }
 
-const WARP_TIME: Duration = Duration::from_secs(10);
-
 /// The cursor key a movement of `(dx, dy)` means, once it is long enough.
 fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
     use libretro::*;
@@ -787,7 +785,8 @@ pub struct App {
     nav_swipe: Option<(u64, (f64, f64))>,
     frame_time: Duration,
     next_frame: Instant,
-    warp_until: Option<Instant>,
+    /// Set while a finger is on the warp button.
+    warp: bool,
     disk: u32,
     /// A headset tap waiting to see if a second one follows.
     tap_at: Option<Instant>,
@@ -824,7 +823,7 @@ impl App {
             nav_swipe: None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
-            warp_until: None,
+            warp: false,
             disk: 0,
             tap_at: None,
         }
@@ -878,7 +877,7 @@ impl App {
         self.core_frames = 0;
         self.audio_fill = 0.0;
         self.ui.paused = false;
-        self.warp_until = None;
+        self.warp = false;
         self.disk = 0;
         self.core = Some(core);
         self.work = Some(work);
@@ -1037,8 +1036,12 @@ impl App {
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     self.bar_press = None;
                     self.ui.key_held = None;
+                    self.warp = false;
                     if over && t.phase == TouchPhase::Ended {
                         self.bar_button(BUTTONS[i]);
+                        if BUTTONS[i].closes_bar() {
+                            self.ui.keys_open = false;
+                        }
                     }
                 }
             }
@@ -1055,6 +1058,7 @@ impl App {
                     } else {
                         self.bar_press = Some((t.id, i));
                         self.ui.key_held = Some(i);
+                        self.warp = BUTTONS[i] == Button::Warp;
                     }
                     return;
                 }
@@ -1128,6 +1132,10 @@ impl App {
                         self.disk = (self.disk + 1) % disks;
                         core.set_disk(self.disk);
                     }
+                    if disks > 0 {
+                        let text = format!("\u{f09ef} #{}", self.disk + 1);
+                        self.ui.status_for(&text, Duration::from_millis(1500));
+                    }
                 }
             }
             Button::Reset => {
@@ -1136,12 +1144,26 @@ impl App {
                 }
             }
             Button::Pause => self.ui.paused = !self.ui.paused,
-            Button::Warp => self.warp_until = Some(Instant::now() + WARP_TIME),
+            Button::Stop => self.stop(),
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),
             Button::Back => self.ui.open(),
             _ => {}
         }
+    }
+
+    /// Unload the running release and go back to the picker.
+    fn stop(&mut self) {
+        self.cancel_touch();
+        self.core = None;
+        self.work = None;
+        self.startup_keys.clear();
+        self.ui.paused = false;
+        self.ui.info("");
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.has_frame = false;
+        }
+        self.ui.open();
     }
 
     fn media(&mut self, m: Media) {
@@ -1187,6 +1209,7 @@ impl App {
         self.touches.clear();
         self.swipe = None;
         self.bar_press = None;
+        self.warp = false;
         self.release_bar_key();
     }
 
@@ -1221,14 +1244,12 @@ impl App {
         if self.core.is_none() || self.ui.paused {
             return;
         }
-        let now = Instant::now();
-        if self.warp_until.is_some_and(|t| now < t) {
-            let end = now + self.frame_time.mul_f32(0.8);
+        if self.warp {
+            let end = Instant::now() + self.frame_time.mul_f32(0.8);
             while Instant::now() < end {
                 self.run_frame();
             }
         } else {
-            self.warp_until = None;
             // Timer jitter and a late frame both drain the ring.
             if self.run_frame() && self.audio.occupied_len() < AUDIO_BUF.0 {
                 self.run_frame();
@@ -1272,7 +1293,7 @@ impl App {
         };
         let rate = core.sample_rate() as f32;
         let audio = &mut self.audio;
-        let warp = self.warp_until.is_some();
+        let warp = self.warp;
         let mut heard = false;
         core.with_audio(|samples| {
             heard = !samples.is_empty();

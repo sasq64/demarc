@@ -42,6 +42,11 @@ pub const BUTTONS: [Button; 16] = {
 const BACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xb8, 0x6c);
 
 impl Button {
+    /// Whether pressing it closes the key bar.
+    pub fn closes_bar(self) -> bool {
+        BUTTONS.iter().position(|&b| b == self).is_some_and(|i| i >= 8)
+    }
+
     fn label(self, paused: bool) -> &'static str {
         match self {
             Button::F1 => "F1",
@@ -68,6 +73,7 @@ const KEY_SIZE: f32 = 26.0;
 const HUD_SCALE: f32 = 0.35;
 /// Physical pixels from the top and right edges to the info text.
 const INFO_MARGIN: f32 = 50.0;
+const INFO_TIME: Duration = Duration::from_secs(5);
 
 pub enum Action {
     Play(EmuFile),
@@ -169,11 +175,14 @@ impl Ui {
         self.status_for(text, Duration::from_secs(3600));
     }
 
-    /// What is playing, in place of the status.
+    /// What is playing, in place of the status, shown for `INFO_TIME`.
     pub fn info(&mut self, text: &str) {
         self.info_text = text.to_owned();
         self.status("");
-        self.set_info(false);
+        self.info_shown = false;
+        let now = self.now();
+        self.hud
+            .set_text(HudLocation::InfoText, text, now, Duration::ZERO, INFO_TIME);
     }
 
     /// Shows the info text while the key bar is.
@@ -194,7 +203,7 @@ impl Ui {
         );
     }
 
-    fn status_for(&mut self, text: &str, time: Duration) {
+    pub fn status_for(&mut self, text: &str, time: Duration) {
         let now = self.now();
         self.hud
             .set_text(HudLocation::BottomLeft, text, now, Duration::ZERO, time);
