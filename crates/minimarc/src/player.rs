@@ -781,6 +781,8 @@ pub struct App {
     swipe: Option<Swipe>,
     /// The finger on a key bar button or after a swipe, and the key it holds down.
     bar_key: Option<(u64, libretro::retro_key)>,
+    /// The finger on a key bar button that acts when lifted, and its index.
+    bar_press: Option<(u64, usize)>,
     /// The finger that went down on the open picker, and where.
     nav_swipe: Option<(u64, (f64, f64))>,
     frame_time: Duration,
@@ -818,6 +820,7 @@ impl App {
             touches: Vec::new(),
             swipe: None,
             bar_key: None,
+            bar_press: None,
             nav_swipe: None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
@@ -1023,6 +1026,24 @@ impl App {
             }
             return;
         }
+        if let Some((id, i)) = self.bar_press
+            && id == t.id
+        {
+            let over = self.ui.key_at(t.location.x, t.location.y) == Some(i);
+            match t.phase {
+                TouchPhase::Started | TouchPhase::Moved => {
+                    self.ui.key_held = over.then_some(i);
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    self.bar_press = None;
+                    self.ui.key_held = None;
+                    if over && t.phase == TouchPhase::Ended {
+                        self.bar_button(BUTTONS[i]);
+                    }
+                }
+            }
+            return;
+        }
         match t.phase {
             TouchPhase::Started => {
                 if let Some(i) = self.ui.key_at(t.location.x, t.location.y) {
@@ -1032,7 +1053,8 @@ impl App {
                         self.bar_key = Some((t.id, key));
                         self.ui.key_held = Some(i);
                     } else {
-                        self.bar_button(BUTTONS[i]);
+                        self.bar_press = Some((t.id, i));
+                        self.ui.key_held = Some(i);
                     }
                     return;
                 }
@@ -1085,7 +1107,11 @@ impl App {
 
     /// A finger held still past `SWIPE_TIME` is a long press.
     fn check_long_press(&mut self) {
-        if self.swipe.take_if(|s| s.began.elapsed() >= SWIPE_TIME).is_some() {
+        if self
+            .swipe
+            .take_if(|s| s.began.elapsed() >= SWIPE_TIME)
+            .is_some()
+        {
             self.toggle_keys();
         }
     }
@@ -1160,6 +1186,7 @@ impl App {
     fn cancel_touch(&mut self) {
         self.touches.clear();
         self.swipe = None;
+        self.bar_press = None;
         self.release_bar_key();
     }
 
