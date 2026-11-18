@@ -124,6 +124,22 @@ fn playlist_shows_its_entries_directly() {
 }
 
 #[test]
+fn a_single_db_hides_the_root() {
+    let dbs: IndexMap<String, &'static [EmuFile]> = [(
+        "CSDb".to_string(),
+        db("id:1\ttitle:A\tcategory:Demo\tdownload:http://x/a.zip\n"),
+    )]
+    .into();
+    let mut navigator = Navigator::new();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
+    navigator.go_root().enter(&["CSDb"]).enter(&["Categories"]);
+    navigator.back().back();
+    assert_eq!(navigator.current_path(), ["CSDb"]);
+    navigator.forward().to_depth(0);
+    assert_eq!(navigator.current_path(), ["CSDb"]);
+}
+
+#[test]
 fn playlist_menu_and_refresh() {
     let mut navigator = Navigator::new();
     navigator.add_playlist(

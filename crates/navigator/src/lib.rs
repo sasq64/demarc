@@ -184,8 +184,15 @@ impl Navigator {
         self.stack.push(nav_list);
         self
     }
+    /// The lowest stack position reachable: the root list is skipped when it
+    /// holds a single database.
+    fn min_pos(&self) -> isize {
+        let single = self.files.len() == 1 && self.stack.len() > 1;
+        (single && self.stack[0].path.is_empty()) as isize
+    }
+
     pub fn back(&mut self) -> &mut Self {
-        if self.pos > 0 {
+        if self.pos > self.min_pos() {
             self.pos -= 1;
         }
         self
@@ -200,7 +207,7 @@ impl Navigator {
     /// Go to the deepest list in the stack whose path has at most `depth` parts.
     pub fn to_depth(&mut self, depth: usize) -> &mut Self {
         if let Some(i) = self.stack.iter().rposition(|l| l.path.len() <= depth) {
-            self.pos = i as isize;
+            self.pos = (i as isize).max(self.min_pos());
         }
         self
     }
