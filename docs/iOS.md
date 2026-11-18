@@ -25,6 +25,16 @@ Everything runs on a Mac (`ssh macbook`, checkout in `~/projects/demarc`).
 - The Apple ID signed in under Xcode → Settings → Accounts. When its login
   expires `xcodebuild` fails with "The login details for account … were
   rejected"; sign in there again.
+- The first install from a free team has to be trusted on the phone:
+  Settings → General → VPN & Device Management → Developer App → Trust.
+- The phone unlocked: `devicectl` mounts the developer disk image on first use
+  after a reboot and fails with `kAMDMobileImageMounterDeviceLocked` otherwise.
+  Xcode 16.4 (the newest the App Store offers on Sequoia) works with iOS 26.6.
+- Over ssh the login keychain is locked, and signing fails with "User
+  interaction is not allowed" or `errSecInternalComponent`. Run the script in
+  Terminal on the Mac, or `ssh -t macbook security unlock-keychain
+  ~/Library/Keychains/login.keychain-db` first; it stays locked after a reboot.
+  Launching an installed build (below) needs no keychain.
 
 ## Identity
 
@@ -73,8 +83,28 @@ the development certificate, registers the phone and fetches a profile, then:
   safe area, which becomes egui's `safe_area_insets` (`Gfx::safe_area`).
 - RAR and LHA work: `release-io/build.rs` links `c++` for `unrar_sys`.
 - `UIApplication.idleTimerDisabled` keeps the screen on.
+- The audio session is set to `Playback` (`play_audio`): the default one is
+  muted by the silent switch. With `UIBackgroundModes` = `audio` in
+  `Info.plist` the demo keeps playing in the background.
+- The soft keyboard sends each character as a `KeyboardInput` with an
+  `Unidentified` physical key and the character as the logical key, press and
+  release together; Backspace is the only one with a key code. `window_event`
+  sends those characters through `char_key`, with `\n` as Return.
 
 ## Looking at it
+
+On the phone, with the log on the terminal (no keychain needed):
+
+```sh
+xcrun devicectl device process launch --terminate-existing --console \
+    --environment-variables '{"RUST_LOG": "info", "MINIMARC_PERF": "1"}' \
+    --device <id> se.minnberg.demarc.dev
+```
+
+`<id>` is from `xcrun devicectl list devices`. `MINIMARC_PERF` logs ticks,
+core and draw rates and times every five seconds (`Perf` in `player.rs`).
+
+In the simulator:
 
 ```sh
 xcrun simctl io "iPhone 15" screenshot shot.png
@@ -86,11 +116,16 @@ nothing to click, so over ssh the simulator can only be looked at.
 
 ## State (2026-11-18)
 
-Simulator (iPhone 15, iOS 17.4), merged with the key bar and phone picker
-from `minimarc`: the database loads and the picker fills the screen inside the
-safe area. Earlier a release was downloaded, unpacked and run in VICE there.
+Running on an iPhone 13 (iOS 26.6.2) with the free team, from Xcode 16.4 on
+macOS 15.7.3: the picker, download and unpack, VICE, sound, touch, the key bar
+and the soft keyboard work.
 
-Not yet seen on a phone. Untested: touch (taps, swipes, the key bar), sound,
-the soft keyboard (its height is not fed to the picker as `MiniActivity` does
-on Android), rotation, and background audio. On a phone the swipe up for the
-key bar will compete with the home gesture.
+Measured with `MINIMARC_PERF` during a demo: a steady 50.1 core frames and
+draws per second, VICE 6.5 ms a frame (worst 9 ms), egui and render under
+0.5 ms on the CPU, no tick late by more than 21 ms. Motion still looks uneven
+because the panel runs at 60 Hz: every fifth refresh repeats a frame. Blending
+the two nearest C64 frames per refresh would smooth it; not done.
+
+Untested: rotation, the soft keyboard's height (not fed to the picker as
+`MiniActivity` does on Android), background audio with the screen off. On a
+phone the swipe up for the key bar competes with the home gesture.

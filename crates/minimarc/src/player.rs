@@ -776,6 +776,73 @@ fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
 /// How long a scheduled startup key is held, in frames.
 const KEY_HOLD: u32 = 2;
 
+#[derive(Default)]
+struct Stat {
+    sum: Duration,
+    max: Duration,
+    n: u32,
+}
+
+impl Stat {
+    fn add(&mut self, d: Duration) {
+        self.sum += d;
+        self.max = self.max.max(d);
+        self.n += 1;
+    }
+}
+
+impl std::fmt::Display for Stat {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let avg = ms(self.sum) / self.n.max(1) as f64;
+        write!(f, "{avg:.1}/{:.1}ms", ms(self.max))
+    }
+}
+
+/// Timings logged every few seconds when `MINIMARC_PERF` is set.
+#[derive(Default)]
+struct Perf {
+    since: Option<Instant>,
+    last_tick: Option<Instant>,
+    ticks: u32,
+    gap_max: Duration,
+    core: Stat,
+    ui: Stat,
+    render: Stat,
+}
+
+impl Perf {
+    fn tick(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_tick {
+            self.gap_max = self.gap_max.max(now - last);
+        }
+        self.last_tick = Some(now);
+        self.ticks += 1;
+        let since = *self.since.get_or_insert(now);
+        let secs = (now - since).as_secs_f64();
+        if secs >= 5.0 {
+            let per_sec = |n: u32| n as f64 / secs;
+            info!(
+                "perf: ticks {:.1}/s, core {:.1}/s {}, draws {:.1}/s ui {} render {}, \
+                 max gap {:.1}ms",
+                per_sec(self.ticks),
+                per_sec(self.core.n),
+                self.core,
+                per_sec(self.render.n),
+                self.ui,
+                self.render,
+                self.gap_max.as_secs_f64() * 1000.0
+            );
+            *self = Perf {
+                since: Some(now),
+                last_tick: Some(now),
+                ..Default::default()
+            };
+        }
+    }
+}
+
 pub struct App {
     core: Option<RetroCoreDirect>,
     /// The release `core` is running, kept for the temp dir it may sit in.
@@ -816,6 +883,7 @@ pub struct App {
     disk: u32,
     /// A headset tap waiting to see if a second one follows.
     tap_at: Option<Instant>,
+    perf: Option<Perf>,
 }
 
 impl App {
@@ -852,6 +920,7 @@ impl App {
             warp: false,
             disk: 0,
             tap_at: None,
+            perf: std::env::var_os("MINIMARC_PERF").map(|_| Perf::default()),
         }
     }
 
@@ -1251,6 +1320,9 @@ impl App {
     /// Step the core one frame and hand the result to the GPU. Without a
     /// surface (on Android, in the background) the core only plays its sound.
     fn step(&mut self) {
+        if let Some(perf) = self.perf.as_mut() {
+            perf.tick();
+        }
         let Some(gfx) = self.gfx.as_ref() else {
             return;
         };
@@ -1304,7 +1376,11 @@ impl App {
         let Some(core) = self.core.as_mut() else {
             return false;
         };
+        let began = Instant::now();
         core.run();
+        if let Some(perf) = self.perf.as_mut() {
+            perf.core.add(began.elapsed());
+        }
         self.core_frames += 1;
         let frames = self.core_frames;
         self.startup_keys.retain(|&(frame, key, down)| {
@@ -1512,11 +1588,17 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
+                    let began = Instant::now();
                     let (frame, picked) = gfx.run_ui(&mut self.ui);
+                    let drawn = Instant::now();
                     if frame.repaint {
                         gfx.window.request_redraw();
                     }
                     gfx.render(frame);
+                    if let Some(perf) = self.perf.as_mut() {
+                        perf.ui.add(drawn - began);
+                        perf.render.add(drawn.elapsed());
+                    }
                     match picked {
                         Some(Action::Play(file)) => {
                             self.ui.status("Loading...");

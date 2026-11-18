@@ -1817,3 +1817,17 @@
   device target (`aarch64-apple-ios`) does not link at that; the simulator
   target does. `IPHONEOS_DEPLOYMENT_TARGET=14.0` fixes it (the failing symbol
   was not looked up).
+
+- On iOS winit's soft keyboard text arrives as `KeyboardInput` with
+  `PhysicalKey::Unidentified` and the character in `logical_key`, so
+  minimarc's match on `PhysicalKey::Code` dropped everything but Backspace.
+
+- `devicectl` saying `ddiServicesAvailable: false` for an iOS 26 phone looked
+  like Xcode 16.4 being too old; the full error from `devicectl device info
+  apps` was `kAMDMobileImageMounterDeviceLocked` — the phone was locked. Read
+  the whole error before asking for an Xcode update.
+
+- Signing over ssh fails with "User interaction is not allowed" or
+  `errSecInternalComponent` while the login keychain is locked to that
+  session; the user has to unlock it (`ssh -t … security unlock-keychain`) or
+  run the script in Terminal on the Mac.
