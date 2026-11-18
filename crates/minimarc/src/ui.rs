@@ -98,13 +98,9 @@ impl Ui {
         let ctx = egui::Context::default();
         retro_ui::apply_style(&ctx, FONT.to_vec());
         let mut picker = Picker::default();
-        picker.buttons = vec!["".into(), "󰍹".into()];
-        picker.dir_buttons = vec!["".into(), "󰍹".into()];
-        picker.button_colors = vec![egui::Color32::from_rgb(0x33, 0xdd, 0x55), BACK_COLOR];
-        picker.dir_button_colors = vec![BACK_COLOR];
-        picker.info_lines = 2.0;
         picker.right_icons = false;
         picker.compact = true;
+        picker.phone = true;
         navigator::picker_sources::SHOW_URL.store(false, std::sync::atomic::Ordering::Relaxed);
         Self {
             ctx,
@@ -328,14 +324,6 @@ impl Ui {
                 TitleClick::Forward => self.navigator.forward(),
             };
             self.show_changed();
-        }
-        match self.picker.take_button_click() {
-            Some(1) => {
-                self.close();
-                return None;
-            }
-            Some(0) => self.picker.pick_selected(),
-            _ => {}
         }
         let picked = self.picker.show(ctx, |_, _, _| vec![]);
         if self.picker.take_query_click() {
