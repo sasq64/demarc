@@ -1,0 +1,59 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		A1000000000000000000000A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B; };
+		A1000000000000000000000B /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A1000000000000000000000C /* minimarc.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = minimarc.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000D = {isa = PBXGroup; children = (A1000000000000000000000E, A1000000000000000000000F); sourceTree = "<group>"; };
+		A1000000000000000000000E /* src */ = {isa = PBXGroup; children = (A1000000000000000000000B); path = src; sourceTree = "<group>"; };
+		A1000000000000000000000F /* Products */ = {isa = PBXGroup; children = (A1000000000000000000000C); name = Products; sourceTree = "<group>"; };
+		A10000000000000000000010 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000A); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000011 /* minimarc */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000014;
+			buildPhases = (A10000000000000000000010);
+			buildRules = ();
+			dependencies = ();
+			name = minimarc;
+			productName = minimarc;
+			productReference = A1000000000000000000000C;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000012 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {LastUpgradeCheck = 1600; TargetAttributes = {A10000000000000000000011 = {CreatedOnToolsVersion = 16.0; }; }; };
+			buildConfigurationList = A10000000000000000000016;
+			compatibilityVersion = "Xcode 14.0";
+			mainGroup = A1000000000000000000000D;
+			productRefGroup = A1000000000000000000000F;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A10000000000000000000011);
+		};
+		A10000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID)";
+				PRODUCT_NAME = minimarc;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A10000000000000000000014 = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+		A10000000000000000000015 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; }; name = Debug; };
+		A10000000000000000000016 = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000015); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+	};
+	rootObject = A10000000000000000000012;
+}

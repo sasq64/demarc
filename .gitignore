@@ -29,3 +29,5 @@ __pycache__/
 
 /external/rife-ncnn-vulkan/
 /external/rife-demarc/build/
+/ios/provision/Provision.xcodeproj/project.xcworkspace/
+/ios/provision/Provision.xcodeproj/xcuserdata/

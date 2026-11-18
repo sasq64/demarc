@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Build `minimarc` for the iOS simulator, bundle it into an .app with the VICE
-# core, the csdb database and the fast-load cartridge, install and launch it.
+# Build `minimarc` for the iOS simulator or a phone, bundle it into an .app with
+# the VICE core, the csdb database and the carts, install and launch it.
 # Runs on a Mac with Xcode. See docs/iOS.md.
 #
-#   scripts/run-ios.sh              release build
+#   scripts/run-ios.sh              release build in the simulator
 #   scripts/run-ios.sh --debug      debug build
 #   scripts/run-ios.sh --console    stay attached and print the app's log
-#   scripts/run-ios.sh --device     build and bundle for a real device, and stop:
-#                                   signing and installing it is not scripted
+#   scripts/run-ios.sh --device     sign with $TEAM and run on the connected phone
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,7 +15,9 @@ TARGET=aarch64-apple-ios-sim
 # Matches MinimumOSVersion in ios/Info.plist. Rust's default of 10.0 does not
 # link the device build.
 export IPHONEOS_DEPLOYMENT_TARGET=14.0
-BUNDLE_ID=com.demarc.c64
+BUNDLE_ID="${BUNDLE_ID:-se.minnberg.demarc.dev}"
+# The personal team of the Apple ID signed in to Xcode.
+TEAM="${TEAM:-DGBP99FB75}"
 CORE=vice_x64sc
 SIM="${SIM:-iPhone 15}"
 OUT=target/ios
@@ -63,6 +64,7 @@ echo "==> bundle"
 rm -rf "$APP"
 mkdir -p "$APP"
 cp "target/$TARGET/$PROFILE/minimarc" ios/Info.plist "$APP/"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Info.plist"
 cp "$OUT/${CORE}_libretro.dylib" demodb/csdb.txt system/vice/C64/*.crt "$APP/"
 # Only the csdb entries, each with the comment lines right above it.
 awk '
@@ -72,8 +74,37 @@ awk '
     { pend = "" }
 ' system/overrides.toml > "$APP/overrides.toml"
 if [[ "$TARGET" != *-sim ]]; then
-    echo "==> $APP is unsigned: sign the core and the app with a development"
-    echo "    identity and a provisioning profile before installing it"
+    # Only Xcode makes provisioning profiles: build a stub app with the same
+    # bundle id and take its profile and signing identity.
+    echo "==> provisioning $BUNDLE_ID (team $TEAM)"
+    prov=$PWD/$OUT/provision
+    xcodebuild -quiet -project ios/provision/Provision.xcodeproj -sdk iphoneos \
+        DEVELOPMENT_TEAM="$TEAM" BUNDLE_ID="$BUNDLE_ID" SYMROOT="$prov" \
+        -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+    stub=$prov/Debug-iphoneos/minimarc.app
+    identity=$(codesign -dvv "$stub" 2>&1 | sed -n 's/^Authority=//p' | head -1)
+    cp "$stub/embedded.mobileprovision" "$APP/"
+    security cms -D -i "$APP/embedded.mobileprovision" > "$prov/profile.plist"
+    /usr/libexec/PlistBuddy -x -c "Print :Entitlements" "$prov/profile.plist" \
+        > "$prov/entitlements.plist"
+    codesign --force --sign "$identity" "$APP/${CORE}_libretro.dylib"
+    codesign --force --sign "$identity" --entitlements "$prov/entitlements.plist" "$APP"
+
+    if [[ -z "${DEVICE:-}" ]]; then
+        xcrun devicectl list devices --json-output "$prov/devices.json" >/dev/null
+        DEVICE=$(python3 -c 'import json, sys
+for d in json.load(open(sys.argv[1]))["result"]["devices"]:
+    if d["hardwareProperties"].get("platform") == "iOS" and d["connectionProperties"].get("pairingState") == "paired":
+        print(d["identifier"]); break' "$prov/devices.json")
+        [[ -n "$DEVICE" ]] || { echo "no paired iPhone found" >&2; exit 1; }
+    fi
+    echo "==> install on $DEVICE ($(du -sh "$APP" | cut -f1))"
+    xcrun devicectl device install app --device "$DEVICE" "$APP" >/dev/null
+    echo "==> launch"
+    launch=(--terminate-existing)
+    [[ "$CONSOLE" == 1 ]] && launch+=(--console)
+    xcrun devicectl device process launch "${launch[@]}" --device "$DEVICE" \
+        --environment-variables "{\"RUST_LOG\": \"${RUST_LOG:-info}\"}" "$BUNDLE_ID"
     exit 0
 fi
 codesign --force --sign - "$APP/${CORE}_libretro.dylib"
