@@ -10,6 +10,8 @@ record mistakes there, small changes, short comments, test layout).
 `docs/ANDROID.md` has the app's design at the top; everything in it below
 "The rest of this file is the log" is history, and its paths are stale.
 
+The crate also runs on iOS: `scripts/run-ios.sh` on a Mac, see `docs/iOS.md`.
+
 ## Where things are
 
 ```

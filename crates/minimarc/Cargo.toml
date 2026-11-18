@@ -37,6 +37,9 @@ tempfile.workspace = true
 winit = { workspace = true, features = ["android-native-activity"] }
 egui-winit = { version = "0.36.2", default-features = false, features = ["android-native-activity"] }
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+
 # A development tool, not something to release.
 [package.metadata.dist]
 dist = false

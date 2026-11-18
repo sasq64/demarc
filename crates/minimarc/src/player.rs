@@ -35,13 +35,14 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 /// and how long it may take to get there.
 const SWIPE_DIST: f64 = 80.0;
 /// Phone text is read at arm's length on a small screen.
-const UI_ZOOM: f32 = if cfg!(target_os = "android") {
+const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
+const UI_ZOOM: f32 = if MOBILE {
     2.0
 } else {
     1.0
 };
 /// Window height in logical pixels past which the UI stops growing with it.
-const UI_MAX_HEIGHT: f32 = if cfg!(target_os = "android") {
+const UI_MAX_HEIGHT: f32 = if MOBILE {
     600.0
 } else {
     f32::INFINITY
@@ -276,9 +277,34 @@ struct Gfx {
     egui_renderer: egui_wgpu::Renderer,
 }
 
+/// The size of what is drawn on. An iOS window's inner size is its safe area,
+/// but the view covers the screen.
+fn surface_size(window: &Window) -> PhysicalSize<u32> {
+    if cfg!(target_os = "ios") {
+        window.outer_size()
+    } else {
+        window.inner_size()
+    }
+}
+
+/// Physical pixels at each edge that the notch and the home indicator take.
+fn safe_area(window: &Window) -> egui::epaint::MarginF32 {
+    let mut insets = egui::epaint::MarginF32::ZERO;
+    if cfg!(target_os = "ios")
+        && let (Ok(inner), Ok(outer)) = (window.inner_position(), window.outer_position())
+    {
+        let (inner_size, outer_size) = (window.inner_size(), window.outer_size());
+        insets.left = (inner.x - outer.x) as f32;
+        insets.top = (inner.y - outer.y) as f32;
+        insets.right = outer_size.width as f32 - inner_size.width as f32 - insets.left;
+        insets.bottom = outer_size.height as f32 - inner_size.height as f32 - insets.top;
+    }
+    insets
+}
+
 impl Gfx {
     fn new(window: Arc<Window>, ctx: &egui::Context, filter: Filter) -> Result<Self> {
-        let size = window.inner_size();
+        let size = surface_size(&window);
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_without_display_handle_from_env()
                 .with_display_handle(Box::new(window.clone())),
@@ -429,7 +455,7 @@ impl Gfx {
     /// renderer stay, since the egui context won't send its textures again.
     fn resume(&mut self) -> Result<()> {
         self.surface = Some(self.instance.create_surface(self.window.clone())?);
-        self.resize(self.window.inner_size());
+        self.resize(surface_size(&self.window));
         Ok(())
     }
 
@@ -469,16 +495,15 @@ impl Gfx {
         let mut input = self.egui_state.take_egui_input(&self.window);
         // Android's focus event comes before there is an egui state to take it.
         input.focused = self.window.has_focus();
-        let bottom = self.keyboard_height(ui) / ui.ctx.pixels_per_point();
-        input.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
-            bottom,
-            ..Default::default()
-        }));
+        let ppp = ui.ctx.pixels_per_point();
+        let mut insets = safe_area(&self.window);
+        insets.bottom = insets.bottom.max(self.keyboard_height(ui));
+        input.safe_area_insets = Some(egui::SafeAreaInsets(insets / ppp));
         let ctx = ui.ctx.clone();
         let mut picked = None;
         let mut output = ctx.run_ui(input, |egui_ui| picked = ui.draw(egui_ui.ctx()));
         // The soft keyboard covers the picker's buttons.
-        if cfg!(target_os = "android") {
+        if MOBILE {
             let ime = &mut output.platform_output.ime;
             if !ui.soft_keyboard {
                 *ime = None;
@@ -1263,9 +1288,11 @@ impl ApplicationHandler for App {
             }
             return;
         }
-        let attrs = Window::default_attributes()
-            .with_title("demarc C64")
-            .with_inner_size(PhysicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));
+        let mut attrs = Window::default_attributes().with_title("demarc C64");
+        // On iOS this would size the view, which should cover the screen.
+        if !cfg!(target_os = "ios") {
+            attrs = attrs.with_inner_size(PhysicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));
+        }
         match event_loop
             .create_window(attrs)
             .map_err(anyhow::Error::from)
@@ -1274,6 +1301,8 @@ impl ApplicationHandler for App {
             Ok(gfx) => {
                 self.gfx = Some(gfx);
                 self.audio.activate();
+                #[cfg(target_os = "ios")]
+                keep_screen_on();
             }
             Err(e) => {
                 eprintln!("Could not open a window: {e:#}");
@@ -1457,6 +1486,53 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // Android keeps the process after the activity is gone and would call
     // this again in it, where the logger, winit and the core are all set up.
     std::process::exit(0);
+}
+
+// -------------------------------------------------------------------------
+// iOS
+// -------------------------------------------------------------------------
+
+/// Point everything writable into the app's container and copy what the core
+/// reads from its system dir out of the bundle (`scripts/run-ios.sh` puts it
+/// there). Returns the database to open.
+#[cfg(target_os = "ios")]
+pub fn ios_setup() -> Result<std::path::PathBuf> {
+    let bundle = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("no bundle directory"))?
+        .to_owned();
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("no HOME"))?;
+    let home = std::path::PathBuf::from(home);
+    let data = home.join("Library/Application Support");
+    release_io::set_cache_dir(home.join("Library/Caches/releases"));
+    retro_core::set_system_dir(data.clone());
+    for (name, dest) in [
+        ("rr38ppal-auto.crt", "vice/C64/rr38ppal-auto.crt"),
+        (
+            database::overrides::FILE_NAME,
+            database::overrides::FILE_NAME,
+        ),
+    ] {
+        let path = data.join(dest);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(bundle.join(name), &path)
+            .with_context(|| format!("no {name} in the app bundle"))?;
+    }
+    Ok(bundle.join("csdb.txt"))
+}
+
+/// A locked screen stops the demo.
+#[cfg(target_os = "ios")]
+fn keep_screen_on() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    // SAFETY: called from the event loop, which is the main thread.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(UIApplication), sharedApplication];
+        let _: () = msg_send![app, setIdleTimerDisabled: true];
+    }
 }
 
 #[cfg(test)]

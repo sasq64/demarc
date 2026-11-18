@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 pub fn dylib_name(name: &str) -> String {
     let ext = if cfg!(target_os = "windows") {
         "dll"
-    } else if cfg!(target_os = "macos") {
+    } else if cfg!(target_vendor = "apple") {
         "dylib"
     } else {
         "so"

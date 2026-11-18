@@ -1783,3 +1783,13 @@
 - Nerd Font glyphs (private-use codepoints) in `ListIcon::Glyph('…')` get
   dropped when source is rewritten through a shell heredoc, leaving `''`.
   Copy them from the file itself (e.g. read and reuse in Python) instead.
+
+- On iOS winit's `with_inner_size` sizes the view itself, so minimarc's desktop
+  window size left the app in a 720x576 corner of the phone. `inner_size()`
+  there is the safe area and `outer_size()` the screen; `egui-winit` already
+  uses the outer one, so the surface has to as well.
+
+- A Rust iOS build defaults to a deployment target of 10.0, and minimarc's
+  device target (`aarch64-apple-ios`) does not link at that; the simulator
+  target does. `IPHONEOS_DEPLOYMENT_TARGET=14.0` fixes it (the failing symbol
+  was not looked up).

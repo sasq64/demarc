@@ -702,8 +702,10 @@ impl RetroCoreDirect {
         //
         // Android bans loading code out of the app's writable data dir, and the
         // core lives in the APK's native library dir, so there it is loaded in
-        // place — there is only ever one view to dupe for anyway.
-        let (loaded_core_path, core_tempdir) = if cfg!(target_os = "android") {
+        // place — there is only ever one view to dupe for anyway. iOS has the
+        // same ban, with the core in the app bundle.
+        let in_place = cfg!(any(target_os = "android", target_os = "ios"));
+        let (loaded_core_path, core_tempdir) = if in_place {
             (core_path.to_owned(), None)
         } else {
             let dir = tempfile::Builder::new().prefix("demarc-core-").tempdir()?;

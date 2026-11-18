@@ -1,5 +1,9 @@
 fn main() {
     build_cbmconvert();
+    // `unrar_sys` is C++ and does not ask for the runtime on iOS.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
+        println!("cargo:rustc-link-lib=c++");
+    }
 }
 
 /// Compile the `cbmconvert` command-line tool as a static library linked into
