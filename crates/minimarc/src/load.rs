@@ -141,9 +141,7 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
         apply_override_meta(&mut work, over);
         events.extend_from_slice(&over.events);
     }
-    if work.has_meta("vice_cartridge") {
-        events.extend_from_slice(&release_io::c64::FAST_LOAD_EVENTS);
-    }
+    events.extend(release_io::c64::boot_events(&work));
     let info = info_text(&file);
     Ok(Demo { work, events, info })
 }

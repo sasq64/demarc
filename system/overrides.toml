@@ -12,6 +12,15 @@ meta = { vice_sid_extra = "0xd420" }
 [csdb.256782]
 meta = { vice_sid_extra = "0xd420" }
 
+[csdb.81157]
+file = "Instinct+BoozeDesign - Andropolis.d64"
+
+[csdb.93836]
+boot = "ARTIL*"
+
+[csdb.81198]
+boot = "ARTIL*"
+
 [zoo.20]
 meta = { wine_res = "1024x768" }
 events = [{ frame = 505, click = [0.0729999989271164, 0.39800000190734863] }, { frame = 603, click = [0.503000020980835, 0.5220000147819519] }]

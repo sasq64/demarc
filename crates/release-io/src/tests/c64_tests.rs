@@ -62,3 +62,27 @@ fn characters_map_to_the_c64_key_that_types_them() {
     assert_eq!(char_key('~'), Some((RETROK_DELETE, false)));
     assert_eq!(char_key('{'), None);
 }
+
+#[test]
+fn boot_events_follow_the_cartridge_and_boot_name() {
+    let (_dir, mut file) = prg_release("");
+    assert!(boot_events(&file).is_empty());
+    file.set_meta("vice_cartridge", "rr38ppal-auto.crt");
+    assert_eq!(boot_events(&file), FAST_LOAD_EVENTS.to_vec());
+    file.set_meta(BOOT_NAME, "AB*");
+    use retro_core::libretro::*;
+    assert_eq!(
+        boot_events(&file),
+        vec![
+            (50, InputEvent::KeyState(RETROK_LSHIFT, true)),
+            (51, InputEvent::Key(RETROK_5)),
+            (54, InputEvent::KeyState(RETROK_LSHIFT, false)),
+            (56, InputEvent::Key(RETROK_0)),
+            (60, InputEvent::Key(RETROK_SEMICOLON)),
+            (64, InputEvent::Key(RETROK_a)),
+            (68, InputEvent::Key(RETROK_b)),
+            (72, InputEvent::Key(RETROK_RIGHTBRACKET)),
+            (76, InputEvent::Key(RETROK_RETURN)),
+        ]
+    );
+}

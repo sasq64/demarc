@@ -112,6 +112,10 @@ pub const RELEASE_DIR: &str = "release_dir";
 /// arguments, e.g. `dos4gw.exe demo.exe`.
 pub const BOOT_COMMAND: &str = "boot_command";
 
+/// Meta key holding an override's `boot` that names no file in the release,
+/// e.g. a file inside a C64 disk image.
+pub const BOOT_NAME: &str = "boot_name";
+
 /// Apply what `overrides.toml` says about this release, once it is unpacked and
 /// before any system looks at it.
 ///
@@ -146,7 +150,10 @@ pub fn apply_override(file: &mut WorkFile, over: &Override, system_dir: &Path) -
             // The archive it named is not the one that was downloaded, most
             // likely. Falling back to the systems' own pick still runs
             // something, which beats refusing to load the release at all.
-            None => warn!("Override names {boot:?}, which is not in {:?}", file.path),
+            None => {
+                warn!("Override names {boot:?}, which is not in {:?}", file.path);
+                file.set_meta(BOOT_NAME, boot);
+            }
         }
     }
     Ok(())

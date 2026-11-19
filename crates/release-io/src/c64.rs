@@ -5,10 +5,11 @@ use std::{collections::HashMap, fs, path::Path};
 use tracing::warn;
 
 use retro_core::backend::InputEvent;
-use retro_core::libretro::{RETROK_F1, RETROK_RETURN, retro_key};
+use retro_core::libretro::{RETROK_F1, RETROK_LSHIFT, RETROK_RETURN, retro_key};
 
 use crate::cbmconvert;
 use crate::release::{collect_disk_images, walk_dir};
+use crate::release_override::BOOT_NAME;
 use crate::workfile::WorkFile;
 
 /// Keys that take the fast-load cartridge's menu into the disk, by frame.
@@ -16,6 +17,37 @@ pub const FAST_LOAD_EVENTS: [(u32, InputEvent); 2] = [
     (50, InputEvent::Key(RETROK_F1)),
     (55, InputEvent::Key(RETROK_RETURN)),
 ];
+
+/// The keys that start a release once VICE is up: through the fast-load
+/// cartridge's menu, typing `%0:<name>` when an override names the file.
+pub fn boot_events(file: &WorkFile) -> Vec<(u32, InputEvent)> {
+    if !file.has_meta("vice_cartridge") {
+        return vec![];
+    }
+    let name = file.get_meta_or(BOOT_NAME, "");
+    if name.is_empty() {
+        return FAST_LOAD_EVENTS.to_vec();
+    }
+    let mut events = vec![];
+    let mut at = FAST_LOAD_EVENTS[0].0;
+    for c in format!("%0:{name}").chars() {
+        let Some((key, shifted)) = char_key(c.to_ascii_lowercase()) else {
+            warn!("Can not type {c:?} on a C64");
+            continue;
+        };
+        if shifted {
+            events.push((at, InputEvent::KeyState(RETROK_LSHIFT, true)));
+            events.push((at + 1, InputEvent::Key(key)));
+            events.push((at + 4, InputEvent::KeyState(RETROK_LSHIFT, false)));
+            at += 6;
+        } else {
+            events.push((at, InputEvent::Key(key)));
+            at += 4;
+        }
+    }
+    events.push((at, InputEvent::Key(RETROK_RETURN)));
+    events
+}
 
 /// A PRG is a 2-byte little endian load address followed by the data to place
 /// there, so it can never reach past the top of the C64's 64K address space.
