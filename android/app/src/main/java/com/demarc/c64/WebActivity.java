@@ -10,10 +10,14 @@ import android.util.Base64;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.Objects;
@@ -22,6 +26,28 @@ import java.util.Objects;
 public class WebActivity extends Activity {
     static final String URL = "url";
     static final String CSS = "css";
+
+    private static final String[] AD_HOSTS = {
+        "googlesyndication.com", "doubleclick.net", "googleadservices.com", "adservice.google.com",
+    };
+
+    private static native boolean nativeHasPath(String kind, String name);
+
+    private static native void nativeOpenPath(String kind, String name);
+
+    /** What the page's Open button calls: `kind` is the CSDb page type, `name` its title. */
+    private class Bridge {
+        @JavascriptInterface
+        public boolean has(String kind, String name) {
+            return nativeHasPath(kind, name);
+        }
+
+        @JavascriptInterface
+        public void open(String kind, String name) {
+            nativeOpenPath(kind, name);
+            runOnUiThread(WebActivity.this::finish);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -33,6 +59,7 @@ public class WebActivity extends Activity {
         WebView web = new WebView(this);
         web.getSettings().setJavaScriptEnabled(true);
         web.setBackgroundColor(0xff000000);
+        web.addJavascriptInterface(new Bridge(), "minimarc");
         // Hidden until the css is in, so the unstyled page never shows.
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -40,6 +67,19 @@ public class WebActivity extends Activity {
                 if (Objects.equals(Uri.parse(url).getHost(), host)) {
                     view.setAlpha(0);
                 }
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(
+                    WebView view, WebResourceRequest request) {
+                String h = request.getUrl().getHost();
+                for (String ad : AD_HOSTS) {
+                    if (h != null && (h.equals(ad) || h.endsWith("." + ad))) {
+                        return new WebResourceResponse(
+                                "text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                    }
+                }
+                return null;
             }
 
             @Override
@@ -93,10 +133,21 @@ public class WebActivity extends Activity {
         }
     }
 
+    /** An Open button in the header of an event or group page the db has releases for. */
+    private static final String OPEN_BUTTON =
+            "if(document.getElementById('minimarc-open'))return;"
+            + "var k=location.pathname.split('/')[1];"
+            + "var t=document.querySelector('font[size=\"6\"]');"
+            + "var h=document.querySelector('td[background*=\"topgfx\"] td');"
+            + "if(t&&h&&minimarc.has(k,t.textContent)){"
+            + "var b=document.createElement('button');b.id='minimarc-open';b.textContent='Open';"
+            + "b.onclick=function(){minimarc.open(k,t.textContent);};"
+            + "h.insertBefore(b,h.firstChild);}";
+
     /** Adds a phone viewport and `css` (passed as base64, so no quoting) to the page, once. */
     private static String styleScript(String css) {
         String b64 = Base64.encodeToString(css.getBytes(), Base64.NO_WRAP);
-        return "(function(){"
+        return "(function(){" + OPEN_BUTTON + "})();(function(){"
                 + "if(document.getElementById('minimarc-css'))return;"
                 + "var p=document.head||document.documentElement;"
                 + "var m=document.createElement('meta');m.name='viewport';"

@@ -1341,6 +1341,9 @@ impl App {
         for m in media::take() {
             self.media(m);
         }
+        if let Some(path) = crate::web::take() {
+            self.ui.goto(path);
+        }
         if self.tap_at.is_some_and(|t| t.elapsed() >= DOUBLE_TAP) {
             self.tap_at = None;
             self.toggle_pause();

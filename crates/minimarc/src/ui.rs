@@ -147,6 +147,7 @@ impl Ui {
     pub fn set_db(&mut self, name: String, files: &'static [EmuFile]) -> anyhow::Result<()> {
         let dbs: IndexMap<String, &'static [EmuFile]> = [(name.clone(), files)].into();
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
+        crate::web::set_db(&name, files);
         self.navigator.go_root().enter(&[&name]);
         self.status("");
         self.open();
@@ -161,6 +162,11 @@ impl Ui {
         if let Some(list) = self.navigator.current() {
             self.show(list);
         }
+    }
+
+    pub fn goto(&mut self, path: Vec<String>) {
+        self.navigator.goto_path(path);
+        self.show_changed();
     }
 
     pub fn close(&mut self) {

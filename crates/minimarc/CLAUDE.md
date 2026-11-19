@@ -18,7 +18,7 @@ The crate also runs on iOS: `scripts/run-ios.sh` on a Mac, see `docs/iOS.md`.
 crates/minimarc/src/player.rs   window, wgpu 30, CRT pass, egui pass, keys, touch,
                                 android_main, asset unpacking
 crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one fragment entry point
-crates/minimarc/src/web.rs      the release page: JNI call to MiniActivity.openWeb
+crates/minimarc/src/web.rs      the release page: JNI call to MiniActivity.openWeb, its Open button
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
 crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
                                 overrides.toml
@@ -95,6 +95,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   `release_url` (with `{id}`) and `release_css`, an APK asset from
   `system/web/` injected on load (`web.rs` calls `MiniActivity.openWeb` over
   JNI; Android only). Back finishes it; the demo plays on underneath.
+  On an event or group page whose name the db has releases under, an Open
+  button in the header (a JS bridge to `nativeHasPath`/`nativeOpenPath` in
+  `web.rs`) finishes it and opens Parties/<name> or Authors/<name>.
 - Escape or Back toggles the picker;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

@@ -12,3 +12,7 @@ body > table > tbody > tr:not(:first-child), body > center, body > div { display
 img { max-width: 100% !important; height: auto !important; }
 td { overflow-wrap: break-word; white-space: normal !important; }
 font[size="6"] { font-size: 24px; }
+#minimarc-open { float: left; margin: 0 0 8px 8px; padding: 8px 20px; font-size: 16px; color: #fff; background: #3d6ab7; border: 1px solid #7474fc; border-radius: 4px; }
+/* ad slots */
+ins, iframe[id^="google_ads"], iframe[id^="aswift"] { display: none !important; }
+td:has(> script[src*="googlesyndication"]), div:has(> script[src*="googlesyndication"]) { display: none !important; }
