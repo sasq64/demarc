@@ -19,7 +19,7 @@ builds it, fetches the core if needed, packs the database, installs and launches
 | Native lib | `libminimarc.so` (`android.app.lib_name` = `minimarc`) + `libvice_x64sc_libretro.so` |
 | App name | `demarc` (`res/values/strings.xml`) |
 | SDK | `minSdk` 26 (AAudio), `targetSdk`/`compileSdk` 36, arm64-v8a only |
-| Version | `versionName` 0.1.2 in `app/build.gradle.kts`; `versionCode` from `-PversionCode` |
+| Version | `versionName` 0.1.3 in `app/build.gradle.kts`; `versionCode` from `-PversionCode` |
 
 ## Icons and store graphics
 
@@ -53,7 +53,7 @@ VERSION_CODE=2 scripts/run-android.sh --bundle
 # -> android/app/build/outputs/bundle/release/app-release.aab
 ```
 
-`versionCode` must go up with every upload (1–3 are used). Bump `versionName`
+`versionCode` must go up with every upload (1–4 are used). Bump `versionName`
 in `app/build.gradle.kts` for user-visible releases.
 
 ### Publishing from the command line

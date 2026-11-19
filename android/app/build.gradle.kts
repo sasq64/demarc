@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         // Play rejects an upload whose versionCode it has seen: -PversionCode=N.
         versionCode = project.findProperty("versionCode")?.toString()?.toInt() ?: 1
-        versionName = "0.1.2"
+        versionName = "0.1.3"
         ndk {
             abiFilters += listOf(project.findProperty("abi")?.toString() ?: "arm64-v8a")
         }
