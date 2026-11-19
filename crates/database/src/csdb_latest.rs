@@ -31,7 +31,6 @@ pub const CATEGORIES: &[&str] = &[
     "Diskmag",
     "Intro Collection",
     "REU Release",
-    "EasyFlash Release",
     "Graphics",
     "Graphics Collection",
     "Music",
@@ -88,14 +87,17 @@ fn parse_row(row: &str) -> Option<EmuFile> {
         .map(text)
         .filter(|a| !a.is_empty())
         .collect();
+    let title = text(name);
+    let tags = if title.to_lowercase().contains("2sid") { "2sid" } else { "" };
     let meta: Meta = [
         ("id", leak(id.to_string())),
-        ("title", leak(text(name))),
+        ("title", leak(title)),
         ("author", leak(authors.join(" & "))),
         ("date", leak(text(date))),
         ("db", "CSDb"),
         ("release_url", RELEASE_URL),
         ("release_css", RELEASE_CSS),
+        ("tags", tags),
     ]
     .into_iter()
     .filter(|(_, v)| !v.is_empty())

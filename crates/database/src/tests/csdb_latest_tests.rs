@@ -26,6 +26,8 @@ fn fills_in_fields() {
     assert_eq!(f.get_meta("author"), "Hokuto Force & TempesT");
     assert_eq!(f.get_meta("date"), "2026-11-11");
     assert_eq!(f.game_info.year(), 2026);
+    assert_eq!(f.get_meta("tags"), "2sid");
+    assert_eq!(sample()[2].get_meta("tags"), "");
     assert_eq!(*f.categories, ["Music"]);
     assert_eq!(*f.platforms, ["C64"]);
     let FileSource::Url(urls) = &f.path else {
