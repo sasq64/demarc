@@ -113,6 +113,8 @@ public class MiniActivity extends NativeActivity {
     protected void onDestroy() {
         session.release();
         stopService(new Intent(this, PlaybackService.class));
+        // super.onDestroy() waits for android_main, which winit never lets return.
+        android.os.Process.killProcess(android.os.Process.myPid());
         super.onDestroy();
     }
 

@@ -146,6 +146,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   Only this crate names 30.
 - `unarc-rs` (RAR, LHA) needs `release-io`'s `build.rs` Android link fixes;
   see `docs/ANDROID.md`.
+- NativeActivity's `onDestroy` blocks until `android_main` returns, and winit
+  0.30 drops Destroy, so `MiniActivity.onDestroy` kills the process first;
+  without it a relaunch hangs on the splash screen.
 - `cargo ndk -o` copies every cdylib it builds into `jniLibs`; the script
   removes the `sevenz_rust2` one.
 
