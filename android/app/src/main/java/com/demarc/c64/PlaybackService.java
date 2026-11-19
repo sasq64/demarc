@@ -36,6 +36,13 @@ public class PlaybackService extends Service {
         return START_NOT_STICKY;
     }
 
+    // Swiped out of recents: the activity may not get onDestroy, and the core would play on.
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        stopSelf();
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;

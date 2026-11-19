@@ -157,6 +157,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - NativeActivity's `onDestroy` blocks until `android_main` returns, and winit
   0.30 drops Destroy, so `MiniActivity.onDestroy` kills the process first;
   without it a relaunch hangs on the splash screen.
+- Swiping the app out of recents need not call the activity's `onDestroy`;
+  `PlaybackService.onTaskRemoved` kills the process instead (it is only called
+  without `stopWithTask`).
 - `cargo ndk -o` copies every cdylib it builds into `jniLibs`; the script
   removes the `sevenz_rust2` one.
 
