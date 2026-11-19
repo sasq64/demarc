@@ -66,6 +66,9 @@ import urllib.request
 from collections import Counter
 from pathlib import Path
 
+# Where minimarc finds a release's page, and the css that fits it to a phone.
+RELEASE_HEADER = "# release_url:https://csdb.dk/release/?id={id} release_css:csdb.css"
+
 # demozoo.py owns the rules for which download urls demarc can actually use.
 # They are not Demozoo-specific -- they are about what demarc does with the
 # field -- so we import them rather than keep a second copy that can drift.
@@ -489,7 +492,7 @@ def main() -> int:
 
     releases = load_releases(args.cache_dir, args.min, args.max, args.type)
 
-    rows = ["# CSDb database", f"# Platform:{PLATFORM}"]
+    rows = ["# CSDb database", f"# Platform:{PLATFORM}", RELEASE_HEADER]
     categories: Counter = Counter()
     skipped_download = 0  # had links, but none demarc could use
     skipped_no_link = 0  # had none to begin with (--only-with-url)

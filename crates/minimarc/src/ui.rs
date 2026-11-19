@@ -20,7 +20,8 @@ pub enum Button {
     Space,
     Return,
     Keyboard,
-    Joy,
+    /// The release's web page.
+    Csdb,
     Disk,
     Reset,
     Pause,
@@ -35,17 +36,18 @@ pub enum Button {
 const ROWS: [&[Button]; 2] = {
     use Button::*;
     [
-        &[F1, F3, F5, F7, Space, Return, Keyboard, Joy],
+        &[F1, F3, F5, F7, Space, Return, Keyboard, Csdb],
         &[Disk, Stop, Reset, Pause, Warp, Prev, Next, Back],
     ]
 };
 
 const BACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xb8, 0x6c);
+const WEB_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x80, 0xfc);
 
 impl Button {
     /// Whether pressing it closes the key bar.
     pub fn closes_bar(self) -> bool {
-        ROWS[1].contains(&self)
+        self == Button::Csdb || ROWS[1].contains(&self)
     }
 
     /// The key it holds down, if it is a key.
@@ -71,7 +73,7 @@ impl Button {
             Button::Space => "󱁐",
             Button::Return => "󰌑",
             Button::Keyboard => "󰌌",
-            Button::Joy => "󰊗",
+            Button::Csdb => "󰖟",
             Button::Back => "",
             Button::Stop => "",
             Button::Disk => "󰉉",
@@ -276,6 +278,8 @@ impl Ui {
                             .font(retro_ui::picker_font(ctx, KEY_SIZE));
                         if button == Button::Back {
                             text = text.color(BACK_COLOR);
+                        } else if button == Button::Csdb {
+                            text = text.color(WEB_COLOR);
                         }
                         let widget = egui::Button::new(text)
                             .selected(self.key_held == Some(button))

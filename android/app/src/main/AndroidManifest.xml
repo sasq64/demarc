@@ -37,6 +37,13 @@
             </intent-filter>
         </activity>
 
+        <!-- A separate activity: NativeActivity owns its window's surface, so
+             a view added over it would never be drawn. -->
+        <activity
+            android:name=".WebActivity"
+            android:exported="false"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|density|uiMode" />
+
         <service
             android:name=".PlaybackService"
             android:exported="false"

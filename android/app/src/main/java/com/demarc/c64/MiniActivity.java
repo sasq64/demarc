@@ -49,7 +49,7 @@ public class MiniActivity extends NativeActivity {
     }
 
     /** The display cutout, grown so no corner of the rect is cut by a rounded screen corner. */
-    private static Insets safeInsets(WindowInsets insets) {
+    static Insets safeInsets(WindowInsets insets) {
         Insets cut = insets.getInsets(WindowInsets.Type.displayCutout());
         int left = cut.left, top = cut.top, right = cut.right, bottom = cut.bottom;
         if (Build.VERSION.SDK_INT >= 31) {
@@ -94,6 +94,13 @@ public class MiniActivity extends NativeActivity {
                 .setState(PlaybackState.STATE_PLAYING, 0, 1)
                 .build());
         session.setActive(true);
+    }
+
+    /** Called from native code: show a release's page, styled by the asset `css`. */
+    public void openWeb(String url, String css) {
+        startActivity(new Intent(this, WebActivity.class)
+                .putExtra(WebActivity.URL, url)
+                .putExtra(WebActivity.CSS, css));
     }
 
     // Started while hidden so the process is not frozen and the demo keeps playing.

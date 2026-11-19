@@ -1244,8 +1244,22 @@ impl App {
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),
             Button::Back => self.ui.open(),
+            Button::Csdb => self.open_web(),
             _ => {}
         }
+    }
+
+    /// Show the running release's page, from its db's `release_url` template.
+    fn open_web(&self) {
+        let Some(work) = self.work.as_ref() else {
+            return;
+        };
+        let template = work.get_meta_or("release_url", "");
+        if template.is_empty() {
+            return;
+        }
+        let url = template.replace("{id}", &work.get_meta_or("id", ""));
+        crate::web::open(&url, &work.get_meta_or("release_css", ""));
     }
 
     /// Unload the running release and go back to the picker.
@@ -1667,6 +1681,7 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
 
     retro_core::android::init_logging();
+    crate::web::set_app(app.clone());
     // A dimmed screen throttles the CPU, and the demo with it.
     {
         use winit::platform::android::activity::WindowManagerFlags;

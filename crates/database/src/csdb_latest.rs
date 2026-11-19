@@ -10,6 +10,9 @@ use crate::files::leak;
 
 const URL: &str = "https://csdb.dk/latestreleases.php?count=500";
 const BASE: &str = "https://csdb.dk";
+/// The `release_url` and `release_css` csdb.txt's header gives its entries.
+pub const RELEASE_URL: &str = "https://csdb.dk/release/?id={id}";
+pub const RELEASE_CSS: &str = "csdb.css";
 
 const MAX_AGE: Duration = Duration::from_secs(3600);
 
@@ -91,6 +94,8 @@ fn parse_row(row: &str) -> Option<EmuFile> {
         ("author", leak(authors.join(" & "))),
         ("date", leak(text(date))),
         ("db", "CSDb"),
+        ("release_url", RELEASE_URL),
+        ("release_css", RELEASE_CSS),
     ]
     .into_iter()
     .filter(|(_, v)| !v.is_empty())

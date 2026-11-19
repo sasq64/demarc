@@ -1,0 +1,14 @@
+body { margin: 0 12px !important; background: #000 !important; font-size: 15px; }
+body > table, body > table table { width: 100% !important; }
+/* AI/login bar, divider */
+body > table > tbody > tr:first-child > td > table > tbody > tr:not(:first-child):not(:last-child) { display: none; }
+/* the menu buttons over the top graphic, which stays with its logo */
+body > table > tbody > tr:first-child > td > table > tbody > tr:first-child td:first-child > a { display: none; }
+/* search sidebar */
+body > table > tbody > tr:first-child > td > table > tbody > tr:last-child > td:not(:first-child) { display: none; }
+/* "About this site" and the footer */
+body > table > tbody > tr:not(:first-child), body > center, body > div { display: none; }
+.cc_banner-wrapper { display: none !important; }
+img { max-width: 100% !important; height: auto !important; }
+td { overflow-wrap: break-word; white-space: normal !important; }
+font[size="6"] { font-size: 24px; }

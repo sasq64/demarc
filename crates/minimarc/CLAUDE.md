@@ -18,6 +18,7 @@ The crate also runs on iOS: `scripts/run-ios.sh` on a Mac, see `docs/iOS.md`.
 crates/minimarc/src/player.rs   window, wgpu 30, CRT pass, egui pass, keys, touch,
                                 android_main, asset unpacking
 crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one fragment entry point
+crates/minimarc/src/web.rs      the release page: JNI call to MiniActivity.openWeb
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
 crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
                                 overrides.toml
@@ -85,11 +86,15 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   (held past `SWIPE_TIME` without moving) or a tap opens or closes the key bar
   (`Ui::draw_keys`, `ui::ROWS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
-  F1/F3/F5/F7/Space/Return (held keys, `Button::key`), the soft keyboard and Joy (unused); row two (`App::bar_button`) is disk flip (shows
+  F1/F3/F5/F7/Space/Return (held keys, `Button::key`), the soft keyboard and C; row two (`App::bar_button`) is disk flip (shows
   the disk number), stop (unloads the core, back to the picker), reset, pause,
   warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
-  says which buttons close the bar: all of row two. One touch gesture
+  says which buttons close the bar: C and all of row two. One touch gesture
   at a time (`player::Gesture`).
+- C opens the release's page in `WebActivity`, a WebView: the db header's
+  `release_url` (with `{id}`) and `release_css`, an APK asset from
+  `system/web/` injected on load (`web.rs` calls `MiniActivity.openWeb` over
+  JNI; Android only). Back finishes it; the demo plays on underneath.
 - Escape or Back toggles the picker;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

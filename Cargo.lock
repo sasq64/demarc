@@ -5105,6 +5105,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "indexmap",
+ "jni 0.21.1",
  "navigator",
  "objc2 0.6.4",
  "pollster",

@@ -6,3 +6,4 @@ mod load;
 mod media;
 pub mod player;
 mod ui;
+mod web;

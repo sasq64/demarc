@@ -299,6 +299,20 @@ fn collect_db_applies_header_tags() {
     assert_eq!(*out[1].platforms, ["Amiga"]);
 }
 
+/// A header value may itself hold colons, as a URL does.
+#[test]
+fn collect_db_header_url_value() {
+    let mut out = vec![];
+    collect_db_text(
+        "# release_url:https://csdb.dk/release/?id={id} release_css:csdb.css\n\
+         id:1\ttitle:A\tdownload:http://x/a.zip\n",
+        &DbFilter::default(),
+        &mut out,
+    );
+    assert_eq!(out[0].get_meta("release_url"), "https://csdb.dk/release/?id={id}");
+    assert_eq!(out[0].get_meta("release_css"), "csdb.css");
+}
+
 /// A song and its secondary file land in one directory, and neither is any
 /// use alone. Without the second one it is an ordinary download.
 #[test]
