@@ -22,7 +22,7 @@ fn wait_for(app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
 #[test]
 fn picking_an_entry_starts_it_and_a_second_pick_replaces_it() {
     retro_core::set_system_dir(root("system"));
-    let mut app = App::new(root("testdata/demos.txt"));
+    let mut app = App::new(vec![root("testdata/demos.txt")]);
     wait_for(&mut app, "the database", |app| app.ui.is_open());
 
     for (demo, frames) in [("quantum.prg", 60), ("Skaaneland.zip", 80)] {
@@ -46,7 +46,7 @@ fn picking_an_entry_starts_it_and_a_second_pick_replaces_it() {
 fn the_picker_draws_and_enters_a_list() {
     let mut ui = Ui::new();
     let files: &'static [EmuFile] = Box::leak(Box::new([EmuFile::default()]));
-    ui.set_db("CSDb".into(), files).unwrap();
+    ui.set_db(vec![("CSDb".into(), files)]).unwrap();
     let ctx = ui.ctx.clone();
     for _ in 0..3 {
         let mut output = ctx.run_ui(egui::RawInput::default(), |egui_ui| {

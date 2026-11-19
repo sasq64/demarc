@@ -12,23 +12,63 @@ use database::emu_file::{DemoId, EmuFile, FileSource, GameInfo, Override, UrlLis
 use database::files::{DbFilter, collect_db};
 use database::overrides;
 use regex::Regex;
+use release_io::amiga;
 use release_io::release_override::apply_override_meta;
 use release_io::workfile::WorkFile;
 use retro_core::backend::InputEvent;
 
 pub enum Loaded {
-    Db(Result<(String, &'static [EmuFile])>),
+    Db(Result<Vec<(String, &'static [EmuFile])>>),
     /// A release ready to start, tagged with the load it answers.
     Demo(u32, Result<Demo>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    C64,
+    Amiga,
+}
+
+impl Platform {
+    fn of(file: &EmuFile) -> Self {
+        if amiga_platform(file).is_some() {
+            Platform::Amiga
+        } else {
+            Platform::C64
+        }
+    }
+
+    pub fn core(self) -> &'static str {
+        match self {
+            Platform::C64 => "vice_x64sc",
+            Platform::Amiga => amiga::CORE_NAME_UAE,
+        }
+    }
+
+    pub fn system_dir(self) -> PathBuf {
+        match self {
+            Platform::C64 => retro_core::system_dir().to_owned(),
+            Platform::Amiga => amiga::amiga_system_dir(),
+        }
+    }
+}
+
+/// "Amiga" or "Amiga AGA", when that is what `file` is for.
+fn amiga_platform(file: &EmuFile) -> Option<&'static str> {
+    file.platforms.iter().copied().find(|p| p.starts_with("Amiga"))
+}
+
 pub struct Demo {
+    pub platform: Platform,
     pub work: WorkFile,
     /// Keys to press, by core frame.
     pub events: Vec<(u32, InputEvent)>,
     /// Title, author and format, a line each; empty for a release without a title.
     pub info: String,
 }
+
+/// The ROM an A500 boots; the other Kickstarts come with it.
+const KICKSTART: &str = "kick34005.A500";
 
 pub struct Loader {
     tx: Sender<Loaded>,
@@ -43,10 +83,17 @@ impl Loader {
         Self { tx, rx, current: 0 }
     }
 
-    pub fn load_db(&self, path: PathBuf) {
+    /// Read each of `paths` that exists; the first is required.
+    pub fn load_db(&self, paths: Vec<PathBuf>) {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Loaded::Db(read_db(&path)));
+            let dbs = paths
+                .iter()
+                .enumerate()
+                .filter(|(i, path)| *i == 0 || path.is_file())
+                .map(|(_, path)| read_db(path))
+                .collect();
+            let _ = tx.send(Loaded::Db(dbs));
         });
     }
 
@@ -69,10 +116,14 @@ impl Loader {
 }
 
 fn read_db(path: &std::path::Path) -> Result<(String, &'static [EmuFile])> {
-    let include = [Regex::new(&format!(
-        "^category:({})$",
-        csdb_latest::CATEGORIES.join("|")
-    ))?];
+    // Other dbs ship already cut down to what is worth watching.
+    let include = match path.file_stem().and_then(|s| s.to_str()) {
+        Some("csdb") => vec![Regex::new(&format!(
+            "^category:({})$",
+            csdb_latest::CATEGORIES.join("|")
+        ))?],
+        _ => vec![],
+    };
     let filter = DbFilter {
         include: &include,
         exclude: &[],
@@ -87,19 +138,24 @@ fn read_db(path: &std::path::Path) -> Result<(String, &'static [EmuFile])> {
     Ok((name, files.leak()))
 }
 
-/// The csdb entries of `overrides.toml`, read when the first release is loaded.
-fn csdb_overrides() -> &'static HashMap<DemoId, Override> {
+/// The csdb and demozoo entries of `overrides.toml`, read when the first
+/// release is loaded.
+fn db_overrides() -> &'static HashMap<DemoId, Override> {
     static OVERRIDES: OnceLock<HashMap<DemoId, Override>> = OnceLock::new();
     OVERRIDES.get_or_init(|| {
-        overrides::load_default_for(Some("csdb"), crate::player::key_by_name).unwrap_or_else(|e| {
-            tracing::warn!("{e:#}");
-            HashMap::new()
-        })
+        let mut all = HashMap::new();
+        for db in ["csdb", "zoo"] {
+            match overrides::load_default_for(Some(db), crate::player::key_by_name) {
+                Ok(found) => all.extend(found),
+                Err(e) => tracing::warn!("{e:#}"),
+            }
+        }
+        all
     })
 }
 
 fn prepare(file: EmuFile) -> Result<Demo> {
-    let over = file.demo_id().and_then(|id| csdb_overrides().get(&id));
+    let over = file.demo_id().and_then(|id| db_overrides().get(&id));
     prepare_with(file, over)
 }
 
@@ -116,11 +172,16 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
     } else if let Some(name) = over.and_then(|o| o.download) {
         file.path.pick_download(name);
     }
+    let platform = Platform::of(&file);
+    if platform == Platform::Amiga {
+        // No amiberry on the phone.
+        meta.insert("amiga_core".into(), "puae".into());
+    }
     let mut source = file.path.clone();
     let mut work = loop {
         let mut attempt = source.clone();
         let (path, used) = attempt.resolve_with_progress(&|_, _| {})?;
-        let err = match unpack_for_c64(path, &meta, over) {
+        let err = match unpack_for(platform, path, &meta, over) {
             Ok(work) => break work,
             Err(e) => e,
         };
@@ -142,11 +203,24 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
         events.extend_from_slice(&over.events);
     }
     events.extend(release_io::c64::boot_events(&work));
+    if platform == Platform::Amiga {
+        for (key, val) in amiga::default_meta() {
+            if !work.has_meta(key) {
+                work.set_meta(key, val);
+            }
+        }
+    }
     let info = info_text(&file);
-    Ok(Demo { work, events, info })
+    Ok(Demo {
+        platform,
+        work,
+        events,
+        info,
+    })
 }
 
-fn unpack_for_c64(
+fn unpack_for(
+    platform: Platform,
     path: &std::path::Path,
     meta: &HashMap<String, String>,
     over: Option<&Override>,
@@ -156,8 +230,20 @@ fn unpack_for_c64(
     if let Some(over) = over {
         release_io::apply_override(&mut work, over, &retro_core::system_dir())?;
     }
-    if !release_io::c64::prepare(&mut work, false)? {
-        bail!("Nothing in this release runs on a C64");
+    match platform {
+        Platform::C64 => {
+            if !release_io::c64::prepare(&mut work, false)? {
+                bail!("Nothing in this release runs on a C64");
+            }
+        }
+        Platform::Amiga => {
+            if !amiga::amiga_system_dir().join(KICKSTART).is_file() {
+                bail!("No Kickstart ROM: install Amiga Forever Essentials");
+            }
+            if !amiga::prepare(&mut work, &amiga::AmigaOpts::default())? {
+                bail!("Nothing in this release runs on an Amiga");
+            }
+        }
     }
     Ok(work)
 }
@@ -176,7 +262,11 @@ fn info_text(file: &EmuFile) -> String {
         0 => String::new(),
         year => format!(" ({year})"),
     };
-    format!("\"{title}\"\n{group}{year}\nC64 {category}")
+    let platform = match Platform::of(file) {
+        Platform::C64 => "C64",
+        Platform::Amiga => amiga_platform(file).unwrap_or("Amiga"),
+    };
+    format!("\"{title}\"\n{group}{year}\n{platform} {category}")
         .trim_end()
         .to_owned()
 }

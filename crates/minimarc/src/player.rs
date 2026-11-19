@@ -20,15 +20,14 @@ use winit::window::{Window, WindowId};
 use retro_core::audio::{AudioSink, rate_adjust, smooth_fill};
 use retro_core::backend::{InputEvent, frame_bytes};
 use retro_core::retro_emu::RetroCoreDirect;
-use retro_core::{dylib_name, find_core, system_dir};
+use retro_core::{dylib_name, find_core};
 
-use crate::load::{Demo, Loaded, Loader};
+use crate::load::{Demo, Loaded, Loader, Platform};
 use crate::media::{self, Media};
 use crate::ui::{Button, Ui};
 use database::emu_file::EmuFile;
 use release_io::workfile::WorkFile;
 
-const CORE_NAME: &str = "vice_x64sc";
 const WINDOW_SIZE: (u32, u32) = (720, 576);
 
 /// How far a finger has to travel, in physical pixels, before it is a swipe,
@@ -929,6 +928,7 @@ impl Perf {
 
 pub struct App {
     core: Option<RetroCoreDirect>,
+    platform: Platform,
     /// The release `core` is running, kept for the temp dir it may sit in.
     work: Option<WorkFile>,
     /// Keys to tap once `core` has run that many frames.
@@ -966,14 +966,15 @@ pub struct App {
 }
 
 impl App {
-    /// An app browsing the database at `db`.
-    pub fn new(db: PathBuf) -> Self {
+    /// An app browsing the databases at `dbs`; only the first must exist.
+    pub fn new(dbs: Vec<PathBuf>) -> Self {
         let mut ui = Ui::new();
         ui.status("Loading database...");
         let loader = Loader::new();
-        loader.load_db(db);
+        loader.load_db(dbs);
         Self {
             core: None,
+            platform: Platform::C64,
             work: None,
             startup_keys: Vec::new(),
             core_frames: 0,
@@ -1009,7 +1010,7 @@ impl App {
     fn poll_loader(&mut self) {
         while let Some(loaded) = self.loader.poll() {
             let result = match loaded {
-                Loaded::Db(db) => db.and_then(|(name, files)| self.ui.set_db(name, files)),
+                Loaded::Db(dbs) => dbs.and_then(|dbs| self.ui.set_db(dbs)),
                 Loaded::Demo(_, demo) => demo.and_then(|demo| self.start(demo)),
             };
             if let Err(e) = result {
@@ -1038,11 +1039,20 @@ impl App {
 
     /// Replace the running core with one booting `demo`.
     fn start(&mut self, demo: Demo) -> Result<()> {
-        let Demo { work, events, info } = demo;
+        let Demo {
+            platform,
+            work,
+            events,
+            info,
+        } = demo;
         // One core at a time: Android loads it in place, so the old instance
         // has to be gone before the new one starts.
         self.unload();
-        let core = load_core(&work.path, work.get_all_meta())?;
+        let core = load_core(platform, &work.path, work.get_all_meta())?;
+        self.platform = platform;
+        if let Some(gfx) = self.gfx.as_mut() {
+            gfx.zoomed &= platform == Platform::C64;
+        }
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         self.frame_time = Duration::from_secs_f64(1.0 / fps);
         self.startup_keys = events
@@ -1205,7 +1215,8 @@ impl App {
             if gap > start * PINCH || gap * PINCH < start {
                 self.pinch = None;
                 if let Some(gfx) = self.gfx.as_mut() {
-                    gfx.zoomed = gap > start;
+                    // The zoom knows the C64's screen only.
+                    gfx.zoomed = gap > start && self.platform == Platform::C64;
                 }
             }
         }
@@ -1735,15 +1746,20 @@ impl ApplicationHandler for App {
     }
 }
 
-fn load_core(game: &std::path::Path, settings: HashMap<String, String>) -> Result<RetroCoreDirect> {
-    let path = find_core(CORE_NAME).ok_or_else(|| {
+fn load_core(
+    platform: Platform,
+    game: &std::path::Path,
+    settings: HashMap<String, String>,
+) -> Result<RetroCoreDirect> {
+    let name = platform.core();
+    let path = find_core(name).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \
              download it into the core cache",
-            dylib_name(CORE_NAME)
+            dylib_name(name)
         )
     })?;
-    let system = system_dir();
+    let system = platform.system_dir();
     info!("Core: {}", path.display());
     info!("System dir: {}", system.display());
     RetroCoreDirect::new(&path, &system, Some(game), settings)
@@ -1773,6 +1789,14 @@ const ASSETS: [(&str, &str); 5] = [
 #[cfg(any(target_os = "android", target_os = "ios"))]
 const DB_ASSET: &str = "csdb.txt";
 
+/// Built by `scripts/run-android.sh` out of demozoo.txt.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+const AMIGA_DB: &str = "demozoo-amiga.txt";
+
+/// The drive skeletons and WHDLoad, unpacked into the system dir.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+const AMIGA_ZIP: &str = "amiga.zip";
+
 /// Write each of `assets`, as `read` gives it, to its place under `dir`.
 /// Unconditionally, so a rebuilt app replaces whatever the last one left behind.
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1790,6 +1814,30 @@ fn install_assets<'a>(
         std::fs::write(&path, &data)?;
         info!("Installed {} ({} bytes)", path.display(), data.len());
     }
+    Ok(())
+}
+
+/// The Amiga db and drive skeletons out of the APK, and the Kickstarts out of
+/// Amiga Forever when it is installed.
+#[cfg(target_os = "android")]
+fn install_amiga(
+    app: &winit::platform::android::activity::AndroidApp,
+    data: &std::path::Path,
+) -> Result<()> {
+    install_assets(data, [(AMIGA_DB, AMIGA_DB), (AMIGA_ZIP, AMIGA_ZIP)], |name| {
+        use std::io::Read;
+        let mut asset = app
+            .asset_manager()
+            .open(&std::ffi::CString::new(name)?)
+            .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
+        let mut bytes = Vec::new();
+        asset.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })?;
+    crate::amiga::unpack_zip(&data.join(AMIGA_ZIP), data)?;
+    let apk = crate::amiga::package_path(app, crate::amiga::FOREVER_PACKAGE)
+        .ok_or_else(|| anyhow!("{} is not installed", crate::amiga::FOREVER_PACKAGE))?;
+    crate::amiga::install_kickstarts(&apk, &release_io::amiga::amiga_system_dir())?;
     Ok(())
 }
 
@@ -1823,6 +1871,14 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         std::fs::create_dir_all(&tmp)?;
         // SAFETY: nothing else in the process reads the environment this early.
         unsafe { std::env::set_var("TMPDIR", &tmp) };
+        // `adb shell setprop debug.minimarc.perf 1` turns the perf log on.
+        let perf = std::process::Command::new("getprop")
+            .arg("debug.minimarc.perf")
+            .output();
+        if perf.is_ok_and(|out| out.stdout.starts_with(b"1")) {
+            // SAFETY: as above.
+            unsafe { std::env::set_var("MINIMARC_PERF", "1") };
+        }
         release_io::set_cache_dir(data.join("cache"));
         retro_core::set_system_dir(data.clone());
         install_assets(&data, ASSETS, |name| {
@@ -1835,9 +1891,12 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
             asset.read_to_end(&mut bytes)?;
             Ok(bytes)
         })?;
+        if let Err(e) = install_amiga(&app, &data) {
+            tracing::warn!("No Amiga: {e:#}");
+        }
 
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
-        event_loop.run_app(&mut App::new(data.join(DB_ASSET)))?;
+        event_loop.run_app(&mut App::new(vec![data.join(DB_ASSET), data.join(AMIGA_DB)]))?;
         Ok(())
     };
     // The panic hook has logged a panic already.
@@ -1855,9 +1914,9 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
 
 /// Point everything writable into the app's container and copy what the core
 /// reads from its system dir out of the bundle (`scripts/run-ios.sh` puts it
-/// there). Returns the database to open.
+/// there). Returns the databases to open.
 #[cfg(target_os = "ios")]
-pub fn ios_setup() -> Result<std::path::PathBuf> {
+pub fn ios_setup() -> Result<Vec<std::path::PathBuf>> {
     let bundle = std::env::current_exe()?
         .parent()
         .ok_or_else(|| anyhow!("no bundle directory"))?
@@ -1873,7 +1932,7 @@ pub fn ios_setup() -> Result<std::path::PathBuf> {
         std::fs::read(bundle.join(name)).with_context(|| format!("no {name} in the app bundle"))
     })?;
     play_audio();
-    Ok(bundle.join(DB_ASSET))
+    Ok(vec![bundle.join(DB_ASSET), bundle.join(AMIGA_DB)])
 }
 
 /// The default audio session is muted by the silent switch and stops in the

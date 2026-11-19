@@ -178,7 +178,7 @@ fn a_named_boot_file_still_brings_the_release_along() {
 
     let mut file = WorkFile::new(dir.path().join("my demo"));
     file.set_meta(RELEASE_DIR, dir.path().to_string_lossy());
-    assert!(AmigaSystem::default().load(&mut file).unwrap());
+    assert!(prepare(&mut file, &AmigaOpts::default()).unwrap());
 
     assert!(file.path.join("music.mod").is_file(), "data files come too");
     assert_eq!(
@@ -198,7 +198,7 @@ fn a_loose_executable_goes_in_on_its_own() {
     fs::write(dir.path().join("unrelated"), b"data").unwrap();
 
     let mut file = WorkFile::new(dir.path().join("demo"));
-    assert!(AmigaSystem::default().load(&mut file).unwrap());
+    assert!(prepare(&mut file, &AmigaOpts::default()).unwrap());
 
     assert!(file.path.join("amiga_file").is_file());
     assert!(!file.path.join("unrelated").exists());
@@ -261,7 +261,7 @@ fn rejects_missing_hunk_block() {
 /// which makes it the same one the case above describes.
 #[test]
 fn unpacks_a_boot_disk_out_of_a_dms_archive() {
-    let archive = Path::new("testdata/ANARCHY-3dDemo2.dms");
+    let archive = Path::new(concat!(env!("DEMARC_ROOT"), "/testdata/ANARCHY-3dDemo2.dms"));
     if !archive.is_file() {
         return;
     }

@@ -42,7 +42,6 @@ use web::WebSystem;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use windows::WindowsSystem;
 
-mod adf;
 mod amiga;
 mod amstrad;
 mod atari_2600;
@@ -50,7 +49,6 @@ mod atari_st;
 mod atari_xl;
 mod c64;
 mod disc;
-mod dms;
 mod dos;
 mod ffmpeg;
 mod gameboy;

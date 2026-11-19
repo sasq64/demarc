@@ -148,3 +148,33 @@ fn a_release_with_nothing_for_a_c64_is_an_error() {
     };
     assert!(prepare(file).is_err());
 }
+
+#[test]
+fn the_repo_overrides_parse_for_both_dbs() {
+    let text = std::fs::read_to_string(root("system/overrides.toml")).unwrap();
+    for db in ["csdb", "zoo"] {
+        overrides::parse_for(&text, Some(db), crate::player::key_by_name).unwrap();
+    }
+}
+
+#[test]
+fn a_demozoo_amiga_disk_is_prepared_for_puae() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("demozoo-amiga.txt");
+    std::fs::write(
+        &db,
+        "# Demozoo release database (https://demozoo.org/)\n# puae_model:date\n\
+         id:7\ttitle:Rebels\tauthor:Rebels\tdate:1989\tplatform:Amiga\tcategory:Demo\t\
+         download:https://x.org/a.zip\n",
+    )
+    .unwrap();
+    let (_, files) = read_db(&db).unwrap();
+    let mut file = files[0].clone();
+    file.path = FileSource::Path(root("testdata/amiga/rebels.adf"));
+    let demo = prepare_with(file, None).unwrap();
+    assert_eq!(demo.platform, Platform::Amiga);
+    assert_eq!(amiga::core_name(&demo.work), "puae");
+    assert_eq!(demo.work.get_meta_or("puae_kickstart", ""), "kick33180.A500");
+    assert_eq!(demo.work.get_meta_or("puae_crop", ""), "smaller");
+    assert!(demo.info.ends_with("Amiga Demo"), "{}", demo.info);
+}

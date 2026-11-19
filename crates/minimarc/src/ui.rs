@@ -160,14 +160,19 @@ impl Ui {
 
     /// Browse `files`, starting inside the database rather than at a root
     /// list with one row in it.
-    pub fn set_db(&mut self, name: String, files: &'static [EmuFile]) -> anyhow::Result<()> {
-        let dbs: IndexMap<String, &'static [EmuFile]> = [(name.clone(), files)].into();
+    pub fn set_db(&mut self, dbs: Vec<(String, &'static [EmuFile])>) -> anyhow::Result<()> {
+        let (name, files) = dbs.first().cloned().unwrap_or_default();
+        let several = dbs.len() > 1;
+        let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
         let favorites = Playlists::load(&playlist_dir());
         self.navigator.set_csdb_favorites(favorites.lists[0].files);
         self.favorites = Some(favorites);
         crate::web::set_db(&name, files);
-        self.navigator.go_root().enter(&[&name]);
+        let root = self.navigator.go_root();
+        if !several {
+            root.enter(&[&name]);
+        }
         self.status("");
         self.open();
         Ok(())

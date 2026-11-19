@@ -29,7 +29,7 @@ ABI="${ABI:-arm64-v8a}"
 API=26
 PKG=se.minnberg.demarc
 ACTIVITY=com.demarc.c64.MiniActivity
-CORE=vice_x64sc
+CORES=(vice_x64sc puae)
 JNILIBS=android/app/src/main/jniLibs/$ABI
 ASSETS=android/app/src/main/assets
 
@@ -53,8 +53,9 @@ for arg in "$@"; do
 done
 
 # Cores cannot be downloaded at runtime — Android will not load code out of the
-# app's writable data dir — so the core is packaged beside our own library.
-if [[ ! -f "$JNILIBS/lib${CORE}_libretro.so" ]]; then
+# app's writable data dir — so the cores are packaged beside our own library.
+for CORE in "${CORES[@]}"; do
+    [[ -f "$JNILIBS/lib${CORE}_libretro.so" ]] && continue
     echo "==> fetching $CORE for $ABI"
     url=https://buildbot.libretro.com/nightly/android/latest/$ABI/${CORE}_libretro_android.so.zip
     tmp=$(mktemp -d)
@@ -63,18 +64,29 @@ if [[ ! -f "$JNILIBS/lib${CORE}_libretro.so" ]]; then
     mkdir -p "$JNILIBS"
     mv "$tmp/${CORE}_libretro_android.so" "$JNILIBS/lib${CORE}_libretro.so"
     rm -rf "$tmp"
-fi
+done
 
 mkdir -p "$ASSETS"
 rm -f "$ASSETS/csdb.txt.gz"
 cp -u demodb/csdb.txt system/vice/C64/*.crt system/web/*.css "$ASSETS/"
-# Only the csdb entries, each with the comment lines right above it.
+# The csdb and demozoo entries, each with the comment lines right above it.
 awk '
-    /^\[[a-z]+\.[0-9]+\]$/ { keep = /^\[csdb\./; if (keep) printf "%s", pend; pend = "" }
+    /^\[[a-z]+\.[0-9]+\]$/ { keep = /^\[(csdb|zoo)\./; if (keep) printf "%s", pend; pend = "" }
     keep { print; next }
     /^#/ { pend = pend $0 "\n"; next }
     { pend = "" }
 ' system/overrides.toml > "$ASSETS/overrides.toml"
+
+# The Amiga demos worth watching, with demozoo as their release page.
+{
+    grep '^#' demodb/demozoo.txt
+    echo '# release_url:https://demozoo.org/productions/{id}/'
+    grep -P '\tplatform:Amiga[^\t]*\t' demodb/demozoo.txt |
+        grep -P '\tcategory:(Demo|Intro|\d+[kK] Intro|Cracktro|Invitation|Musicdisk|Diskmag|Slideshow)\t'
+} > "$ASSETS/demozoo-amiga.txt"
+# The drives puae boots a release from, and WHDLoad.
+rm -f "$ASSETS/amiga.zip"
+(cd system && zip -qr "../$ASSETS/amiga.zip" ami13 amihdd amiga/WHDBoot)
 
 echo "==> cargo ndk ($ABI, API $API)"
 cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \

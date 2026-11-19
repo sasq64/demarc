@@ -1843,3 +1843,20 @@
   missing. Paint from inside an `Area` instead. An `Area` is also kept inside
   `content_rect`, which leaves out the safe area, so anything placed above the
   safe-area top gets clipped.
+
+- A test that reads `testdata/...` by a relative path runs from its crate's
+  directory, finds nothing, and the `is_file()` guard turns it into a silent
+  pass: the ADF/DMS tests had never run. Use `env!("DEMARC_ROOT")`.
+
+- An `EmuFile`'s `platform` is in `platforms`, not in the meta, so
+  `get_meta("platform")` is always empty; `meta_strings()` adds it back.
+
+- `scripts/run-android.sh` uninstalls an installed build with a higher version
+  code (a Play install), and that deletes the app's data with it.
+
+- A files.scene.org `get:<mirror>/` link is not that mirror: when scene.org's
+  index thinks the mirror lacks the file (often wrongly — the Norwegian host
+  has all of `mirrors/amigascne`) it redirects to archive.scene.org, and every
+  `fi-*` host has stopped answering, so each such try cost a 5 s connect
+  timeout. `get:` also lists no directories. `LINK_BASES` names the mirror
+  hosts directly; curl each one with `-w '%{time_total}'` to re-rank them.

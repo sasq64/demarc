@@ -5119,6 +5119,7 @@ dependencies = [
  "tracing-subscriber",
  "wgpu 30.0.2",
  "winit",
+ "zip",
 ]
 
 [[package]]

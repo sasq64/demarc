@@ -96,6 +96,15 @@ public class MiniActivity extends NativeActivity {
         session.setActive(true);
     }
 
+    /** Called from native code: the APK of an installed package, or null. */
+    public String packagePath(String pkg) {
+        try {
+            return getPackageManager().getApplicationInfo(pkg, 0).sourceDir;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** Called from native code: show a release's page, styled by the asset `css`. */
     public void openWeb(String url, String css) {
         startActivity(new Intent(this, WebActivity.class)

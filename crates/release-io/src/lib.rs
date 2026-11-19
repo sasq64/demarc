@@ -2,9 +2,12 @@
 //! cache, unpacking, and finding what to boot. Nothing here runs a release, so
 //! it builds wherever the libretro layer does (see `docs/ANDROID.md`).
 
+pub mod adf;
+pub mod amiga;
 pub mod c64;
 pub mod cache;
 pub mod cbmconvert;
+pub mod dms;
 pub mod fetch;
 pub mod m3u;
 pub mod release;

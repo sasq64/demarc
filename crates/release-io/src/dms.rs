@@ -3,7 +3,7 @@
 //! DMS (Disk Masher System) is how a great deal of the Amiga scene was
 //! distributed: a whole floppy, track by track, in one compressed file. Both
 //! Amiga cores read `.dms` directly, so nothing here is needed to *boot* one —
-//! it exists for `--unadf` (see [`AmigaSystem::load`](super::amiga)), whose
+//! it exists for `--unadf` (see [`amiga::prepare`](crate::amiga::prepare)), whose
 //! ADFlib walk only understands a plain sector image. Unpacking to an `.adf`
 //! first is what lets a DMS release take the faster hard-drive path too.
 //!
@@ -17,7 +17,7 @@
 //!
 //! xDMS keeps the decrunchers' state — the sliding window, the bit buffer, the
 //! Huffman tables — in globals, so only one unpack may be in flight at a time
-//! (see [`XDMS`]). Releases are loaded on a worker thread (see `crate::jobs`),
+//! (see [`XDMS`]). Releases are loaded on a worker thread (demarc's `jobs`),
 //! and with `--grid` several of them are loaded at once, so this is a real race
 //! and not a theoretical one: running two of these at once corrupts the heap.
 

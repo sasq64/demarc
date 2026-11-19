@@ -10,13 +10,17 @@ fn main() -> Result<()> {
         .init();
 
     #[cfg(target_os = "ios")]
-    let db = minimarc::player::ios_setup()?;
+    let dbs = minimarc::player::ios_setup()?;
     #[cfg(not(target_os = "ios"))]
-    let db = std::env::args_os()
-        .nth(1)
-        .unwrap_or_else(|| "demodb/csdb.txt".into())
-        .into();
+    let dbs = {
+        let args: Vec<_> = std::env::args_os().skip(1).map(Into::into).collect();
+        if args.is_empty() {
+            vec!["demodb/csdb.txt".into(), "demodb/demozoo-amiga.txt".into()]
+        } else {
+            args
+        }
+    };
     let event_loop = EventLoop::new()?;
-    event_loop.run_app(&mut App::new(db))?;
+    event_loop.run_app(&mut App::new(dbs))?;
     Ok(())
 }

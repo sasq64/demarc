@@ -1,8 +1,9 @@
 # minimarc — the Android app
 
-A stripped-down demarc for browsing and watching C64 demos on a phone: it reads
-`csdb.txt`, shows demarc's picker over the navigator tree, downloads the picked
-release and runs it in the VICE libretro core. No Bevy, themes, slangp shaders,
+A stripped-down demarc for browsing and watching C64 and Amiga demos on a
+phone: it reads `csdb.txt` and `demozoo-amiga.txt`, shows demarc's picker over
+the navigator tree, downloads the picked release and runs it in the VICE or
+puae libretro core. No Bevy, themes, slangp shaders,
 grid or cross-fade. The same crate runs on the desktop.
 
 The repo-root `CLAUDE.md` applies here too (read `docs/LEARNINGS.md` first,
@@ -21,11 +22,12 @@ crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one fragment ent
 crates/minimarc/src/web.rs      the release page: JNI call to MiniActivity.openWeb, its Open button
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
 crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
-                                overrides.toml
+                                overrides.toml; `Platform` (C64 or Amiga) picks prepare and core
+crates/minimarc/src/amiga.rs    Kickstarts out of Amiga Forever Essentials' APK, amiga.zip
 crates/retro-core/src/audio.rs  AudioSink (cpal, resampler, drift control), shared with demarc
 crates/navigator                the tree of lists, shared with demarc (src/navigator.rs wraps it)
 crates/retro-ui                 the egui picker/HUD, shared with demarc
-crates/release-io               fetch, cache, unpack, WorkFile, c64::prepare
+crates/release-io               fetch, cache, unpack, WorkFile, c64::prepare, amiga::prepare
 crates/database                 db parsing, EmuFile; used with default-features = false
 android/                        Gradle project: MiniActivity (NativeActivity + immersive mode)
 scripts/run-android.sh          the whole build-install-launch loop
@@ -65,6 +67,9 @@ adb shell pidof se.minnberg.demarc
 adb shell dumpsys activity activities | grep -m1 ResumedActivity
 ```
 
+- `adb shell setprop debug.minimarc.perf 1` before launch logs `perf:` lines
+  every 5 s (core, ui and render ms per frame, avg/max); `MINIMARC_PERF` on
+  the desktop.
 - Tracing and the core's own log both go to logcat tag `demarc`. A crash shows
   as `Fatal signal` / `DEBUG   :` lines, not under that tag.
 - After `run-android.sh` returns, the splash is still up for a second or two
@@ -129,10 +134,17 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   when the zoom leaves no room (`CHROME_HEIGHT`).
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
   frame 50 and Return at 55 (`release_io::c64::FAST_LOAD_EVENTS`).
-- The `[csdb.<id>]` entries of `overrides.toml` (an APK asset on Android, the
+- Amiga: an entry whose platform starts with "Amiga" (demozoo-amiga.txt, cut
+  out of demozoo.txt by `run-android.sh`) runs in puae, never amiberry, with
+  `<data>/amiga` as its system dir. The Kickstarts are decrypted at startup
+  out of the installed Amiga Forever Essentials APK (`MiniActivity.packagePath`,
+  a `<queries>` entry in the manifest); without it an Amiga pick is an error.
+  `amiga.zip` (`ami13`, `amihdd`, `amiga/WHDBoot`) is unpacked over the data
+  dir on every start. Pinch zoom is C64 only.
+- The `[csdb.<id>]` and `[zoo.<id>]` entries of `overrides.toml` (an APK asset on Android, the
   system dir elsewhere) are applied in `load.rs`: download, meta, patches,
   boot file and key events. Other sections are skipped unparsed.
-- A started release shows title, author and "C64 <category>" for five seconds
+- A started release shows title, author and "<platform> <category>" for five seconds
   (`Ui::info`): top left of the window in portrait, bottom right of the
   picture in landscape (`Hud::info_place`).
 - Sound goes through `retro_core::audio::AudioSink`; `App::step` steers the

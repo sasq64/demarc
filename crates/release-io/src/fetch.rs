@@ -88,24 +88,26 @@ const LARGE_LIMIT: u64 = 750 * 1024 * 1024;
 /// spells the class the way Demozoo does, but a value that has been through
 /// `Url::parse` (which is how db lines reach [`fetch_url_with_progress`]) arrives lowercased.
 const LINK_BASES: &[(&str, &[&str])] = &[
+    // Mirror hosts named directly, fastest first (measured 2026-11): a
+    // files.scene.org `get:` link sends a file its index thinks a mirror lacks
+    // to archive.scene.org, which no longer answers, and lists no directories.
+    // Only the Norwegian and US mirrors carry `mirrors/amigascne`.
     (
         "AmigascneFile",
         &[
-            "https://files.scene.org/get:fi-ftp/mirrors/amigascne",
-            "https://files.scene.org/get:de-https/mirrors/amigascne",
+            "http://http.no.scene.org/scene.org/mirrors/amigascne",
+            "http://http.us.scene.org/pub/scene.org/mirrors/amigascne",
             "ftp://ftp.amigascne.org/pub/amiga",
         ],
     ),
     (
         "SceneOrgFile",
         &[
-            // The bare `/get/` link 302-redirects to a slow FTP mirror, so name
-            // a mirror directly. (`URL_REWRITES` below rewrites `/get/` the same
-            // way, for the plain urls a db holds for the same files.)
-            "https://files.scene.org/get:no-http",
-            "https://files.scene.org/get:de-https",
-            "https://files.scene.org/get:fi-ftp",
-            "https://files.scene.org/get:se2-http",
+            "https://mirror.scenesat.com/scene.org",
+            "http://http.no.scene.org/scene.org",
+            "https://mirror.netcologne.de/scene.org",
+            "http://http.hu.scene.org",
+            "http://http.us.scene.org/pub/scene.org",
         ],
     ),
     ("ModlandFile", &["https://ftp.modland.com"]),
@@ -139,7 +141,7 @@ const AMIGASCNE_URLS: &[&str] = &[
 ///
 ///   funet, sndh  plain http (or ftp) no longer serves these files.
 ///   scene.org    a `/get/` link 302-redirects to a slow FTP mirror; the
-///                `/get:de-https/` variant serves the file over HTTPS directly.
+///                `/get:se-https/` variant serves the file over HTTPS directly.
 ///   modland      some links already carry the `/pub/modules` prefix, giving a
 ///                doubled path once the base is prepended.
 ///   untergrund   the fujiology archive moved from user ltk_tscl to ltk_tscc.
@@ -147,7 +149,7 @@ const URL_REWRITES: &[(&str, &str)] = &[
     ("ftp://ftp.funet.fi/", "https://ftp.funet.fi/"),
     (
         "https://files.scene.org/get/",
-        "https://files.scene.org/get:de-https/",
+        "https://files.scene.org/get:se-https/",
     ),
     (
         "https://ftp.modland.com/pub/modules/pub/modules/",

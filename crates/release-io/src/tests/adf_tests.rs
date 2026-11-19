@@ -1,7 +1,7 @@
 use super::*;
 
 /// The repository's own test disk, a real trackloaded demo release.
-const REBELS: &str = "testdata/amiga/rebels.adf";
+const REBELS: &str = concat!(env!("DEMARC_ROOT"), "/testdata/amiga/rebels.adf");
 
 #[test]
 fn refuses_something_that_is_not_a_disk_image() {

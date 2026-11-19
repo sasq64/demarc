@@ -1,7 +1,7 @@
 use super::*;
 
 /// A real DMS release: Anarchy's 3D Demo II, an AmigaDOS disk.
-const ARCHIVE: &str = "testdata/ANARCHY-3dDemo2.dms";
+const ARCHIVE: &str = concat!(env!("DEMARC_ROOT"), "/testdata/ANARCHY-3dDemo2.dms");
 
 /// The size of an unpacked double-density Amiga floppy: 80 cylinders of two
 /// 5632-byte tracks.
@@ -40,7 +40,7 @@ fn the_unpacked_disk_is_one_adflib_can_read() {
     std::fs::create_dir(&dest).unwrap();
 
     unpack(&archive, &image).unwrap();
-    assert!(super::super::adf::unpack(&image, &dest).unwrap() > 0);
+    assert!(crate::adf::unpack(&image, &dest).unwrap() > 0);
     // A disk demarc would boot as a hard drive has to have one of these.
     assert!(dest.join("s").join("startup-sequence").is_file());
 }

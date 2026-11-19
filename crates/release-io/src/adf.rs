@@ -1,6 +1,6 @@
 //! Unpacking an AmigaDOS floppy image (`.adf`) into a real directory.
 //!
-//! This backs `--unadf` (see [`AmigaSystem::load`](super::amiga)): a demo that
+//! This backs `--unadf` (see [`amiga::prepare`](crate::amiga::prepare)): a demo that
 //! ships as a bootable AmigaDOS disk can be handed to the emulator as a hard
 //! drive instead, which skips the floppy seeks and the disk-change waits and so
 //! reaches the first frame a good deal faster.
@@ -55,7 +55,7 @@ const ADF_ERR_IO: c_int = -3;
 
 /// ADFlib keeps its environment — the log callbacks, the device driver list,
 /// the dir-cache flag — in globals, so only one unpack may be in flight at a
-/// time. Releases are loaded on a worker thread (see `crate::jobs`), and with
+/// time. Releases are loaded on a worker thread (demarc's `jobs`), and with
 /// `--grid` several of them are loaded at once, so this is a real race and not
 /// a theoretical one.
 static ADFLIB: Mutex<()> = Mutex::new(());

@@ -22,10 +22,11 @@ fn resolves_a_link_class_to_its_mirrors() {
     assert_eq!(
         urls,
         vec![
-            "https://files.scene.org/get:no-http/parties/2006/assembly06/demo/x.zip",
-            "https://files.scene.org/get:de-https/parties/2006/assembly06/demo/x.zip",
-            "https://files.scene.org/get:fi-ftp/parties/2006/assembly06/demo/x.zip",
-            "https://files.scene.org/get:se2-http/parties/2006/assembly06/demo/x.zip",
+            "https://mirror.scenesat.com/scene.org/parties/2006/assembly06/demo/x.zip",
+            "http://http.no.scene.org/scene.org/parties/2006/assembly06/demo/x.zip",
+            "https://mirror.netcologne.de/scene.org/parties/2006/assembly06/demo/x.zip",
+            "http://http.hu.scene.org/parties/2006/assembly06/demo/x.zip",
+            "http://http.us.scene.org/pub/scene.org/parties/2006/assembly06/demo/x.zip",
         ]
     );
     // A base that is not a directory prefix joins just as directly.
@@ -52,7 +53,7 @@ fn rewrites_urls_that_no_longer_work_as_recorded() {
     // A plain url from a db, pointed at the mirror that serves it.
     assert_eq!(
         resolve_url("https://files.scene.org/get/demos/x.zip"),
-        vec!["https://files.scene.org/get:de-https/demos/x.zip"]
+        vec!["https://files.scene.org/get:se-https/demos/x.zip"]
     );
     // ...and the same fixup applied after a link class was resolved: these
     // parameters carry the base's own path prefix a second time.
@@ -117,21 +118,21 @@ fn downloads_https_to_ftp_redirect() {
     // An FTP mirror named directly: a bare `/get/` link redirects here too,
     // but [`URL_REWRITES`] sends that one to the HTTPS mirror instead.
     let buf = download(
-        "https://files.scene.org/get:fi-ftp/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
+        "https://files.scene.org/get:no-ftp/demos/groups/dual_crew_shining/gbc/dcs-nmod.zip",
     )
     .unwrap();
     assert_eq!(buf.len(), 46596);
     assert_eq!(&buf[..2], b"PK");
 }
 
-/// A path with a space survives the https→ftp redirect: files.scene.org
-/// sends the space raw in `Location`, `Url::join` encodes it to `%20`, and
-/// the FTP side has to decode it again before `RETR` or the server 550s.
+/// A path with a space reaches FTP as `%20` (a db spelling, or `Url::join`
+/// encoding a raw `Location`), and has to be decoded before `RETR` or the
+/// server 550s.
 #[test]
 #[ignore = "hits the network"]
 fn downloads_ftp_path_containing_a_space() {
     let buf = download(
-        "https://files.scene.org/get:fi-ftp/mirrors/amigascne/Gfx/M/Mr_Acid/Count%20Duckula.png",
+        "ftp://ftp.no.scene.org/scene.org/mirrors/amigascne/Gfx/M/Mr_Acid/Count%20Duckula.png",
     )
     .unwrap();
     assert_eq!(buf.len(), 5402);

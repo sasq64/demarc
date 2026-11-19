@@ -27,6 +27,7 @@ pollster.workspace = true
 regex = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zip.workspace = true
 wgpu = "30"
 winit.workspace = true
 

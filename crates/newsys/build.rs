@@ -21,8 +21,6 @@ fn rel_name(path: &Path) -> String {
 
 fn main() {
     build_unrar_isnt_shim();
-    build_adflib();
-    build_dms();
     build_system_zip();
 }
 
@@ -45,101 +43,6 @@ fn build_unrar_isnt_shim() {
         .compile("unrar_isnt_shim");
 }
 
-/// Compile ADFlib (external/ADFlib) plus our own `src/c_shims/adf_unpack_shim.c` into a
-/// static library, for the `--unadf` path in src/newsys/adf.rs.
-///
-/// ADFlib normally configures itself with autotools or CMake, both of which
-/// exist only to write a `config.h` full of `HAVE_*` probes. `adf_util.h`
-/// includes that header unless `BUILDING_WITH_CMAKE` is defined, so we define
-/// it and answer the handful of probes that actually matter ourselves.
-///
-/// Only `src/*.c` is built. The `generic/`, `linux/` and `win32/`
-/// subdirectories hold the *native* device driver, which reads real floppy
-/// hardware; `adfLibInit` registers the portable "dump" driver that reads .adf
-/// files, and that is the only one we ever ask for.
-fn build_adflib() {
-    const DIR: &str = "../../external/ADFlib/src";
-    const SHIM: &str = "src/c_shims/adf_unpack_shim.c";
-
-    let Ok(sources) = std::fs::read_dir(DIR) else {
-        // The library is vendored, not a submodule, so a checkout without it
-        // should still build -- `--unadf` then reports it is unavailable.
-        println!("cargo:warning=external/ADFlib not found, --unadf will be unavailable");
-        return;
-    };
-
-    let mut build = cc::Build::new();
-    build.include(DIR);
-    build.warnings(false);
-    // Skip the autotools-generated config.h (see above).
-    build.define("BUILDING_WITH_CMAKE", None);
-
-    // ADFlib carries its own strnlen/strndup/stpncpy/mempcpy for platforms
-    // without them, declared `static` in adf_util.c. On glibc those names are
-    // already declared non-static by <string.h>, and the two collide ("static
-    // declaration of 'mempcpy' follows non-static declaration"), so tell it the
-    // libc ones are there. The MSVC UCRT only has strnlen, and linking our own
-    // copy against it is a duplicate symbol.
-    build.define("HAVE_STRNLEN", Some("1"));
-    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        for probe in ["HAVE_STRNDUP", "HAVE_STPNCPY", "HAVE_MEMPCPY"] {
-            build.define(probe, Some("1"));
-        }
-    }
-
-    let mut files: Vec<PathBuf> = sources
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "c"))
-        .collect();
-    // read_dir order is the file system's; sort so the build is reproducible.
-    files.sort();
-
-    for file in &files {
-        println!("cargo:rerun-if-changed={}", file.display());
-        build.file(file);
-    }
-    println!("cargo:rerun-if-changed={SHIM}");
-    build.file(SHIM);
-    build.compile("adflib");
-}
-
-/// Compile the DMS unpacker (external/dms) plus our own
-/// `src/c_shims/dms_unpack_shim.c` into a static library, for src/newsys/dms.rs.
-///
-/// The sources are xDMS 1.3 (public domain) as amiberry carries them, with the
-/// `.cpp` extension dropped -- they are plain C, and building them as C keeps
-/// the binary off libstdc++. Only `pfile.c` needed editing, to read and write
-/// stdio streams instead of amiberry's `struct zfile`; the header of that file
-/// says what else changed.
-fn build_dms() {
-    const DIR: &str = "../../external/dms";
-    const SHIM: &str = "src/c_shims/dms_unpack_shim.c";
-
-    let mut build = cc::Build::new();
-    build.include(DIR);
-    // Twenty-five year old C: `Unpack_Track` and friends trip -Wall constantly
-    // and there is nothing to be done about it in code we want to keep diffable
-    // against upstream.
-    build.warnings(false);
-
-    let mut files: Vec<PathBuf> = std::fs::read_dir(DIR)
-        .expect("external/dms not found")
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "c"))
-        .collect();
-    // read_dir order is the file system's; sort so the build is reproducible.
-    files.sort();
-
-    for file in &files {
-        println!("cargo:rerun-if-changed={}", file.display());
-        build.file(file);
-    }
-    println!("cargo:rerun-if-changed={SHIM}");
-    build.file(SHIM);
-    build.compile("dms");
-}
 
 const MARKER_FILES: &[&str] = &[
     ".v4",
