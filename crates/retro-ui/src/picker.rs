@@ -862,14 +862,15 @@ fn scroll_area<T>(
                     // their row when the list scrolls -- and keep decaying on
                     // wall-clock time while the row is scrolled out of sight.
                     let row_id = id.with(row);
-                    let level = if (highlight && row == selected) || response.is_pointer_button_down_on() {
-                        // Zero time snaps the stored value, so the highlight
-                        // appears at once and the fade later starts from full.
-                        ui.ctx().animate_value_with_time(row_id, 1.0, 0.0);
-                        1.0
-                    } else {
-                        ui.ctx().animate_value_with_time(row_id, 0.0, FADE_SECS)
-                    };
+                    let level =
+                        if (highlight && row == selected) || response.is_pointer_button_down_on() {
+                            // Zero time snaps the stored value, so the highlight
+                            // appears at once and the fade later starts from full.
+                            ui.ctx().animate_value_with_time(row_id, 1.0, 0.0);
+                            1.0
+                        } else {
+                            ui.ctx().animate_value_with_time(row_id, 0.0, FADE_SECS)
+                        };
                     if level > 0.0 {
                         ui.painter().rect_filled(
                             rect,

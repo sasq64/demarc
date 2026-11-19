@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -526,8 +526,6 @@ fn split_path(path: &str) -> Vec<String> {
         .map(String::from)
         .collect()
 }
-
-static DEMO_CATS: [&str; 3] = ["Demo", "One-File Demo", "Invitation"];
 
 static CATS: [&str; 10] = [
     "Demo",
