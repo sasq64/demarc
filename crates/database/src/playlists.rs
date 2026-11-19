@@ -1,0 +1,254 @@
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
+
+use crate::emu_file::{EmuFile, FileSource, GameInfo, Meta, UrlList, split_values};
+use crate::files::leak;
+
+/// Name of the playlist the root list marks with a heart.
+pub const FAVORITES: &str = "Favorites";
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PlaylistEntry {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub meta: BTreeMap<String, String>,
+}
+
+impl PlaylistEntry {
+    /// `fetched` are the `;`-separated URLs the release was loaded from, which
+    /// are moved first so loading the entry picks the same download.
+    pub fn new(file: &EmuFile, fetched: &str) -> Self {
+        let mut entry = Self {
+            id: entry_id(file),
+            path: match &file.path {
+                FileSource::Path(p) => Some(absolute(p)),
+                FileSource::Url(_) => None,
+            },
+            meta: file
+                .meta_strings()
+                .map(|(k, v)| (k.to_owned(), v.into_owned()))
+                .collect(),
+        };
+        if let FileSource::Url(urls) = &file.path {
+            entry
+                .meta
+                .entry("download".into())
+                .or_insert_with(|| urls.as_slice().join(";"));
+        }
+        if let Some(download) = entry.meta.get_mut("download") {
+            let used: Vec<&str> = fetched.split(';').collect();
+            let (mut urls, rest): (Vec<&str>, Vec<&str>) =
+                download.split(';').partition(|url| used.contains(url));
+            urls.extend(rest);
+            *download = urls.join(";");
+        }
+        entry
+    }
+
+    pub fn to_emu_file(&self) -> EmuFile {
+        let list = |key| self.meta.get(key).map(|v| split_values(leak(v.clone())));
+        let platforms = list("platform").unwrap_or_default();
+        let categories = list("category").unwrap_or_default();
+        let meta: Meta = self
+            .meta
+            .iter()
+            .filter(|(k, _)| *k != "platform" && *k != "category")
+            .map(|(k, v)| (leak(k.clone()), leak(v.clone())))
+            .collect();
+        let path = match &self.path {
+            Some(p) => FileSource::Path(p.into()),
+            None => FileSource::Url(UrlList::parse_field(meta.get("download").unwrap_or(""))),
+        };
+        EmuFile {
+            game_info: GameInfo::new(&meta, &categories),
+            path,
+            meta,
+            platforms,
+            categories,
+        }
+    }
+}
+
+/// `db:id` for a db entry, otherwise wherever the file comes from.
+pub fn entry_id(file: &EmuFile) -> String {
+    if let Some(id) = file.demo_id() {
+        return format!("{}:{}", id.db, id.id);
+    }
+    match &file.path {
+        FileSource::Path(p) => absolute(p),
+        FileSource::Url(urls) => urls.first().unwrap_or("").to_owned(),
+    }
+}
+
+fn absolute(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_owned())
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub struct Playlist {
+    pub name: String,
+    path: PathBuf,
+    entries: Vec<PlaylistEntry>,
+    ids: HashSet<String>,
+    pub files: &'static [EmuFile],
+}
+
+impl Playlist {
+    fn new(name: String, path: PathBuf, entries: Vec<PlaylistEntry>) -> Self {
+        let mut list = Self {
+            name,
+            path,
+            ids: entries.iter().map(|e| e.id.clone()).collect(),
+            entries,
+            files: &[],
+        };
+        list.update_files();
+        list
+    }
+
+    fn update_files(&mut self) {
+        self.files = self
+            .entries
+            .iter()
+            .map(PlaylistEntry::to_emu_file)
+            .collect::<Vec<_>>()
+            .leak();
+    }
+
+    pub fn contains(&self, file: &EmuFile) -> bool {
+        self.ids.contains(&entry_id(file))
+    }
+
+    /// Add `file`, or remove it if it is already here. Returns whether it is
+    /// in the list now.
+    fn toggle(&mut self, file: &EmuFile, fetched: &str) -> bool {
+        let id = entry_id(file);
+        let added = if self.ids.remove(&id) {
+            self.entries.retain(|e| e.id != id);
+            false
+        } else {
+            self.ids.insert(id);
+            self.entries.push(PlaylistEntry::new(file, fetched));
+            true
+        };
+        self.update_files();
+        if let Err(err) = self.save() {
+            error!("Can't save {}: {err:#}", self.path.display());
+        }
+        added
+    }
+
+    fn save(&self) -> Result<()> {
+        if let Some(dir) = self.path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(&self.path, serde_json::to_string_pretty(&self.entries)?)?;
+        Ok(())
+    }
+}
+
+pub struct Playlists {
+    /// Favorites first, the rest by name.
+    pub lists: Vec<Playlist>,
+    dir: PathBuf,
+}
+
+pub fn default_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_default()
+        .join("demarc")
+        .join("playlists")
+}
+
+impl Playlists {
+    pub fn load(dir: &Path) -> Self {
+        let mut lists = vec![];
+        let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+            .map(|rd| rd.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        paths.retain(|p| p.extension().is_some_and(|e| e == "json"));
+        paths.sort();
+        for path in paths {
+            let Some(name) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            let entries = fs::read_to_string(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|text| Ok(serde_json::from_str::<Vec<PlaylistEntry>>(&text)?));
+            match entries {
+                Ok(entries) => lists.push(Playlist::new(name, path, entries)),
+                Err(err) => warn!("Can't read playlist {}: {err:#}", path.display()),
+            }
+        }
+        if !lists.iter().any(|l| l.name == FAVORITES) {
+            lists.push(Playlist::new(
+                FAVORITES.into(),
+                dir.join(format!("{FAVORITES}.json")),
+                vec![],
+            ));
+        }
+        lists.sort_by_key(|l| l.name != FAVORITES);
+        Self {
+            lists,
+            dir: dir.to_owned(),
+        }
+    }
+
+    pub fn is_favorite(&self, file: &EmuFile) -> bool {
+        self.lists[0].contains(file)
+    }
+
+    pub fn toggle(&mut self, index: usize, file: &EmuFile, fetched: &str) -> bool {
+        self.lists[index].toggle(file, fetched)
+    }
+
+    pub fn find(&self, name: &str) -> Option<usize> {
+        let name = name.trim().to_lowercase();
+        self.lists
+            .iter()
+            .position(|l| l.name.to_lowercase() == name)
+    }
+
+    /// Remove the list at `index` and its file. Favorites can't be deleted.
+    pub fn delete(&mut self, index: usize) -> bool {
+        if index == 0 || index >= self.lists.len() {
+            return false;
+        }
+        let list = self.lists.remove(index);
+        if let Err(err) = fs::remove_file(&list.path)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            error!("Can't delete {}: {err:#}", list.path.display());
+        }
+        true
+    }
+
+    /// Index of the list called `name`, created empty if there is none yet.
+    /// `None` if `name` can't be a file name.
+    pub fn create(&mut self, name: &str) -> Option<usize> {
+        let name = name.trim();
+        if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+            return None;
+        }
+        if let Some(index) = self.find(name) {
+            return Some(index);
+        }
+        let path = self.dir.join(format!("{name}.json"));
+        let index = 1 + self.lists[1..].partition_point(|l| l.name.as_str() < name);
+        self.lists
+            .insert(index, Playlist::new(name.into(), path, vec![]));
+        Some(index)
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/playlists_tests.rs"]
+mod tests;

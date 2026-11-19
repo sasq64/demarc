@@ -16,3 +16,4 @@ pub mod load_error;
 #[cfg(feature = "desktop")]
 pub mod modland;
 pub mod overrides;
+pub mod playlists;

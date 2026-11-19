@@ -23,6 +23,7 @@ ureq.workspace = true
 # an entry's `patch = { ... }` span several lines.
 qbsdiff = "1.4.4"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 toml = { version = "1.1.4", features = ["preserve_order"] }
 url = "2"
 # `DbFilter`: matched against each raw db line while collecting.
