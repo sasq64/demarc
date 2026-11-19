@@ -1600,6 +1600,14 @@ impl ApplicationHandler for App {
                     if let Some(file) = picked {
                         self.load(file);
                     }
+                    if std::mem::take(&mut self.ui.shuffle_requested) {
+                        // Shuffling a big list stalls this thread.
+                        self.unload();
+                        self.ui.info("");
+                        if let Some(file) = self.ui.shuffle() {
+                            self.load(file);
+                        }
+                    }
                 }
             }
             _ => {}

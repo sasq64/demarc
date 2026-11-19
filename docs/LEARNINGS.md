@@ -1831,3 +1831,9 @@
   `errSecInternalComponent` while the login keychain is locked to that
   session; the user has to unlock it (`ssh -t … security unlock-keychain`) or
   run the script in Terminal on the Mac.
+
+- `ui.with_layout(Layout::right_to_left(..))` takes all the space left in the
+  parent, height included, so wrapping the picker's search box in one to put a
+  button after it pushed the list down and broke four picker tests. A
+  `ui.horizontal` with the box's width computed from the button's galley does
+  not.

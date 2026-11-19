@@ -263,6 +263,66 @@ fn compo_with_slash_in_name() {
 }
 
 #[test]
+fn goto_replaces_the_stack_with_the_path() {
+    let dbs: IndexMap<String, &'static [EmuFile]> = [(
+        "Demozoo".to_string(),
+        db("id:1\ttitle:A\tauthor:G\tparty:Evoke 2005;Demo;1\tdownload:http://x/a.zip\n"),
+    )]
+    .into();
+    let mut navigator = Navigator::new();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
+    navigator.go_root().enter(&["Demozoo"]).enter(&["Authors"]);
+
+    navigator.goto("Demozoo/Parties/Evoke 2005");
+    let paths: Vec<_> = navigator.stack.iter().map(|l| l.path.join("/")).collect();
+    assert_eq!(
+        paths,
+        [
+            "",
+            "Demozoo",
+            "Demozoo/Parties",
+            "Demozoo/Parties/Evoke 2005"
+        ]
+    );
+    assert_eq!(navigator.current().unwrap().title_select, 3);
+    navigator.take_show();
+    navigator.goto("Demozoo/Parties/Evoke 2005");
+    assert!(navigator.take_show().is_some());
+    navigator.back();
+    assert_eq!(navigator.get_showing(), vec!["Evoke 2005"]);
+    navigator.remember_state("x", None);
+    navigator.back().enter(&["Parties"]);
+    assert_eq!(navigator.stack.len(), 4);
+    assert_eq!(navigator.current().unwrap().prompt, "x");
+}
+
+#[test]
+fn shuffle_launches_and_is_undone_on_return() {
+    let lines: String = (1..=20)
+        .map(|i| format!("id:{i}\ttitle:T{i:02}\tauthor:G\tparty:Evoke 2005;Demo;{i}\tdownload:http://x/{i}.zip\n"))
+        .collect();
+    let dbs: IndexMap<String, &'static [EmuFile]> = [("Demozoo".to_string(), db(lines.leak()))].into();
+    let mut navigator = Navigator::new();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
+    navigator.goto("Demozoo/Parties/Evoke 2005/Demo");
+    navigator.take_show();
+    let normal = navigator.get_showing();
+
+    let (file, _) = navigator.shuffle().unwrap();
+    let shuffled = navigator.get_showing();
+    assert_ne!(shuffled, normal);
+    assert_eq!(navigator.current_launch.as_ref().unwrap().index, 0);
+    assert!(shuffled[0].contains(&file.game_info.title));
+
+    navigator.back();
+    navigator.take_show();
+    navigator.goto("Demozoo/Parties/Evoke 2005/Demo");
+    assert_eq!(navigator.stack.len(), 5);
+    navigator.take_show();
+    assert_eq!(navigator.get_showing(), normal);
+}
+
+#[test]
 fn glob() {
     use super::glob_match;
     assert!(glob_match("Scene.org *", "Scene.org 2010"));

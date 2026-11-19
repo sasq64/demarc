@@ -259,6 +259,7 @@ pub struct Picker<T> {
     button_down: Option<usize>,
     pick_requested: bool,
     query_clicked: bool,
+    shuffle_clicked: bool,
 }
 
 impl<T> Default for Picker<T> {
@@ -296,6 +297,7 @@ impl<T> Default for Picker<T> {
             button_down: None,
             pick_requested: false,
             query_clicked: false,
+            shuffle_clicked: false,
         }
     }
 }
@@ -330,6 +332,11 @@ impl<T: 'static> Picker<T> {
     /// Whether the search box was clicked since the last call.
     pub fn take_query_click(&mut self) -> bool {
         std::mem::take(&mut self.query_clicked)
+    }
+
+    /// Whether the shuffle button was clicked since the last call.
+    pub fn take_shuffle_click(&mut self) -> bool {
+        std::mem::take(&mut self.shuffle_clicked)
     }
 
     /// Picks the highlighted row on the next [`Picker::show`], as Enter does.
@@ -632,20 +639,40 @@ impl<T: 'static> Picker<T> {
                     // time it is up: egui only routes key events to a focused
                     // widget, and a click on the emulator behind would otherwise
                     // take focus away and leave typing going nowhere.
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.list_query)
-                            .id(self.edit_id)
-                            // Our own `panel_frame` already draws the box.
-                            .frame(egui::Frame::NONE)
-                            .margin(egui::Margin::ZERO)
-                            .desired_width(inner_width)
-                            .font(picker_font(ctx, QUERY_SIZE))
-                            .text_color(theme.picker.text),
-                    );
-                    self.query_clicked |= response.clicked();
-                    if !response.has_focus() {
-                        response.request_focus();
-                    }
+                    ui.horizontal(|ui| {
+                        let font = picker_font(ctx, QUERY_SIZE);
+                        let shuffle = source.can_shuffle().then(|| {
+                            ui.painter().layout_no_wrap(
+                                "".into(),
+                                font.clone(),
+                                theme.picker.text,
+                            )
+                        });
+                        let shuffle_width = shuffle.as_ref().map_or(0.0, |g| {
+                            g.size().x
+                                + 2.0 * ui.spacing().button_padding.x
+                                + ui.spacing().item_spacing.x
+                        });
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.list_query)
+                                .id(self.edit_id)
+                                // Our own `panel_frame` already draws the box.
+                                .frame(egui::Frame::NONE)
+                                .margin(egui::Margin::ZERO)
+                                .desired_width(inner_width - shuffle_width)
+                                .font(font)
+                                .text_color(theme.picker.text),
+                        );
+                        self.query_clicked |= response.clicked();
+                        if !response.has_focus() {
+                            response.request_focus();
+                        }
+                        if let Some(shuffle) = shuffle
+                            && ui.add(egui::Button::new(shuffle).frame(false)).clicked()
+                        {
+                            self.shuffle_clicked = true;
+                        }
+                    });
                 });
 
                 let follow = self.list_reopened || self.list_followed != Some(selected);

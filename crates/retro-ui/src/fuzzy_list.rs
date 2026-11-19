@@ -85,6 +85,11 @@ pub trait FuzzySource<T = ()>: Send + Sync + 'static {
         None
     }
 
+    /// Whether the picker offers to shuffle the list and play it.
+    fn can_shuffle(&self) -> bool {
+        false
+    }
+
     /// Icons drawn at the left and the far right of the item's row.
     fn get_icon(&self, _id: usize) -> (Option<ListIcon>, Option<ListIcon>) {
         (None, None)

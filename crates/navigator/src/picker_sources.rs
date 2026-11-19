@@ -92,6 +92,10 @@ impl FuzzySource<EmuFile> for PickerSource {
         }
     }
 
+    fn can_shuffle(&self) -> bool {
+        true
+    }
+
     fn file_index(&self, id: usize) -> Option<usize> {
         self.index(id)
     }

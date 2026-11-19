@@ -2,9 +2,9 @@
 //! lists registered for its paths (`Parties/{name}/{compo}`, ...).
 
 use std::collections::{BTreeSet, HashSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher, RandomState};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
 use indexmap::{IndexMap, IndexSet};
@@ -75,19 +75,33 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
 
 pub struct NavList {
     pub id: usize,
-    pub source: ListSource,
+    /// Filled when the list is first shown.
+    source: OnceLock<ListSource>,
     pub path: Vec<String>,
     /// Search text this list was left with, restored when it comes back up.
     pub prompt: String,
     /// Source id of the row this list was left on.
     pub selected: Option<usize>,
+    /// Rebuilt in its normal order the next time it is shown.
+    shuffled: bool,
 }
 
 impl NavList {
-    fn show(&self, pos: i32, title: Vec<String>) -> ShowList {
+    fn new(id: usize, source: Option<ListSource>, path: Vec<String>) -> Self {
+        Self {
+            id,
+            source: source.map(OnceLock::from).unwrap_or_default(),
+            path,
+            prompt: String::new(),
+            selected: None,
+            shuffled: false,
+        }
+    }
+
+    fn show(&self, source: ListSource, pos: i32, title: Vec<String>) -> ShowList {
         ShowList {
             id: self.id,
-            source: self.source.clone(),
+            source,
             prompt: self.prompt.clone(),
             selected: self.selected,
             title,
@@ -116,6 +130,45 @@ impl Launch {
         let file = self.source.get_data(id)?;
         self.index = index;
         Some((file, self.source.file_index(id)))
+    }
+}
+
+/// A list in a random order that holds while it is up.
+struct ShuffledSource {
+    inner: ListSource,
+    state: RandomState,
+}
+
+impl FuzzySource<EmuFile> for ShuffledSource {
+    fn search(&self, query: &str, limit: usize) -> Vec<usize> {
+        let mut ids = self.inner.search(query, usize::MAX);
+        ids.sort_by_cached_key(|&id| self.state.hash_one(id));
+        ids.truncate(limit);
+        ids
+    }
+    fn get_text(&self, id: usize) -> String {
+        self.inner.get_text(id)
+    }
+    fn get_item(&self, id: usize) -> usize {
+        self.inner.get_item(id)
+    }
+    fn get_lines(&self, id: usize) -> (String, String) {
+        self.inner.get_lines(id)
+    }
+    fn get_info(&self, id: usize) -> String {
+        self.inner.get_info(id)
+    }
+    fn get_data(&self, id: usize) -> Option<EmuFile> {
+        self.inner.get_data(id)
+    }
+    fn file_index(&self, id: usize) -> Option<usize> {
+        self.inner.file_index(id)
+    }
+    fn get_icon(&self, id: usize) -> (Option<ListIcon>, Option<ListIcon>) {
+        self.inner.get_icon(id)
+    }
+    fn can_shuffle(&self) -> bool {
+        true
     }
 }
 
@@ -243,6 +296,11 @@ impl Navigator {
             return None;
         }
         self.showing = self.pos;
+        if let Some(list) = self.stack.get_mut(self.pos as usize)
+            && std::mem::take(&mut list.shuffled)
+        {
+            list.source = OnceLock::new();
+        }
         self.current()
     }
 
@@ -250,14 +308,14 @@ impl Navigator {
     pub fn current(&self) -> Option<ShowList> {
         let list = self.stack.get(usize::try_from(self.pos).ok()?)?;
         let title = self.stack.last()?.path.clone();
-        Some(list.show(self.pos as i32, title))
+        Some(list.show(self.list_source(list), self.pos as i32, title))
     }
 
     /// Make the list `item` was picked from the one [`Launch::step`] walks,
     /// and return the entry's index into its db.
     pub fn launch(&mut self, item: usize) -> Option<usize> {
         let current = self.stack.get(usize::try_from(self.pos).ok()?)?;
-        let source = current.source.clone();
+        let source = self.list_source(current);
         let ids = source.search(&current.prompt, usize::MAX);
         let index = ids.iter().position(|&i| source.get_item(i) == item)?;
         let file_index = source.file_index(ids[index]);
@@ -267,6 +325,34 @@ impl Navigator {
             index: index as isize,
         });
         file_index
+    }
+
+    /// Put the current list in a random order, launch its first entry and
+    /// return it, with its index into its db.
+    pub fn shuffle(&mut self) -> Option<(EmuFile, Option<usize>)> {
+        let list = self.stack.get(usize::try_from(self.pos).ok()?)?;
+        let inner = self.list_source(list);
+        if list.id != 0 || !inner.can_shuffle() {
+            return None;
+        }
+        let source: ListSource = Arc::new(ShuffledSource {
+            inner,
+            state: RandomState::new(),
+        });
+        let list = &mut self.stack[self.pos as usize];
+        list.source = OnceLock::from(source.clone());
+        list.shuffled = true;
+        let ids = source.search(&list.prompt, usize::MAX);
+        let index = ids.iter().position(|&id| source.get_data(id).is_some())?;
+        list.selected = Some(ids[index]);
+        let file = source.get_data(ids[index])?;
+        let file_index = source.file_index(ids[index]);
+        self.current_launch = Some(Launch {
+            source,
+            ids,
+            index: index as isize,
+        });
+        Some((file, file_index))
     }
 
     fn root_source(&self) -> ListSource {
@@ -287,16 +373,23 @@ impl Navigator {
         ))
     }
 
+    fn list_source(&self, list: &NavList) -> ListSource {
+        list.source
+            .get_or_init(|| {
+                if list.path.is_empty() {
+                    return self.root_source();
+                }
+                self.source_for(&list.path)
+                    .unwrap_or_else(|| Arc::new(AllWordsSource::new(vec![])))
+            })
+            .clone()
+    }
+
     pub fn go_root(&mut self) -> &mut Self {
         self.stack.clear();
         self.pos = 0;
-        self.stack.push(NavList {
-            id: 0,
-            source: self.root_source(),
-            path: vec![],
-            prompt: String::new(),
-            selected: None,
-        });
+        self.stack
+            .push(NavList::new(0, Some(self.root_source()), vec![]));
         self
     }
 
@@ -310,15 +403,26 @@ impl Navigator {
             return self.go_root();
         }
         debug!("Goto: {path:?}");
-        if let Some(source) = self.source_for(&path) {
-            self.push(NavList {
-                id: 0,
-                source,
-                path,
-                prompt: String::new(),
-                selected: None,
-            });
+        let next = self.stack.get((self.pos + 1) as usize);
+        if next.is_some_and(|l| l.id == 0 && l.path == path) {
+            return self.forward();
         }
+        let Some(source) = self.source_for(&path) else {
+            return self;
+        };
+        // Keep the lists leading here, and stand in for the missing ones.
+        let keep = (0..path.len())
+            .take_while(|&i| {
+                i as isize <= self.pos && self.stack.get(i).is_some_and(|l| l.path == path[..i])
+            })
+            .count();
+        self.stack.truncate(keep);
+        for i in keep..path.len() {
+            self.stack.push(NavList::new(0, None, path[..i].to_vec()));
+        }
+        self.stack.push(NavList::new(0, Some(source), path));
+        self.pos = self.stack.len() as isize - 1;
+        self.showing = -1;
         self
     }
 
@@ -418,7 +522,8 @@ impl Navigator {
         if self.pos < 0 {
             return vec![];
         }
-        self.stack[self.pos as usize].source.get_all_strings()
+        self.list_source(&self.stack[self.pos as usize])
+            .get_all_strings()
     }
 
     /// Add a top level entry to the Navigator. It must be backed by a static
@@ -433,11 +538,12 @@ impl Navigator {
         self.add_db(name, files);
         let root_source = self.root_source();
         if new && let Some(root) = self.stack.first_mut() {
-            root.source = root_source;
+            root.source = OnceLock::from(root_source);
         }
         for list in &mut self.stack {
             if list.id == 0 && list.path == [name] {
-                list.source = Arc::new(PickerSource::new(files, None, IconMode::All));
+                let source: ListSource = Arc::new(PickerSource::new(files, None, IconMode::All));
+                list.source = OnceLock::from(source);
             }
         }
     }
@@ -447,35 +553,33 @@ impl Navigator {
         self.files.shift_remove(name);
         let root_source = self.root_source();
         if let Some(root) = self.stack.first_mut() {
-            root.source = root_source;
+            root.source = OnceLock::from(root_source);
         }
     }
 
     /// Shift+Enter on playlist `name` in the root list.
     pub fn open_playlist_root_menu(&mut self, name: &str) -> &mut Self {
-        self.push(NavList {
-            id: PLAYLIST_ROOT_MENU,
-            source: Arc::new(AllWordsSource::new(vec!["󰅖 Delete Playlist".into()])),
-            path: vec![name.into()],
-            prompt: String::new(),
-            selected: None,
-        })
+        let source: ListSource = Arc::new(AllWordsSource::new(vec!["󰅖 Delete Playlist".into()]));
+        self.push(NavList::new(
+            PLAYLIST_ROOT_MENU,
+            Some(source),
+            vec![name.into()],
+        ))
     }
 
     /// Shift+Enter on entry `id` of a playlist: remove it, or go on to its
     /// downloads.
     pub fn open_playlist_menu(&mut self, id: usize) -> &mut Self {
         let list = self.current_path().join("/");
-        self.push(NavList {
-            id: PLAYLIST_MENU,
-            source: Arc::new(AllWordsSource::new(vec![
-                format!("󰅖 Remove from {list}"),
-                "Run...".into(),
-            ])),
-            path: vec![list, id.to_string()],
-            prompt: String::new(),
-            selected: None,
-        })
+        let source: ListSource = Arc::new(AllWordsSource::new(vec![
+            format!("󰅖 Remove from {list}"),
+            "Run...".into(),
+        ]));
+        self.push(NavList::new(
+            PLAYLIST_MENU,
+            Some(source),
+            vec![list, id.to_string()],
+        ))
     }
 
     // Register a path pattern; "Parties/{party}/{combo}" calls `callback` for

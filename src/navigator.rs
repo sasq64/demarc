@@ -3,6 +3,8 @@ use bevy::prelude::*;
 use crate::AppState;
 use crate::config::AppSettings;
 use crate::egui_ui::HudState;
+use crate::emulator::Emulator;
+use crate::frontend::EmuView;
 use crate::loading::LoadFile;
 use crate::playlists::{FAVORITES, Playlists};
 use crate::ui::{FuzzyListSelect, ShowFuzzyList};
@@ -175,6 +177,38 @@ fn handle_selection(
     }
 }
 
+/// The picker's shuffle button: stop the running demo, shuffle the open list
+/// and play its first entry.
+fn shuffle_list(
+    mut hud: ResMut<HudState>,
+    mut navigator: ResMut<Navigator>,
+    mut settings: ResMut<AppSettings>,
+    mut emus: Query<(&EmuView, &mut Emulator)>,
+    mut load_writer: MessageWriter<LoadFile>,
+) {
+    if !hud.take_shuffle_click() {
+        return;
+    }
+    // Before shuffling, which can stall this thread.
+    for (view, mut emu) in &mut emus {
+        if view.index == settings.current_emu {
+            emu.stop();
+        }
+    }
+    let Some((emu_file, file_index)) = navigator.shuffle() else {
+        return;
+    };
+    if let Some(file_index) = file_index {
+        settings.current_game = file_index as isize;
+    }
+    hud.close_list();
+    load_writer.write(LoadFile {
+        emu_file,
+        target_emulator: None,
+        choose: false,
+    });
+}
+
 /// When `--select` is passed, open the file-open selector once we start running.
 fn open_select_menu(
     args: Res<crate::Args>,
@@ -197,6 +231,7 @@ impl Plugin for NavigatorPlugin {
                 Update,
                 (
                     update_navigator,
+                    shuffle_list,
                     handle_selection.run_if(on_message::<FuzzyListSelect>),
                 ),
             );

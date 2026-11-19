@@ -108,6 +108,8 @@ pub struct Ui {
     pub key_held: Option<Button>,
     key_rects: Vec<(Button, egui::Rect)>,
     pub paused: bool,
+    /// The picker's shuffle button was clicked; see [`Ui::shuffle`].
+    pub shuffle_requested: bool,
     info_text: String,
     info_shown: bool,
 }
@@ -133,6 +135,7 @@ impl Ui {
             key_held: None,
             key_rects: Vec::new(),
             paused: false,
+            shuffle_requested: false,
             info_text: String::new(),
             info_shown: false,
         }
@@ -182,6 +185,13 @@ impl Ui {
     pub fn forward(&mut self) {
         self.navigator.forward();
         self.show_changed();
+    }
+
+    /// Shuffle the open list and return its first entry, now launched.
+    pub fn shuffle(&mut self) -> Option<EmuFile> {
+        let (file, _) = self.navigator.shuffle()?;
+        self.close();
+        Some(file)
     }
 
     /// The release `d` steps from the playing one in the list it was picked from.
@@ -348,6 +358,7 @@ impl Ui {
             self.show_changed();
         }
         let picked = self.picker.show(ctx, |_, _, _| vec![]);
+        self.shuffle_requested |= self.picker.take_shuffle_click();
         if self.picker.take_query_click() {
             self.soft_keyboard = true;
         } else if ctx.input(|i| i.pointer.any_click()) {

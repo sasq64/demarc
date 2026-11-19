@@ -202,6 +202,10 @@ impl HudState {
         self.picker.take_title_click()
     }
 
+    pub fn take_shuffle_click(&mut self) -> bool {
+        self.picker.take_shuffle_click()
+    }
+
     pub fn close_list(&mut self) {
         self.picker.show_list = false;
     }
