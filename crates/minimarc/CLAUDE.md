@@ -83,13 +83,13 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Picker open: all input goes to egui. Closed: keys go to the core.
 - During a demo a swipe in any direction is that cursor key, and a long press
   (held past `SWIPE_TIME` without moving) or a tap opens or closes the key bar
-  (`Ui::draw_keys`, `ui::BUTTONS`).
+  (`Ui::draw_keys`, `ui::ROWS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
-  F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
-  the bar) and Joy (unused); row two (`App::bar_button`) is disk flip (shows
+  F1/F3/F5/F7/Space/Return (held keys, `Button::key`), the soft keyboard and Joy (unused); row two (`App::bar_button`) is disk flip (shows
   the disk number), stop (unloads the core, back to the picker), reset, pause,
   warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
-  says which buttons close the bar: for now all of row two.
+  says which buttons close the bar: all of row two. One touch gesture
+  at a time (`player::Gesture`).
 - Escape or Back toggles the picker;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.

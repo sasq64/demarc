@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use database::emu_file::{EmuFile, bytes_in_progress};
 use indexmap::IndexMap;
 use navigator::{Navigator, setup_navigator};
+use retro_core::libretro;
 use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
 const FONT: &[u8] = include_bytes!("../../../system/font.ttf");
@@ -30,12 +31,12 @@ pub enum Button {
     Stop,
 }
 
-/// The key bar's buttons, eight on the first row.
-pub const BUTTONS: [Button; 16] = {
+/// The key bar's buttons.
+const ROWS: [&[Button]; 2] = {
     use Button::*;
     [
-        F1, F3, F5, F7, Space, Return, Keyboard, Joy, Disk, Stop, Reset, Pause, Warp, Prev, Next,
-        Back,
+        &[F1, F3, F5, F7, Space, Return, Keyboard, Joy],
+        &[Disk, Stop, Reset, Pause, Warp, Prev, Next, Back],
     ]
 };
 
@@ -44,10 +45,21 @@ const BACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xb8, 0x6c);
 impl Button {
     /// Whether pressing it closes the key bar.
     pub fn closes_bar(self) -> bool {
-        BUTTONS
-            .iter()
-            .position(|&b| b == self)
-            .is_some_and(|i| i >= 8)
+        ROWS[1].contains(&self)
+    }
+
+    /// The key it holds down, if it is a key.
+    pub fn key(self) -> Option<libretro::retro_key> {
+        use libretro::*;
+        Some(match self {
+            Button::F1 => RETROK_F1,
+            Button::F3 => RETROK_F3,
+            Button::F5 => RETROK_F5,
+            Button::F7 => RETROK_F7,
+            Button::Space => RETROK_SPACE,
+            Button::Return => RETROK_RETURN,
+            _ => return None,
+        })
     }
 
     fn label(self, paused: bool) -> &'static str {
@@ -77,10 +89,7 @@ const HUD_SCALE: f32 = 0.35;
 /// Physical pixels from the top and right edges to the info text.
 const INFO_MARGIN: f32 = 50.0;
 const INFO_TIME: Duration = Duration::from_secs(5);
-
-pub enum Action {
-    Play(EmuFile),
-}
+const FOREVER: Duration = Duration::from_secs(3600 * 24 * 365);
 
 pub struct Ui {
     pub ctx: egui::Context,
@@ -93,10 +102,9 @@ pub struct Ui {
     pub keys_open: bool,
     /// Where the key bar starts, in points, when it goes under the frame.
     pub bar_top: Option<f32>,
-    /// Index into `BUTTONS` of the button a finger is on.
-    pub key_held: Option<usize>,
-    /// One per `BUTTONS`.
-    key_rects: Vec<egui::Rect>,
+    /// The key bar button a finger is on.
+    pub key_held: Option<Button>,
+    key_rects: Vec<(Button, egui::Rect)>,
     pub paused: bool,
     info_text: String,
     info_shown: bool,
@@ -175,7 +183,7 @@ impl Ui {
     }
 
     pub fn status(&mut self, text: &str) {
-        self.status_for(text, Duration::from_secs(3600));
+        self.status_for(text, FOREVER);
     }
 
     /// What is playing, in place of the status, shown for `INFO_TIME`.
@@ -183,9 +191,7 @@ impl Ui {
         self.info_text = text.to_owned();
         self.status("");
         self.info_shown = false;
-        let now = self.now();
-        self.hud
-            .set_text(HudLocation::InfoText, text, now, Duration::ZERO, INFO_TIME);
+        self.hud_text(HudLocation::InfoText, text, INFO_TIME);
     }
 
     /// Shows the info text while the key bar is.
@@ -196,32 +202,25 @@ impl Ui {
         } else {
             String::new()
         };
-        let now = self.now();
-        self.hud.set_text(
-            HudLocation::InfoText,
-            &text,
-            now,
-            Duration::ZERO,
-            Duration::from_secs(3600 * 24 * 365),
-        );
+        self.hud_text(HudLocation::InfoText, &text, FOREVER);
     }
 
     pub fn status_for(&mut self, text: &str, time: Duration) {
-        let now = self.now();
-        self.hud
-            .set_text(HudLocation::BottomLeft, text, now, Duration::ZERO, time);
+        self.hud_text(HudLocation::BottomLeft, text, time);
     }
 
     pub fn error(&mut self, text: &str) {
         self.status("");
+        self.hud_text(HudLocation::Error, text, Duration::from_secs(8));
+    }
+
+    fn hud_text(&mut self, loc: HudLocation, text: &str, time: Duration) {
         let now = self.now();
-        self.hud.set_text(
-            HudLocation::Error,
-            text,
-            now,
-            Duration::ZERO,
-            Duration::from_secs(8),
-        );
+        self.hud.set_text(loc, text, now, Duration::ZERO, time);
+    }
+
+    fn bar_visible(&self) -> bool {
+        self.keys_open && !self.picker.is_open()
     }
 
     fn show(&mut self, list: navigator::ShowList) {
@@ -243,9 +242,9 @@ impl Ui {
         }
     }
 
-    /// Index into `BUTTONS` of the key bar button at a physical position.
-    pub fn key_at(&self, x: f64, y: f64) -> Option<usize> {
-        if !self.keys_open || self.picker.is_open() {
+    /// The key bar button at a physical position.
+    pub fn key_at(&self, x: f64, y: f64) -> Option<Button> {
+        if !self.bar_visible() {
             return None;
         }
         let scale = self.ctx.pixels_per_point();
@@ -253,7 +252,8 @@ impl Ui {
         let gap = self.ctx.global_style().spacing.item_spacing.x / 2.0;
         self.key_rects
             .iter()
-            .position(|r| r.expand(gap).contains(pos))
+            .find(|(_, r)| r.expand(gap).contains(pos))
+            .map(|&(b, _)| b)
     }
 
     fn draw_keys(&mut self, ctx: &egui::Context) {
@@ -267,7 +267,7 @@ impl Ui {
             None => area.anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -gap)),
         };
         area.show(ctx, |ui| {
-            for row in BUTTONS.chunks(8) {
+            for row in ROWS {
                 let width = ctx.content_rect().width() / row.len() as f32 - gap;
                 let size = egui::vec2(width, KEY_SIZE * 2.0);
                 ui.horizontal(|ui| {
@@ -277,10 +277,10 @@ impl Ui {
                         if button == Button::Back {
                             text = text.color(BACK_COLOR);
                         }
-                        let button = egui::Button::new(text)
-                            .selected(self.key_held == Some(self.key_rects.len()))
+                        let widget = egui::Button::new(text)
+                            .selected(self.key_held == Some(button))
                             .min_size(size);
-                        self.key_rects.push(ui.add(button).rect);
+                        self.key_rects.push((button, ui.add(widget).rect));
                     }
                 });
             }
@@ -289,14 +289,14 @@ impl Ui {
 
     /// Height of the key bar, in points, while it is open.
     pub fn key_bar_height(&self) -> f32 {
-        if !self.keys_open || self.picker.is_open() {
+        if !self.bar_visible() {
             return 0.0;
         }
         let gap = self.ctx.global_style().spacing.item_spacing.x;
         let rect = self
             .key_rects
             .iter()
-            .fold(egui::Rect::NOTHING, |a, r| a.union(*r));
+            .fold(egui::Rect::NOTHING, |a, (_, r)| a.union(*r));
         if rect.is_positive() {
             rect.height() + gap
         } else {
@@ -304,23 +304,23 @@ impl Ui {
         }
     }
 
-    /// Draw one frame, and return what the user asked for.
-    pub fn draw(&mut self, ctx: &egui::Context) -> Option<Action> {
+    /// Draw one frame, and return the release the user picked.
+    pub fn draw(&mut self, ctx: &egui::Context) -> Option<EmuFile> {
         let margin = INFO_MARGIN / ctx.pixels_per_point();
         let place = ctx.viewport_rect();
         let place = place
             .with_max_x(place.max.x - margin)
             .with_min_y(place.min.y + margin);
         self.hud.info_place = Some((place, egui::Align2::RIGHT_TOP));
-        let show = self.keys_open && !self.picker.is_open();
+        let show = self.bar_visible();
         if show != self.info_shown {
             self.set_info(show);
         }
         self.hud.show(ctx, self.now(), bytes_in_progress(), None);
+        if show {
+            self.draw_keys(ctx);
+        }
         if !self.picker.is_open() {
-            if self.keys_open {
-                self.draw_keys(ctx);
-            }
             return None;
         }
         if let Some(list) = self.navigator.current()
@@ -348,7 +348,7 @@ impl Ui {
             Some(file) => {
                 self.navigator.launch(picked.item);
                 self.close();
-                Some(Action::Play(file))
+                Some(file)
             }
             None => {
                 self.navigator.enter(&[&picked.text]);

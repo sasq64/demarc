@@ -24,7 +24,8 @@ use retro_core::{dylib_name, find_core, system_dir};
 
 use crate::load::{Demo, Loaded, Loader};
 use crate::media::{self, Media};
-use crate::ui::{Action, BUTTONS, Button, Ui};
+use crate::ui::{Button, Ui};
+use database::emu_file::EmuFile;
 use release_io::workfile::WorkFile;
 
 const CORE_NAME: &str = "vice_x64sc";
@@ -185,10 +186,6 @@ fn alt_key(key: KeyCode, shift: bool) -> Option<libretro::retro_key> {
         KeyC => 9,
         _ => return None,
     };
-    let digits = [
-        RETROK_0, RETROK_1, RETROK_2, RETROK_3, RETROK_4, RETROK_5, RETROK_6, RETROK_7, RETROK_8,
-        RETROK_9,
-    ];
     let fkeys = [
         RETROK_ESCAPE,
         RETROK_F1,
@@ -202,7 +199,7 @@ fn alt_key(key: KeyCode, shift: bool) -> Option<libretro::retro_key> {
     if shift {
         fkeys.get(i).copied()
     } else {
-        Some(digits[i])
+        Some(RETROK_0 + i as retro_key)
     }
 }
 
@@ -469,7 +466,7 @@ impl Gfx {
 
     /// Run one egui frame over `ui`, and return what it wants drawn along with
     /// the entry the user picked.
-    fn run_ui(&mut self, ui: &mut Ui) -> (UiFrame, Option<Action>) {
+    fn run_ui(&mut self, ui: &mut Ui) -> (UiFrame, Option<EmuFile>) {
         let scale = self.window.scale_factor() as f32;
         let height = (self.config.height as f32 / scale).min(UI_MAX_HEIGHT);
         retro_ui::set_scale(&ui.ctx, height, scale, UI_ZOOM);
@@ -607,40 +604,15 @@ impl Gfx {
             &screen,
         );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("lottes"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            if self.has_frame {
-                let (x, y, w, h) = ui.frame_rect;
-                pass.set_viewport(x, y, w, h, 0.0, 1.0);
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-        }
-        {
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("ui"),
+                    label: Some("screen"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &view,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -650,6 +622,14 @@ impl Gfx {
                     multiview_mask: None,
                 })
                 .forget_lifetime();
+            if self.has_frame {
+                let (x, y, w, h) = ui.frame_rect;
+                pass.set_viewport(x, y, w, h, 0.0, 1.0);
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            // Sets its own viewport.
             self.egui_renderer.render(&mut pass, &ui.jobs, &screen);
         }
         self.queue
@@ -722,25 +702,64 @@ const AUDIO_BUF: (usize, usize) = (3000, 18000);
 // Touch
 // -------------------------------------------------------------------------
 
-/// One finger on the screen.
-struct Swipe {
-    id: u64,
-    start: (f64, f64),
-    began: Instant,
+/// What the finger that counts is doing.
+#[derive(Clone, Copy)]
+enum Gesture {
+    None,
+    /// Down and still: a swipe, a tap or a long press to be.
+    Swipe {
+        id: u64,
+        start: (f64, f64),
+        began: Instant,
+    },
+    /// Holding `key` down: a key bar key, or a swipe's cursor key.
+    Key {
+        id: u64,
+        key: libretro::retro_key,
+        button: Option<Button>,
+    },
+    /// On a key bar button that acts when lifted over it.
+    Button {
+        id: u64,
+        button: Button,
+        over: bool,
+    },
+    /// On the open picker.
+    Nav {
+        id: u64,
+        start: (f64, f64),
+    },
 }
 
-/// The key a key bar button holds down, if it is a key.
-fn bar_key(button: Button) -> Option<libretro::retro_key> {
-    use libretro::*;
-    Some(match button {
-        Button::F1 => RETROK_F1,
-        Button::F3 => RETROK_F3,
-        Button::F5 => RETROK_F5,
-        Button::F7 => RETROK_F7,
-        Button::Space => RETROK_SPACE,
-        Button::Return => RETROK_RETURN,
-        _ => return None,
-    })
+impl Gesture {
+    fn id(self) -> Option<u64> {
+        match self {
+            Gesture::None => None,
+            Gesture::Swipe { id, .. }
+            | Gesture::Key { id, .. }
+            | Gesture::Button { id, .. }
+            | Gesture::Nav { id, .. } => Some(id),
+        }
+    }
+
+    /// The key bar button shown held.
+    fn held(self) -> Option<Button> {
+        match self {
+            Gesture::Key { button, .. } => button,
+            Gesture::Button { button, over, .. } => over.then_some(button),
+            _ => None,
+        }
+    }
+
+    fn warp(self) -> bool {
+        matches!(
+            self,
+            Gesture::Button {
+                button: Button::Warp,
+                ..
+            }
+        )
+    }
 }
 
 /// The cursor key a movement of `(dx, dy)` means, once it is long enough.
@@ -855,17 +874,9 @@ pub struct App {
     last_key_frame: Option<u32>,
     /// Every finger currently down, so a second one can veto the swipe.
     touches: Vec<u64>,
-    swipe: Option<Swipe>,
-    /// The finger on a key bar button or after a swipe, and the key it holds down.
-    bar_key: Option<(u64, libretro::retro_key)>,
-    /// The finger on a key bar button that acts when lifted, and its index.
-    bar_press: Option<(u64, usize)>,
-    /// The finger that went down on the open picker, and where.
-    nav_swipe: Option<(u64, (f64, f64))>,
+    gesture: Gesture,
     frame_time: Duration,
     next_frame: Instant,
-    /// Set while a finger is on the warp button.
-    warp: bool,
     disk: u32,
     /// A headset tap waiting to see if a second one follows.
     tap_at: Option<Instant>,
@@ -897,13 +908,9 @@ impl App {
             keys_down: HashMap::new(),
             last_key_frame: None,
             touches: Vec::new(),
-            swipe: None,
-            bar_key: None,
-            bar_press: None,
-            nav_swipe: None,
+            gesture: Gesture::None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
-            warp: false,
             disk: 0,
             tap_at: None,
             perf: std::env::var_os("MINIMARC_PERF").map(|_| Perf::default()),
@@ -930,21 +937,28 @@ impl App {
         }
     }
 
-    /// Replace the running core with one booting `demo`.
-    fn start(&mut self, demo: Demo) -> Result<()> {
-        let Demo { work, events, info } = demo;
+    /// Drop the running core and the key and touch state that went with it.
+    fn unload(&mut self) {
         self.cancel_touch();
         self.pressed.clear();
         self.key_queue.clear();
         self.keys_down.clear();
         self.last_key_frame = None;
-        // One core at a time: Android loads it in place, so the old instance
-        // has to be gone before the new one starts.
+        self.startup_keys.clear();
         self.core = None;
         self.work = None;
+        self.ui.paused = false;
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.has_frame = false;
         }
+    }
+
+    /// Replace the running core with one booting `demo`.
+    fn start(&mut self, demo: Demo) -> Result<()> {
+        let Demo { work, events, info } = demo;
+        // One core at a time: Android loads it in place, so the old instance
+        // has to be gone before the new one starts.
+        self.unload();
         let core = load_core(&work.path, work.get_all_meta())?;
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         self.frame_time = Duration::from_secs_f64(1.0 / fps);
@@ -957,8 +971,6 @@ impl App {
             .collect();
         self.core_frames = 0;
         self.audio_fill = 0.0;
-        self.ui.paused = false;
-        self.warp = false;
         self.disk = 0;
         self.core = Some(core);
         self.work = Some(work);
@@ -1093,90 +1105,95 @@ impl App {
         }
     }
 
-    /// A swipe is a cursor key, a long press opens or closes the key bar;
-    /// keys are held for as long as the finger is on them. A second finger cancels a swipe and blocks
-    /// another until the screen is clear: the touchpad sits on the keyboard, so
-    /// typing drags fingers across it.
+    /// A swipe is a cursor key, a tap or a long press opens or closes the key
+    /// bar; keys are held for as long as the finger is on them. A second
+    /// finger cancels a swipe and blocks another until the screen is clear:
+    /// the touchpad sits on the keyboard, so typing drags fingers across it.
     fn touch(&mut self, t: Touch) {
-        if self.bar_key.is_some_and(|(id, _)| id == t.id) {
-            if matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
-                self.touches.retain(|&id| id != t.id);
-                self.release_bar_key();
-            }
-            return;
-        }
-        if let Some((id, i)) = self.bar_press
-            && id == t.id
-        {
-            let over = self.ui.key_at(t.location.x, t.location.y) == Some(i);
-            match t.phase {
-                TouchPhase::Started | TouchPhase::Moved => {
-                    self.ui.key_held = over.then_some(i);
-                }
-                TouchPhase::Ended | TouchPhase::Cancelled => {
-                    self.bar_press = None;
-                    self.ui.key_held = None;
-                    self.warp = false;
-                    if over && t.phase == TouchPhase::Ended {
-                        self.bar_button(BUTTONS[i]);
-                        if BUTTONS[i].closes_bar() {
-                            self.ui.keys_open = false;
-                        }
-                    }
-                }
-            }
-            return;
-        }
+        let pos = (t.location.x, t.location.y);
+        let mine = self.gesture.id() == Some(t.id);
         match t.phase {
             TouchPhase::Started => {
-                if let Some(i) = self.ui.key_at(t.location.x, t.location.y) {
-                    self.release_bar_key();
-                    if let Some(key) = bar_key(BUTTONS[i]) {
-                        self.press(key, true, self.mods());
-                        self.bar_key = Some((t.id, key));
-                        self.ui.key_held = Some(i);
-                    } else {
-                        self.bar_press = Some((t.id, i));
-                        self.ui.key_held = Some(i);
-                        self.warp = BUTTONS[i] == Button::Warp;
-                    }
-                    return;
-                }
-                self.swipe = None;
                 if !self.touches.contains(&t.id) {
                     self.touches.push(t.id);
                 }
-                if self.touches.len() == 1 {
-                    self.swipe = Some(Swipe {
-                        id: t.id,
-                        start: (t.location.x, t.location.y),
-                        began: Instant::now(),
+                let id = t.id;
+                if let Some(button) = self.ui.key_at(pos.0, pos.1) {
+                    let gesture = match button.key() {
+                        Some(key) => {
+                            self.press(key, true, self.mods());
+                            Gesture::Key {
+                                id,
+                                key,
+                                button: Some(button),
+                            }
+                        }
+                        None => Gesture::Button {
+                            id,
+                            button,
+                            over: true,
+                        },
+                    };
+                    self.set_gesture(gesture);
+                } else if self.touches.len() == 1 {
+                    let began = Instant::now();
+                    self.set_gesture(Gesture::Swipe {
+                        id,
+                        start: pos,
+                        began,
                     });
+                } else if let Gesture::Swipe { .. } = self.gesture {
+                    self.gesture = Gesture::None;
                 }
             }
-            TouchPhase::Moved => {
-                let Some(swipe) = self.swipe.as_ref() else {
-                    return;
-                };
-                if swipe.id != t.id || swipe.began.elapsed() > SWIPE_TIME {
-                    return;
+            TouchPhase::Moved if mine => match self.gesture {
+                Gesture::Button { id, button, .. } => {
+                    let over = self.ui.key_at(pos.0, pos.1) == Some(button);
+                    self.gesture = Gesture::Button { id, button, over };
                 }
-                let (dx, dy) = (t.location.x - swipe.start.0, t.location.y - swipe.start.1);
-                if let Some(key) = swipe_key(dx, dy) {
-                    self.swipe = None;
-                    self.release_bar_key();
-                    self.press(key, true, self.mods());
-                    self.bar_key = Some((t.id, key));
+                Gesture::Swipe { id, start, began } if began.elapsed() <= SWIPE_TIME => {
+                    if let Some(key) = swipe_key(pos.0 - start.0, pos.1 - start.1) {
+                        self.press(key, true, self.mods());
+                        self.gesture = Gesture::Key {
+                            id,
+                            key,
+                            button: None,
+                        };
+                    }
                 }
-            }
+                _ => {}
+            },
+            TouchPhase::Moved => {}
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&id| id != t.id);
-                if self.swipe.take_if(|s| s.id == t.id).is_some()
-                    && t.phase == TouchPhase::Ended
-                {
-                    self.toggle_keys();
+                if !mine {
+                    return;
+                }
+                let gesture = self.gesture;
+                self.set_gesture(Gesture::None);
+                if t.phase == TouchPhase::Cancelled {
+                    return;
+                }
+                match gesture {
+                    Gesture::Button {
+                        button, over: true, ..
+                    } => {
+                        self.bar_button(button);
+                        if button.closes_bar() {
+                            self.ui.keys_open = false;
+                        }
+                    }
+                    Gesture::Swipe { .. } => self.toggle_keys(),
+                    _ => {}
                 }
             }
+        }
+    }
+
+    /// Replace the gesture, letting go of the key the old one held.
+    fn set_gesture(&mut self, gesture: Gesture) {
+        if let Gesture::Key { key, .. } = std::mem::replace(&mut self.gesture, gesture) {
+            self.press(key, false, self.mods());
         }
     }
 
@@ -1185,13 +1202,16 @@ impl App {
         self.ui.soft_keyboard = false;
     }
 
+    fn toggle_pause(&mut self) {
+        self.ui.paused = !self.ui.paused;
+    }
+
     /// A finger held still past `SWIPE_TIME` is a long press.
     fn check_long_press(&mut self) {
-        if self
-            .swipe
-            .take_if(|s| s.began.elapsed() >= SWIPE_TIME)
-            .is_some()
+        if let Gesture::Swipe { began, .. } = self.gesture
+            && began.elapsed() >= SWIPE_TIME
         {
+            self.gesture = Gesture::None;
             self.toggle_keys();
         }
     }
@@ -1219,7 +1239,7 @@ impl App {
                     core.reset();
                 }
             }
-            Button::Pause => self.ui.paused = !self.ui.paused,
+            Button::Pause => self.toggle_pause(),
             Button::Stop => self.stop(),
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),
@@ -1230,15 +1250,8 @@ impl App {
 
     /// Unload the running release and go back to the picker.
     fn stop(&mut self) {
-        self.cancel_touch();
-        self.core = None;
-        self.work = None;
-        self.startup_keys.clear();
-        self.ui.paused = false;
+        self.unload();
         self.ui.info("");
-        if let Some(gfx) = self.gfx.as_mut() {
-            gfx.has_frame = false;
-        }
         self.ui.open();
     }
 
@@ -1246,7 +1259,7 @@ impl App {
         match m {
             Media::Tap if self.tap_at.take().is_some() => self.skip(1),
             Media::Tap => self.tap_at = Some(Instant::now()),
-            Media::Toggle => self.ui.paused = !self.ui.paused,
+            Media::Toggle => self.toggle_pause(),
             Media::Next => self.skip(1),
             Media::Prev => self.skip(-1),
         }
@@ -1255,20 +1268,30 @@ impl App {
     /// Load the release `d` steps along the list the running one was picked from.
     fn skip(&mut self, d: isize) {
         if let Some(file) = self.ui.step(d) {
-            self.ui.status("Loading...");
-            self.loader.load_demo(file);
+            self.load(file);
         }
+    }
+
+    fn load(&mut self, file: EmuFile) {
+        self.ui.status("Loading...");
+        self.loader.load_demo(file);
     }
 
     /// A sideways swipe over the picker is Left or Right.
     fn nav_touch(&mut self, t: &Touch) {
         match t.phase {
-            TouchPhase::Started => self.nav_swipe = Some((t.id, (t.location.x, t.location.y))),
+            TouchPhase::Started => {
+                // Whatever the fingers did before the picker opened is over.
+                self.cancel_touch();
+                let start = (t.location.x, t.location.y);
+                self.gesture = Gesture::Nav { id: t.id, start };
+            }
             TouchPhase::Moved => {}
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                let Some((id, start)) = self.nav_swipe.take() else {
+                let Gesture::Nav { id, start } = self.gesture else {
                     return;
                 };
+                self.gesture = Gesture::None;
                 if id != t.id || t.phase == TouchPhase::Cancelled {
                     return;
                 }
@@ -1283,17 +1306,7 @@ impl App {
 
     fn cancel_touch(&mut self) {
         self.touches.clear();
-        self.swipe = None;
-        self.bar_press = None;
-        self.warp = false;
-        self.release_bar_key();
-    }
-
-    fn release_bar_key(&mut self) {
-        self.ui.key_held = None;
-        if let Some((_, key)) = self.bar_key.take() {
-            self.press(key, false, self.mods());
-        }
+        self.set_gesture(Gesture::None);
     }
 
     /// Step the core one frame and hand the result to the GPU. Without a
@@ -1316,12 +1329,12 @@ impl App {
         }
         if self.tap_at.is_some_and(|t| t.elapsed() >= DOUBLE_TAP) {
             self.tap_at = None;
-            self.ui.paused = !self.ui.paused;
+            self.toggle_pause();
         }
         if self.core.is_none() || self.ui.paused {
             return;
         }
-        if self.warp {
+        if self.gesture.warp() {
             let end = Instant::now() + self.frame_time.mul_f32(0.8);
             while Instant::now() < end {
                 self.run_frame();
@@ -1362,7 +1375,10 @@ impl App {
         }
         self.core_frames += 1;
         let frames = self.core_frames;
-        for (_, key) in self.startup_keys.extract_if(.., |(frame, _)| *frame <= frames) {
+        for (_, key) in self
+            .startup_keys
+            .extract_if(.., |(frame, _)| *frame <= frames)
+        {
             self.key_queue.push_back((key, true, 0));
             self.key_queue.push_back((key, false, 0));
         }
@@ -1372,7 +1388,7 @@ impl App {
         };
         let rate = core.sample_rate() as f32;
         let audio = &mut self.audio;
-        let warp = self.warp;
+        let warp = self.gesture.warp();
         let mut heard = false;
         core.with_audio(|samples| {
             heard = !samples.is_empty();
@@ -1405,33 +1421,29 @@ impl App {
                 return true;
             }
             // Android's Back has a logical key only.
-            let toggle = *logical_key == Key::Named(NamedKey::BrowserBack)
-                || *physical_key == PhysicalKey::Code(KeyCode::Escape);
-            match physical_key {
-                _ if toggle => {
-                    if down && !repeat {
-                        if !self.ui.is_open() {
-                            self.cancel_touch();
-                            self.ui.open();
-                        } else if self.core.is_some() {
-                            self.ui.close();
-                        }
+            if *logical_key == Key::Named(NamedKey::BrowserBack)
+                || *physical_key == PhysicalKey::Code(KeyCode::Escape)
+            {
+                if down && !repeat {
+                    if !self.ui.is_open() {
+                        self.cancel_touch();
+                        self.ui.open();
+                    } else if self.core.is_some() {
+                        self.ui.close();
                     }
-                    return true;
                 }
-                PhysicalKey::Code(KeyCode::ArrowLeft) if self.ui.is_open() => {
-                    if down {
-                        self.ui.back();
-                    }
-                    return true;
+                return true;
+            }
+            if self.ui.is_open()
+                && let PhysicalKey::Code(code @ (KeyCode::ArrowLeft | KeyCode::ArrowRight)) =
+                    physical_key
+            {
+                if down && *code == KeyCode::ArrowLeft {
+                    self.ui.back();
+                } else if down {
+                    self.ui.forward();
                 }
-                PhysicalKey::Code(KeyCode::ArrowRight) if self.ui.is_open() => {
-                    if down {
-                        self.ui.forward();
-                    }
-                    return true;
-                }
-                _ => {}
+                return true;
             }
         }
         if !self.ui.is_open() {
@@ -1556,6 +1568,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
+                    self.ui.key_held = self.gesture.held();
                     let began = Instant::now();
                     let (frame, picked) = gfx.run_ui(&mut self.ui);
                     let drawn = Instant::now();
@@ -1567,12 +1580,8 @@ impl ApplicationHandler for App {
                         perf.ui.add(drawn - began);
                         perf.render.add(drawn.elapsed());
                     }
-                    match picked {
-                        Some(Action::Play(file)) => {
-                            self.ui.status("Loading...");
-                            self.loader.load_demo(file);
-                        }
-                        None => {}
+                    if let Some(file) = picked {
+                        self.load(file);
                     }
                 }
             }
@@ -1591,10 +1600,7 @@ impl ApplicationHandler for App {
     }
 }
 
-fn load_core(
-    game: &std::path::Path,
-    settings: HashMap<String, String>,
-) -> Result<RetroCoreDirect> {
+fn load_core(game: &std::path::Path, settings: HashMap<String, String>) -> Result<RetroCoreDirect> {
     let path = find_core(CORE_NAME).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \
@@ -1632,27 +1638,22 @@ const ASSETS: [(&str, &str); 5] = [
 #[cfg(any(target_os = "android", target_os = "ios"))]
 const DB_ASSET: &str = "csdb.txt";
 
-/// Unconditionally, so a rebuilt APK replaces whatever the last one left behind.
-#[cfg(target_os = "android")]
-fn unpack_assets(
-    app: &winit::platform::android::activity::AndroidApp,
+/// Write each of `assets`, as `read` gives it, to its place under `dir`.
+/// Unconditionally, so a rebuilt app replaces whatever the last one left behind.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn install_assets<'a>(
     dir: &std::path::Path,
+    assets: impl IntoIterator<Item = (&'a str, &'a str)>,
+    mut read: impl FnMut(&str) -> Result<Vec<u8>>,
 ) -> Result<()> {
-    use std::io::Read;
-
-    let assets = app.asset_manager();
-    for (name, dest) in ASSETS {
-        let mut asset = assets
-            .open(&std::ffi::CString::new(name)?)
-            .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
-        let mut data = Vec::new();
-        asset.read_to_end(&mut data)?;
+    for (name, dest) in assets {
+        let data = read(name)?;
         let path = dir.join(dest);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&path, &data)?;
-        info!("Unpacked {} ({} bytes)", path.display(), data.len());
+        info!("Installed {} ({} bytes)", path.display(), data.len());
     }
     Ok(())
 }
@@ -1688,7 +1689,16 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         unsafe { std::env::set_var("TMPDIR", &tmp) };
         release_io::set_cache_dir(data.join("cache"));
         retro_core::set_system_dir(data.clone());
-        unpack_assets(&app, &data)?;
+        install_assets(&data, ASSETS, |name| {
+            use std::io::Read;
+            let mut asset = app
+                .asset_manager()
+                .open(&std::ffi::CString::new(name)?)
+                .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
+            let mut bytes = Vec::new();
+            asset.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })?;
 
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
         event_loop.run_app(&mut App::new(data.join(DB_ASSET)))?;
@@ -1722,14 +1732,10 @@ pub fn ios_setup() -> Result<std::path::PathBuf> {
     release_io::set_cache_dir(home.join("Library/Caches/releases"));
     retro_core::set_system_dir(data.clone());
     // The database is read in place.
-    for (name, dest) in ASSETS.into_iter().filter(|(name, _)| *name != DB_ASSET) {
-        let path = data.join(dest);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(bundle.join(name), &path)
-            .with_context(|| format!("no {name} in the app bundle"))?;
-    }
+    let assets = ASSETS.into_iter().filter(|(name, _)| *name != DB_ASSET);
+    install_assets(&data, assets, |name| {
+        std::fs::read(bundle.join(name)).with_context(|| format!("no {name} in the app bundle"))
+    })?;
     play_audio();
     Ok(bundle.join(DB_ASSET))
 }
