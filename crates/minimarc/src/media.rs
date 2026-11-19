@@ -27,6 +27,7 @@ pub fn from_key(key: &Key) -> Option<Media> {
 }
 
 /// An Android `KeyEvent` keycode.
+#[cfg(any(target_os = "android", test))]
 pub fn from_keycode(code: i32) -> Option<Media> {
     match code {
         79 | 85 => Some(Media::Tap),

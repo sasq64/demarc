@@ -1,8 +1,6 @@
 //! The window: the VICE libretro core through the lottes CRT shader, with the
 //! picker drawn over it.
 
-#![allow(dead_code)]
-
 use retro_core::libretro;
 
 use std::collections::{HashMap, VecDeque};
@@ -35,15 +33,16 @@ const WINDOW_SIZE: (u32, u32) = (720, 576);
 /// How far a finger has to travel, in physical pixels, before it is a swipe,
 /// and how long it may take to get there.
 const SWIPE_DIST: f64 = 80.0;
+const SWIPE_TIME: Duration = Duration::from_millis(500);
 /// Phone text is read at arm's length on a small screen.
 const MOBILE: bool = cfg!(any(target_os = "android", target_os = "ios"));
 const UI_ZOOM: f32 = if MOBILE { 2.0 } else { 1.0 };
 /// Window height in logical pixels past which the UI stops growing with it.
 const UI_MAX_HEIGHT: f32 = if MOBILE { 600.0 } else { f32::INFINITY };
-const SWIPE_TIME: Duration = Duration::from_millis(500);
 /// A second headset tap within this skips to the next release.
 const DOUBLE_TAP: Duration = Duration::from_millis(400);
-/// Core frames a key is held at least, see `App::flush_keys`.
+/// Core frames a key is held at least, see `App::flush_keys`; also what makes
+/// a tap shorter than a frame land.
 const MIN_KEY_FRAMES: u32 = 3;
 
 // -------------------------------------------------------------------------
@@ -237,11 +236,11 @@ const CRT_WGSL: &str = include_str!("crt.wgsl");
 
 const FRAGMENT: &str = "fragment_normal";
 
-/// Where the picture lands in a window of `win` pixels, at display aspect
-/// `aspect`: as large as fits, centred, aspect preserved.
 /// Gap, in points, between the key bar and the soft keyboard.
 const KEYBOARD_MARGIN: f32 = 16.0;
 
+/// Where the picture lands in a window of `win` pixels, at display aspect
+/// `aspect`: as large as fits, centred, aspect preserved.
 fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
     let (win_w, win_h) = win;
     let aspect = if aspect > 0.0 { aspect } else { win_w / win_h };
@@ -763,9 +762,6 @@ fn swipe_key(dx: f64, dy: f64) -> Option<libretro::retro_key> {
 // App
 // -------------------------------------------------------------------------
 
-/// How long a scheduled startup key is held, in frames.
-const KEY_HOLD: u32 = 2;
-
 #[derive(Default)]
 struct Stat {
     sum: Duration,
@@ -837,8 +833,8 @@ pub struct App {
     core: Option<RetroCoreDirect>,
     /// The release `core` is running, kept for the temp dir it may sit in.
     work: Option<WorkFile>,
-    /// Keys to press once `core` has run that many frames.
-    startup_keys: Vec<(u32, libretro::retro_key, bool)>,
+    /// Keys to tap once `core` has run that many frames.
+    startup_keys: Vec<(u32, libretro::retro_key)>,
     core_frames: u32,
     ui: Ui,
     loader: Loader,
@@ -949,16 +945,16 @@ impl App {
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.has_frame = false;
         }
-        let core = load_core(Some(&work.path), work.get_all_meta())?;
+        let core = load_core(&work.path, work.get_all_meta())?;
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         self.frame_time = Duration::from_secs_f64(1.0 / fps);
-        self.startup_keys.clear();
-        for (frame, event) in events {
-            if let InputEvent::Key(key) = event {
-                self.startup_keys.push((frame, key, true));
-                self.startup_keys.push((frame + KEY_HOLD, key, false));
-            }
-        }
+        self.startup_keys = events
+            .into_iter()
+            .filter_map(|(frame, event)| match event {
+                InputEvent::Key(key) => Some((frame, key)),
+                _ => None,
+            })
+            .collect();
         self.core_frames = 0;
         self.audio_fill = 0.0;
         self.ui.paused = false;
@@ -1092,7 +1088,6 @@ impl App {
                 self.keys_down.remove(&key);
             }
             self.key_queue.pop_front();
-            tracing::info!("KEYDBG f{now} press {key} {down} {mods}");
             core.press_key(key, down, mods);
             self.last_key_frame = Some(now);
         }
@@ -1176,14 +1171,10 @@ impl App {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&id| id != t.id);
-                if let Some(swipe) = self.swipe.take_if(|s| s.id == t.id)
+                if self.swipe.take_if(|s| s.id == t.id).is_some()
                     && t.phase == TouchPhase::Ended
                 {
-                    if swipe.began.elapsed() < SWIPE_TIME {
-                        self.toggle_keys();
-                    } else {
-                        self.toggle_keys();
-                    }
+                    self.toggle_keys();
                 }
             }
         }
@@ -1298,12 +1289,10 @@ impl App {
         self.release_bar_key();
     }
 
-    /// Lifted a couple of frames on, so a tap shorter than a frame still lands.
     fn release_bar_key(&mut self) {
         self.ui.key_held = None;
         if let Some((_, key)) = self.bar_key.take() {
-            self.startup_keys
-                .push((self.core_frames + KEY_HOLD, key, false));
+            self.press(key, false, self.mods());
         }
     }
 
@@ -1373,12 +1362,10 @@ impl App {
         }
         self.core_frames += 1;
         let frames = self.core_frames;
-        self.startup_keys.retain(|&(frame, key, down)| {
-            if frame <= frames {
-                core.press_key(key, down, 0);
-            }
-            frame > frames
-        });
+        for (_, key) in self.startup_keys.extract_if(.., |(frame, _)| *frame <= frames) {
+            self.key_queue.push_back((key, true, 0));
+            self.key_queue.push_back((key, false, 0));
+        }
         self.flush_keys();
         let Some(core) = self.core.as_mut() else {
             return false;
@@ -1518,15 +1505,6 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        if let WindowEvent::KeyboardInput { event: e, .. } = &event {
-            tracing::info!(
-                "KEYDBG f{} event {:?} {:?} {:?}",
-                self.core_frames,
-                e.physical_key,
-                e.logical_key,
-                e.state
-            );
-        }
         if self.ui_event(&event) {
             if let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();
@@ -1614,7 +1592,7 @@ impl ApplicationHandler for App {
 }
 
 fn load_core(
-    game: Option<&std::path::Path>,
+    game: &std::path::Path,
     settings: HashMap<String, String>,
 ) -> Result<RetroCoreDirect> {
     let path = find_core(CORE_NAME).ok_or_else(|| {
@@ -1627,7 +1605,7 @@ fn load_core(
     let system = system_dir();
     info!("Core: {}", path.display());
     info!("System dir: {}", system.display());
-    RetroCoreDirect::new(&path, &system, game, settings)
+    RetroCoreDirect::new(&path, &system, Some(game), settings)
         .with_context(|| format!("could not start {}", path.display()))
 }
 

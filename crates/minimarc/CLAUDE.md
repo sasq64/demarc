@@ -17,7 +17,7 @@ The crate also runs on iOS: `scripts/run-ios.sh` on a Mac, see `docs/iOS.md`.
 ```
 crates/minimarc/src/player.rs   window, wgpu 30, CRT pass, egui pass, keys, touch,
                                 android_main, asset unpacking
-crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one entry point per Filter
+crates/minimarc/src/crt.wgsl    minimarc's own cut-down lottes: one fragment entry point
 crates/minimarc/src/ui.rs       Ui: picker + HUD + Navigator; draw() returns the picked EmuFile
 crates/minimarc/src/load.rs     Loader threads: db parse (CATEGORIES filter), download + unpack,
                                 overrides.toml
@@ -82,7 +82,7 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   result replaces the core (`App::start`). Stale results are dropped.
 - Picker open: all input goes to egui. Closed: keys go to the core.
 - During a demo a swipe in any direction is that cursor key, and a long press
-  (held past `SWIPE_TIME` without moving) opens or closes the key bar
+  (held past `SWIPE_TIME` without moving) or a tap opens or closes the key bar
   (`Ui::draw_keys`, `ui::BUTTONS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
   F1/F3/F5/F7/Space/Return (held keys, `bar_key`), the soft keyboard (closes
@@ -90,7 +90,7 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   the disk number), stop (unloads the core, back to the picker), reset, pause,
   warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
   says which buttons close the bar: for now all of row two.
-- Escape or Back toggles the picker; a tap on a running demo opens it;
+- Escape or Back toggles the picker;
   Left/Right keys, or a sideways swipe over the picker (`nav_touch`), go back
   and forward in the tree.
 - The picker has a button column left of the info box: back closes the
