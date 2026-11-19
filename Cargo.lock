@@ -2692,6 +2692,7 @@ dependencies = [
  "release-io",
  "retro-core",
  "serde",
+ "serde_json",
  "suppaftp",
  "tempfile",
  "thiserror 2.0.18",

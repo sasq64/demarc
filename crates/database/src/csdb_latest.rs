@@ -88,7 +88,11 @@ fn parse_row(row: &str) -> Option<EmuFile> {
         .filter(|a| !a.is_empty())
         .collect();
     let title = text(name);
-    let tags = if title.to_lowercase().contains("2sid") { "2sid" } else { "" };
+    let tags = if title.to_lowercase().contains("2sid") {
+        "2sid"
+    } else {
+        ""
+    };
     let meta: Meta = [
         ("id", leak(id.to_string())),
         ("title", leak(title)),

@@ -1837,3 +1837,9 @@
   button after it pushed the list down and broke four picker tests. A
   `ui.horizontal` with the box's width computed from the button's galley does
   not.
+
+- A shape on a `ctx.layer_painter` layer that no `egui::Area` owns showed in
+  a headless test but never on the phone, so minimarc's favorite heart was
+  missing. Paint from inside an `Area` instead. An `Area` is also kept inside
+  `content_rect`, which leaves out the safe area, so anything placed above the
+  safe-area top gets clipped.

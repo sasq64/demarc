@@ -4,7 +4,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher, RandomState};
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
 use indexmap::{IndexMap, IndexSet};
@@ -20,8 +20,10 @@ pub use picker_sources::{DownloadSource, IconMode, PickerSource};
 
 pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
 
-/// Name of the playlist the root list marks with a heart.
-pub const FAVORITES: &str = "Favorites";
+pub use database::playlists::FAVORITES;
+
+/// The favorites listed under the CSDb root, when there are any to list.
+static CSDB_FAVORITES: Mutex<Option<&'static [EmuFile]>> = Mutex::new(None);
 
 /// A list to put on screen, as [`Navigator::take_show`] hands it out.
 pub struct ShowList {
@@ -548,6 +550,17 @@ impl Navigator {
         }
     }
 
+    /// Show `files` as Favorites in the CSDb root list.
+    pub fn set_csdb_favorites(&mut self, files: &'static [EmuFile]) {
+        *CSDB_FAVORITES.lock().unwrap() = Some(files);
+        for list in &mut self.stack {
+            if list.id == 0 && list.path.first().is_some_and(|db| db == "CSDb") {
+                list.source = OnceLock::new();
+            }
+        }
+        self.showing = -1;
+    }
+
     pub fn remove_playlist(&mut self, name: &str) {
         self.playlists.remove(name);
         self.files.shift_remove(name);
@@ -885,18 +898,37 @@ pub fn setup_navigator(
     )?;
 
     navigator.register_db("CSDb", "", |_path: &[&str], _files: &'static [EmuFile]| {
-        Some(WordsIconSource::new(
-            [
-                ("All".into(), ALL_ICON),
-                ("Parties".into(), PARTIES_ICON),
-                ("Categories".into(), CATEGORIES_ICON),
-                ("Authors".into(), AUTHOR_ICON),
-                ("New Releases".into(), NEW_ICON),
-                ("System".into(), SYSTEM_ICON),
-            ]
-            .into(),
-        ))
+        let mut rows = vec![
+            ("All".into(), ALL_ICON),
+            ("Parties".into(), PARTIES_ICON),
+            ("Categories".into(), CATEGORIES_ICON),
+            ("Authors".into(), AUTHOR_ICON),
+            ("New Releases".into(), NEW_ICON),
+            ("System".into(), SYSTEM_ICON),
+        ];
+        if CSDB_FAVORITES.lock().unwrap().is_some() {
+            rows.push((FAVORITES.into(), FAVORITES_ICON));
+        }
+        Some(WordsIconSource::new(rows))
     })?;
+    navigator.register_db(
+        "CSDb",
+        FAVORITES,
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            let files = (*CSDB_FAVORITES.lock().unwrap())?;
+            Some(PickerSource::new(files, None, IconMode::Categories))
+        },
+    )?;
+    navigator.register_db(
+        "CSDb",
+        "Favorites/{id}/dls",
+        |path: &[&str], _files: &'static [EmuFile]| {
+            let files = (*CSDB_FAVORITES.lock().unwrap())?;
+            Some(DownloadSource::new(
+                files.get(path[1].parse::<usize>().ok()?)?,
+            ))
+        },
+    )?;
 
     navigator.register_db(
         "CSDb",

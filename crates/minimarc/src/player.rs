@@ -1245,6 +1245,7 @@ impl App {
             Button::Prev => self.skip(-1),
             Button::Back => self.ui.open(),
             Button::Csdb => self.open_web(),
+            Button::Favorite => self.ui.toggle_favorite(),
             _ => {}
         }
     }
@@ -1265,6 +1266,7 @@ impl App {
     /// Unload the running release and go back to the picker.
     fn stop(&mut self) {
         self.unload();
+        self.ui.playing = None;
         self.ui.info("");
         self.ui.open();
     }
@@ -1288,6 +1290,7 @@ impl App {
 
     fn load(&mut self, file: EmuFile) {
         self.ui.status("Loading...");
+        self.ui.playing = Some(file.clone());
         self.loader.load_demo(file);
     }
 

@@ -336,3 +336,25 @@ fn glob() {
 fn system_dir() -> PathBuf {
     PathBuf::from(env!("DEMARC_ROOT")).join("system")
 }
+
+#[test]
+fn csdb_favorites_follow_the_root_views() {
+    let dbs: IndexMap<String, &'static [EmuFile]> = [(
+        "CSDb".to_string(),
+        db("id:1\ttitle:A\tcategory:Demo\tdownload:http://x/a.zip\n"),
+    )]
+    .into();
+    let mut navigator = Navigator::new();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
+    navigator.set_csdb_favorites(&[]);
+
+    navigator.goto("CSDb");
+    assert_eq!(navigator.get_showing().last().unwrap(), "Favorites");
+    navigator.goto("CSDb/Favorites");
+    assert!(navigator.get_showing().is_empty());
+
+    navigator.set_csdb_favorites(db(
+        "id:2\ttitle:B\tauthor:G\tcategory:Demo\tdownload:http://x/b.zip\n",
+    ));
+    assert_eq!(navigator.get_showing(), vec!["B / G"]);
+}

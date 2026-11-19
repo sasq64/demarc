@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use database::emu_file::{EmuFile, bytes_in_progress};
+use database::playlists::Playlists;
 use indexmap::IndexMap;
 use navigator::{Navigator, setup_navigator};
 use retro_core::libretro;
@@ -30,6 +31,8 @@ pub enum Button {
     Next,
     Back,
     Stop,
+    /// The heart left of the info text.
+    Favorite,
 }
 
 /// The key bar's buttons.
@@ -83,9 +86,14 @@ impl Button {
             Button::Warp => "",
             Button::Next => "",
             Button::Prev => "",
+            Button::Favorite => HEART_OUTLINE,
         }
     }
 }
+const HEART: &str = "\u{f02d1}";
+const HEART_OUTLINE: &str = "\u{f02d5}";
+/// The heart's size over the info text's.
+const HEART_SCALE: f32 = 2.0;
 const KEY_SIZE: f32 = 26.0;
 const HUD_SCALE: f32 = 0.35;
 /// Physical pixels from the top and right edges to the info text.
@@ -112,6 +120,9 @@ pub struct Ui {
     pub shuffle_requested: bool,
     info_text: String,
     info_shown: bool,
+    favorites: Option<Playlists>,
+    /// The release last handed to the loader.
+    pub playing: Option<EmuFile>,
 }
 
 impl Ui {
@@ -138,6 +149,8 @@ impl Ui {
             shuffle_requested: false,
             info_text: String::new(),
             info_shown: false,
+            favorites: None,
+            playing: None,
         }
     }
 
@@ -150,6 +163,9 @@ impl Ui {
     pub fn set_db(&mut self, name: String, files: &'static [EmuFile]) -> anyhow::Result<()> {
         let dbs: IndexMap<String, &'static [EmuFile]> = [(name.clone(), files)].into();
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
+        let favorites = Playlists::load(&playlist_dir());
+        self.navigator.set_csdb_favorites(favorites.lists[0].files);
+        self.favorites = Some(favorites);
         crate::web::set_db(&name, files);
         self.navigator.go_root().enter(&[&name]);
         self.status("");
@@ -198,6 +214,22 @@ impl Ui {
     pub fn step(&mut self, d: isize) -> Option<EmuFile> {
         let (file, _) = self.navigator.current_launch.as_mut()?.step(d, false)?;
         Some(file)
+    }
+
+    /// Add the playing release to the favorites, or take it out.
+    pub fn toggle_favorite(&mut self) {
+        let (Some(favorites), Some(file)) = (self.favorites.as_mut(), self.playing.as_ref()) else {
+            return;
+        };
+        favorites.toggle(0, file, "");
+        self.navigator.set_csdb_favorites(favorites.lists[0].files);
+    }
+
+    fn is_favorite(&self) -> bool {
+        let (Some(favorites), Some(file)) = (&self.favorites, &self.playing) else {
+            return false;
+        };
+        favorites.is_favorite(file)
     }
 
     pub fn status(&mut self, text: &str) {
@@ -307,6 +339,30 @@ impl Ui {
         });
     }
 
+    /// The favorite toggle, left of the `info` text.
+    fn draw_heart(&mut self, ctx: &egui::Context, info: egui::Rect) {
+        let theme = retro_ui::theme(ctx);
+        let (glyph, color) = if self.is_favorite() {
+            (HEART, theme.hud.favorite)
+        } else {
+            (HEART_OUTLINE, theme.hud.text)
+        };
+        let size = retro_ui::HEADING_SIZE * HUD_SCALE * HEART_SCALE;
+        let pos = info.left_center() - egui::vec2(size * 0.3, 0.0);
+        let font = retro_ui::picker_font(ctx, size);
+        // Painted from an Area: a bare layer painter's layer is not drawn.
+        let rect = egui::Area::new(egui::Id::new("favorite"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                ui.painter()
+                    .text(pos, egui::Align2::RIGHT_CENTER, glyph, font, color)
+            })
+            .inner;
+        self.key_rects
+            .push((Button::Favorite, rect.expand(size * 0.5)));
+    }
+
     /// Height of the key bar, in points, while it is open.
     pub fn key_bar_height(&self) -> f32 {
         if !self.bar_visible() {
@@ -316,6 +372,7 @@ impl Ui {
         let rect = self
             .key_rects
             .iter()
+            .filter(|(b, _)| *b != Button::Favorite)
             .fold(egui::Rect::NOTHING, |a, (_, r)| a.union(*r));
         if rect.is_positive() {
             rect.height() + gap
@@ -330,15 +387,20 @@ impl Ui {
         let place = ctx.viewport_rect();
         let place = place
             .with_max_x(place.max.x - margin)
-            .with_min_y(place.min.y + margin);
+            .with_min_y(ctx.content_rect().min.y + margin);
         self.hud.info_place = Some((place, egui::Align2::RIGHT_TOP));
         let show = self.bar_visible();
         if show != self.info_shown {
             self.set_info(show);
         }
-        self.hud.show(ctx, self.now(), bytes_in_progress(), None);
+        let info_rect = self.hud.show(ctx, self.now(), bytes_in_progress(), None);
         if show {
             self.draw_keys(ctx);
+            if let Some(info) = info_rect
+                && self.playing.is_some()
+            {
+                self.draw_heart(ctx, info);
+            }
         }
         if !self.picker.is_open() {
             return None;
@@ -379,3 +441,17 @@ impl Ui {
         }
     }
 }
+
+/// Where the favorites are kept: the app's data dir on a phone, demarc's
+/// playlists elsewhere.
+fn playlist_dir() -> std::path::PathBuf {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        retro_core::system_dir().join("playlists")
+    } else {
+        database::playlists::default_dir()
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/ui_tests.rs"]
+mod tests;

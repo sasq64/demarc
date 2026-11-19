@@ -87,24 +87,26 @@ impl Hud {
     }
 
     /// Draws the corner texts, `download_bytes` left to download while there
-    /// are any, and the recording time while recording.
+    /// are any, and the recording time while recording. Returns where the
+    /// info text is, if it is showing.
     pub fn show(
         &self,
         ctx: &egui::Context,
         now: f32,
         download_bytes: u64,
         recording: Option<Duration>,
-    ) {
+    ) -> Option<egui::Rect> {
         let rect = ctx.content_rect().shrink2(MARGIN);
         let theme = theme(ctx);
 
-        egui::Area::new(egui::Id::new("overlay"))
+        let info_rect = egui::Area::new(egui::Id::new("overlay"))
             .fixed_pos(rect.min)
             .constrain_to(ctx.viewport_rect())
             .order(egui::Order::Background)
             .show(ctx, |ui| {
                 ui.set_min_size(rect.size());
                 let mut info_line = None;
+                let mut info_rect = None;
                 for (text, corner, scale) in [
                     (HudLocation::TopLeft, egui::Align2::LEFT_TOP, TOP_LEFT_SCALE),
                     (
@@ -149,7 +151,7 @@ impl Hud {
                         })
                         .linear_multiply(t);
 
-                        ui.scope_builder(
+                        let shown = ui.scope_builder(
                             egui::UiBuilder::new().max_rect(quad).layout(layout),
                             |ui| {
                                 let line = heading_with_shadow(
@@ -164,6 +166,9 @@ impl Hud {
                                 }
                             },
                         );
+                        if text == HudLocation::InfoText {
+                            info_rect = Some(shown.response.rect);
+                        }
                     }
                 }
                 let (info, t) = self.fade(ctx, HudLocation::Favorite, now);
@@ -180,12 +185,15 @@ impl Hud {
                         - egui::vec2(galley.size().x + size * 0.3, galley.size().y / 2.0);
                     paint_with_shadow(ui, pos, galley, size, theme.hud.favorite.linear_multiply(t));
                 }
-            });
+                info_rect
+            })
+            .inner;
 
         render_downloads(ctx, rect.min, download_bytes);
         if let Some(time) = recording {
             render_recording(ctx, rect.right_top(), time);
         }
+        info_rect
     }
 
     /// The text at `location` and how far it is faded in.
