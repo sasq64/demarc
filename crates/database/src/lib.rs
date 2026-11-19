@@ -9,6 +9,7 @@ use newsys::system_dir;
 #[cfg(not(feature = "desktop"))]
 use retro_core::system_dir;
 
+pub mod csdb_latest;
 pub mod emu_file;
 pub mod files;
 pub mod load_error;

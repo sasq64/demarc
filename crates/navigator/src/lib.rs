@@ -10,6 +10,7 @@ use anyhow::Result;
 use indexmap::{IndexMap, IndexSet};
 use tracing::{debug, warn};
 
+use database::csdb_latest;
 use database::emu_file::{Award, EmuFile};
 use retro_ui::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 
@@ -39,6 +40,7 @@ const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
 const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
 const SYSTEM_ICON: ListIcon = ListIcon::Glyph('󰒔', 0xa02020);
+const NEW_ICON: ListIcon = ListIcon::Glyph('󰎔', 0xe08040);
 
 const PARTY_ICON: char = '󰍖';
 const ALL_ICON: ListIcon = ListIcon::Glyph('', 0xffff00);
@@ -453,9 +455,7 @@ impl Navigator {
     pub fn open_playlist_root_menu(&mut self, name: &str) -> &mut Self {
         self.push(NavList {
             id: PLAYLIST_ROOT_MENU,
-            source: Arc::new(AllWordsSource::new(vec![
-                "󰅖 Delete Playlist".into(),
-            ])),
+            source: Arc::new(AllWordsSource::new(vec!["󰅖 Delete Playlist".into()])),
             path: vec![name.into()],
             prompt: String::new(),
             selected: None,
@@ -787,11 +787,33 @@ pub fn setup_navigator(
                 ("Parties".into(), PARTIES_ICON),
                 ("Categories".into(), CATEGORIES_ICON),
                 ("Authors".into(), AUTHOR_ICON),
+                ("New Releases".into(), NEW_ICON),
                 ("System".into(), SYSTEM_ICON),
             ]
             .into(),
         ))
     })?;
+
+    navigator.register_db(
+        "CSDb",
+        "New Releases",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            let files = csdb_latest::new_releases()
+                .inspect_err(|e| warn!("CSDb new releases: {e:#}"))
+                .ok()?;
+            Some(PickerSource::new(files, None, IconMode::Categories))
+        },
+    )?;
+    navigator.register_db(
+        "CSDb",
+        "New Releases/{id}/dls",
+        |path: &[&str], _files: &'static [EmuFile]| {
+            let files = csdb_latest::new_releases().ok()?;
+            Some(DownloadSource::new(
+                files.get(path[1].parse::<usize>().ok()?)?,
+            ))
+        },
+    )?;
 
     let p0 = system_dir.to_owned().join("vice/C64/rr38ppal.crt");
     let p1 = system_dir.to_owned().join("vice/C64/tar_v2_pal.crt");

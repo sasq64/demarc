@@ -101,7 +101,14 @@ fn csdb_root_lists_its_views() {
     navigator.goto("CSDb");
     assert_eq!(
         navigator.get_showing(),
-        vec!["All", "Parties", "Categories", "Authors", "System"]
+        vec![
+            "All",
+            "Parties",
+            "Categories",
+            "Authors",
+            "New Releases",
+            "System"
+        ]
     );
 
     navigator.goto("Demozoo");

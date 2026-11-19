@@ -310,13 +310,35 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
 /// file, so its name comes from the server's `Content-Disposition`.
 fn download_name(url: &str) -> String {
     let resolved = primary_url(url);
-    if drive_id(url).is_none() {
-        return url_filename(&resolved);
+    let name = url_filename(&resolved);
+    if drive_id(url).is_some() {
+        return DOWNLOADS
+            .cached_name(url)
+            .or_else(|| attachment_name(&resolved))
+            .unwrap_or(name);
     }
-    DOWNLOADS
-        .cached_name(url)
-        .or_else(|| attachment_name(&resolved))
-        .unwrap_or_else(|| url_filename(&resolved))
+    // CSDb's `download.php?id=` redirects to the file.
+    if name.ends_with(".php") {
+        return DOWNLOADS
+            .cached_name(url)
+            .or_else(|| redirect_name(&resolved))
+            .unwrap_or(name);
+    }
+    name
+}
+
+fn redirect_name(url: &str) -> Option<String> {
+    let response = ureq::head(url)
+        .config()
+        .max_redirects(0)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_recv_response(Some(RESPONSE_TIMEOUT))
+        .build()
+        .call()
+        .inspect_err(|e| warn!("HEAD {url} failed: {e}"))
+        .ok()?;
+    let location = response.headers().get("location")?.to_str().ok()?;
+    Some(url_filename(location))
 }
 
 fn attachment_name(url: &str) -> Option<String> {

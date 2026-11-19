@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use anyhow::{Context, Result, bail};
+use database::csdb_latest;
 use database::emu_file::{DemoId, EmuFile, FileSource, GameInfo, Override, UrlList};
 use database::files::{DbFilter, collect_db};
 use database::overrides;
@@ -14,11 +15,6 @@ use regex::Regex;
 use release_io::release_override::apply_override_meta;
 use release_io::workfile::WorkFile;
 use retro_core::backend::InputEvent;
-
-/// The csdb categories that are something to watch.
-const CATEGORIES: &str = "^category:(Demo|One-File Demo|Intro|Crack Intro|4K Intro|1K Intro|\
-    256b Intro|Basic Demo|Fake Demo|Invitation|Diskmag|Intro Collection|REU Release|\
-    EasyFlash Release|Graphics|Graphics Collection|Music|Music Collection)$";
 
 pub enum Loaded {
     Db(Result<(String, &'static [EmuFile])>),
@@ -73,7 +69,10 @@ impl Loader {
 }
 
 fn read_db(path: &std::path::Path) -> Result<(String, &'static [EmuFile])> {
-    let include = [Regex::new(CATEGORIES)?];
+    let include = [Regex::new(&format!(
+        "^category:({})$",
+        csdb_latest::CATEGORIES.join("|")
+    ))?];
     let filter = DbFilter {
         include: &include,
         exclude: &[],
