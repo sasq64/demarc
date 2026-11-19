@@ -80,6 +80,27 @@ fn the_key_bar_finds_the_button_under_a_finger() {
 }
 
 #[test]
+fn an_amiga_key_bar_has_the_mouse_buttons() {
+    let mut ui = Ui::new();
+    ui.keys_open = true;
+    ui.amiga = true;
+    let ctx = ui.ctx.clone();
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |egui_ui| {
+            ui.draw(egui_ui.ctx());
+        });
+        output.textures_delta.clear();
+    }
+    let screen = ctx.content_rect();
+    let scale = ctx.pixels_per_point() as f64;
+    let at = |x: f32, y: f32| ui.key_at(x as f64 * scale, y as f64 * scale);
+    let (w, bottom) = (screen.width() / 8.0, screen.bottom());
+    assert_eq!(at(w * 0.5, bottom - 90.0), Some(Button::MouseLeft));
+    assert_eq!(at(w * 2.5, bottom - 90.0), Some(Button::Pointer));
+    assert_eq!(at(w * 3.5, bottom - 90.0), Some(Button::Esc));
+}
+
+#[test]
 fn the_crt_shader_validates() {
     use wgpu::naga;
     let module = naga::front::wgsl::parse_str(CRT_WGSL).unwrap();

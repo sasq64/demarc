@@ -18,7 +18,7 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use retro_core::audio::{AudioSink, rate_adjust, smooth_fill};
-use retro_core::backend::{InputEvent, frame_bytes};
+use retro_core::backend::{Backend, InputEvent, frame_bytes};
 use retro_core::retro_emu::RetroCoreDirect;
 use retro_core::{dylib_name, find_core};
 
@@ -247,6 +247,8 @@ const ZOOM_INSET: f32 = 0.5;
 
 /// How far apart two fingers have to spread or close, as a ratio, to zoom.
 const PINCH: f64 = 1.4;
+/// Mouse units per physical pixel a finger moves in pointer mode.
+const MOUSE_SPEED: f64 = 1.0;
 
 /// Where the picture lands in a window of `win` pixels, at display aspect
 /// `aspect`: as large as fits, centred, aspect preserved.
@@ -802,6 +804,14 @@ enum Gesture {
         button: Button,
         over: bool,
     },
+    /// Holding a mouse button on the key bar.
+    Mouse { id: u64, button: Button },
+    /// Moving the mouse in pointer mode; a tap opens or closes the key bar.
+    Pointer {
+        id: u64,
+        start: (f64, f64),
+        began: Instant,
+    },
     /// On the open picker.
     Nav {
         id: u64,
@@ -816,6 +826,8 @@ impl Gesture {
             Gesture::Swipe { id, .. }
             | Gesture::Key { id, .. }
             | Gesture::Button { id, .. }
+            | Gesture::Mouse { id, .. }
+            | Gesture::Pointer { id, .. }
             | Gesture::Nav { id, .. } => Some(id),
         }
     }
@@ -824,6 +836,7 @@ impl Gesture {
     fn held(self) -> Option<Button> {
         match self {
             Gesture::Key { button, .. } => button,
+            Gesture::Mouse { button, .. } => Some(button),
             Gesture::Button { button, over, .. } => over.then_some(button),
             _ => None,
         }
@@ -957,6 +970,8 @@ pub struct App {
     /// How far apart two fingers started, while they may still pinch.
     pinch: Option<f64>,
     gesture: Gesture,
+    /// Pointer mode movement not yet a whole mouse unit.
+    mouse_rest: (f64, f64),
     frame_time: Duration,
     next_frame: Instant,
     disk: u32,
@@ -993,6 +1008,7 @@ impl App {
             touches: Vec::new(),
             pinch: None,
             gesture: Gesture::None,
+            mouse_rest: (0.0, 0.0),
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
             disk: 0,
@@ -1032,6 +1048,8 @@ impl App {
         self.core = None;
         self.work = None;
         self.ui.paused = false;
+        self.ui.amiga = false;
+        self.ui.pointer_mode = false;
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.has_frame = false;
         }
@@ -1050,6 +1068,7 @@ impl App {
         self.unload();
         let core = load_core(platform, &work.path, work.get_all_meta())?;
         self.platform = platform;
+        self.ui.amiga = platform == Platform::Amiga;
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.zoomed &= platform == Platform::C64;
         }
@@ -1205,8 +1224,19 @@ impl App {
     fn touch(&mut self, t: Touch) {
         let pos = (t.location.x, t.location.y);
         let mine = self.gesture.id() == Some(t.id);
+        let on_bar = mine
+            && matches!(
+                self.gesture,
+                Gesture::Key { .. } | Gesture::Mouse { .. } | Gesture::Button { .. }
+            );
         match self.touches.iter_mut().find(|(id, _)| *id == t.id) {
-            Some(touch) => touch.1 = pos,
+            Some(touch) => {
+                let (dx, dy) = (pos.0 - touch.1.0, pos.1 - touch.1.1);
+                touch.1 = pos;
+                if self.ui.pointer_mode && !on_bar {
+                    self.move_mouse(dx, dy);
+                }
+            }
             None if t.phase == TouchPhase::Started => self.touches.push((t.id, pos)),
             None => {}
         }
@@ -1225,6 +1255,10 @@ impl App {
                 let id = t.id;
                 if let Some(button) = self.ui.key_at(pos.0, pos.1) {
                     let gesture = match button.key() {
+                        _ if matches!(button, Button::MouseLeft | Button::MouseRight) => {
+                            self.set_mouse_buttons(button == Button::MouseLeft, button == Button::MouseRight);
+                            Gesture::Mouse { id, button }
+                        }
                         Some(key) => {
                             self.press(key, true, self.mods());
                             Gesture::Key {
@@ -1240,6 +1274,15 @@ impl App {
                         },
                     };
                     self.set_gesture(gesture);
+                } else if self.ui.pointer_mode {
+                    if let Gesture::None = self.gesture {
+                        let began = Instant::now();
+                        self.gesture = Gesture::Pointer {
+                            id,
+                            start: pos,
+                            began,
+                        };
+                    }
                 } else if self.touches.len() == 1 {
                     let began = Instant::now();
                     self.set_gesture(Gesture::Swipe {
@@ -1293,6 +1336,12 @@ impl App {
                         }
                     }
                     Gesture::Swipe { .. } => self.toggle_keys(),
+                    Gesture::Pointer { start, began, .. }
+                        if began.elapsed() <= SWIPE_TIME
+                            && (pos.0 - start.0).hypot(pos.1 - start.1) < SWIPE_DIST =>
+                    {
+                        self.toggle_keys()
+                    }
                     _ => {}
                 }
             }
@@ -1309,9 +1358,27 @@ impl App {
 
     /// Replace the gesture, letting go of the key the old one held.
     fn set_gesture(&mut self, gesture: Gesture) {
-        if let Gesture::Key { key, .. } = std::mem::replace(&mut self.gesture, gesture) {
-            self.press(key, false, self.mods());
+        match std::mem::replace(&mut self.gesture, gesture) {
+            Gesture::Key { key, .. } => self.press(key, false, self.mods()),
+            Gesture::Mouse { .. } => self.set_mouse_buttons(false, false),
+            _ => {}
         }
+    }
+
+    fn set_mouse_buttons(&mut self, left: bool, right: bool) {
+        if let Some(core) = self.core.as_mut() {
+            Backend::set_mouse_buttons(core, left, right, false);
+        }
+    }
+
+    fn move_mouse(&mut self, dx: f64, dy: f64) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        let x = self.mouse_rest.0 + dx * MOUSE_SPEED;
+        let y = self.mouse_rest.1 + dy * MOUSE_SPEED;
+        self.mouse_rest = (x.fract(), y.fract());
+        Backend::add_mouse_motion(core, x.trunc() as f32, y.trunc() as f32);
     }
 
     fn toggle_keys(&mut self) {
@@ -1357,6 +1424,7 @@ impl App {
                 }
             }
             Button::Pause => self.toggle_pause(),
+            Button::Pointer => self.ui.pointer_mode = !self.ui.pointer_mode,
             Button::Stop => self.stop(),
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),

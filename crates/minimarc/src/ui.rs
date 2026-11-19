@@ -18,6 +18,11 @@ pub enum Button {
     F3,
     F5,
     F7,
+    MouseLeft,
+    MouseRight,
+    /// Toggles pointer mode, where fingers move the mouse.
+    Pointer,
+    Esc,
     Space,
     Return,
     Keyboard,
@@ -44,6 +49,14 @@ const ROWS: [&[Button]; 2] = {
     ]
 };
 
+const AMIGA_ROWS: [&[Button]; 2] = {
+    use Button::*;
+    [
+        &[MouseLeft, MouseRight, Pointer, Esc, Space, Return, Keyboard, Csdb],
+        ROWS[1],
+    ]
+};
+
 const BACK_COLOR: egui::Color32 = egui::Color32::from_rgb(0xff, 0xb8, 0x6c);
 const WEB_COLOR: egui::Color32 = egui::Color32::from_rgb(0xa0, 0x80, 0xfc);
 
@@ -63,6 +76,7 @@ impl Button {
             Button::F7 => RETROK_F7,
             Button::Space => RETROK_SPACE,
             Button::Return => RETROK_RETURN,
+            Button::Esc => RETROK_ESCAPE,
             _ => return None,
         })
     }
@@ -73,6 +87,10 @@ impl Button {
             Button::F3 => "F3",
             Button::F5 => "F5",
             Button::F7 => "F7",
+            Button::MouseLeft => "\u{f037d}L",
+            Button::MouseRight => "\u{f037d}R",
+            Button::Pointer => "\u{f01c0}",
+            Button::Esc => "ESC",
             Button::Space => "󱁐",
             Button::Return => "󰌑",
             Button::Keyboard => "󰌌",
@@ -116,6 +134,10 @@ pub struct Ui {
     pub key_held: Option<Button>,
     key_rects: Vec<(Button, egui::Rect)>,
     pub paused: bool,
+    /// An Amiga is running: the key bar has the mouse buttons.
+    pub amiga: bool,
+    /// Finger movement is mouse movement.
+    pub pointer_mode: bool,
     /// The picker's shuffle button was clicked; see [`Ui::shuffle`].
     pub shuffle_requested: bool,
     info_text: String,
@@ -146,6 +168,8 @@ impl Ui {
             key_held: None,
             key_rects: Vec::new(),
             paused: false,
+            amiga: false,
+            pointer_mode: false,
             shuffle_requested: false,
             info_text: String::new(),
             info_shown: false,
@@ -322,7 +346,8 @@ impl Ui {
             None => area.anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -gap)),
         };
         area.show(ctx, |ui| {
-            for row in ROWS {
+            let rows = if self.amiga { AMIGA_ROWS } else { ROWS };
+            for row in rows {
                 let width = ctx.content_rect().width() / row.len() as f32 - gap;
                 let size = egui::vec2(width, KEY_SIZE * 2.0);
                 ui.horizontal(|ui| {
@@ -335,7 +360,10 @@ impl Ui {
                             text = text.color(WEB_COLOR);
                         }
                         let widget = egui::Button::new(text)
-                            .selected(self.key_held == Some(button))
+                            .selected(
+                                self.key_held == Some(button)
+                                    || (button == Button::Pointer && self.pointer_mode),
+                            )
                             .min_size(size);
                         self.key_rects.push((button, ui.add(widget).rect));
                     }

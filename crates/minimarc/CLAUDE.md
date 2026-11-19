@@ -91,7 +91,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   (held past `SWIPE_TIME` without moving) or a tap opens or closes the key bar
   (`Ui::draw_keys`, `ui::ROWS`).
   Its buttons are hit-tested in `App::touch`, not by egui. Row one is
-  F1/F3/F5/F7/Space/Return (held keys, `Button::key`), the soft keyboard and C; row two (`App::bar_button`) is disk flip (shows
+  F1/F3/F5/F7/Space/Return (held keys, `Button::key`), the soft keyboard and C; on an Amiga
+  (`ui::AMIGA_ROWS`) the first four are mouse left/right (held), pointer mode
+  (fingers off the bar move the mouse, a tap toggles the bar) and Esc; row two (`App::bar_button`) is disk flip (shows
   the disk number), stop (unloads the core, back to the picker), reset, pause,
   warp (while held, audio dropped), prev, next and back. `Button::closes_bar`
   says which buttons close the bar: C and all of row two. One touch gesture
