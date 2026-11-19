@@ -95,11 +95,13 @@ Pages Play links to live on minnberg.se, a Zola site in
 - `https://minnberg.se/demarc-privacy/` — privacy policy
   (`content/demarc-privacy.md`)
 
-## Play Console state (2026-11-17)
+## Play Console state (2026-11-18)
 
-Done: developer account, app created, App content filled in, first `.aab`
-(versionCode 1) released on **Internal testing** and installed from Play on
-the phone, working.
+Done: developer account, app created, App content filled in, store listing
+(text, icon, feature graphic, 4 phone screenshots), versionCode 1 on
+**Internal testing**, versionCode 2 ("RC1") on **Closed testing** (`alpha`)
+in AU, DE, DK, ES, FI, FR, NO, PL, SE, US. `scripts/play.py status` shows
+the tracks; review state and tester counts are only in the console.
 
 Play cannot update over an `adb install` (different signing key), so run
 `adb uninstall se.minnberg.demarc` before installing from Play.
