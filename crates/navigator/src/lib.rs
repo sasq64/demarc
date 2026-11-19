@@ -41,6 +41,11 @@ const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
 const SYSTEM_ICON: ListIcon = ListIcon::Glyph('󰒔', 0xa02020);
 
 const PARTY_ICON: char = '󰍖';
+const ALL_ICON: ListIcon = ListIcon::Glyph('', 0xffff00);
+const PARTIES_ICON: ListIcon = ListIcon::Glyph(PARTY_ICON, 0xff00ff);
+const PLATFORMS_ICON: ListIcon = ListIcon::Glyph('󰍹', 0xc0f0c0);
+const CATEGORIES_ICON: ListIcon = ListIcon::Glyph('', 0xf0a080);
+const AWARDS_ICON: ListIcon = ListIcon::Glyph('', 0xffd700);
 /// Saturation and brightness of the per-party colours; tweak to taste.
 const PARTY_SATURATION: f32 = 0.65;
 const PARTY_VALUE: f32 = 0.75;
@@ -449,7 +454,7 @@ impl Navigator {
         self.push(NavList {
             id: PLAYLIST_ROOT_MENU,
             source: Arc::new(AllWordsSource::new(vec![
-                "\u{f0156} Delete Playlist".into(),
+                "󰅖 Delete Playlist".into(),
             ])),
             path: vec![name.into()],
             prompt: String::new(),
@@ -464,7 +469,7 @@ impl Navigator {
         self.push(NavList {
             id: PLAYLIST_MENU,
             source: Arc::new(AllWordsSource::new(vec![
-                format!("\u{f0156} Remove from {list}"),
+                format!("󰅖 Remove from {list}"),
                 "Run...".into(),
             ])),
             path: vec![list, id.to_string()],
@@ -778,9 +783,9 @@ pub fn setup_navigator(
     navigator.register_db("CSDb", "", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [
-                ("All".into(), ListIcon::Glyph('', 0xffff00)),
-                ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
-                ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
+                ("All".into(), ALL_ICON),
+                ("Parties".into(), PARTIES_ICON),
+                ("Categories".into(), CATEGORIES_ICON),
                 ("Authors".into(), AUTHOR_ICON),
                 ("System".into(), SYSTEM_ICON),
             ]
@@ -804,12 +809,12 @@ pub fn setup_navigator(
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
         Some(WordsIconSource::new(
             [
-                ("All".into(), ListIcon::Glyph('', 0xffff00)),
-                ("Parties".into(), ListIcon::Glyph(PARTY_ICON, 0xff00ff)),
-                ("Platforms".into(), ListIcon::Glyph('󰍹', 0xc0f0c0)),
-                ("Categories".into(), ListIcon::Glyph('', 0xf0a080)),
+                ("All".into(), ALL_ICON),
+                ("Parties".into(), PARTIES_ICON),
+                ("Platforms".into(), PLATFORMS_ICON),
+                ("Categories".into(), CATEGORIES_ICON),
                 ("Authors".into(), AUTHOR_ICON),
-                ("Awards".into(), ListIcon::Glyph('\u{f091}', 0xffd700)),
+                ("Awards".into(), AWARDS_ICON),
             ]
             .into(),
         ))
