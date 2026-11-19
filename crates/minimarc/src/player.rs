@@ -236,6 +236,19 @@ const FRAGMENT: &str = "fragment_normal";
 /// Gap, in points, between the key bar and the soft keyboard.
 const KEYBOARD_MARGIN: f32 = 16.0;
 
+/// The C64's screen inside the core's frame; zooming pushes the border out.
+const C64_SCREEN: (f32, f32) = (320.0, 200.0);
+
+/// Border lines above the screen in VICE's 272 line PAL frame (37 below).
+const PAL_TOP_BORDER: f32 = 35.0;
+
+/// Texels of screen edge also zoomed away, so the shader's blur does not
+/// bring the border colour back in.
+const ZOOM_INSET: f32 = 0.5;
+
+/// How far apart two fingers have to spread or close, as a ratio, to zoom.
+const PINCH: f64 = 1.4;
+
 /// Where the picture lands in a window of `win` pixels, at display aspect
 /// `aspect`: as large as fits, centred, aspect preserved.
 fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
@@ -254,6 +267,17 @@ fn fit_rect(win: (f32, f32), aspect: f32) -> (f32, f32, f32, f32) {
     )
 }
 
+/// `rect` cut back to the window `win`, and the uv offset and scale of the
+/// part of the picture left.
+fn clip_rect(win: (f32, f32), rect: (f32, f32, f32, f32)) -> ((f32, f32, f32, f32), [f32; 4]) {
+    let (x, y, w, h) = rect;
+    let (x0, y0) = (x.max(0.0), y.max(0.0));
+    let (x1, y1) = ((x + w).min(win.0), (y + h).min(win.1));
+    let (cw, ch) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
+    let crop = [(x0 - x) / w, (y0 - y) / h, cw / w, ch / h];
+    ((x0, y0, cw, ch), crop)
+}
+
 struct Gfx {
     window: Arc<Window>,
     instance: wgpu::Instance,
@@ -267,6 +291,9 @@ struct Gfx {
     sampler: wgpu::Sampler,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    crop: wgpu::Buffer,
+    /// The border pushed off the screen's short sides.
+    zoomed: bool,
     /// Display aspect the frame is presented at.
     aspect: f32,
     /// Whether `texture` holds a frame of the core that is running.
@@ -352,6 +379,16 @@ impl Gfx {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -390,7 +427,13 @@ impl Gfx {
         });
 
         let texture = create_frame_texture(&device, 1, 1);
-        let bind_group = create_bind_group(&device, &bind_layout, &texture, &sampler);
+        let crop = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("crop"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = create_bind_group(&device, &bind_layout, &texture, &sampler, &crop);
 
         let egui_state = egui_winit::State::new(
             ctx.clone(),
@@ -414,6 +457,8 @@ impl Gfx {
             sampler,
             texture,
             bind_group,
+            crop,
+            zoomed: false,
             aspect: 0.0,
             has_frame: false,
             egui_state,
@@ -446,6 +491,7 @@ impl Gfx {
                 &self.bind_layout,
                 &self.texture,
                 &self.sampler,
+                &self.crop,
             );
         }
         self.queue.write_texture(
@@ -477,7 +523,7 @@ impl Gfx {
             self.safe_area() / ui.ctx.pixels_per_point(),
         ));
         let ppp = ui.ctx.pixels_per_point();
-        let frame_rect = self.frame_rect(ui.key_bar_height() * ppp);
+        let (frame_rect, frame_crop) = self.frame_rect(ui.key_bar_height() * ppp);
         let portrait = self.config.height > self.config.width;
         ui.bar_top = (portrait && self.has_frame).then(|| (frame_rect.1 + frame_rect.3) / ppp);
         let ctx = ui.ctx.clone();
@@ -507,6 +553,7 @@ impl Gfx {
         let frame = UiFrame {
             repaint,
             frame_rect,
+            frame_crop,
             jobs: ctx.tessellate(output.shapes, output.pixels_per_point),
             textures: output.textures_delta,
             pixels_per_point: output.pixels_per_point,
@@ -515,16 +562,39 @@ impl Gfx {
     }
 
     /// Where the frame goes, in pixels: in portrait, high enough that the key
-    /// bar, `bar` pixels tall, fits under it above the soft keyboard.
-    fn frame_rect(&self, bar: f32) -> (f32, f32, f32, f32) {
+    /// bar, `bar` pixels tall, fits under it above the soft keyboard. With
+    /// the uv crop of what the window edges cut off when zoomed.
+    fn frame_rect(&self, bar: f32) -> ((f32, f32, f32, f32), [f32; 4]) {
         let win = (self.config.width as f32, self.config.height as f32);
-        let (x, mut y, w, h) = fit_rect(win, self.aspect);
-        if win.1 > win.0 {
+        let portrait = win.1 > win.0;
+        let (mut x, mut y, mut w, mut h) = fit_rect(win, self.aspect);
+        let tex = (self.texture.width() as f32, self.texture.height() as f32);
+        if self.zoomed && self.has_frame && tex.0 > C64_SCREEN.0 && tex.1 > C64_SCREEN.1 {
+            let aspect = w / h;
+            if portrait {
+                let left = (tex.0 - C64_SCREEN.0) * 0.5 + ZOOM_INSET;
+                let scale = win.0 / (C64_SCREEN.0 - 2.0 * ZOOM_INSET);
+                (w, x) = (tex.0 * scale, -left * scale);
+                h = w / aspect;
+                y = (win.1 - h) * 0.5;
+            } else {
+                let top = if tex.1 == 272.0 {
+                    PAL_TOP_BORDER
+                } else {
+                    (tex.1 - C64_SCREEN.1) * 0.5
+                } + ZOOM_INSET;
+                let scale = win.1 / (C64_SCREEN.1 - 2.0 * ZOOM_INSET);
+                (h, y) = (tex.1 * scale, -top * scale);
+                w = h * aspect;
+                x = (win.0 - w) * 0.5;
+            }
+        }
+        if portrait {
             let margin = KEYBOARD_MARGIN * self.window.scale_factor() as f32;
             let bottom = win.1 - self.safe_area().bottom - margin - bar;
             y = y.min((bottom - h).floor()).max(0.0);
         }
-        (x, y, w, h)
+        clip_rect(win, (x, y, w, h))
     }
 
     /// Physical pixels on each side covered by the camera cutout, rounded
@@ -591,6 +661,8 @@ impl Gfx {
             }
         };
         let view = frame.texture.create_view(&Default::default());
+        let crop: Vec<u8> = ui.frame_crop.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        self.queue.write_buffer(&self.crop, 0, &crop);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
@@ -644,6 +716,8 @@ struct UiFrame {
     repaint: bool,
     /// Where the emulator frame goes, in pixels.
     frame_rect: (f32, f32, f32, f32),
+    /// uv offset and scale of the part of the frame shown.
+    frame_crop: [f32; 4],
     jobs: Vec<egui::ClippedPrimitive>,
     textures: egui::TexturesDelta,
     pixels_per_point: f32,
@@ -672,6 +746,7 @@ fn create_bind_group(
     layout: &wgpu::BindGroupLayout,
     texture: &wgpu::Texture,
     sampler: &wgpu::Sampler,
+    crop: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let view = texture.create_view(&Default::default());
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -685,6 +760,10 @@ fn create_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: crop.as_entire_binding(),
             },
         ],
     })
@@ -872,8 +951,11 @@ pub struct App {
     /// The core frame each key the core has down went down on.
     keys_down: HashMap<libretro::retro_key, u32>,
     last_key_frame: Option<u32>,
-    /// Every finger currently down, so a second one can veto the swipe.
-    touches: Vec<u64>,
+    /// Every finger currently down and where, so a second one can veto the
+    /// swipe.
+    touches: Vec<(u64, (f64, f64))>,
+    /// How far apart two fingers started, while they may still pinch.
+    pinch: Option<f64>,
     gesture: Gesture,
     frame_time: Duration,
     next_frame: Instant,
@@ -908,6 +990,7 @@ impl App {
             keys_down: HashMap::new(),
             last_key_frame: None,
             touches: Vec::new(),
+            pinch: None,
             gesture: Gesture::None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
@@ -1112,11 +1195,22 @@ impl App {
     fn touch(&mut self, t: Touch) {
         let pos = (t.location.x, t.location.y);
         let mine = self.gesture.id() == Some(t.id);
+        match self.touches.iter_mut().find(|(id, _)| *id == t.id) {
+            Some(touch) => touch.1 = pos,
+            None if t.phase == TouchPhase::Started => self.touches.push((t.id, pos)),
+            None => {}
+        }
+        if let Some(start) = self.pinch {
+            let gap = self.finger_gap();
+            if gap > start * PINCH || gap * PINCH < start {
+                self.pinch = None;
+                if let Some(gfx) = self.gfx.as_mut() {
+                    gfx.zoomed = gap > start;
+                }
+            }
+        }
         match t.phase {
             TouchPhase::Started => {
-                if !self.touches.contains(&t.id) {
-                    self.touches.push(t.id);
-                }
                 let id = t.id;
                 if let Some(button) = self.ui.key_at(pos.0, pos.1) {
                     let gesture = match button.key() {
@@ -1142,8 +1236,11 @@ impl App {
                         start: pos,
                         began,
                     });
-                } else if let Gesture::Swipe { .. } = self.gesture {
-                    self.gesture = Gesture::None;
+                } else {
+                    if let Gesture::Swipe { .. } = self.gesture {
+                        self.gesture = Gesture::None;
+                    }
+                    self.pinch = (self.touches.len() == 2).then(|| self.finger_gap());
                 }
             }
             TouchPhase::Moved if mine => match self.gesture {
@@ -1165,7 +1262,8 @@ impl App {
             },
             TouchPhase::Moved => {}
             TouchPhase::Ended | TouchPhase::Cancelled => {
-                self.touches.retain(|&id| id != t.id);
+                self.touches.retain(|&(id, _)| id != t.id);
+                self.pinch = None;
                 if !mine {
                     return;
                 }
@@ -1187,6 +1285,14 @@ impl App {
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// Distance between the first two fingers down.
+    fn finger_gap(&self) -> f64 {
+        match self.touches.as_slice() {
+            [(_, a), (_, b), ..] => (a.0 - b.0).hypot(a.1 - b.1),
+            _ => 0.0,
         }
     }
 
@@ -1323,6 +1429,7 @@ impl App {
 
     fn cancel_touch(&mut self) {
         self.touches.clear();
+        self.pinch = None;
         self.set_gesture(Gesture::None);
     }
 
