@@ -132,9 +132,47 @@ pub struct DosSettings {
     pub cycles: CpuCycles,
     pub cpu_type: CpuType,
 }
+
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum ChipMemSize {
+    Kb512,
+    #[default]
+    Mb1,
+    Mb2,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum SlowMemSize {
+    #[default]
+    Mb0,
+    Kb512,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum FastMemSize {
+    #[default]
+    Mb0,
+    Mb2,
+    Mb8,
+    Mb32,
+    Mb128,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Reflect)]
+pub enum Machine {
+    #[default]
+    A500,
+    A1200,
+    A3000,
+    A4000,
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Reflect)]
 pub struct AmigaSettings {
-    pub aga: bool,
+    pub chip_mem: ChipMemSize,
+    pub slow_mem: SlowMemSize,
+    pub fast_mem: FastMemSize,
+    pub machine: Machine,
     pub drive_sound: bool,
 }
 
