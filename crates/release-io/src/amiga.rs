@@ -712,8 +712,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
                 } else {
                     file.set_machine(Machine::A1200);
                 }
-            } else if year >= 1995 {
-                file.set_chip_mem(2);
             }
         }
     } else {
