@@ -1888,3 +1888,8 @@
 - `run.sh` without `DEMARC_CORE_DIR` runs the buildbot amiberry, which lacks
   the BUGS.md #5 fix, so a headless test can drown in `JIT: SIGSEGV` lines
   unrelated to the bug at hand. Point it at `external/amiberry/libretro`.
+
+- The amiberry libretro Makefile has no header dependencies: editing
+  `src/osdep/libretro/amiberry_platform_internal.h` left `amiberry.o` stale and
+  the change silently missing from the core. Delete the `.o` of every file that
+  includes a header you edit (or `make clean`) before testing.

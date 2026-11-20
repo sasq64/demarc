@@ -353,7 +353,14 @@ file = "CNCD_PRX-Deep.lha"
 fast = true
 
 [zoo.160452]
-boot = "hoffman-everyway-a500"
+boot = "hoffman-everyway"
+meta = { amiberry_chipmem_size = 4 }
+
+[zoo.77216]
+meta = { amiberry_chipmem_size = "3" }
+
+[zoo.3640]
+meta = { amiberry_chipmem_size = "4" }
 
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
@@ -2295,7 +2302,7 @@ meta = { amiberry_cpu_model = "68040" }
 
 # Bacon of Hope by Desire
 [zoo.385573]
-meta = { amiberry_chipmem_size = "1" }
+meta = { amiberry_model = "A500" }
 
 # [zoo.8891]
 # fast = true
