@@ -33,3 +33,16 @@ fn pages_without_releases_have_no_path() {
     assert_eq!(path_in("group", "Oxyron", &db()), None);
     assert_eq!(path_in("release", "A", &db()), None);
 }
+
+#[test]
+fn host_of_release_url() {
+    assert_eq!(
+        url_host("https://demozoo.org/productions/{id}/"),
+        Some("demozoo.org")
+    );
+    assert_eq!(
+        url_host("https://csdb.dk/release/?id={id}"),
+        Some("csdb.dk")
+    );
+    assert_eq!(url_host(""), None);
+}

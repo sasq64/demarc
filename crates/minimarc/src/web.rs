@@ -25,12 +25,26 @@ fn path_in(kind: &str, name: &str, files: &[EmuFile]) -> Option<Vec<String>> {
     found.then(|| vec![root.to_owned(), name.to_owned()])
 }
 
-fn path(kind: &str, name: &str) -> Option<Vec<String>> {
-    DBS.lock().unwrap().iter().find_map(|(db, files)| {
+/// Dbs whose pages are on `host` come first, so a Demozoo page opens Demozoo's
+/// releases rather than CSDb's.
+fn path(kind: &str, name: &str, host: &str) -> Option<Vec<String>> {
+    let dbs = DBS.lock().unwrap();
+    let on_host = |files: &[EmuFile]| {
+        files
+            .first()
+            .is_some_and(|f| url_host(f.get_meta("release_url")) == Some(host))
+    };
+    let (mut ordered, rest): (Vec<_>, Vec<_>) = dbs.iter().partition(|(_, f)| on_host(f));
+    ordered.extend(rest);
+    ordered.into_iter().find_map(|(db, files)| {
         let mut path = path_in(kind, name, files)?;
         path.insert(0, db.clone());
         Some(path)
     })
+}
+
+fn url_host(url: &str) -> Option<&str> {
+    url.split_once("://")?.1.split(['/', '?']).next()
 }
 
 /// The path the page's Open button asked for.
@@ -82,32 +96,40 @@ mod android {
         }
     }
 
-    fn page_path(env: &mut JNIEnv, kind: &JString, name: &JString) -> Option<Vec<String>> {
+    fn page_path(
+        env: &mut JNIEnv,
+        kind: &JString,
+        name: &JString,
+        host: &JString,
+    ) -> Option<Vec<String>> {
         let kind: String = env.get_string(kind).ok()?.into();
         let name: String = env.get_string(name).ok()?.into();
-        super::path(&kind, &name)
+        let host: String = env.get_string(host).ok()?.into();
+        super::path(&kind, &name, &host)
     }
 
-    /// `WebActivity.nativeHasPath(kind, name)`.
+    /// `WebActivity.nativeHasPath(kind, name, host)`.
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_demarc_c64_WebActivity_nativeHasPath(
         mut env: JNIEnv,
         _class: JClass,
         kind: JString,
         name: JString,
+        host: JString,
     ) -> jboolean {
-        page_path(&mut env, &kind, &name).is_some() as jboolean
+        page_path(&mut env, &kind, &name, &host).is_some() as jboolean
     }
 
-    /// `WebActivity.nativeOpenPath(kind, name)`.
+    /// `WebActivity.nativeOpenPath(kind, name, host)`.
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_com_demarc_c64_WebActivity_nativeOpenPath(
         mut env: JNIEnv,
         _class: JClass,
         kind: JString,
         name: JString,
+        host: JString,
     ) {
-        if let Some(path) = page_path(&mut env, &kind, &name) {
+        if let Some(path) = page_path(&mut env, &kind, &name, &host) {
             *super::PENDING.lock().unwrap() = Some(path);
         }
     }

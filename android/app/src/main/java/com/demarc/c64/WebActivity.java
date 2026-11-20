@@ -31,20 +31,20 @@ public class WebActivity extends Activity {
         "googlesyndication.com", "doubleclick.net", "googleadservices.com", "adservice.google.com",
     };
 
-    private static native boolean nativeHasPath(String kind, String name);
+    private static native boolean nativeHasPath(String kind, String name, String host);
 
-    private static native void nativeOpenPath(String kind, String name);
+    private static native void nativeOpenPath(String kind, String name, String host);
 
-    /** What the page's Open button calls: `kind` is the page type ("event" or "group"), `name` its title. */
+    /** What the page's Open button calls: `kind` is the page type ("event" or "group"), `name` its title, `host` the site. */
     private class Bridge {
         @JavascriptInterface
-        public boolean has(String kind, String name) {
-            return nativeHasPath(kind, name);
+        public boolean has(String kind, String name, String host) {
+            return nativeHasPath(kind, name, host);
         }
 
         @JavascriptInterface
-        public void open(String kind, String name) {
-            nativeOpenPath(kind, name);
+        public void open(String kind, String name, String host) {
+            nativeOpenPath(kind, name, host);
             runOnUiThread(WebActivity.this::finish);
         }
     }
@@ -145,9 +145,9 @@ public class WebActivity extends Activity {
             + "var t=document.querySelector('font[size=\"6\"]');"
             + "k=p;n=t&&t.textContent;"
             + "h=document.querySelector('td[background*=\"topgfx\"] td');}"
-            + "if(k&&n&&h&&minimarc.has(k,n)){"
+            + "if(k&&n&&h&&minimarc.has(k,n,location.hostname)){"
             + "var b=document.createElement('button');b.id='minimarc-open';b.textContent='Open';"
-            + "b.onclick=function(){minimarc.open(k,n);};"
+            + "b.onclick=function(){minimarc.open(k,n,location.hostname);};"
             + "h.insertBefore(b,h.firstChild);}";
 
     /** Adds a phone viewport and `css` (passed as base64, so no quoting) to the page, once. */
