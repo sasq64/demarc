@@ -105,7 +105,7 @@ def main():
     elif kind == "demozoo-amiga":
         out = list(demozoo_amiga(lines))
         header = sum(1 for l in out if l.startswith("#"))
-        out.insert(header, "# release_url:https://demozoo.org/productions/{id}/\n")
+        out.insert(header, "# release_url:https://demozoo.org/productions/{id}/ release_css:demozoo.css\n")
     else:
         sys.exit(f"unknown db {kind}")
     with open(dst, "w", encoding="utf-8") as f:

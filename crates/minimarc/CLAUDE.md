@@ -103,7 +103,7 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   `release_url` (with `{id}`) and `release_css`, an APK asset from
   `system/web/` injected on load (`web.rs` calls `MiniActivity.openWeb` over
   JNI; Android only). Back finishes it; the demo plays on underneath.
-  On an event or group page whose name the db has releases under, an Open
+  On a CSDb event/group or Demozoo party/group page whose name a db has releases under, an Open
   button in the header (a JS bridge to `nativeHasPath`/`nativeOpenPath` in
   `web.rs`) finishes it and opens Parties/<name> or Authors/<name>.
 - Escape or Back toggles the picker;

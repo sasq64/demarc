@@ -4,14 +4,14 @@ use std::sync::Mutex;
 
 use database::emu_file::EmuFile;
 
-static DB: Mutex<Option<(String, &'static [EmuFile])>> = Mutex::new(None);
+static DBS: Mutex<Vec<(String, &'static [EmuFile])>> = Mutex::new(Vec::new());
 static PENDING: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
-pub fn set_db(name: &str, files: &'static [EmuFile]) {
-    *DB.lock().unwrap() = Some((name.to_owned(), files));
+pub fn set_dbs(dbs: Vec<(String, &'static [EmuFile])>) {
+    *DBS.lock().unwrap() = dbs;
 }
 
-/// The picker path for a CSDb page of `kind` ("event" or "group") named
+/// The picker path for a page of `kind` ("event" or "group") named
 /// `name`, if the db has releases there.
 fn path_in(kind: &str, name: &str, files: &[EmuFile]) -> Option<Vec<String>> {
     let found = match kind {
@@ -26,11 +26,11 @@ fn path_in(kind: &str, name: &str, files: &[EmuFile]) -> Option<Vec<String>> {
 }
 
 fn path(kind: &str, name: &str) -> Option<Vec<String>> {
-    let db = DB.lock().unwrap();
-    let (db, files) = db.as_ref()?;
-    let mut path = path_in(kind, name, files)?;
-    path.insert(0, db.clone());
-    Some(path)
+    DBS.lock().unwrap().iter().find_map(|(db, files)| {
+        let mut path = path_in(kind, name, files)?;
+        path.insert(0, db.clone());
+        Some(path)
+    })
 }
 
 /// The path the page's Open button asked for.

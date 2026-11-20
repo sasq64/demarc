@@ -35,7 +35,7 @@ public class WebActivity extends Activity {
 
     private static native void nativeOpenPath(String kind, String name);
 
-    /** What the page's Open button calls: `kind` is the CSDb page type, `name` its title. */
+    /** What the page's Open button calls: `kind` is the page type ("event" or "group"), `name` its title. */
     private class Bridge {
         @JavascriptInterface
         public boolean has(String kind, String name) {
@@ -133,15 +133,21 @@ public class WebActivity extends Activity {
         }
     }
 
-    /** An Open button in the header of an event or group page the db has releases for. */
+    /** An Open button in the header of a party or group page the db has releases for. */
     private static final String OPEN_BUTTON =
             "if(document.getElementById('minimarc-open'))return;"
-            + "var k=location.pathname.split('/')[1];"
+            + "var k,n,h,p=location.pathname.split('/')[1];"
+            + "if(/(^|\\.)demozoo\\.org$/.test(location.hostname)){"
+            + "k={groups:'group',parties:'event'}[p];"
+            + "n=document.title.replace(/ - Demozoo$/,'');"
+            + "h=document.querySelector('.site__header');"
+            + "}else{"
             + "var t=document.querySelector('font[size=\"6\"]');"
-            + "var h=document.querySelector('td[background*=\"topgfx\"] td');"
-            + "if(t&&h&&minimarc.has(k,t.textContent)){"
+            + "k=p;n=t&&t.textContent;"
+            + "h=document.querySelector('td[background*=\"topgfx\"] td');}"
+            + "if(k&&n&&h&&minimarc.has(k,n)){"
             + "var b=document.createElement('button');b.id='minimarc-open';b.textContent='Open';"
-            + "b.onclick=function(){minimarc.open(k,t.textContent);};"
+            + "b.onclick=function(){minimarc.open(k,n);};"
             + "h.insertBefore(b,h.firstChild);}";
 
     /** Adds a phone viewport and `css` (passed as base64, so no quoting) to the page, once. */
