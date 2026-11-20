@@ -778,6 +778,9 @@ fn create_bind_group(
 /// one an extra frame is run rather than let the ring run dry.
 const AUDIO_BUF: (usize, usize) = (3000, 18000);
 
+/// Frames the picture is held back, to meet the sound.
+const VIDEO_DELAY: usize = 3;
+
 // -------------------------------------------------------------------------
 // Touch
 // -------------------------------------------------------------------------
@@ -953,6 +956,8 @@ pub struct App {
     audio: AudioSink,
     /// Smoothed fill of `audio`, see `smooth_fill`.
     audio_fill: f64,
+    /// Frames waiting out `VIDEO_DELAY`, oldest first.
+    frames: VecDeque<(u32, u32, Vec<u32>)>,
     alt: bool,
     shift: bool,
     ctrl: bool,
@@ -998,6 +1003,7 @@ impl App {
             gfx: None,
             audio: AudioSink::default(),
             audio_fill: 0.0,
+            frames: VecDeque::new(),
             alt: false,
             shift: false,
             ctrl: false,
@@ -1083,6 +1089,7 @@ impl App {
             .collect();
         self.core_frames = 0;
         self.audio_fill = 0.0;
+        self.frames.clear();
         self.disk = 0;
         self.core = Some(core);
         self.work = Some(work);
@@ -1566,7 +1573,19 @@ impl App {
         if width == 0 || height == 0 {
             return;
         }
-        core.with_frame(|w, h, pixels| gfx.upload(w as u32, h as u32, pixels));
+        let mut buf = if self.frames.len() > VIDEO_DELAY {
+            self.frames.pop_front().map(|f| f.2).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        core.with_frame(|w, h, pixels| {
+            buf.clear();
+            buf.extend_from_slice(&pixels[..w * h]);
+            self.frames.push_back((w as u32, h as u32, buf));
+        });
+        if let Some((w, h, pixels)) = self.frames.front() {
+            gfx.upload(*w, *h, pixels);
+        }
     }
 
     /// Run the core one frame and queue its sound. Whether there was any.
