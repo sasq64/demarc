@@ -1860,3 +1860,9 @@
   `fi-*` host has stopped answering, so each such try cost a 5 s connect
   timeout. `get:` also lists no directories. `LINK_BASES` names the mirror
   hosts directly; curl each one with `-w '%{time_total}'` to re-rank them.
+
+- puae's `puae_cpu_compatibility` defaults to `exact` only on x86_64, `normal`
+  elsewhere, so the same meta ran cycle-exact on the desktop and not on the
+  phone, and timing-bound demos (No-CPU Challenge) went black there. A core
+  default that differs per arch looks like an Android port bug; grep the
+  core's option table for `#if defined(__x86_64__)` before suspecting the build.

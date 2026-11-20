@@ -671,6 +671,8 @@ pub fn default_meta() -> HashMap<&'static str, &'static str> {
         ("amiberry_video_vresolution", "auto"),
         //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
         ("puae_mapper_mouse_toggle", "---"),
+        // puae only defaults to this on x86_64.
+        ("puae_cpu_compatibility", "exact"),
     ]
     .into()
 }
