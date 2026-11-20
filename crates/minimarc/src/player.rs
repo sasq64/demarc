@@ -820,7 +820,10 @@ enum Gesture {
         over: bool,
     },
     /// Holding a mouse button on the key bar.
-    Mouse { id: u64, button: Button },
+    Mouse {
+        id: u64,
+        button: Button,
+    },
     /// Moving the mouse on an Amiga; a tap opens or closes the key bar.
     Pointer {
         id: u64,
@@ -1251,7 +1254,10 @@ impl App {
             Some(touch) => {
                 let (dx, dy) = (pos.0 - touch.1.0, pos.1 - touch.1.1);
                 touch.1 = pos;
-                if mine && self.touches.len() == 1 && matches!(self.gesture, Gesture::Pointer { .. }) {
+                if mine
+                    && self.touches.len() == 1
+                    && matches!(self.gesture, Gesture::Pointer { .. })
+                {
                     self.move_mouse(dx, dy);
                 }
             }
@@ -1273,7 +1279,10 @@ impl App {
                 if let Some(button) = self.ui.key_at(pos.0, pos.1) {
                     let gesture = match button.key() {
                         _ if matches!(button, Button::MouseLeft | Button::MouseRight) => {
-                            self.set_mouse_buttons(button == Button::MouseLeft, button == Button::MouseRight);
+                            self.set_mouse_buttons(
+                                button == Button::MouseLeft,
+                                button == Button::MouseRight,
+                            );
                             Gesture::Mouse { id, button }
                         }
                         Some(key) => {
@@ -1888,7 +1897,7 @@ fn kickstart_message(missing: &[&str]) -> String {
     };
     format!(
         "Amiga demos need the Kickstart ROMs 1.2, 1.3, 2.04 and 3.1.\n\
-         Missing: {}\n{store} the ROM files to\n{}",
+         Missing: {}\n{store} your own Kickstart files to\n{}",
         missing.join(", "),
         crate::amiga::user_rom_dir().display()
     )
@@ -1932,16 +1941,20 @@ fn install_amiga(
     app: &winit::platform::android::activity::AndroidApp,
     data: &std::path::Path,
 ) -> Result<()> {
-    install_assets(data, [(AMIGA_DB, AMIGA_DB), (AMIGA_ZIP, AMIGA_ZIP)], |name| {
-        use std::io::Read;
-        let mut asset = app
-            .asset_manager()
-            .open(&std::ffi::CString::new(name)?)
-            .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
-        let mut bytes = Vec::new();
-        asset.read_to_end(&mut bytes)?;
-        Ok(bytes)
-    })?;
+    install_assets(
+        data,
+        [(AMIGA_DB, AMIGA_DB), (AMIGA_ZIP, AMIGA_ZIP)],
+        |name| {
+            use std::io::Read;
+            let mut asset = app
+                .asset_manager()
+                .open(&std::ffi::CString::new(name)?)
+                .ok_or_else(|| anyhow!("no asset {name} in the APK"))?;
+            let mut bytes = Vec::new();
+            asset.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        },
+    )?;
     crate::amiga::unpack_zip(&data.join(AMIGA_ZIP), data)?;
     if let Some(dir) = app.external_data_path() {
         let dir = dir.join("kickstarts");
@@ -2009,7 +2022,10 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         }
 
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
-        event_loop.run_app(&mut App::new(vec![data.join(DB_ASSET), data.join(AMIGA_DB)]))?;
+        event_loop.run_app(&mut App::new(vec![
+            data.join(DB_ASSET),
+            data.join(AMIGA_DB),
+        ]))?;
         Ok(())
     };
     // The panic hook has logged a panic already.
