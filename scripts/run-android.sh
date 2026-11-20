@@ -85,7 +85,7 @@ scripts/android_dbs.py csdb demodb/csdb.txt "$ASSETS/csdb.txt"
 scripts/android_dbs.py demozoo-amiga demodb/demozoo.txt "$ASSETS/demozoo-amiga.txt"
 # The drives amiberry boots a release from, and WHDLoad.
 rm -f "$ASSETS/amiga.zip"
-(cd system && zip -qr "../$ASSETS/amiga.zip" ami13 amihdd amiga/WHDBoot)
+(cd system && zip -qr "../$ASSETS/amiga.zip" ami13 amihdd amiga/WHDBoot amiga/floppy_sounds)
 
 echo "==> cargo ndk ($ABI, API $API)"
 cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \

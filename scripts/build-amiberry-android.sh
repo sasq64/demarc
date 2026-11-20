@@ -24,6 +24,11 @@ OUT=android/app/src/main/jniLibs/$ABI/libamiberry_libretro.so
 mkdir -p "$BUILD" "$(dirname "$OUT")"
 rsync -a --exclude=.git --exclude='*.o' --exclude='*.so' --exclude='build*/' "$SRC/" "$BUILD/"
 cp scripts/amiberry-android/android_stub.cpp "$BUILD/libretro/"
+# The Makefile has no header dependencies, so a changed header means a clean build.
+LAST="$BUILD/libretro/amiberry_libretro.so"
+if [ -f "$LAST" ] && [ -n "$(find "$BUILD" -name '*.h' -newer "$LAST" -print -quit)" ]; then
+    find "$BUILD" -name '*.o' -delete
+fi
 make -C "$BUILD/libretro" -j"$(nproc)" -f Makefile -f "$PWD/scripts/amiberry-android/android.mk" \
     ANDROID_STUB=android_stub.o \
     platform=unix ARCH=$ARCH \

@@ -1893,3 +1893,7 @@
   `src/osdep/libretro/amiberry_platform_internal.h` left `amiberry.o` stale and
   the change silently missing from the core. Delete the `.o` of every file that
   includes a header you edit (or `make clean`) before testing.
+  The Android copy under `target/amiberry-android/` had the same stale object;
+  `build-amiberry-android.sh` now cleans when a header is newer than its core.
+  New files under `system/amiga/` also need adding to `amiga.zip` in
+  `run-android.sh`, which packs a fixed list.

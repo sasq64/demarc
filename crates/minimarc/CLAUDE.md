@@ -145,7 +145,7 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
   so rerun it by hand after changing amiberry. The Kickstarts are decrypted at startup
   out of the installed Amiga Forever Essentials APK (`MiniActivity.packagePath`,
   a `<queries>` entry in the manifest); without it an Amiga pick is an error.
-  `amiga.zip` (`ami13`, `amihdd`, `amiga/WHDBoot`) is unpacked over the data
+  `amiga.zip` (`ami13`, `amihdd`, `amiga/WHDBoot`, `amiga/floppy_sounds`) is unpacked over the data
   dir on every start. Pinch zoom is C64 only.
 - The `[csdb.<id>]` and `[zoo.<id>]` entries of `overrides.toml` (an APK asset on Android, the
   system dir elsewhere) are applied in `load.rs`: download, meta, patches,
