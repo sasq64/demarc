@@ -42,6 +42,7 @@
 //!
 //! [zoo.7236]
 //! fast = true                        # accelerated A1200 with FPU, Z3 mem and JIT
+//! jit = false                        # amiberry_jit disabled (true: enabled)
 //!
 //! [zoo.9000]
 //! cache_writeback = true             # unpack into the download cache, run from there
@@ -171,6 +172,8 @@ struct RawOverride {
     /// `newsys::amiga::apply_fast`.
     #[serde(default)]
     fast: bool,
+    /// Shorthand for `amiberry_jit = "enabled"` / `"disabled"`.
+    jit: Option<bool>,
     /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
     /// They are folded into the single `assign` meta value the Amiga system
     /// reads when it writes the startup-sequence — see
@@ -368,6 +371,9 @@ impl RawOverride {
                 };
                 meta.insert(leak(key), leak(value));
             }
+        }
+        if let Some(jit) = self.jit {
+            meta.insert("amiberry_jit", if jit { "enabled" } else { "disabled" });
         }
 
         // `Name=Target;Name2=Target2`, which is the shape

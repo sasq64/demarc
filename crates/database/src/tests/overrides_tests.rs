@@ -108,6 +108,26 @@ fn takes_the_fast_amiga_configuration() {
     assert!(!overrides[&zoo(108)].fast);
 }
 
+#[test]
+fn jit_maps_to_the_amiberry_option() {
+    let overrides = parse(
+        r#"
+        [zoo.1]
+        jit = true
+
+        [zoo.2]
+        jit = false
+
+        [zoo.3]
+        fast = true
+        "#,
+    )
+    .unwrap();
+    assert_eq!(overrides[&zoo(1)].meta["amiberry_jit"], "enabled");
+    assert_eq!(overrides[&zoo(2)].meta["amiberry_jit"], "disabled");
+    assert!(!overrides[&zoo(3)].meta.contains_key("amiberry_jit"));
+}
+
 /// A release needing more than one file written gets an array of patches,
 /// and a patch may write into a file rather than replace it.
 #[test]

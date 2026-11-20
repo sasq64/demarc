@@ -393,7 +393,7 @@ events = [
 # Closer / CNCD
 [zoo.7613]
 assign = { CNCD = "SYS:" }
-meta = { amiga_core = "puae" }
+jit = false
 
 [zoo.7909]
 file = "asd-the_butterfly_effect.zip"
@@ -424,7 +424,7 @@ file = "odd_wd.zip"
 
 # Klone / DCS
 [zoo.8120]
-meta = { amiga_core = "puae" }
+jit = false
 
 [zoo.8205]
 file = "tbc+mainloop_micropolis-party.zip"
@@ -1115,7 +1115,7 @@ file = "dkg^lmn-neocolora.lha"
 meta = { dos4gw = "true" }
 
 [zoo.376675]
-meta = { amiga_core = "puae" }
+jit = false
 
 [zoo.311767]
 download = "https://github.com/sasq64/demodb/releases/download/demo-arc/area5150_86box.zip"
@@ -2177,7 +2177,7 @@ patch = [
 # Under the JIT it freezes on the first picture while the music plays.
 [zoo.202824]
 file = "agt-driftwood-rev19.zip"
-meta = { amiberry_jit = "disabled" }
+jit = false
 
 # The Mind: a multi-cart release; the main cart includes and reloads the rest
 [zoo.342339]
@@ -2292,6 +2292,10 @@ meta = { amiberry_cpu_model = "68030" }
 
 [zoo.372606]
 meta = { amiberry_cpu_model = "68040" }
+
+# Bacon of Hope by Desire
+[zoo.385573]
+meta = { amiberry_chipmem_size = "1" }
 
 # [zoo.8891]
 # fast = true
