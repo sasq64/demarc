@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use database::emu_file::{EmuFile, bytes_in_progress};
 use database::playlists::Playlists;
 use indexmap::IndexMap;
-use navigator::{Navigator, setup_navigator};
+use navigator::{FAVORITES, Navigator, setup_navigator};
 use retro_core::libretro;
 use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
@@ -190,7 +190,7 @@ impl Ui {
         let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
         let favorites = Playlists::load(&playlist_dir());
-        self.navigator.set_csdb_favorites(favorites.lists[0].files);
+        self.navigator.add_playlist(FAVORITES, favorites.lists[0].files);
         self.favorites = Some(favorites);
         crate::web::set_db(&name, files);
         let root = self.navigator.go_root();
@@ -251,7 +251,7 @@ impl Ui {
             return;
         };
         favorites.toggle(0, file, "");
-        self.navigator.set_csdb_favorites(favorites.lists[0].files);
+        self.navigator.add_playlist(FAVORITES, favorites.lists[0].files);
     }
 
     fn is_favorite(&self) -> bool {
