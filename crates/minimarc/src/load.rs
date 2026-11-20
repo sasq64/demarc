@@ -38,10 +38,10 @@ impl Platform {
         }
     }
 
-    pub fn core(self) -> &'static str {
+    pub fn core(self, work: &WorkFile) -> &'static str {
         match self {
             Platform::C64 => "vice_x64sc",
-            Platform::Amiga => amiga::CORE_NAME_UAE,
+            Platform::Amiga => amiga::core_name(work),
         }
     }
 
@@ -173,10 +173,6 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
         file.path.pick_download(name);
     }
     let platform = Platform::of(&file);
-    if platform == Platform::Amiga {
-        // No amiberry on the phone.
-        meta.insert("amiga_core".into(), "puae".into());
-    }
     let mut source = file.path.clone();
     let mut work = loop {
         let mut attempt = source.clone();

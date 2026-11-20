@@ -2,8 +2,8 @@
 
 A stripped-down demarc for browsing and watching C64 and Amiga demos on a
 phone: it reads `csdb.txt` and `demozoo-amiga.txt`, shows demarc's picker over
-the navigator tree, downloads the picked release and runs it in the VICE or
-puae libretro core. No Bevy, themes, slangp shaders,
+the navigator tree, downloads the picked release and runs it in the VICE,
+puae or amiberry libretro core. No Bevy, themes, slangp shaders,
 grid or cross-fade. The same crate runs on the desktop.
 
 The repo-root `CLAUDE.md` applies here too (read `docs/LEARNINGS.md` first,
@@ -31,6 +31,7 @@ crates/release-io               fetch, cache, unpack, WorkFile, c64::prepare, am
 crates/database                 db parsing, EmuFile; used with default-features = false
 android/                        Gradle project: MiniActivity (NativeActivity + immersive mode)
 scripts/run-android.sh          the whole build-install-launch loop
+scripts/build-amiberry-android.sh  amiberry core for the APK (~4 min from clean)
 ```
 
 `retro-ui`, `navigator`, `release-io` and `database` are shared with demarc: a
@@ -137,8 +138,12 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
   frame 50 and Return at 55 (`release_io::c64::FAST_LOAD_EVENTS`).
 - Amiga: an entry whose platform starts with "Amiga" (demozoo-amiga.txt, cut
-  out of demozoo.txt by `run-android.sh`) runs in puae, never amiberry, with
-  `<data>/amiga` as its system dir. The Kickstarts are decrypted at startup
+  out of demozoo.txt by `run-android.sh`) runs in the core
+  `release_io::amiga::prepare` picks (amiberry for AGA, puae otherwise), with
+  `<data>/amiga` as its system dir. The buildbot has no Android amiberry:
+  `scripts/build-amiberry-android.sh` cross-compiles `external/amiberry` in a
+  copy under `target/`, and `run-android.sh` runs it when the .so is missing,
+  so rerun it by hand after changing amiberry. The Kickstarts are decrypted at startup
   out of the installed Amiga Forever Essentials APK (`MiniActivity.packagePath`,
   a `<queries>` entry in the manifest); without it an Amiga pick is an error.
   `amiga.zip` (`ami13`, `amihdd`, `amiga/WHDBoot`) is unpacked over the data

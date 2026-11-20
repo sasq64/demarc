@@ -1066,7 +1066,7 @@ impl App {
         // One core at a time: Android loads it in place, so the old instance
         // has to be gone before the new one starts.
         self.unload();
-        let core = load_core(platform, &work.path, work.get_all_meta())?;
+        let core = load_core(platform, &work)?;
         self.platform = platform;
         self.ui.amiga = platform == Platform::Amiga;
         if let Some(gfx) = self.gfx.as_mut() {
@@ -1814,12 +1814,8 @@ impl ApplicationHandler for App {
     }
 }
 
-fn load_core(
-    platform: Platform,
-    game: &std::path::Path,
-    settings: HashMap<String, String>,
-) -> Result<RetroCoreDirect> {
-    let name = platform.core();
+fn load_core(platform: Platform, work: &WorkFile) -> Result<RetroCoreDirect> {
+    let name = platform.core(work);
     let path = find_core(name).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \
@@ -1830,7 +1826,7 @@ fn load_core(
     let system = platform.system_dir();
     info!("Core: {}", path.display());
     info!("System dir: {}", system.display());
-    RetroCoreDirect::new(&path, &system, Some(game), settings)
+    RetroCoreDirect::new(&path, &system, Some(&work.path), work.get_all_meta())
         .with_context(|| format!("could not start {}", path.display()))
 }
 

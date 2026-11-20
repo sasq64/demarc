@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build `minimarc` as an Android cdylib, package it into an APK with the VICE
-# core, the csdb database and the fast-load cartridge, install and launch it.
+# Build `minimarc` as an Android cdylib, package it into an APK with the VICE,
+# puae and amiberry cores, the csdb database and the fast-load cartridge, install and launch it.
 # See docs/ANDROID.md.
 #
 #   scripts/run-android.sh            release build (the default: debug Bevy-less
@@ -65,6 +65,9 @@ for CORE in "${CORES[@]}"; do
     mv "$tmp/${CORE}_libretro_android.so" "$JNILIBS/lib${CORE}_libretro.so"
     rm -rf "$tmp"
 done
+# The buildbot has no amiberry for Android; scripts/build-amiberry-android.sh
+# again picks up changes in external/amiberry.
+[[ -f "$JNILIBS/libamiberry_libretro.so" ]] || ABI=$ABI scripts/build-amiberry-android.sh
 
 mkdir -p "$ASSETS"
 rm -f "$ASSETS/csdb.txt.gz"
