@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub mod dialog;
 pub mod fuzzy_list;
 pub mod hud;
+pub mod message_box;
 pub mod picker;
 pub mod shader_dialog;
 pub mod theme;

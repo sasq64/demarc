@@ -20,6 +20,7 @@ use crate::emulator::{Emulator, InputMode};
 use crate::frontend::EmuView;
 use crate::frontend::FrontendSet;
 use crate::fuzzy_list::AllWordsSource;
+use crate::message_box::ShowMessage;
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::Navigator;
 use crate::playlists::{PlaylistPicker, Playlists};
@@ -74,6 +75,7 @@ pub enum Cmd {
     ScrollRight,
     NextSubtitle,
     StopEmu,
+    About,
 }
 
 impl Cmd {
@@ -123,6 +125,7 @@ impl Cmd {
         Cmd::ScrollRight,
         Cmd::NextSubtitle,
         Cmd::StopEmu,
+        Cmd::About,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -176,6 +179,7 @@ impl Cmd {
             Cmd::ScrollRight => "Scroll right",
             Cmd::NextSubtitle => "Next subtitle track",
             Cmd::StopEmu => "Stop current emulator",
+            Cmd::About => "About",
         }
     }
 
@@ -239,6 +243,7 @@ impl KeyMapping {
             KeyCode::ArrowDown => '↓',
             KeyCode::Equal | KeyCode::NumpadAdd => '+',
             KeyCode::Minus | KeyCode::NumpadSubtract => '-',
+            KeyCode::Slash => '/',
             _ => {
                 let letter = format!("{:?}", self.key).chars().next_back().unwrap_or('?');
                 char::from_u32(letter as u32 - b'A' as u32 + 0xf0b08).unwrap_or('?')
@@ -286,6 +291,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::new(KeyCode::KeyA, Cmd::ToggleAll),
     KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
     KeyMapping::new(KeyCode::Escape, Cmd::StopEmu),
+    KeyMapping::new(KeyCode::Slash, Cmd::About),
 ];
 
 /// Keys for the music, video and image views, used without the hot key.
@@ -748,6 +754,7 @@ pub(crate) fn handle_cmd(
     mut show_list: MessageWriter<ShowFuzzyList>,
     mut show_settings: MessageWriter<ShowSettings<DemarcSettings>>,
     mut show_shader: MessageWriter<ShowShaderDialog>,
+    mut show_message: MessageWriter<ShowMessage>,
     mut demo_settings: ResMut<DemarcSettings>,
     mut commands: Commands,
     dj: Option<Res<crate::dj::DjWindow>>,
@@ -862,6 +869,12 @@ pub(crate) fn handle_cmd(
             }
             Cmd::ShaderDialog => {
                 show_shader.write(ShowShaderDialog);
+            }
+            Cmd::About => {
+                show_message.write(ShowMessage(format!(
+                    "Demarc\n{}",
+                    env!("CARGO_PKG_VERSION")
+                )));
             }
             Cmd::OpenKeyboard => {
                 steam_keyboard(true);

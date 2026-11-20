@@ -131,6 +131,7 @@ fn world() -> (World, tempfile::TempDir) {
     world.init_resource::<Messages<ShowFuzzyList>>();
     world.init_resource::<Messages<ShowSettings<DemarcSettings>>>();
     world.init_resource::<Messages<ShowShaderDialog>>();
+    world.init_resource::<Messages<crate::message_box::ShowMessage>>();
     world.init_resource::<Messages<bevy::input::keyboard::KeyboardInput>>();
     world.insert_resource(Navigator::new());
     world.insert_resource(Playlists::load(dir.path()));

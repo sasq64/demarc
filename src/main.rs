@@ -50,6 +50,7 @@ mod headless;
 mod jobs;
 mod loading;
 mod media_keys;
+mod message_box;
 mod mouse_cursor;
 mod navigator;
 mod patch_menu;
@@ -759,6 +760,7 @@ fn main() {
             ShaderDialogPlugin,
         ))
         .add_plugins(patch_menu::PatchMenuPlugin)
+        .add_plugins(message_box::MessageBoxPlugin)
         .init_state::<AppState>()
         .add_systems(Update, enter_running.run_if(in_state(AppState::Startup)));
     if headless {
