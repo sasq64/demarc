@@ -79,7 +79,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use qbsdiff::Bspatch;
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 use release_io::release_override::{GLSL_FIELD_SEP, GLSL_PATCH_SEP, META_GLSL_PATCHES};
@@ -337,9 +337,15 @@ pub fn parse_for(
                 .ok()
                 .and_then(|n| DemoId::new(&db, n))
                 .with_context(|| format!("[{db}.{id}]: not an id"))?;
-            let over = raw
-                .build(resolve_key)
-                .with_context(|| format!("[{db}.{id}]"))?;
+            let over = match raw.build(resolve_key) {
+                Ok(over) => over,
+                // A player for one db need not ship every patch file.
+                Err(e) if only.is_some() => {
+                    warn!("Skipping [{db}.{id}]: {e:#}");
+                    continue;
+                }
+                Err(e) => return Err(e.context(format!("[{db}.{id}]"))),
+            };
             overrides.insert(demo_id, over);
         }
     }

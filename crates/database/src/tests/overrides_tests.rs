@@ -360,4 +360,7 @@ fn one_section_can_be_read_on_its_own() {
     assert_eq!(overrides.len(), 1);
     let over = &overrides[&DemoId::new("csdb", 197970).unwrap()];
     assert_eq!(over.meta["vice_sid_extra"], "0xd420");
+    // Within its own section it skips an entry it cannot build.
+    let overrides = parse_for(text, Some("zoo"), resolve_key).unwrap();
+    assert!(overrides.is_empty());
 }

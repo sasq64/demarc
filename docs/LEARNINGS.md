@@ -1872,3 +1872,8 @@
   reached the APK: grep `demodb/` and the script before the Rust filters. A
   multi-platform entry (`platform:Atari Falcon;Amiga AGA`) can list Amiga
   anywhere, not just first.
+
+- An override that "does nothing" in minimarc: check logcat for
+  `Can't read .../overrides.toml` first. One `[zoo.*]` entry naming a Windows
+  patch file the APK doesn't ship used to drop every zoo override; a fix to
+  how one override is applied was tested on the phone before that was seen.
