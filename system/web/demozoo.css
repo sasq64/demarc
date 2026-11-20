@@ -1,0 +1,5 @@
+/* menu, search bar and login dropdown; the logo stays */
+.site__header nav, .site__header .user_menu { display: none !important; }
+.site__header { padding: 12px 0 !important; }
+.logo { margin-right: 0 !important; }
+#minimarc-open { float: right; margin: 0 8px; padding: 8px 20px; font-size: 16px; color: #fff; background: #ec5a64; border: none; border-radius: 4px; }
