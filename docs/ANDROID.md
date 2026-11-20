@@ -103,10 +103,11 @@ Done: developer account, app created, App content filled in, store listing
 in AU, DE, DK, ES, FI, FR, NO, PL, SE, US. `scripts/play.py status` shows
 the tracks; review state and tester counts are only in the console.
 
-Play cannot update over an `adb install` (different signing key), so run
-`adb uninstall se.minnberg.demarc` before installing from Play.
-`run-android.sh` handles the other direction: when `install -r` fails it
-uninstalls and installs again. "Something went wrong on our end" on the first install
+`run-android.sh` installs `se.minnberg.demarc.dev` ("demarc dev", debug key)
+by default, so it sits beside the Play install. With `--release` it installs the
+Play package itself; Play cannot update over that, so run
+`adb uninstall se.minnberg.demarc` before installing from Play again. When
+`install -r` fails, the script uninstalls and installs again. "Something went wrong on our end" on the first install
 went away after that and waiting for the release to propagate.
 
 App content answers (Policy → App content):
@@ -324,12 +325,13 @@ collide in the linker's namespace.
 `gradlew`, `adb install`, launch, optionally `logcat`:
 
 ```sh
-scripts/run-android.sh               # release
-scripts/run-android.sh --debug
+scripts/run-android.sh               # the .dev package
+scripts/run-android.sh --release     # the Play package
 scripts/run-android.sh --logcat
 ```
 
-It defaults to release because a debug wgpu build is both slow and enormous, and sets
+Both build the Rust side with the `android` cargo profile (fat LTO, opt-level 3);
+only the Gradle build type and package differ. It sets
 `JAVA_HOME` to Android Studio's JDK 21 when the shell has none — AGP does not run on this
 machine's JDK 26.
 

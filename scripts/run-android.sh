@@ -3,9 +3,9 @@
 # amiberry cores, the csdb database and the fast-load cartridge, install and launch it.
 # See docs/ANDROID.md.
 #
-#   scripts/run-android.sh            release build (the default: debug Bevy-less
-#                                     wgpu is still slow, and the .so is huge)
-#   scripts/run-android.sh --debug    debug build
+#   scripts/run-android.sh            dev build: se.minnberg.demarc.dev, debug
+#                                     key, beside the Play version
+#   scripts/run-android.sh --release  the Play package, signed with the upload key
 #   scripts/run-android.sh --logcat   also stream the app's log until ctrl-c
 #   scripts/run-android.sh --bundle   build the Play Store .aab instead; no install
 #                                     (VERSION_CODE=N sets its versionCode)
@@ -33,21 +33,21 @@ CORES=(vice_x64sc)
 JNILIBS=android/app/src/main/jniLibs/$ABI
 ASSETS=android/app/src/main/assets
 
-CARGO_PROFILE=(--release)
-GRADLE_TASK=assembleRelease
-APK=android/app/build/outputs/apk/release/app-release.apk
+PKG=$PKG.dev
+GRADLE_TASK=assembleDebug
+APK=android/app/build/outputs/apk/debug/app-debug.apk
 LOGCAT=0
 BUNDLE=0
 
 for arg in "$@"; do
     case "$arg" in
-        --debug)
-            CARGO_PROFILE=()
-            GRADLE_TASK=assembleDebug
-            APK=android/app/build/outputs/apk/debug/app-debug.apk
+        --release)
+            PKG=se.minnberg.demarc
+            GRADLE_TASK=assembleRelease
+            APK=android/app/build/outputs/apk/release/app-release.apk
             ;;
         --logcat) LOGCAT=1 ;;
-        --bundle) BUNDLE=1; GRADLE_TASK=bundleRelease ;;
+        --bundle) BUNDLE=1; PKG=se.minnberg.demarc; GRADLE_TASK=bundleRelease ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -89,9 +89,11 @@ rm -f "$ASSETS/amiga.zip"
 
 echo "==> cargo ndk ($ABI, API $API)"
 cargo ndk -t "$ABI" -P "$API" -o android/app/src/main/jniLibs \
-    build -p minimarc --lib "${CARGO_PROFILE[@]}"
+    build -p minimarc --lib --profile android
 # sevenz-rust2 also builds as a cdylib, which cargo-ndk copies along.
 rm -f "$JNILIBS"/libsevenz_rust2-*.so "$JNILIBS/libretro_core.so"
+# Left over from before amiberry; gradle packages everything in jniLibs.
+rm -f "$JNILIBS/libpuae_libretro.so"
 
 echo "==> gradle $GRADLE_TASK"
 (cd android && ./gradlew --console=plain -Pabi="$ABI" -PversionCode="${VERSION_CODE:-1}" "$GRADLE_TASK")

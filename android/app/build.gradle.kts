@@ -25,6 +25,10 @@ android {
     // The Play upload key; its location and password live in ~/.gradle/gradle.properties.
     val uploadStore = project.findProperty("demarcUploadStoreFile")?.toString()
     signingConfigs {
+        // Checked in, so every machine signs the .dev build alike.
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+        }
         if (uploadStore != null) {
             create("upload") {
                 storeFile = file(uploadStore)
@@ -36,7 +40,10 @@ android {
     }
 
     buildTypes {
+        // Installs beside the Play version; the native code is optimized too.
         debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
             isJniDebuggable = true
         }
         release {

@@ -207,6 +207,12 @@ inherits = "release"
 debug = true
 strip = false
 
+# Android: fat LTO and opt-level 3. Not panic=abort, minimarc catches panics.
+[profile.android]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+
 # Fast-iteration build: keeps opt-level=2 so the emulator/shaders run at a usable
 # speed, but drops the ship-only settings that make rebuilds slow. Parallel codegen
 # + incremental + no LTO link pass turns a one-file change from tens of seconds into
