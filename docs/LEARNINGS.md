@@ -1866,3 +1866,9 @@
   phone, and timing-bound demos (No-CPU Challenge) went black there. A core
   default that differs per arch looks like an Android port bug; grep the
   core's option table for `#if defined(__x86_64__)` before suspecting the build.
+
+- minimarc's Amiga list is cut out of `demozoo.txt` by a `grep` in
+  `scripts/run-android.sh`, so a release missing on the phone may never have
+  reached the APK: grep `demodb/` and the script before the Rust filters. A
+  multi-platform entry (`platform:Atari Falcon;Amiga AGA`) can list Amiga
+  anywhere, not just first.

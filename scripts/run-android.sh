@@ -84,7 +84,7 @@ awk '
 {
     grep '^#' demodb/demozoo.txt
     echo '# release_url:https://demozoo.org/productions/{id}/'
-    grep -P '\tplatform:Amiga[^\t]*\t' demodb/demozoo.txt |
+    grep -P '\tplatform:([^\t]*;)?Amiga' demodb/demozoo.txt |
         grep -P '\tcategory:([^\t]*;)?(Demo|Intro|\d+[kK] Intro|Cracktro|Invitation|Musicdisk|Diskmag|Slideshow)(;[^\t]*)?\t'
 } > "$ASSETS/demozoo-amiga.txt"
 # The drives puae boots a release from, and WHDLoad.

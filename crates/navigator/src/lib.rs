@@ -750,10 +750,7 @@ pub fn setup_navigator(
         Some(AllWordsSource::new(
             files
                 .iter()
-                .filter_map(|f| match *f.platforms {
-                    [one] => Some(one),
-                    _ => None,
-                })
+                .flat_map(|f| f.platforms.iter().copied())
                 .collect::<IndexSet<_>>()
                 .into_iter()
                 .map(String::from)
@@ -792,7 +789,7 @@ pub fn setup_navigator(
             let subset: Vec<u32> = files
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| *f.platforms == [path[1]])
+                .filter(|(_, f)| f.platforms.contains(&path[1]))
                 .map(|(i, _)| i as u32)
                 .collect();
             Some(PickerSource::new(
