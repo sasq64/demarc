@@ -278,23 +278,23 @@ fn collect_db_platform_tags_lines() {
 fn collect_db_applies_header_tags() {
     let mut out = vec![];
     collect_db_text(
-        "# Platform:Amiga puae_model:A500\n\
+        "# Platform:Amiga amiberry_model:A500\n\
          # Just a comment: nothing to see here\n\
          id:1\ttitle:Zentro 4\tcategory:Demo\tdownload:http://example.com/zentro4\n\
-         # puae_model:A1200\n\
+         # amiberry_model:A1200\n\
          id:2\ttitle:Nexus 7\tcategory:Demo\ttags:aga\tdownload:http://example.com/nexus7.zip\n",
         &DbFilter::default(),
         &mut out,
     );
 
     assert_eq!(*out[0].platforms, ["Amiga"]);
-    assert_eq!(out[0].get_meta("puae_model"), "A500");
+    assert_eq!(out[0].get_meta("amiberry_model"), "A500");
     assert!(!out[0].meta.contains_key("Just"));
     assert!(!out[0].meta.contains_key("comment"));
 
     // A later header overrides, and the platform from the first one still
     // applies.
-    assert_eq!(out[1].get_meta("puae_model"), "A1200");
+    assert_eq!(out[1].get_meta("amiberry_model"), "A1200");
     assert_eq!(out[1].get_meta("tags"), "aga");
     assert_eq!(*out[1].platforms, ["Amiga"]);
 }
@@ -419,7 +419,7 @@ fn a_db_is_named_after_its_first_comment() {
     assert_eq!(
         db_name(
             "# Demozoo release database (https://demozoo.org/)\n\
-             # puae_model:date\n\
+             # amiberry_model:date\n\
              id:1\ttitle:A\tdownload:http://x/a.zip\n",
             "demos".into()
         ),

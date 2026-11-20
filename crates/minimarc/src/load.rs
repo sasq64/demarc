@@ -38,10 +38,10 @@ impl Platform {
         }
     }
 
-    pub fn core(self, work: &WorkFile) -> &'static str {
+    pub fn core(self) -> &'static str {
         match self {
             Platform::C64 => "vice_x64sc",
-            Platform::Amiga => amiga::core_name(work),
+            Platform::Amiga => amiga::CORE_NAME_AMIBERRY,
         }
     }
 

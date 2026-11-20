@@ -158,12 +158,12 @@ fn the_repo_overrides_parse_for_both_dbs() {
 }
 
 #[test]
-fn a_demozoo_amiga_disk_is_prepared_for_puae() {
+fn a_demozoo_amiga_disk_is_prepared_for_amiberry() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("demozoo-amiga.txt");
     std::fs::write(
         &db,
-        "# Demozoo release database (https://demozoo.org/)\n# puae_model:date\n\
+        "# Demozoo release database (https://demozoo.org/)\n# amiberry_model:date\n\
          id:7\ttitle:Rebels\tauthor:Rebels\tdate:1989\tplatform:Amiga\tcategory:Demo\t\
          download:https://x.org/a.zip\n",
     )
@@ -173,8 +173,8 @@ fn a_demozoo_amiga_disk_is_prepared_for_puae() {
     file.path = FileSource::Path(root("testdata/amiga/rebels.adf"));
     let demo = prepare_with(file, None).unwrap();
     assert_eq!(demo.platform, Platform::Amiga);
-    assert_eq!(amiga::core_name(&demo.work), "puae");
-    assert_eq!(demo.work.get_meta_or("puae_kickstart", ""), "kick33180.A500");
-    assert_eq!(demo.work.get_meta_or("puae_crop", ""), "smaller");
+    assert_eq!(demo.platform.core(), "amiberry");
+    assert_eq!(demo.work.get_meta_or("amiberry_kickstart", ""), "kick33180.A500");
+    assert_eq!(demo.work.get_meta_or("amiberry_jit", ""), "disabled");
     assert!(demo.info.ends_with("Amiga Demo"), "{}", demo.info);
 }

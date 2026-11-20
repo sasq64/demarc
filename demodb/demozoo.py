@@ -1294,7 +1294,7 @@ def export(conn, out_path, pouet_data=None, pouet_lookup=None):
         # Prose comments, not a `key:value` header: Demozoo is multi-platform,
         # so the platform is per line rather than set once for the whole file.
         out.write("# Demozoo release database (https://demozoo.org/)\n")
-        out.write("# puae_model:date hatari_machinetype:date\n")
+        out.write("# amiberry_model:date hatari_machinetype:date\n")
         out.write(f"# PLATFORMS {code_table(platform_codes)}\n")
         out.write(f"# CATEGORIES {code_table(category_codes)}\n")
         out.writelines(lines)

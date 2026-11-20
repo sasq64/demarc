@@ -1861,12 +1861,6 @@
   timeout. `get:` also lists no directories. `LINK_BASES` names the mirror
   hosts directly; curl each one with `-w '%{time_total}'` to re-rank them.
 
-- puae's `puae_cpu_compatibility` defaults to `exact` only on x86_64, `normal`
-  elsewhere, so the same meta ran cycle-exact on the desktop and not on the
-  phone, and timing-bound demos (No-CPU Challenge) went black there. A core
-  default that differs per arch looks like an Android port bug; grep the
-  core's option table for `#if defined(__x86_64__)` before suspecting the build.
-
 - minimarc's Amiga list is cut out of `demozoo.txt` by a `grep` in
   `scripts/run-android.sh`, so a release missing on the phone may never have
   reached the APK: grep `demodb/` and the script before the Rust filters. A
@@ -1877,3 +1871,10 @@
   `Can't read .../overrides.toml` first. One `[zoo.*]` entry naming a Windows
   patch file the APK doesn't ship used to drop every zoo override; a fix to
   how one override is applied was tested on the phone before that was seen.
+
+- A flood of `JIT: SIGSEGV ... redirecting to popall_do_nothing` from amiberry
+  does not mean the JIT is on: its fault handler is installed with the JIT off
+  and catches every segfault in the core. `JIT: cache=0` in the log says it is
+  off. Map the PC to the .so through `/proc/<pid>/maps` (or `coredumpctl`;
+  ptrace attach is blocked here, and under gdb the race never fired) and
+  `addr2line` it — it was a Denise null write (`external/amiberry/BUGS.md` #5).

@@ -16,15 +16,14 @@ use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 use crate::workfile::WorkFile;
 use crate::{adf, dms};
 
-pub const CORE_NAME_UAE: &str = "puae";
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
 /// downloaded from its own release instead (see `ALT_SOURCES`) — or taken from
 /// `$DEMARC_CORE_DIR` when a local build is being tested (see AMIBERRY.md).
 pub const CORE_NAME_AMIBERRY: &str = "amiberry";
 
 /// The Amiga corner of `system_dir()`: the Kickstart ROMs and the WHDLoad
-/// assets, and the directory both Amiga cores are handed as their libretro
-/// system (and save) directory.
+/// assets, and the directory amiberry is handed as its libretro system (and
+/// save) directory.
 ///
 /// It is a subdirectory rather than `system/` itself because amiberry's startup
 /// ROM scan walks the directory it is given *recursively*, opens every file in
@@ -42,8 +41,7 @@ pub const CORE_NAME_AMIBERRY: &str = "amiberry";
 /// * The scan CRC32s and SHA1s every one of those ~1000 files, which was the
 ///   ~2 s per demo start recorded in docs/AMIBERRY.md.
 ///
-/// puae does not rummage — it looks its files up by name — but it reads the
-/// same Kickstarts, so it gets the same directory. Amiberry also writes here
+/// Amiberry also writes here
 /// (`amiberry.ini`, `Configurations/`, `Savegames/`, WHDLoad save-data …),
 /// which is why it is a real directory in `system/` and not something assembled
 /// per run.
@@ -286,7 +284,6 @@ pub struct AmigaOpts {
     pub aga: bool,
     pub xmem: bool,
     pub fast: bool,
-    pub silent_drive: bool,
     pub unadf: bool,
 }
 
@@ -375,34 +372,28 @@ trait AmigaMeta {
 impl AmigaMeta for WorkFile {
     fn set_fast_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
-        self.set_meta("puae_fastmem_size", &mbs);
         self.set_meta("amiberry_fastmem_size", &mbs);
     }
 
     fn set_chip_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
-        self.set_meta("puae_chipmem_size", &mbs);
         self.set_meta("amiberry_chipmem_size", &mbs);
     }
 
     fn set_z3_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
-        self.set_meta("puae_z3mem_size", &mbs);
         self.set_meta("amiberry_z3mem_size", &mbs);
     }
 
     fn set_cpu(&mut self, cpu: Cpu) {
-        self.set_meta("puae_cpu_model", cpu);
         self.set_meta("amiberry_cpu_model", cpu);
     }
 
     fn set_machine(&mut self, machine: Machine) {
-        self.set_meta("puae_model", machine);
         self.set_meta("amiberry_model", machine);
     }
 
     fn set_kickstart(&mut self, kickstart: Kickstart) {
-        self.set_meta("puae_kickstart", kickstart);
         self.set_meta("amiberry_kickstart", kickstart);
     }
 
@@ -413,12 +404,11 @@ impl AmigaMeta for WorkFile {
         self.set_z3_mem(128);
         self.set_meta("amiberry_jit", "enabled");
         self.set_meta("amiberry_cpu_speed", "max");
-        self.set_meta("puae_fpu_model", "68882");
         self.set_meta("amiberry_fpu_model", "68882");
     }
 
     fn is_aga(&self) -> bool {
-        let model = self.get_meta_or("puae_model", "");
+        let model = self.get_meta_or("amiberry_model", "");
         model == "A1200" || model == "A4000" || model == "A4040"
     }
 }
@@ -581,31 +571,6 @@ fn unpack_boot_disk(image: &Path) -> Option<(WorkFile, PathBuf)> {
     Some((dir, relative))
 }
 
-/// The bytes puae will not have in an Amiga file name — `evilchars` in its
-/// `src/fsdb_unix.c`. `/` and `\` never reach here (the unpacker refuses them
-/// outright, see `safe_name` in `src/c_shims/adf_unpack_shim.c`), and the rest are
-/// ASCII, so looking for them in the UTF-8 host name is the same as looking for
-/// them in the Amiga one.
-const UAE_ILLEGAL_CHARS: &[char] = &['%', '*', '?', '"', '<', '>', '|'];
-
-/// Does the unpacked disk hold a name that puae's file system would refuse?
-///
-/// puae's `get_nname` runs every name a program opens through
-/// `fsdb_name_invalid_dir` and answers "no such file" for any that carries one
-/// of [`UAE_ILLEGAL_CHARS`], *before* it ever looks at the drive — so no way of
-/// spelling the file on the host side can make it visible. `3d-demo.adf` boots
-/// into nothing that way: its demo loads `Har vi røget hash?`, and the question
-/// mark is enough. amiberry has no such check and opens the file, so a disk
-/// like that is handed to amiberry instead.
-fn has_uae_illegal_name(dir: &Path) -> bool {
-    walkdir::WalkDir::new(dir)
-        // The destination directory is ours, not the disk's.
-        .min_depth(1)
-        .into_iter()
-        .flatten()
-        .any(|e| e.file_name().to_string_lossy().contains(UAE_ILLEGAL_CHARS))
-}
-
 fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     debug!("FMT: Amiga exe: {wf:?}");
     if std::fs::metadata(&wf)?.len() > 850 * 1024 && !wf.is_aga() {
@@ -652,7 +617,6 @@ fn handle_exe(wf: &mut WorkFile, copy_all: bool) -> Result<()> {
     }
     wf.path = target_dir.path;
     wf.temp_dir = target_dir.temp_dir;
-    wf.set_meta("puae_use_whdload", "disabled");
 
     Ok(())
 }
@@ -661,18 +625,14 @@ pub const EXTENSIONS: &[&str] = &["adf", "dms", "slave", "ips"];
 
 pub fn default_meta() -> HashMap<&'static str, &'static str> {
     [
-        ("puae_model", "A500"),
+        ("amiberry_model", "A500"),
         ("amiberry_floppy_speed", "100"),
-        ("puae_crop", "smaller"),
         ("amiberry_crop_overscan", "manual"),
         ("amiberry_crop_width", "348"),
         ("amiberry_crop_height", "268"),
-        ("puae_horizontal_pos", "-5"),
         ("amiberry_video_vresolution", "auto"),
         //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
-        ("puae_mapper_mouse_toggle", "---"),
-        // puae only defaults to this on x86_64.
-        ("puae_cpu_compatibility", "exact"),
+        ("amiberry_jit", "disabled"),
     ]
     .into()
 }
@@ -700,18 +660,19 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     let aga =
         file.get_meta_or("platform", "").contains("AGA") || file.get_meta_or("aga", "") == "true";
 
-    if file.get_meta_or("puae_model", "") == "date" {
+    if file.get_meta_or("amiberry_model", "") == "date" {
         file.set_machine(Machine::A500);
         if let Ok(year) = file.get_meta_or("year", "").parse::<u32>() {
             if year < 1990 {
                 file.set_kickstart(Kickstart::V12);
-                //file.set_meta("puae_kickstart", "kick33180.A500");
             } else if aga || opts.aga {
                 if year >= 1995 {
                     file.set_fast();
                 } else {
                     file.set_machine(Machine::A1200);
                 }
+            } else if year >= 1995 {
+                file.set_chip_mem(2);
             }
         }
     } else {
@@ -727,9 +688,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     }
     if opts.fast {
         file.set_fast();
-    }
-    if opts.silent_drive {
-        file.set_meta("puae_floppy_sound", "100");
     }
 
     // The whole release goes into the generated drive, since the program
@@ -750,8 +708,7 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
         if ["adf", "dms"].contains(&ext) {
             images.push(path.to_owned());
         } else if ext == "slave" {
-            file.set_meta("puae_model", "A1200");
-            file.set_meta("puae_use_whdload", "enabled");
+            file.set_machine(Machine::A1200);
             is_dir = true;
         } else if header.starts_with(&HUNK_MAGIC) {
             if is_amiga_exe(path) {
@@ -763,7 +720,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
         } else if path.ends_with("s/startup-sequence") {
             // Auto-booting
             info!("Auto-booting");
-            file.set_meta("puae_use_whdload", "disabled");
             if let Some(p) = path.parent()
                 && let Some(p) = p.parent()
             {
@@ -822,7 +778,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     // disk — a multi-disk release swaps disks by name, which a drive built
     // out of one of them cannot answer. Anything that isn't a mountable,
     // self-booting AmigaDOS disk falls through to the floppy path below.
-    let mut puae_cannot_read_the_names = false;
     if opts.unadf
         && !is_dir
         && images.len() == 1
@@ -830,26 +785,11 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
         && let Some((dir, relative)) = unpack_boot_disk(&images[0])
     {
         info!("Booting {:?} as a hard drive", images[0]);
-        file.set_meta("puae_use_whdload", "disabled");
-        puae_cannot_read_the_names = has_uae_illegal_name(&dir.path);
         file.path = dir.path;
         file.temp_dir = dir.temp_dir;
         copy_dir_all(system_dir().join("ami13"), &file)?;
         startup_sequence = Some(file.path.join(relative));
         is_dir = true;
-    }
-
-    // Chosen after the unpack, so a disk whose file names puae's file
-    // system refuses can ask for the core that does read them.
-    if file.get_meta_or("amiga_core", "").is_empty() {
-        file.set_meta(
-            "amiga_core",
-            if file.is_aga() || puae_cannot_read_the_names {
-                "amiberry"
-            } else {
-                "puae"
-            },
-        );
     }
 
     if let Some(startup) = startup_sequence {
@@ -872,15 +812,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     file.set_meta("info", format!("{platform} ({model}) {category}"));
 
     Ok(true)
-}
-
-/// The core [`prepare`] chose for `file`.
-pub fn core_name(file: &WorkFile) -> &'static str {
-    if file.get_meta_or("amiga_core", "").contains("puae") {
-        CORE_NAME_UAE
-    } else {
-        CORE_NAME_AMIBERRY
-    }
 }
 
 #[cfg(test)]

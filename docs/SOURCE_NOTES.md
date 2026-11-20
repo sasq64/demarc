@@ -556,7 +556,7 @@ unpacked, and `boot`/`libretro`/`fast` as it is handed to a system (both in `New
 
 ## `newsys/amiga.rs`
 
-**Cores.** `puae` and `amiberry` (`CORE_NAME_AMIBERRY = "amiberry"`). The libretro buildbot does not
+**Core.** `amiberry` (`CORE_NAME_AMIBERRY`) only. The libretro buildbot does not
 ship amiberry, so it comes from its own release via `ALT_SOURCES`, or `$DEMARC_CORE_DIR` for a local
 build (see `docs/AMIBERRY.md`).
 
@@ -573,8 +573,7 @@ reach vice's, musix's, PCem's and Ruffle's data:
   is to not show it the file.
 - The scan CRC32s and SHA1s all ~1000 files — the ~2 s per demo start recorded in `docs/AMIBERRY.md`.
 
-puae doesn't rummage (it looks files up by name) but reads the same Kickstarts, so it gets the same
-directory. Amiberry also *writes* there (`amiberry.ini`, `Configurations/`, `Savegames/`, WHDLoad
+Amiberry also *writes* there (`amiberry.ini`, `Configurations/`, `Savegames/`, WHDLoad
 save data), which is why it is a real directory in `system/` rather than assembled per run.
 
 ### AmigaDOS executable detection (`is_amiga_exe`)
@@ -655,15 +654,6 @@ floppy path.
   mount at all. Neither is an error; both are logged at debug. ADFlib reads sector images only, so a
   DMS is turned back into one first and that temp dir must live for the whole walk. The returned
   startup-sequence path is relative, since the caller rebases it onto its own copy.
-
-**puae illegal file names.** `UAE_ILLEGAL_CHARS = % * ? " < > |` — `evilchars` in puae's
-`src/fsdb_unix.c`. (`/` and `\` never reach here; the unpacker refuses them outright — `safe_name` in
-`src/c_shims/adf_unpack_shim.c`. The rest are ASCII, so looking for them in the UTF-8 host name is the same
-as looking for them in the Amiga one.) puae's `get_nname` runs every name a program opens through
-`fsdb_name_invalid_dir` and answers "no such file" *before* it looks at the drive, so no host-side
-spelling can make the file visible. `3d-demo.adf` boots into nothing that way: its demo loads
-`Har vi røget hash?` and the question mark is enough. amiberry has no such check, so a disk like that
-is handed to amiberry instead — the core is chosen *after* the unpack for exactly this reason.
 
 ## `newsys/disc.rs`
 
@@ -1258,10 +1248,10 @@ The frontend reports back the version it actually implements, which may be newer
 leave a port silent until the frontend selects a device for it, so without this `set_joypad` state is
 never polled. The mouse is only wired to port 0.
 
-**Loading content.** For a directory (puae mounts one as a virtual hard drive) and for any
+**Loading content.** For a directory (amiberry mounts one as a virtual hard drive) and for any
 `need_fullpath` content, pass `data = null, size = 0` and let the core use the path — there are no
 bytes to hand over, and reading a directory errors with `IsADirectory`. The path is **canonicalized
-to absolute**: cores like puae resolve m3u playlist entries relative to the playlist file's own
+to absolute**: cores like amiberry resolve m3u playlist entries relative to the playlist file's own
 directory, so a bare relative filename leaves them with no base dir and they insert zero disks. On
 Windows, `canonicalize()` adds the `\\?\` extended-length prefix which most C libraries (libretro
 cores included) don't understand — `utils::strip_verbatim_prefix` removes it.
@@ -1709,7 +1699,7 @@ is unpacked first.
 
 A `# Platform:<name>` header line applies to every line below it, becoming `platform` meta on each
 entry that doesn't name one itself (a `platform` field on the line wins). A header may carry further
-`key:value` pairs (`# Platform:Amiga puae_model:A500`) which likewise become meta on every entry
+`key:value` pairs (`# Platform:Amiga amiberry_model:A500`) which likewise become meta on every entry
 below — a db can this way set emulator settings for all its lines at once. **Only a comment made up
 entirely of `key:value` pairs is a header**, so an ordinary prose comment never turns into meta.
 
@@ -3169,13 +3159,12 @@ the entry is refused — a demo disk holding a file called `..` is not one we wa
 Refused: `..`-style climbs, both kinds of path separator (the drive is also read on Windows), the
 AmigaDOS volume separator, and controls including NUL padding.
 
-**The bytes that are kept are transcoded ISO 8859-1 → UTF-8**, because that is the boundary both
-Amiga cores draw: an Amiga file name is Latin-1, a host file name is UTF-8, and each converts on
+**The bytes that are kept are transcoded ISO 8859-1 → UTF-8**, because that is the boundary amiberry
+draws: an Amiga file name is Latin-1, a host file name is UTF-8, and each converts on
 every call into the file system. amiberry's `my_readdir` runs the host name through
-`utf8_to_latin1_string` and **skips the entry** when that fails; puae's runs it through
-`utf8_to_local_string_alloc`. So a name written out as raw Latin-1 — `3d-demo.adf` ships one,
+`utf8_to_latin1_string` and **skips the entry** when that fails. So a name written out as raw Latin-1 — `3d-demo.adf` ships one,
 `Har vi r\xf8get hash?` — is not a file the emulated Amiga can see at all. Writing the same bytes the
-cores would write is what makes it visible. (Latin-1 only ever reaches U+00FF, so two bytes always
+core would write is what makes it visible. (Latin-1 only ever reaches U+00FF, so two bytes always
 suffice; buffers are sized at twice the longest AmigaDOS name plus a terminator.)
 
 Bounds and refusals: a directory tree deeper than the limit is a corrupt image, not a demo. An 880K
@@ -3249,7 +3238,7 @@ BIOS ROMs).
 Facts the tests encode that are not stated elsewhere:
 
 - **Two Amiga skeleton drives.** A plain executable is booted from a generated startup-sequence on a
-  stock A500 (not through WHDLoad): `puae_use_whdload=disabled`, `puae_model=A500`. That 1.3 A500's
+  stock A500: `amiberry_model=A500`. That 1.3 A500's
   skeleton is `system/ami13`; the AGA drive gets the larger `system/amihdd` with `lowlevel.library`
   (keyboard and joypad) in it, which no 1.3 machine ever had. The generated drive carries a `LIBS:`
   of its own because Kickstart has only *some* system libraries in ROM, and a demo that opens one of

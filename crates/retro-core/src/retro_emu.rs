@@ -201,8 +201,8 @@ thread_local! {
     static CURRENT_EMU: Cell<*mut RetroCoreDirect> = const { Cell::new(std::ptr::null_mut()) }
 }
 
-/// Core duping gives each instance its own globals, but not libc's: puae parses
-/// its config with `strtok`, so two loading at once swap Kickstarts and crash.
+/// Core duping gives each instance its own globals, but not libc's: a core that
+/// parses its config with `strtok` can have two loading at once swap Kickstarts and crash.
 static LOAD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Points [`CURRENT_EMU`] at `emu` for the duration of a call into the core, so
@@ -869,7 +869,7 @@ impl RetroCoreDirect {
     }
 
     fn load_game(&mut self, game_path: &Path, need_fullpath: bool) -> Result<()> {
-        // A directory (puae's virtual hard drive) or a URL (the gamescope
+        // A directory (an Amiga hard drive) or a URL (the gamescope
         // core's web pages) has no bytes to hand over, and a need_fullpath
         // core opens the path itself.
         let is_url = game_path.to_string_lossy().starts_with("http://");
@@ -878,7 +878,7 @@ impl RetroCoreDirect {
         } else {
             Some(std::fs::read(game_path)?)
         };
-        // Pass an absolute path: cores like puae resolve m3u playlist entries
+        // Pass an absolute path: cores like amiberry resolve m3u playlist entries
         // relative to the playlist file's own directory, so a bare relative
         // filename leaves them with no base dir and they insert zero disks.
         let abs_path = std::fs::canonicalize(game_path).unwrap_or_else(|_| game_path.to_path_buf());

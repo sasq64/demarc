@@ -1,4 +1,4 @@
-//! What puae needs on disk: the Kickstart ROMs, out of an installed Amiga
+//! What amiberry needs on disk: the Kickstart ROMs, out of an installed Amiga
 //! Forever, and the drive skeletons the release is booted from.
 
 use std::io::Read;
@@ -12,7 +12,7 @@ pub const FOREVER_PACKAGE: &str = "com.cloanto.amigaforever.essentials";
 
 const ROM_DIR: &str = "assets/files/rom/";
 
-/// Cloanto's file, the name puae looks for, and the ROM's size: the 1.x ROMs
+/// Cloanto's file, the name amiberry looks for, and the ROM's size: the 1.x ROMs
 /// are stored twice over to fill 512K.
 const ROMS: [(&str, &str, usize); 4] = [
     ("amiga-os-120.rom", "kick33180.A500", 0x40000),

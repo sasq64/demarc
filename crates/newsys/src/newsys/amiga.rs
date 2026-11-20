@@ -22,7 +22,6 @@ impl AmigaSystem {
                 aga: args.aga,
                 xmem: args.xmem,
                 fast: args.fast,
-                silent_drive: args.silent_drive,
                 unadf: args.unadf,
             },
         }
@@ -35,7 +34,7 @@ impl System for AmigaSystem {
     }
 
     fn core_name(&self) -> &'static str {
-        amiga::CORE_NAME_UAE
+        amiga::CORE_NAME_AMIBERRY
     }
 
     fn name(&self) -> &'static str {
@@ -56,9 +55,8 @@ impl System for AmigaSystem {
 
     fn create(&self, path: &WorkFile) -> Result<Box<dyn Backend + Send + Sync>> {
         let meta = path.get_all_meta();
-        let core_name = amiga::core_name(path);
-        debug!("Starting {core_name} with meta {meta:?}");
-        let core = libloader::get_libretro(core_name).context("Could not load core")?;
+        debug!("Starting amiberry with meta {meta:?}");
+        let core = libloader::get_libretro(self.core_name()).context("Could not load core")?;
         retro_emu::create_core(&core, &amiga_system_dir(), Some(path), meta, false)
     }
 }

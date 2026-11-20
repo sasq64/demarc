@@ -1842,7 +1842,7 @@ impl ApplicationHandler for App {
 }
 
 fn load_core(platform: Platform, work: &WorkFile) -> Result<RetroCoreDirect> {
-    let name = platform.core(work);
+    let name = platform.core();
     let path = find_core(name).ok_or_else(|| {
         anyhow!(
             "could not find {} — set DEMARC_CORE_DIR, or run demarc once to \

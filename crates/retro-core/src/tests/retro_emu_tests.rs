@@ -56,7 +56,7 @@ fn run_until_frame(emu: &mut dyn Backend, timeout: Duration) {
 
 #[test]
 fn retro_amiga_works() {
-    let core_path = core("puae");
+    let core_path = core("amiberry");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
@@ -71,18 +71,15 @@ fn retro_amiga_works() {
     save_png(&retro_emu, &root("test_amiga.png")).unwrap();
 }
 
-/// Boot a self-booting directory under Kickstart 1.3 (A500). The WHDLoad
-/// helper must be disabled, otherwise its Startup-Sequence runs `FAILAT`,
-/// a command that doesn't exist under 1.3, and the boot fails.
+/// Boot a self-booting directory under Kickstart 1.3 (A500).
 #[test]
 fn retro_amiga_dir_works() {
-    let core_path = core("puae");
+    let core_path = core("amiberry");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/o2-intro");
 
     let mut settings = HashMap::new();
-    settings.insert("puae_model".into(), "A500".into());
-    settings.insert("puae_use_whdload".into(), "disabled".into());
+    settings.insert("amiberry_model".into(), "A500".into());
 
     let mut retro_emu =
         RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), settings).unwrap();
@@ -94,12 +91,12 @@ fn retro_amiga_dir_works() {
 
 #[test]
 fn retro_threaded_works() {
-    let core_path = core("puae");
+    let core_path = core("amiberry");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
     let mut settings = HashMap::new();
-    settings.insert("puae_model".into(), "A500".into());
+    settings.insert("amiberry_model".into(), "A500".into());
 
     let mut emu =
         RetroCoreThreaded::new(&core_path, system_dir, Some(&game_path), settings, false).unwrap();
@@ -120,12 +117,12 @@ fn retro_threaded_works() {
 
 #[test]
 fn a_paused_worker_does_not_free_run_on_a_low_ring() {
-    let core_path = core("puae");
+    let core_path = core("amiberry");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
     let mut settings = HashMap::new();
-    settings.insert("puae_model".into(), "A500".into());
+    settings.insert("amiberry_model".into(), "A500".into());
 
     let mut emu =
         RetroCoreThreaded::new(&core_path, system_dir, Some(&game_path), settings, false).unwrap();
@@ -154,35 +151,35 @@ fn a_paused_worker_does_not_free_run_on_a_low_ring() {
 
 #[test]
 fn retro_threaded_multi_works() {
-    let uae_core = core("puae");
+    let amiga_core = core("amiberry");
     let vice_core = core("vice_x64sc");
     // The two cores no longer share a system dir — the Amiga one is a subdir of
     // it (see `amiga_system_dir()`).
-    let uae_system = root("system/amiga");
+    let amiga_system = root("system/amiga");
     let vice_system = root("system");
-    let uae_game = root("testdata/amiga/rebels.adf");
+    let amiga_game = root("testdata/amiga/rebels.adf");
     let vice_game = root("testdata/c64/quantum.prg");
 
-    let uae_settings = || {
+    let amiga_settings = || {
         let mut s = HashMap::new();
-        s.insert("puae_model".to_string(), "A500".to_string());
+        s.insert("amiberry_model".to_string(), "A500".to_string());
         s
     };
 
     let cores = [
         (
-            &uae_core,
-            &uae_system,
-            &uae_game,
-            uae_settings(),
-            "test_threaded_uae_0.png",
+            &amiga_core,
+            &amiga_system,
+            &amiga_game,
+            amiga_settings(),
+            "test_threaded_amiga_0.png",
         ),
         (
-            &uae_core,
-            &uae_system,
-            &uae_game,
-            uae_settings(),
-            "test_threaded_uae_1.png",
+            &amiga_core,
+            &amiga_system,
+            &amiga_game,
+            amiga_settings(),
+            "test_threaded_amiga_1.png",
         ),
         (
             &vice_core,
@@ -231,13 +228,13 @@ fn retro_threaded_multi_works() {
 /// libc's `strtok` and jump to a null opcode handler — see `LOAD_LOCK`.
 #[test]
 fn retro_amiga_concurrent_loads_work() {
-    let core = core("puae");
+    let core = core("amiberry");
     let barrier = &std::sync::Barrier::new(4);
     let core = &core;
     std::thread::scope(|s| {
         for model in ["A500", "A1200", "A500", "A1200"] {
             s.spawn(move || {
-                let settings = HashMap::from([("puae_model".to_string(), model.to_string())]);
+                let settings = HashMap::from([("amiberry_model".to_string(), model.to_string())]);
                 barrier.wait();
                 let mut emu = RetroCoreDirect::new(
                     core,
@@ -310,13 +307,13 @@ fn retro_vice_works() {
 
 #[test]
 fn settings_reach_the_core() {
-    let core_path = core("puae");
+    let core_path = core("amiberry");
     let system_dir = &root("system/amiga");
     let game_path = root("testdata/amiga/rebels.adf");
 
     let mut settings = HashMap::new();
-    settings.insert("puae_model".into(), "A1200".into());
-    settings.insert("puae_video_standard".into(), "NTSC".into());
+    settings.insert("amiberry_model".into(), "A1200".into());
+    settings.insert("amiberry_video_standard".into(), "ntsc".into());
 
     let retro_emu =
         RetroCoreDirect::new(&core_path, system_dir, Some(&game_path), settings).unwrap();
@@ -329,9 +326,9 @@ fn settings_reach_the_core() {
             .to_string_lossy()
             .into_owned()
     };
-    assert_eq!(var("puae_model"), "A1200");
-    assert_eq!(var("puae_video_standard"), "NTSC");
+    assert_eq!(var("amiberry_model"), "A1200");
+    assert_eq!(var("amiberry_video_standard"), "ntsc");
     // Announced by the core, never set by us, so it must have kept its
     // default — this is what proves the core did announce its options.
-    assert!(!var("puae_floppy_speed").is_empty());
+    assert!(!var("amiberry_floppy_speed").is_empty());
 }

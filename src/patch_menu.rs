@@ -30,12 +30,11 @@ const ITEMS: &[&str] = &[
     "Apply AGA",
     "Apply Fast",
     "Apply 68030",
-    "Apply core puae",
     "Record Events",
     "Debug",
 ];
-const RECORD: usize = 9;
-const DEBUG: usize = 10;
+const RECORD: usize = 8;
+const DEBUG: usize = 9;
 
 pub struct PatchMenuPlugin;
 
@@ -239,7 +238,6 @@ fn change_for(emu: &Emulator, item: usize) -> Result<Change> {
         5 => Change::Amiga(Amiga::Aga),
         6 => Change::Amiga(Amiga::Fast),
         7 => Change::Amiga(Amiga::Cpu68030),
-        8 => Change::Meta("amiga_core", "puae".into()),
         _ => bail!("Unknown patch"),
     })
 }

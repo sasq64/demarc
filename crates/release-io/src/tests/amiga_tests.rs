@@ -226,23 +226,6 @@ fn inserts_assigns_before_an_existing_startup_sequence() {
     );
 }
 
-/// A disk whose file names puae's file system refuses has to be handed to
-/// amiberry, which reads them — the check is what keeps `3d-demo.adf` from
-/// booting into nothing.
-#[test]
-fn a_name_puae_refuses_picks_amiberry() {
-    let dir = tempfile::Builder::new().tempdir().unwrap();
-    fs::write(dir.path().join("Har vi røget hash?"), b"data").unwrap();
-    assert!(has_uae_illegal_name(dir.path()));
-
-    let plain = tempfile::Builder::new().tempdir().unwrap();
-    fs::create_dir(plain.path().join("s")).unwrap();
-    fs::write(plain.path().join("s/startup-sequence"), b"demo\n").unwrap();
-    // Non-ASCII on its own is fine: puae only refuses its `evilchars`.
-    fs::write(plain.path().join("Bjørn"), b"data").unwrap();
-    assert!(!has_uae_illegal_name(plain.path()));
-}
-
 #[test]
 fn rejects_missing_hunk_block() {
     let mut file = MINIMAL.to_vec();
@@ -256,9 +239,6 @@ fn rejects_missing_hunk_block() {
 /// `--unadf` on a DMS release: the archive holds a whole AmigaDOS floppy, so
 /// unpacking it twice — out of the archive, then off the disk — has to land the
 /// same self-booting directory an `.adf` would have.
-///
-/// `ANARCHY-3dDemo2.dms` is the disk `has_uae_illegal_name` was written for,
-/// which makes it the same one the case above describes.
 #[test]
 fn unpacks_a_boot_disk_out_of_a_dms_archive() {
     let archive = Path::new(concat!(
@@ -270,5 +250,4 @@ fn unpacks_a_boot_disk_out_of_a_dms_archive() {
     }
     let (dir, startup) = unpack_boot_disk(archive).expect("no boot disk in the archive");
     assert!(dir.path.join(&startup).is_file());
-    assert!(has_uae_illegal_name(&dir.path));
 }

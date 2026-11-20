@@ -21,7 +21,7 @@ fn a_plain_rom_is_refused() {
 }
 
 #[test]
-fn kickstarts_are_written_under_puae_names() {
+fn kickstarts_are_written_under_their_names() {
     let dir = tempfile::tempdir().unwrap();
     let apk = dir.path().join("forever.apk");
     let key = b"the key".to_vec();

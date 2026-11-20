@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build `minimarc` as an Android cdylib, package it into an APK with the VICE,
-# puae and amiberry cores, the csdb database and the fast-load cartridge, install and launch it.
+# Build `minimarc` as an Android cdylib, package it into an APK with the VICE and
+# amiberry cores, the csdb database and the fast-load cartridge, install and launch it.
 # See docs/ANDROID.md.
 #
 #   scripts/run-android.sh            release build (the default: debug Bevy-less
@@ -29,7 +29,7 @@ ABI="${ABI:-arm64-v8a}"
 API=26
 PKG=se.minnberg.demarc
 ACTIVITY=com.demarc.c64.MiniActivity
-CORES=(vice_x64sc puae)
+CORES=(vice_x64sc)
 JNILIBS=android/app/src/main/jniLibs/$ABI
 ASSETS=android/app/src/main/assets
 
@@ -83,7 +83,7 @@ awk '
 # The csdb releases and Amiga demos worth watching.
 scripts/android_dbs.py csdb demodb/csdb.txt "$ASSETS/csdb.txt"
 scripts/android_dbs.py demozoo-amiga demodb/demozoo.txt "$ASSETS/demozoo-amiga.txt"
-# The drives puae boots a release from, and WHDLoad.
+# The drives amiberry boots a release from, and WHDLoad.
 rm -f "$ASSETS/amiga.zip"
 (cd system && zip -qr "../$ASSETS/amiga.zip" ami13 amihdd amiga/WHDBoot)
 

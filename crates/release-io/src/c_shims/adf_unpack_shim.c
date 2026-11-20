@@ -59,13 +59,12 @@
  * file called `..` is not one we want to boot anyway.
  *
  * The bytes that are kept are transcoded from ISO 8859-1 to UTF-8, because that
- * is the boundary both Amiga cores draw: an Amiga file name is Latin-1, a host
+ * is the boundary amiberry draws: an Amiga file name is Latin-1, a host
  * file name is UTF-8, and each converts between the two on every call into the
  * file system. amiberry's `my_readdir` runs the host name through
- * `utf8_to_latin1_string` and *skips the entry* when that fails, and puae's
- * runs it through `utf8_to_local_string_alloc`, so a name written out as raw
+ * `utf8_to_latin1_string` and *skips the entry* when that fails, so a name written out as raw
  * Latin-1 -- `3d-demo.adf` ships one, `Har vi r\xf8get hash?` -- is not a file
- * the emulated Amiga can see at all. Writing the same bytes the cores would
+ * the emulated Amiga can see at all. Writing the same bytes the core would
  * write is what makes it visible.
  *
  * Returns 1 if `out` holds a usable name, 0 if the entry should be skipped.

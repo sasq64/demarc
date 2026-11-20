@@ -2,8 +2,8 @@
 
 A stripped-down demarc for browsing and watching C64 and Amiga demos on a
 phone: it reads `csdb.txt` and `demozoo-amiga.txt`, shows demarc's picker over
-the navigator tree, downloads the picked release and runs it in the VICE,
-puae or amiberry libretro core. No Bevy, themes, slangp shaders,
+the navigator tree, downloads the picked release and runs it in the VICE
+or amiberry libretro core. No Bevy, themes, slangp shaders,
 grid or cross-fade. The same crate runs on the desktop.
 
 The repo-root `CLAUDE.md` applies here too (read `docs/LEARNINGS.md` first,
@@ -138,8 +138,7 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - The C64 load path: fast-load cartridge `rr38ppal-auto.crt`, then F1 at core
   frame 50 and Return at 55 (`release_io::c64::FAST_LOAD_EVENTS`).
 - Amiga: an entry whose platform starts with "Amiga" (demozoo-amiga.txt, cut
-  out of demozoo.txt by `run-android.sh`) runs in the core
-  `release_io::amiga::prepare` picks (amiberry for AGA, puae otherwise), with
+  out of demozoo.txt by `run-android.sh`) runs in amiberry, with
   `<data>/amiga` as its system dir. The buildbot has no Android amiberry:
   `scripts/build-amiberry-android.sh` cross-compiles `external/amiberry` in a
   copy under `target/`, and `run-android.sh` runs it when the .so is missing,

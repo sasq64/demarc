@@ -201,7 +201,6 @@ fn fast_sets_the_amiga_configuration_the_entry_can_still_amend() {
     assert_eq!(wf.get_meta_or("amiberry_z3mem_size", ""), "128");
     assert_eq!(wf.get_meta_or("amiberry_jit", ""), "enabled");
     assert_eq!(wf.get_meta_or("amiberry_cpu_speed", ""), "max");
-    assert_eq!(wf.get_meta_or("puae_cpu_model", ""), "68030");
     assert_eq!(
         wf.get_meta_or("amiberry_cpu_model", ""),
         "68040",
@@ -311,10 +310,10 @@ fn test_amiga() {
     test_load(&testdata.join("o2-intro"), "Amiga");
 
     // A plain executable is booted from a generated startup-sequence on a
-    // stock A500, not through WHDLoad.
+    // stock A500.
     let work_file = test_load(&testdata.join("o2-intro").join("o2intro"), "Amiga");
-    assert!(work_file.get_meta_or("puae_use_whdload", "") == "disabled");
-    assert!(work_file.get_meta_or("puae_model", "") == "A500");
+    assert!(work_file.get_meta_or("amiberry_model", "") == "A500");
+    assert!(work_file.get_meta_or("amiberry_jit", "") == "disabled");
 
     // The generated drive carries a LIBS: of its own. Kickstart has only
     // some of the system libraries in ROM, and a demo that opens one of the
@@ -331,11 +330,10 @@ fn test_amiga() {
         "generated drive has no LIBS:"
     );
 
-    // A WHDLoad install (a `.slave` next to the data) turns WHDLoad on and
-    // needs an A1200.
+    // A WHDLoad install (a `.slave` next to the data) needs an A1200.
     let work_file = test_load(&testdata.join("nexus7"), "Amiga");
-    assert!(work_file.get_meta_or("puae_use_whdload", "") == "enabled");
-    assert!(work_file.get_meta_or("puae_model", "") == "A1200");
+    assert!(work_file.get_meta_or("amiberry_model", "") == "A1200");
+    assert!(work_file.get_meta_or("amiberry_jit", "") == "enabled");
 }
 /// A bare music file has no system of its own, so it falls through every
 /// other system to [`MusicSystem`] — both on its own and as the only

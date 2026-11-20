@@ -1,7 +1,7 @@
 # Amiberry libretro core — status notes
 
-Investigation into using Amiberry's libretro core as an alternative Amiga
-backend to the current `puae` core. Written 2026-08-25.
+Notes on Amiberry's libretro core, demarc's only Amiga backend. Written
+2026-08-25.
 
 Checkout: `external/amiberry` @ `552274b6` (upstream `BlitterStudio/amiberry`,
 branch `master`). The `libretro/` port is maintained upstream, not by us.
@@ -9,8 +9,8 @@ branch `master`). The `libretro/` port is maintained upstream, not by us.
 **Bottom line:** the core builds, boots, and runs demos, **including TBL's
 Starstruck** (the definitive test), which now loads in ~11 s and plays.
 
-The blocker recorded here earlier — "the directory-filesystem read path is
-~1000x slower than puae's" — was a misdiagnosis. The filesystem was never the
+The blocker recorded here earlier — a "slow directory-filesystem read
+path" — was a misdiagnosis. The filesystem was never the
 problem; the emulated CPU was throttled to the modelled machine's clock. See
 [Starstruck](#starstruck-tbl--the-definitive-test).
 
@@ -42,19 +42,13 @@ directories searched for `<name>_libretro.<ext>` before the buildbot cache. A
 hit short-circuits the whole download/cache path, so a local build is never
 written to — or evicted from — the user's cache.
 
-demarc asks for the core by name, and for Amiga that name is still `puae`, so
-the local build has to be presented under that name:
-
 ```sh
-mkdir -p /tmp/cores
-ln -sf $PWD/external/amiberry/libretro/amiberry_libretro.so /tmp/cores/puae_libretro.so
-DEMARC_CORE_DIR=/tmp/cores ./target/release-fast/demarc -w tbl/
+DEMARC_CORE_DIR=$PWD/external/amiberry/libretro ./target/release-fast/demarc -w tbl/
 ```
 
 Confirm which library actually got loaded with
 `grep libretro.so /proc/$(pgrep -x demarc)/maps` — demarc copies the core to
-`/tmp/demarc-core-XXXXXX/` first, and the file size distinguishes the two
-(amiberry ~32 MB, puae ~21 MB).
+`/tmp/demarc-core-XXXXXX/` first.
 
 ---
 
@@ -71,7 +65,7 @@ below, which has to reach the emulator's own allocators under `src/`.
 | `amiberry_jit` option — sets `cachesize` + clears cycle-exact | `libretro.cpp:684`, `:814`, `:4101` |
 | `amiberry_cpu_speed` option (`default`/`real`/`max`) | `libretro.cpp:686`, `:830`, `:4132` |
 | `amiberry_z3mem_size` option (up to 512 MB) | `libretro.cpp:683`, `:790` |
-| `amiberry_chipmem_size` / `amiberry_bogomem_size` / `amiberry_fastmem_size` options (puae value space) | `libretro.cpp` variables + option_defs, chip/bogo/fastmem push |
+| `amiberry_chipmem_size` / `amiberry_bogomem_size` / `amiberry_fastmem_size` options | `libretro.cpp` variables + option_defs, chip/bogo/fastmem push |
 | `amiberry_cpu_model` extended to 68040/68060 (+ matching FPU, `address_space_24=false`) | `libretro.cpp` cpu_model push |
 | Directory-as-harddrive mount | `libretro.cpp:4281` |
 | A4000 kickstart fallback to `kick40068.A1200`, now with a warning | `libretro.cpp:1826`, `:1890` |
@@ -184,38 +178,15 @@ timing-sensitive OCS/ECS software.
 
 ---
 
-## Integration gaps vs. the puae core
+## Integration gaps
 
-**1. Option namespace.** demarc emits `puae_*` (`src/newsys/amiga.rs:21`);
-Amiberry reads `amiberry_*` (`libretro.cpp:677`). Every option is silently
-dropped, so everything runs as a default OCS A500 / 68000 / KS 1.3 — AGA
-included. Proven on rebels.adf:
-
-| | `puae_*` (what demarc sends) | `-x amiberry_model=A1200,amiberry_cpu_model=68030` |
-| --- | --- | --- |
-| Chipset mask | `00000000` (OCS) | `00000007` (AGA) |
-| Kickstart | KS 34 (1.3) | KS 40 (3.1) |
-| CPU | 68000 | 68030 |
-
-A mapping layer in `amiga.rs` is the obvious fix, but note it cannot be a pure
-rename — see the option-coverage gaps below.
-
-**2. Option coverage.** Even renamed, Amiberry's libretro exposes no equivalent
-for `puae_fpu_model`. We added `amiberry_z3mem_size`, `amiberry_chipmem_size`,
-`amiberry_bogomem_size` and `amiberry_fastmem_size` (all four taking the same
-values as their `puae_*` counterparts, so they are plain renames in
-`amiga.rs`), `amiberry_cpu_speed` (the nearest thing to `puae_cpu_throttle`,
-and the one that matters — see Starstruck below) and 040/060 CPUs; the rest are
-still missing.
-
-**3. Startup ROM scan.** *Fixed — see [Amiberry gets its own system
+**1. Startup ROM scan.** *Fixed — see [Amiberry gets its own system
 directory](#amiberry-gets-its-own-system-directory).* Amiberry used to
 recursively CRC32/SHA1-scan the whole demarc `system/` dir (fuse, vice, musix,
 pcem ROMs, win…) on every load — about 2 s per demo start, and one abort.
 
-**4. Geometry differs.** Amiberry reports base 640x480 / max 1920x1280 and
-`GEOMETRY 720x568`; puae reports 360x287 / 720x574 and `GEOMETRY 696x264`. So
-demarc's crop/aspect defaults are mistuned for it.
+**2. Geometry.** Amiberry reports base 640x480 / max 1920x1280 and
+`GEOMETRY 720x568`.
 
 ---
 
@@ -322,7 +293,7 @@ guest progress closely):
 | | time to read the file | rate |
 | --- | --- | --- |
 | Amiberry, `cpu_speed` unset | never finished — 128 KB read, then 1–30 KB/s | — |
-| puae (demarc's normal core) | ~78 s | ~240 KB/s |
+| puae (the former Amiga core) | ~78 s | ~240 KB/s |
 | Amiberry, `cpu_speed=max` | **~11 s** | **~1.8 MB/s** |
 
 Sampled with a shell loop over `/proc/<pid>/fd` looking for the open
@@ -387,15 +358,11 @@ and it applies to **any** JIT core, p-uae included.
 
 ## Open items
 
-1. **`puae_*` → `amiberry_*` mapping** in `amiga.rs`, plus the missing options
-   (fpu_model). Without it every demo still runs as
-   a default OCS A500 unless its m3u spells out `amiberry_*` by hand, the way
-   `tbl/demo.m3u` does.
-2. **Upstream `bip_*` wrapper fix** — route the 2-arg wrappers through
+1. **Upstream `bip_*` wrapper fix** — route the 2-arg wrappers through
    `built_in_prefs()` so JIT and CPU speed (compa generally) work without our
    `-s` workarounds. This is the root cause behind both `amiberry_jit` and
    `amiberry_cpu_speed`, and fixing it upstream would retire both.
-3. **Whether `cpu_speed=max` should be the default** for accelerated models.
+2. **Whether `cpu_speed=max` should be the default** for accelerated models.
    It is opt-in now because unthrottling is wrong for timing-sensitive OCS/ECS
    software, but a 68040/68060 config almost always wants it.
 4. Geometry/crop defaults.
@@ -423,10 +390,9 @@ detected*.
 
 So the Amiga assets moved into a `system/amiga/` subdirectory — the Kickstart
 ROMs, `WHDLoad.prefs`, `WHDBoot/`, `WHDLoad/`, `Kickstarts/`, `WHDSaves/` — and
-that is what `amiga.rs` hands both Amiga cores as their libretro system (and
-save) directory (`amiga_system_dir()`). The scan now sees Amiga data and nothing
-else. puae does not rummage — it resolves `kick34005.A500` and friends by name —
-but it reads the same ROMs, so it gets the same directory; demarc's own drive
+that is what `amiga.rs` hands amiberry as its libretro system (and save)
+directory (`amiga_system_dir()`). The scan now sees Amiga data and nothing
+else; demarc's own drive
 skeletons (`system/amihdd/`, `system/ami13/`, `system/libs/`) stay at the top
 level, because they are ours to copy into a work dir and not a core's to scan.
 

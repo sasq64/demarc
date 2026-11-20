@@ -80,7 +80,7 @@ pub use release_io::leak;
 ///
 /// A `# Platform:<name>` header line applies to every line below it, becoming a
 /// `platform` meta on each entry that doesn't name one itself. A header line
-/// may carry further `key:value` pairs (`# Platform:Amiga puae_model:A500`), which
+/// may carry further `key:value` pairs (`# Platform:Amiga amiberry_model:A500`), which
 /// likewise become meta on every entry below it — see [`parse_db_header`].
 ///
 /// `# PLATFORMS A:Amiga,B:Windows` and `# CATEGORIES A:Demo,…` headers let a
@@ -238,7 +238,7 @@ pub fn collect_db_stdin(filter: &DbFilter, out: &mut Vec<EmuFile>) -> Result<Opt
     Ok(Some(name))
 }
 
-/// Read a header comment such as `# Platform:Amiga puae_model:A500`, which
+/// Read a header comment such as `# Platform:Amiga amiberry_model:A500`, which
 /// applies to every line below it: `Platform` names the platform the entries
 /// are for, and every other pair becomes meta merged into each entry (a
 /// db can this way set emulator settings for all its lines at once).

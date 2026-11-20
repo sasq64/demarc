@@ -147,7 +147,7 @@ Caveat: this removes the prominent center line but doesn't eliminate crt-royale'
 ATARI ST DIRECTORIES AS GEMDOS HARD DRIVES
 
 hatari mounts a host directory as GEMDOS drive C:, which is how a release
-directory (program + data files) is loaded — the equivalent of handing puae an
+directory (program + data files) is loaded — the equivalent of handing amiberry an
 Amiga directory. Two pieces of libretro-core trivia make it work:
 
 - The core recognizes a hard drive by the *extension* `.gem`, and mounts the
