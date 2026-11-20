@@ -49,6 +49,20 @@ fn resolves_a_link_class_case_insensitively() {
 }
 
 #[test]
+fn resolves_a_one_letter_csdb_link() {
+    let parsed = Url::parse("B:/58016/padua_embryo.zip").unwrap();
+    assert_eq!(
+        resolve_url(parsed.as_str()),
+        vec!["https://csdb.dk/getinternalfile.php/58016/padua_embryo.zip"]
+    );
+    assert_eq!(
+        cache_key(parsed.as_str()),
+        "https://csdb.dk/getinternalfile.php/58016/padua_embryo.zip"
+    );
+    assert_eq!(cache_key("SceneOrgFile:/x.zip"), "SceneOrgFile:/x.zip");
+}
+
+#[test]
 fn rewrites_urls_that_no_longer_work_as_recorded() {
     // A plain url from a db, pointed at the mirror that serves it.
     assert_eq!(

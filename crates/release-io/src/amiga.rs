@@ -697,8 +697,8 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     // resort so a release that only ships a mangled exe behaves as before.
     let mut broken = vec![];
 
-    let aga = file.get_meta_or("platform", "").contains("AGA")
-        || file.get_meta_or("aga", "") == "true";
+    let aga =
+        file.get_meta_or("platform", "").contains("AGA") || file.get_meta_or("aga", "") == "true";
 
     if file.get_meta_or("puae_model", "") == "date" {
         file.set_machine(Machine::A500);

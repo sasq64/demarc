@@ -261,7 +261,10 @@ fn rejects_missing_hunk_block() {
 /// which makes it the same one the case above describes.
 #[test]
 fn unpacks_a_boot_disk_out_of_a_dms_archive() {
-    let archive = Path::new(concat!(env!("DEMARC_ROOT"), "/testdata/ANARCHY-3dDemo2.dms"));
+    let archive = Path::new(concat!(
+        env!("DEMARC_ROOT"),
+        "/testdata/ANARCHY-3dDemo2.dms"
+    ));
     if !archive.is_file() {
         return;
     }

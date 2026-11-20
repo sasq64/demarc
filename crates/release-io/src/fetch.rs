@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -120,6 +121,12 @@ const LINK_BASES: &[(&str, &[&str])] = &[
     ("Defacto2File", &["https://defacto2.net/f/"]),
     ("ModarchiveModule", &["https://modarchive.org/module.php?"]),
     ("SixteenColorsPack", &["https://16colo.rs/pack/"]),
+    // Short stand-ins scripts/android_dbs.py writes into minimarc's csdb.txt.
+    ("A", &["http://csdb.dk/getinternalfile.php"]),
+    ("B", &["https://csdb.dk/getinternalfile.php"]),
+    ("C", &["ftp://ftp.scs-trc.net/pub/c64"]),
+    ("D", &["ftp://ftp.padua.org/pub/c64"]),
+    ("E", &["ftp://c64.rulez.org/pub/c64"]),
 ];
 
 /// Spelled-out urls on the dead amigascne host, treated as `AmigascneFile`
@@ -305,7 +312,20 @@ pub fn fetch_url_with_progress(url: &str, on_progress: OnProgress<'_>) -> anyhow
     // it comes from the resolved url, which is the one that carries the file's
     // real name and extension.
     let name = download_name(url);
-    DOWNLOADS.get_file(url, &name, |dest| download_to(url, dest, on_progress))
+    DOWNLOADS.get_file(&cache_key(url), &name, |dest| {
+        download_to(url, dest, on_progress)
+    })
+}
+
+/// The url a download is cached under: a one-letter link class is spelled out,
+/// so its letter can be reassigned without losing the cache.
+fn cache_key(url: &str) -> Cow<'_, str> {
+    match link_class(url) {
+        Some((class, parameter)) if LINK_BASES[class].0.len() == 1 => {
+            format!("{}{parameter}", LINK_BASES[class].1[0]).into()
+        }
+        _ => url.into(),
+    }
 }
 
 /// The name a download is cached under. A Drive link says nothing about the
@@ -315,14 +335,14 @@ fn download_name(url: &str) -> String {
     let name = url_filename(&resolved);
     if drive_id(url).is_some() {
         return DOWNLOADS
-            .cached_name(url)
+            .cached_name(&cache_key(url))
             .or_else(|| attachment_name(&resolved))
             .unwrap_or(name);
     }
     // CSDb's `download.php?id=` redirects to the file.
     if name.ends_with(".php") {
         return DOWNLOADS
-            .cached_name(url)
+            .cached_name(&cache_key(url))
             .or_else(|| redirect_name(&resolved))
             .unwrap_or(name);
     }
@@ -389,11 +409,11 @@ pub fn is_download_cached(url: &str) -> bool {
         return DOWNLOADS.cached_name(url).is_some();
     }
     let name = url_filename(&primary_url(url));
-    DOWNLOADS.is_cached(url, &name)
+    DOWNLOADS.is_cached(&cache_key(url), &name)
 }
 
 pub fn cached_download(url: &str) -> Option<PathBuf> {
-    DOWNLOADS.cached_path(url)
+    DOWNLOADS.cached_path(&cache_key(url))
 }
 
 /// Copy `files` into a single fresh temp directory and return that directory's

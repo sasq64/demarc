@@ -71,7 +71,7 @@ done
 
 mkdir -p "$ASSETS"
 rm -f "$ASSETS/csdb.txt.gz"
-cp -u demodb/csdb.txt system/vice/C64/*.crt system/web/*.css "$ASSETS/"
+cp -u system/vice/C64/*.crt system/web/*.css "$ASSETS/"
 # The csdb and demozoo entries, each with the comment lines right above it.
 awk '
     /^\[[a-z]+\.[0-9]+\]$/ { keep = /^\[(csdb|zoo)\./; if (keep) printf "%s", pend; pend = "" }
@@ -80,13 +80,9 @@ awk '
     { pend = "" }
 ' system/overrides.toml > "$ASSETS/overrides.toml"
 
-# The Amiga demos worth watching, with demozoo as their release page.
-{
-    grep '^#' demodb/demozoo.txt
-    echo '# release_url:https://demozoo.org/productions/{id}/'
-    grep -P '\tplatform:([^\t]*;)?Amiga' demodb/demozoo.txt |
-        grep -P '\tcategory:([^\t]*;)?(Demo|Intro|\d+[kK] Intro|Cracktro|Invitation|Musicdisk|Diskmag|Slideshow)(;[^\t]*)?\t'
-} > "$ASSETS/demozoo-amiga.txt"
+# The csdb releases and Amiga demos worth watching.
+scripts/android_dbs.py csdb demodb/csdb.txt "$ASSETS/csdb.txt"
+scripts/android_dbs.py demozoo-amiga demodb/demozoo.txt "$ASSETS/demozoo-amiga.txt"
 # The drives puae boots a release from, and WHDLoad.
 rm -f "$ASSETS/amiga.zip"
 (cd system && zip -qr "../$ASSETS/amiga.zip" ami13 amihdd amiga/WHDBoot)
