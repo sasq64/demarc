@@ -247,7 +247,9 @@ const ZOOM_INSET: f32 = 0.5;
 
 /// How far apart two fingers have to spread or close, as a ratio, to zoom.
 const PINCH: f64 = 1.4;
-/// Mouse units per physical pixel a finger moves in pointer mode.
+/// How much a zoomed Amiga frame is enlarged in portrait.
+const AMIGA_PORTRAIT_ZOOM: f32 = 1.25;
+/// Mouse units per physical pixel a finger moves on an Amiga.
 const MOUSE_SPEED: f64 = 1.0;
 
 /// Where the picture lands in a window of `win` pixels, at display aspect
@@ -295,6 +297,7 @@ struct Gfx {
     crop: wgpu::Buffer,
     /// The border pushed off the screen's short sides.
     zoomed: bool,
+    amiga: bool,
     /// Display aspect the frame is presented at.
     aspect: f32,
     /// Whether `texture` holds a frame of the core that is running.
@@ -460,6 +463,7 @@ impl Gfx {
             bind_group,
             crop,
             zoomed: false,
+            amiga: false,
             aspect: 0.0,
             has_frame: false,
             egui_state,
@@ -570,7 +574,15 @@ impl Gfx {
         let portrait = win.1 > win.0;
         let (mut x, mut y, mut w, mut h) = fit_rect(win, self.aspect);
         let tex = (self.texture.width() as f32, self.texture.height() as f32);
-        if self.zoomed && self.has_frame && tex.0 > C64_SCREEN.0 && tex.1 > C64_SCREEN.1 {
+        if self.zoomed && self.has_frame && self.amiga {
+            let scale = if portrait {
+                AMIGA_PORTRAIT_ZOOM
+            } else {
+                (win.0 / w).max(win.1 / h)
+            };
+            (w, h) = (w * scale, h * scale);
+            (x, y) = ((win.0 - w) * 0.5, (win.1 - h) * 0.5);
+        } else if self.zoomed && self.has_frame && tex.0 > C64_SCREEN.0 && tex.1 > C64_SCREEN.1 {
             let aspect = w / h;
             if portrait {
                 let left = (tex.0 - C64_SCREEN.0) * 0.5 + ZOOM_INSET;
@@ -809,7 +821,7 @@ enum Gesture {
     },
     /// Holding a mouse button on the key bar.
     Mouse { id: u64, button: Button },
-    /// Moving the mouse in pointer mode; a tap opens or closes the key bar.
+    /// Moving the mouse on an Amiga; a tap opens or closes the key bar.
     Pointer {
         id: u64,
         start: (f64, f64),
@@ -975,7 +987,7 @@ pub struct App {
     /// How far apart two fingers started, while they may still pinch.
     pinch: Option<f64>,
     gesture: Gesture,
-    /// Pointer mode movement not yet a whole mouse unit.
+    /// Mouse movement not yet a whole mouse unit.
     mouse_rest: (f64, f64),
     frame_time: Duration,
     next_frame: Instant,
@@ -1055,7 +1067,6 @@ impl App {
         self.work = None;
         self.ui.paused = false;
         self.ui.amiga = false;
-        self.ui.pointer_mode = false;
         if let Some(gfx) = self.gfx.as_mut() {
             gfx.has_frame = false;
         }
@@ -1076,7 +1087,9 @@ impl App {
         self.platform = platform;
         self.ui.amiga = platform == Platform::Amiga;
         if let Some(gfx) = self.gfx.as_mut() {
-            gfx.zoomed &= platform == Platform::C64;
+            let amiga = platform == Platform::Amiga;
+            gfx.zoomed &= gfx.amiga == amiga;
+            gfx.amiga = amiga;
         }
         let fps = if core.fps() > 1.0 { core.fps() } else { 50.0 };
         self.frame_time = Duration::from_secs_f64(1.0 / fps);
@@ -1231,16 +1244,11 @@ impl App {
     fn touch(&mut self, t: Touch) {
         let pos = (t.location.x, t.location.y);
         let mine = self.gesture.id() == Some(t.id);
-        let on_bar = mine
-            && matches!(
-                self.gesture,
-                Gesture::Key { .. } | Gesture::Mouse { .. } | Gesture::Button { .. }
-            );
         match self.touches.iter_mut().find(|(id, _)| *id == t.id) {
             Some(touch) => {
                 let (dx, dy) = (pos.0 - touch.1.0, pos.1 - touch.1.1);
                 touch.1 = pos;
-                if self.ui.pointer_mode && !on_bar {
+                if mine && self.touches.len() == 1 && matches!(self.gesture, Gesture::Pointer { .. }) {
                     self.move_mouse(dx, dy);
                 }
             }
@@ -1252,8 +1260,7 @@ impl App {
             if gap > start * PINCH || gap * PINCH < start {
                 self.pinch = None;
                 if let Some(gfx) = self.gfx.as_mut() {
-                    // The zoom knows the C64's screen only.
-                    gfx.zoomed = gap > start && self.platform == Platform::C64;
+                    gfx.zoomed = gap > start;
                 }
             }
         }
@@ -1281,14 +1288,16 @@ impl App {
                         },
                     };
                     self.set_gesture(gesture);
-                } else if self.ui.pointer_mode {
-                    if let Gesture::None = self.gesture {
-                        let began = Instant::now();
-                        self.gesture = Gesture::Pointer {
-                            id,
-                            start: pos,
-                            began,
-                        };
+                } else if self.ui.amiga {
+                    match self.gesture {
+                        Gesture::None => {
+                            self.gesture = Gesture::Pointer {
+                                id,
+                                start: pos,
+                                began: Instant::now(),
+                            };
+                        }
+                        _ => self.pinch = (self.touches.len() == 2).then(|| self.finger_gap()),
                     }
                 } else if self.touches.len() == 1 {
                     let began = Instant::now();
@@ -1431,7 +1440,6 @@ impl App {
                 }
             }
             Button::Pause => self.toggle_pause(),
-            Button::Pointer => self.ui.pointer_mode = !self.ui.pointer_mode,
             Button::Stop => self.stop(),
             Button::Next => self.skip(1),
             Button::Prev => self.skip(-1),

@@ -20,8 +20,7 @@ pub enum Button {
     F7,
     MouseLeft,
     MouseRight,
-    /// Toggles pointer mode, where fingers move the mouse.
-    Pointer,
+    Tab,
     Esc,
     Space,
     Return,
@@ -52,7 +51,9 @@ const ROWS: [&[Button]; 2] = {
 const AMIGA_ROWS: [&[Button]; 2] = {
     use Button::*;
     [
-        &[MouseLeft, MouseRight, Pointer, Esc, Space, Return, Keyboard, Csdb],
+        &[
+            MouseLeft, MouseRight, Tab, Esc, Space, Return, Keyboard, Csdb,
+        ],
         ROWS[1],
     ]
 };
@@ -77,6 +78,7 @@ impl Button {
             Button::Space => RETROK_SPACE,
             Button::Return => RETROK_RETURN,
             Button::Esc => RETROK_ESCAPE,
+            Button::Tab => RETROK_TAB,
             _ => return None,
         })
     }
@@ -89,8 +91,8 @@ impl Button {
             Button::F7 => "F7",
             Button::MouseLeft => "\u{f037d}L",
             Button::MouseRight => "\u{f037d}R",
-            Button::Pointer => "\u{f01c0}",
-            Button::Esc => "ESC",
+            Button::Tab => "\u{f0312}",
+            Button::Esc => "󱊷",
             Button::Space => "󱁐",
             Button::Return => "󰌑",
             Button::Keyboard => "󰌌",
@@ -136,8 +138,6 @@ pub struct Ui {
     pub paused: bool,
     /// An Amiga is running: the key bar has the mouse buttons.
     pub amiga: bool,
-    /// Finger movement is mouse movement.
-    pub pointer_mode: bool,
     /// The picker's shuffle button was clicked; see [`Ui::shuffle`].
     pub shuffle_requested: bool,
     info_text: String,
@@ -169,7 +169,6 @@ impl Ui {
             key_rects: Vec::new(),
             paused: false,
             amiga: false,
-            pointer_mode: false,
             shuffle_requested: false,
             info_text: String::new(),
             info_shown: false,
@@ -190,7 +189,8 @@ impl Ui {
         let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
         let favorites = Playlists::load(&playlist_dir());
-        self.navigator.add_playlist(FAVORITES, favorites.lists[0].files);
+        self.navigator
+            .add_playlist(FAVORITES, favorites.lists[0].files);
         self.favorites = Some(favorites);
         crate::web::set_db(&name, files);
         let root = self.navigator.go_root();
@@ -251,7 +251,8 @@ impl Ui {
             return;
         };
         favorites.toggle(0, file, "");
-        self.navigator.add_playlist(FAVORITES, favorites.lists[0].files);
+        self.navigator
+            .add_playlist(FAVORITES, favorites.lists[0].files);
     }
 
     fn is_favorite(&self) -> bool {
@@ -360,10 +361,7 @@ impl Ui {
                             text = text.color(WEB_COLOR);
                         }
                         let widget = egui::Button::new(text)
-                            .selected(
-                                self.key_held == Some(button)
-                                    || (button == Button::Pointer && self.pointer_mode),
-                            )
+                            .selected(self.key_held == Some(button))
                             .min_size(size);
                         self.key_rects.push((button, ui.add(widget).rect));
                     }

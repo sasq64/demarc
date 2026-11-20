@@ -96,7 +96,7 @@ fn an_amiga_key_bar_has_the_mouse_buttons() {
     let at = |x: f32, y: f32| ui.key_at(x as f64 * scale, y as f64 * scale);
     let (w, bottom) = (screen.width() / 8.0, screen.bottom());
     assert_eq!(at(w * 0.5, bottom - 90.0), Some(Button::MouseLeft));
-    assert_eq!(at(w * 2.5, bottom - 90.0), Some(Button::Pointer));
+    assert_eq!(at(w * 2.5, bottom - 90.0), Some(Button::Tab));
     assert_eq!(at(w * 3.5, bottom - 90.0), Some(Button::Esc));
 }
 
