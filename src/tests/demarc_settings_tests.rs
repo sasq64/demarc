@@ -36,8 +36,8 @@ fn demarc_settings_are_all_editable() {
 fn wine_is_its_own_section() {
     let sections = settings_sections();
     let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
-    assert_eq!(titles, vec!["", "Dos", "Recording", "Wine"]);
-    let names: Vec<&str> = widgets(&sections[3].fields)
+    assert_eq!(titles, vec!["", "Dos", "Amiga", "Recording", "Wine"]);
+    let names: Vec<&str> = widgets(&sections[4].fields)
         .iter()
         .map(|(n, _)| *n)
         .collect();
@@ -47,7 +47,7 @@ fn wine_is_its_own_section() {
 #[test]
 fn resolutions_are_labelled_by_size() {
     let sections = settings_sections();
-    let Widget::Enum { variants } = &sections[3].fields[0].widget else {
+    let Widget::Enum { variants } = &sections[4].fields[0].widget else {
         panic!("resolution is not a combo box");
     };
     let labels: Vec<&str> = variants.iter().map(|v| v.label.as_str()).collect();
@@ -104,4 +104,25 @@ fn dos_settings_map_to_core_options() {
     assert_eq!(CpuCycles::X486.as_meta(), "25000");
     assert_eq!(CpuCycles::Max.as_meta(), "max");
     assert_eq!(CpuType::MMx.as_meta(), "pentium_mmx");
+}
+
+#[test]
+fn amiga_settings_map_to_run_wide_meta() {
+    let old = AmigaSettings::default();
+    let new = AmigaSettings {
+        machine: Machine::A4000,
+        chip_mem: ChipMemSize::Mb2,
+        fast_mem: FastMemSize::Mb32,
+        ..Default::default()
+    };
+    let mut meta = HashMap::new();
+    apply_amiga(&new, &old, &mut meta);
+    assert_eq!(meta[MACHINE_TYPE], "A4000");
+    assert_eq!(meta["amiberry_chipmem_size"], "4");
+    assert_eq!(meta["amiberry_fastmem_size"], "0");
+    assert_eq!(meta["amiberry_z3mem_size"], "32");
+    assert!(!meta.contains_key("amiberry_bogomem_size"));
+
+    apply_amiga(&old, &new, &mut meta);
+    assert!(meta.is_empty(), "{meta:?}");
 }

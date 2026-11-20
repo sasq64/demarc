@@ -39,6 +39,8 @@
 //! [`describe`] and [`set_variant`] are pure functions over `dyn PartialReflect`
 //! with no egui and no `App` in sight, and the tests exercise those.
 
+use std::marker::PhantomData;
+
 use bevy::prelude::*;
 use bevy::reflect::enums::{DynamicEnum, DynamicVariant, EnumInfo, VariantInfo};
 use bevy::reflect::{
@@ -693,6 +695,10 @@ impl<T> ShowSettings<T> {
 #[derive(Message, Clone)]
 pub struct SettingsApplied<T>(pub T);
 
+/// Written when the dialog closes.
+#[derive(Message, Clone)]
+pub struct SettingsClosed<T>(PhantomData<T>);
+
 /// The open dialog for one settings type.
 #[derive(Resource)]
 pub(crate) struct SettingsState<T> {
@@ -751,6 +757,7 @@ impl AppSettingsExt for App {
             .init_resource::<SettingsState<T>>()
             .add_message::<ShowSettings<T>>()
             .add_message::<SettingsApplied<T>>()
+            .add_message::<SettingsClosed<T>>()
             .add_systems(
                 Update,
                 open_settings::<T>.run_if(on_message::<ShowSettings<T>>),
@@ -788,6 +795,7 @@ fn settings_ui<T: SettingsType>(
     mut state: ResMut<SettingsState<T>>,
     mut hud: ResMut<HudState>,
     mut applied: MessageWriter<SettingsApplied<T>>,
+    mut closed: MessageWriter<SettingsClosed<T>>,
 ) -> Result {
     if !state.open {
         return Ok(());
@@ -843,6 +851,7 @@ fn settings_ui<T: SettingsType>(
     }
     if closing {
         close(&mut state, &mut hud);
+        closed.write(SettingsClosed(PhantomData));
     }
     Ok(())
 }

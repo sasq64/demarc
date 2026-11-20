@@ -11,9 +11,11 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
 
+use crate::commands::{Cmd, CmdMessage};
 use crate::config::{AppSettings, GlobalSettings, Latency};
-use crate::egui_settings::{ReflectDisplay, SettingsApplied};
+use crate::egui_settings::{ReflectDisplay, SettingsApplied, SettingsClosed};
 use crate::post_process::ShaderPath;
+use newsys::AMIGA_MACHINE_TYPE as MACHINE_TYPE;
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
 #[cfg(target_os = "linux")]
@@ -135,22 +137,48 @@ pub struct DosSettings {
 
 #[derive(Default, Clone, Debug, PartialEq, Reflect)]
 pub enum ChipMemSize {
-    Kb512,
     #[default]
+    Auto,
+    Kb512,
     Mb1,
     Mb2,
+}
+
+impl ChipMemSize {
+    /// In the core's 512K units.
+    pub fn as_meta(&self) -> &'static str {
+        match self {
+            ChipMemSize::Auto => "",
+            ChipMemSize::Kb512 => "1",
+            ChipMemSize::Mb1 => "2",
+            ChipMemSize::Mb2 => "4",
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Reflect)]
 pub enum SlowMemSize {
     #[default]
+    Auto,
     Mb0,
     Kb512,
+}
+
+impl SlowMemSize {
+    /// In the core's 256K units.
+    pub fn as_meta(&self) -> &'static str {
+        match self {
+            SlowMemSize::Auto => "",
+            SlowMemSize::Mb0 => "0",
+            SlowMemSize::Kb512 => "2",
+        }
+    }
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Reflect)]
 pub enum FastMemSize {
     #[default]
+    Auto,
     Mb0,
     Mb2,
     Mb8,
@@ -158,13 +186,42 @@ pub enum FastMemSize {
     Mb128,
 }
 
+impl FastMemSize {
+    /// Zorro II and Zorro III sizes in MB; past 8 MB it has to be Zorro III.
+    pub fn as_meta(&self) -> (&'static str, &'static str) {
+        match self {
+            FastMemSize::Auto => ("", ""),
+            FastMemSize::Mb0 => ("0", "0"),
+            FastMemSize::Mb2 => ("2", "0"),
+            FastMemSize::Mb8 => ("8", "0"),
+            FastMemSize::Mb32 => ("0", "32"),
+            FastMemSize::Mb128 => ("0", "128"),
+        }
+    }
+}
+
 #[derive(Default, Clone, Debug, PartialEq, Reflect)]
 pub enum Machine {
     #[default]
+    Auto,
     A500,
+    A500P,
     A1200,
     A3000,
     A4000,
+}
+
+impl Machine {
+    pub fn as_meta(&self) -> &'static str {
+        match self {
+            Machine::Auto => "",
+            Machine::A500 => "A500",
+            Machine::A500P => "A500P",
+            Machine::A1200 => "A1200",
+            Machine::A3000 => "A3000",
+            Machine::A4000 => "A4000",
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Reflect)]
@@ -242,6 +299,8 @@ pub struct DemarcSettings {
 
     pub dos: DosSettings,
 
+    pub amiga: AmigaSettings,
+
     pub recording: RecordingSettings,
 
     #[cfg(target_os = "linux")]
@@ -262,8 +321,19 @@ pub fn apply_settings(
     mut app_settings: ResMut<AppSettings>,
     mut shader_path: ResMut<ShaderPath>,
     mut global: ResMut<GlobalSettings>,
+    mut closed: MessageReader<SettingsClosed<DemarcSettings>>,
+    mut cmds: MessageWriter<CmdMessage>,
+    mut needs_reload: Local<bool>,
 ) {
     for SettingsApplied(new) in reader.read() {
+        *needs_reload |= new.latency != current.latency
+            || new.c64_fast_load != current.c64_fast_load
+            || new.dos != current.dos
+            || new.amiga != current.amiga;
+        #[cfg(target_os = "linux")]
+        {
+            *needs_reload |= new.wine != current.wine;
+        }
         if new.fullscreen != current.fullscreen {
             window.mode = if new.fullscreen {
                 WindowMode::BorderlessFullscreen(MonitorSelection::Current)
@@ -301,6 +371,13 @@ pub fn apply_settings(
                 .system
                 .set_meta("dosbox_pure_cpu_type", new.dos.cpu_type.as_meta().into());
         }
+        if new.amiga != current.amiga {
+            apply_amiga(
+                &new.amiga,
+                &current.amiga,
+                &mut app_settings.system.meta_mut(),
+            );
+        }
         #[cfg(target_os = "linux")]
         if new.wine != current.wine {
             apply_wine(
@@ -311,23 +388,45 @@ pub fn apply_settings(
         }
         *current = new.clone();
     }
+    if closed.read().count() > 0 && std::mem::take(&mut *needs_reload) {
+        cmds.write(CmdMessage(Cmd::Reload));
+    }
 }
 
-/// Writes the wine fields that changed as run-wide meta. An empty value removes
-/// the key, so the release's own meta applies again.
+/// An empty value removes the key, so the release's own meta applies again.
+fn set_meta(meta: &mut HashMap<String, String>, key: &str, value: &str) {
+    if value.is_empty() {
+        meta.remove(key);
+    } else {
+        meta.insert(key.to_owned(), value.to_owned());
+    }
+}
+
+fn apply_amiga(new: &AmigaSettings, old: &AmigaSettings, meta: &mut HashMap<String, String>) {
+    if new.machine != old.machine {
+        set_meta(meta, MACHINE_TYPE, new.machine.as_meta());
+    }
+    if new.chip_mem != old.chip_mem {
+        set_meta(meta, "amiberry_chipmem_size", new.chip_mem.as_meta());
+    }
+    if new.slow_mem != old.slow_mem {
+        set_meta(meta, "amiberry_bogomem_size", new.slow_mem.as_meta());
+    }
+    if new.fast_mem != old.fast_mem {
+        let (fast, z3) = new.fast_mem.as_meta();
+        set_meta(meta, "amiberry_fastmem_size", fast);
+        set_meta(meta, "amiberry_z3mem_size", z3);
+    }
+}
+
+/// Writes the wine fields that changed as run-wide meta.
 fn apply_wine(new: &WineSettings, old: &WineSettings, meta: &mut HashMap<String, String>) {
-    let mut set = |key: &str, value: &str| {
-        if value.is_empty() {
-            meta.remove(key);
-        } else {
-            meta.insert(key.to_owned(), value.to_owned());
-        }
-    };
     if new.resolution != old.resolution {
-        set(META_RES, new.resolution.as_meta().unwrap_or(""));
+        set_meta(meta, META_RES, new.resolution.as_meta().unwrap_or(""));
     }
     if new.show_startup_dialog != old.show_startup_dialog {
-        set(
+        set_meta(
+            meta,
             META_DIALOG_RES,
             if new.show_startup_dialog { PICK } else { "" },
         );

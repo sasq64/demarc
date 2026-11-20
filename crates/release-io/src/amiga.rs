@@ -10,11 +10,14 @@ use tracing::{debug, info};
 
 use retro_core::system_dir;
 
-use crate::release::{collect_disk_images, walk_dir};
 use crate::release_override::RELEASE_DIR;
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 use crate::workfile::WorkFile;
 use crate::{adf, dms};
+use crate::{
+    amiga::Machine::A500PLUS,
+    release::{collect_disk_images, walk_dir},
+};
 
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
 /// downloaded from its own release instead (see `ALT_SOURCES`) — or taken from
@@ -311,7 +314,7 @@ impl From<Cpu> for String {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Machine {
     A500OLD,
     A500,
@@ -326,7 +329,7 @@ impl From<Machine> for String {
         (match value {
             Machine::A500OLD => "A500OG",
             Machine::A500 => "A500",
-            Machine::A500PLUS => "A500+",
+            Machine::A500PLUS => "A500P",
             Machine::A600 => "A600",
             Machine::A1200 => "A1200",
             Machine::A4000 => "A4040",
@@ -377,6 +380,9 @@ impl AmigaMeta for WorkFile {
 
     fn set_chip_mem(&mut self, mb: usize) {
         let mbs = mb.to_string();
+        // if mb > 1 && self.get_meta_or("amiberry_machinetype", "") == "A500" {
+        //     self.set_machine(Machine::A500PLUS);
+        // }
         self.set_meta("amiberry_chipmem_size", &mbs);
     }
 
@@ -391,6 +397,11 @@ impl AmigaMeta for WorkFile {
 
     fn set_machine(&mut self, machine: Machine) {
         self.set_meta("amiberry_model", machine);
+        if machine == Machine::A500PLUS {
+            if self.get_meta_or("amiberry_chipmem_size", "") == "" {
+                self.set_chip_mem(2);
+            }
+        }
     }
 
     fn set_kickstart(&mut self, kickstart: Kickstart) {
@@ -423,6 +434,27 @@ impl AmigaMeta for WorkFile {
 /// `fast = true` can still name a single option of its own and have that win.
 pub fn apply_fast(file: &mut WorkFile) {
     file.set_fast();
+}
+
+/// Names the machine to emulate (`A500`, `A1200`, `A3000`, `A4000`), which
+/// implies its CPU, memory and Kickstart; it beats what [`prepare`] would guess.
+pub const MACHINE_TYPE: &str = "amiberry_machinetype";
+
+fn apply_machine_type(file: &mut WorkFile, machine_type: &str) -> bool {
+    match machine_type {
+        "A500" => file.set_machine(Machine::A500),
+        "A500P" => file.set_machine(Machine::A500PLUS),
+        "A1200" => file.set_machine(Machine::A1200),
+        "A3000" => file.set_fast(),
+        "A4000" => {
+            file.set_fast();
+            file.set_machine(Machine::A4000);
+            file.set_cpu(Cpu::M68040);
+            file.set_kickstart(Kickstart::V31A4000);
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// The `C:Assign` lines the `assign` meta (`NAME=path;NAME=path`) asks for.
@@ -672,6 +704,7 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
                     file.set_machine(Machine::A1200);
                 }
             } else if year >= 1995 {
+                file.set_machine(Machine::A500PLUS);
                 file.set_chip_mem(2);
             }
         }
@@ -744,6 +777,7 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     });
 
     if file.has_tag("requires-1mb-chipmem") {
+        file.set_machine(Machine::A500PLUS);
         file.set_chip_mem(2);
     }
     if file.has_tag("requires-1mb-fastmem") {

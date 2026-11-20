@@ -1878,3 +1878,13 @@
   off. Map the PC to the .so through `/proc/<pid>/maps` (or `coredumpctl`;
   ptrace attach is blocked here, and under gdb the race never fired) and
   `addr2line` it — it was a Denise null write (`external/amiberry/BUGS.md` #5).
+
+- Amiberry's 1 MB+ chip RAM on an OCS model (`A500`) gives the CPU the RAM but
+  keeps DMA at 512K (`chipmem_full_mask`, `src/memory.cpp`), so a trackloader
+  that DMAs into high chip wraps onto the vectors at 0: `unknown CIA address
+  00BFFFCx`, `PC=0000000E`, then `Exception 3 ... CPU halted`. More chip RAM
+  needs `amiberry_chipset=ecs` too (AltairPL-ZenerDrive.adf).
+
+- `run.sh` without `DEMARC_CORE_DIR` runs the buildbot amiberry, which lacks
+  the BUGS.md #5 fix, so a headless test can drown in `JIT: SIGSEGV` lines
+  unrelated to the bug at hand. Point it at `external/amiberry/libretro`.

@@ -251,3 +251,36 @@ fn unpacks_a_boot_disk_out_of_a_dms_archive() {
     let (dir, startup) = unpack_boot_disk(archive).expect("no boot disk in the archive");
     assert!(dir.path.join(&startup).is_file());
 }
+
+/// The machine type picked in the settings beats the guess from the year.
+#[test]
+fn machine_type_implies_the_whole_configuration() {
+    let dir = tempfile::Builder::new().tempdir().unwrap();
+    let exe: Vec<u8> = MINIMAL.iter().flat_map(|l| l.to_be_bytes()).collect();
+    fs::write(dir.path().join("demo"), &exe).unwrap();
+
+    let mut file = WorkFile::new(dir.path().join("demo"));
+    file.set_meta("amiberry_model", "date");
+    file.set_meta("year", "1988");
+    file.set_meta(MACHINE_TYPE, "A4000");
+    assert!(prepare(&mut file, &AmigaOpts::default()).unwrap());
+
+    assert_eq!(file.get_meta_or("amiberry_model", ""), "A4040");
+    assert_eq!(file.get_meta_or("amiberry_cpu_model", ""), "68040");
+    assert_eq!(file.get_meta_or("amiberry_kickstart", ""), "kick40068.A4000");
+    assert_eq!(file.get_meta_or("amiberry_jit", ""), "enabled");
+}
+
+#[test]
+fn machine_type_beats_the_chipmem_tag() {
+    let dir = tempfile::Builder::new().tempdir().unwrap();
+    let exe: Vec<u8> = MINIMAL.iter().flat_map(|l| l.to_be_bytes()).collect();
+    fs::write(dir.path().join("demo"), &exe).unwrap();
+
+    let mut file = WorkFile::new(dir.path().join("demo"));
+    file.set_meta("tags", "requires-1mb-chipmem");
+    file.set_meta(MACHINE_TYPE, "A500");
+    assert!(prepare(&mut file, &AmigaOpts::default()).unwrap());
+
+    assert_eq!(file.get_meta_or("amiberry_model", ""), "A500");
+}
