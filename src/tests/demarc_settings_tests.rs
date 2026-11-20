@@ -113,6 +113,7 @@ fn amiga_settings_map_to_run_wide_meta() {
         machine: Machine::A4000,
         chip_mem: ChipMemSize::Mb2,
         fast_mem: FastMemSize::Mb32,
+        drive_sound: true,
         ..Default::default()
     };
     let mut meta = HashMap::new();
@@ -121,6 +122,7 @@ fn amiga_settings_map_to_run_wide_meta() {
     assert_eq!(meta["amiberry_chipmem_size"], "4");
     assert_eq!(meta["amiberry_fastmem_size"], "0");
     assert_eq!(meta["amiberry_z3mem_size"], "32");
+    assert_eq!(meta["amiberry_floppy_sound"], "enabled");
     assert!(!meta.contains_key("amiberry_bogomem_size"));
 
     apply_amiga(&old, &new, &mut meta);

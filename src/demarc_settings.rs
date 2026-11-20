@@ -417,6 +417,10 @@ fn apply_amiga(new: &AmigaSettings, old: &AmigaSettings, meta: &mut HashMap<Stri
         set_meta(meta, "amiberry_fastmem_size", fast);
         set_meta(meta, "amiberry_z3mem_size", z3);
     }
+    if new.drive_sound != old.drive_sound {
+        let value = if new.drive_sound { "enabled" } else { "" };
+        set_meta(meta, "amiberry_floppy_sound", value);
+    }
 }
 
 /// Writes the wine fields that changed as run-wide meta.
