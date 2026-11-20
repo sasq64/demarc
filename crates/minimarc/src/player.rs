@@ -1731,7 +1731,7 @@ impl ApplicationHandler for App {
             }
             return;
         }
-        let mut attrs = Window::default_attributes().with_title("demarc C64");
+        let mut attrs = Window::default_attributes().with_title("demarc");
         // On iOS this would size the view, which should cover the screen.
         if !cfg!(target_os = "ios") {
             attrs = attrs.with_inner_size(PhysicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1));

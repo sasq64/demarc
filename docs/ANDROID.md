@@ -17,7 +17,7 @@ builds it, fetches the core if needed, packs the database, installs and launches
 | Play package (`applicationId`) | `se.minnberg.demarc` — permanent once on Play |
 | Java namespace / activity | `com.demarc.c64` / `com.demarc.c64.MiniActivity` |
 | Native lib | `libminimarc.so` (`android.app.lib_name` = `minimarc`) + `libvice_x64sc_libretro.so` |
-| App name | `demarc C64` (`res/values/strings.xml`) |
+| App name | `demarc` (`res/values/strings.xml`) |
 | SDK | `minSdk` 26 (AAudio), `targetSdk`/`compileSdk` 36, arm64-v8a only |
 | Version | `versionName` 0.1.2 in `app/build.gradle.kts`; `versionCode` from `-PversionCode` |
 
