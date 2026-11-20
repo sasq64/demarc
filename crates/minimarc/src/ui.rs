@@ -314,6 +314,7 @@ impl Ui {
             list.title_select,
             true,
         );
+        self.picker.set_scroll(list.scroll);
     }
 
     fn show_changed(&mut self) {
@@ -441,6 +442,7 @@ impl Ui {
         {
             let (query, selected) = (query.to_owned(), self.picker.selected_item(list.id));
             self.navigator.remember_state(&query, selected);
+            self.navigator.remember_scroll(self.picker.scroll());
         }
         if let Some(click) = self.picker.take_title_click() {
             match click {

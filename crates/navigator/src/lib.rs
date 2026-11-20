@@ -29,6 +29,8 @@ pub struct ShowList {
     pub prompt: String,
     /// Source id of the row to highlight, if it is among the results.
     pub selected: Option<usize>,
+    /// Scroll offset of the list, in points.
+    pub scroll: f32,
     pub title: Vec<String>,
     pub title_select: i32,
 }
@@ -81,6 +83,7 @@ pub struct NavList {
     pub prompt: String,
     /// Source id of the row this list was left on.
     pub selected: Option<usize>,
+    pub scroll: f32,
     /// Rebuilt in its normal order the next time it is shown.
     shuffled: bool,
 }
@@ -93,6 +96,7 @@ impl NavList {
             path,
             prompt: String::new(),
             selected: None,
+            scroll: 0.0,
             shuffled: false,
         }
     }
@@ -103,6 +107,7 @@ impl NavList {
             source,
             prompt: self.prompt.clone(),
             selected: self.selected,
+            scroll: self.scroll,
             title,
             title_select: pos,
         }
@@ -287,6 +292,12 @@ impl Navigator {
             list.prompt = query.into();
         }
         list.selected = selected;
+    }
+
+    pub fn remember_scroll(&mut self, scroll: f32) {
+        if let Some(list) = self.stack.get_mut(self.pos as usize) {
+            list.scroll = scroll;
+        }
     }
 
     /// The current list, if it is not the one last handed out.

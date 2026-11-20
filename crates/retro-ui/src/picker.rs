@@ -320,6 +320,14 @@ impl<T: 'static> Picker<T> {
         self.list_items.get(self.list_selected).copied()
     }
 
+    pub fn scroll(&self) -> f32 {
+        self.list_scroll
+    }
+
+    pub fn set_scroll(&mut self, scroll: f32) {
+        self.list_scroll = scroll;
+    }
+
     pub fn take_title_click(&mut self) -> Option<TitleClick> {
         self.title_click.take()
     }
@@ -449,7 +457,9 @@ impl<T: 'static> Picker<T> {
         if changed {
             // A new filter starts at the top; a re-open keeps where the user was.
             self.list_selected = 0;
-            self.list_scroll = 0.0;
+            if !self.list_reopened {
+                self.list_scroll = 0.0;
+            }
         }
         if let Some(item) = self.list_pending_select.take()
             && let Some(pos) = self.list_items.iter().position(|&i| i == item)
@@ -675,7 +685,12 @@ impl<T: 'static> Picker<T> {
                     });
                 });
 
-                let follow = self.list_reopened || self.list_followed != Some(selected);
+                // Phone mode shows no selection, so a reopen keeps its scroll.
+                let follow = if self.list_reopened {
+                    !self.phone
+                } else {
+                    self.list_followed != Some(selected)
+                };
                 self.list_followed = Some(selected);
                 let phone = self.phone;
                 let scrolled = scroll_area(
