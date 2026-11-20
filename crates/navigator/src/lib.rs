@@ -733,6 +733,19 @@ fn category_entries(path: &[&str], files: &'static [EmuFile]) -> Option<PickerSo
     Some(PickerSource::new(files, Some(subset), IconMode::Platforms))
 }
 
+/// minimarc's Demozoo root: no Platforms or Awards. Call before
+/// [`setup_navigator`], so it is matched first.
+pub fn setup_phone(navigator: &mut Navigator) -> Result<()> {
+    navigator.register_db("Demozoo", "", |_path: &[&str], _files: &'static [EmuFile]| {
+        Some(WordsIconSource::new(vec![
+            ("All".into(), ALL_ICON),
+            ("Parties".into(), PARTIES_ICON),
+            ("Categories".into(), CATEGORIES_ICON),
+            ("Authors".into(), AUTHOR_ICON),
+        ]))
+    })
+}
+
 pub fn setup_navigator(
     dbs: &IndexMap<String, &'static [EmuFile]>,
     navigator: &mut Navigator,

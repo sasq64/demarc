@@ -1,4 +1,4 @@
-use crate::{Navigator, setup_navigator};
+use crate::{Navigator, setup_navigator, setup_phone};
 use database::{
     emu_file::EmuFile,
     files::{DbFilter, collect_db},
@@ -113,6 +113,23 @@ fn csdb_root_lists_its_views() {
 
     navigator.goto("Demozoo");
     assert!(navigator.get_showing().contains(&"Awards".to_string()));
+}
+
+#[test]
+fn phone_demozoo_root_has_no_platforms_or_awards() {
+    let dbs: IndexMap<String, &'static [EmuFile]> = [(
+        "Demozoo".to_string(),
+        db("id:1\ttitle:A\tcategory:Demo\tdownload:http://x/a.zip\n"),
+    )]
+    .into();
+    let mut navigator = Navigator::new();
+    setup_phone(&mut navigator).unwrap();
+    setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
+    navigator.goto("Demozoo");
+    assert_eq!(
+        navigator.get_showing(),
+        vec!["All", "Parties", "Categories", "Authors"]
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use database::emu_file::{EmuFile, bytes_in_progress};
 use database::playlists::Playlists;
 use indexmap::IndexMap;
-use navigator::{FAVORITES, Navigator, setup_navigator};
+use navigator::{FAVORITES, Navigator, setup_navigator, setup_phone};
 use retro_core::libretro;
 use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
@@ -188,6 +188,7 @@ impl Ui {
         let several = dbs.len() > 1;
         crate::web::set_dbs(dbs.clone());
         let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();
+        setup_phone(&mut self.navigator)?;
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
         let favorites = Playlists::load(&playlist_dir());
         self.navigator
