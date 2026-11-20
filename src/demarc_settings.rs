@@ -224,13 +224,25 @@ impl Machine {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Reflect)]
+#[derive(Debug, Clone, PartialEq, Reflect)]
 pub struct AmigaSettings {
     pub chip_mem: ChipMemSize,
     pub slow_mem: SlowMemSize,
     pub fast_mem: FastMemSize,
     pub machine: Machine,
     pub drive_sound: bool,
+}
+
+impl Default for AmigaSettings {
+    fn default() -> Self {
+        Self {
+            chip_mem: Default::default(),
+            slow_mem: Default::default(),
+            fast_mem: Default::default(),
+            machine: Default::default(),
+            drive_sound: true,
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Reflect)]
@@ -418,7 +430,7 @@ fn apply_amiga(new: &AmigaSettings, old: &AmigaSettings, meta: &mut HashMap<Stri
         set_meta(meta, "amiberry_z3mem_size", z3);
     }
     if new.drive_sound != old.drive_sound {
-        let value = if new.drive_sound { "enabled" } else { "" };
+        let value = if new.drive_sound { "enabled" } else { "disabled" };
         set_meta(meta, "amiberry_floppy_sound", value);
     }
 }
