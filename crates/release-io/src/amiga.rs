@@ -832,6 +832,9 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
         patch_startup_sequence(file, &startup)?;
     }
 
+    if is_dir || images.is_empty() {
+        file.set_meta("amiberry_floppy_sound", "disabled");
+    }
     if !is_dir {
         if !images.is_empty() {
             collect_disk_images(file, &mut images)?;
