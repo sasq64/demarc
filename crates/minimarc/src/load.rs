@@ -67,8 +67,17 @@ pub struct Demo {
     pub info: String,
 }
 
-/// The ROM an A500 boots; the other Kickstarts come with it.
-const KICKSTART: &str = "kick34005.A500";
+/// The Kickstart versions an Amiga release could not start without.
+#[derive(Debug)]
+pub struct MissingKickstarts(pub Vec<&'static str>);
+
+impl std::fmt::Display for MissingKickstarts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Missing Kickstart ROMs: {}", self.0.join(", "))
+    }
+}
+
+impl std::error::Error for MissingKickstarts {}
 
 pub struct Loader {
     tx: Sender<Loaded>,
@@ -173,6 +182,9 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
         file.path.pick_download(name);
     }
     let platform = Platform::of(&file);
+    if platform == Platform::Amiga {
+        check_kickstarts()?;
+    }
     let mut source = file.path.clone();
     let mut work = loop {
         let mut attempt = source.clone();
@@ -215,6 +227,19 @@ fn prepare_with(mut file: EmuFile, over: Option<&Override>) -> Result<Demo> {
     })
 }
 
+fn check_kickstarts() -> Result<()> {
+    let dir = amiga::amiga_system_dir();
+    if let Err(e) = crate::amiga::import_kickstarts(&crate::amiga::user_rom_dir(), &dir) {
+        tracing::warn!("Could not import Kickstarts: {e:#}");
+    }
+    let missing = crate::amiga::missing_kickstarts(&dir);
+    if !missing.is_empty() {
+        let versions = missing.iter().map(|rom| rom.version).collect();
+        return Err(MissingKickstarts(versions).into());
+    }
+    Ok(())
+}
+
 fn unpack_for(
     platform: Platform,
     path: &std::path::Path,
@@ -236,9 +261,6 @@ fn unpack_for(
             }
         }
         Platform::Amiga => {
-            if !amiga::amiga_system_dir().join(KICKSTART).is_file() {
-                bail!("No Kickstart ROM: install Amiga Forever Essentials");
-            }
             if !amiga::prepare(&mut work, &amiga::AmigaOpts::default())? {
                 bail!("Nothing in this release runs on an Amiga");
             }

@@ -2,7 +2,8 @@
 //! Forever, and the drive skeletons the release is booted from.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use tracing::info;
@@ -12,14 +13,119 @@ pub const FOREVER_PACKAGE: &str = "com.cloanto.amigaforever.essentials";
 
 const ROM_DIR: &str = "assets/files/rom/";
 
-/// Cloanto's file, the name amiberry looks for, and the ROM's size: the 1.x ROMs
-/// are stored twice over to fill 512K.
-const ROMS: [(&str, &str, usize); 4] = [
-    ("amiga-os-120.rom", "kick33180.A500", 0x40000),
-    ("amiga-os-130.rom", "kick34005.A500", 0x40000),
-    ("amiga-os-204.rom", "kick37175.A500", 0x80000),
-    ("amiga-os-310-a1200.rom", "kick40068.A1200", 0x80000),
+pub struct Rom {
+    /// Cloanto's file.
+    cloanto: &'static str,
+    /// The name amiberry looks for.
+    name: &'static str,
+    /// The 1.x ROMs are stored twice over to fill 512K.
+    size: usize,
+    pub version: &'static str,
+    /// As in amiberry's `src/rommgr.cpp`.
+    crcs: &'static [u32],
+}
+
+const ROMS: [Rom; 4] = [
+    Rom {
+        cloanto: "amiga-os-120.rom",
+        name: "kick33180.A500",
+        size: 0x40000,
+        version: "1.2",
+        crcs: &[0xa6ce1636],
+    },
+    Rom {
+        cloanto: "amiga-os-130.rom",
+        name: "kick34005.A500",
+        size: 0x40000,
+        version: "1.3",
+        // Amiga Forever's is the A3000 one.
+        crcs: &[0xc4f0f55f, 0xe0f37258],
+    },
+    Rom {
+        cloanto: "amiga-os-204.rom",
+        name: "kick37175.A500",
+        size: 0x80000,
+        version: "2.04",
+        crcs: &[0xc3bdb240],
+    },
+    Rom {
+        cloanto: "amiga-os-310-a1200.rom",
+        name: "kick40068.A1200",
+        size: 0x80000,
+        version: "3.1",
+        crcs: &[0x1483a091],
+    },
 ];
+
+static USER_ROM_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where the user can copy Kickstarts of their own.
+pub fn set_user_rom_dir(dir: PathBuf) {
+    let _ = USER_ROM_DIR.set(dir);
+}
+
+pub fn user_rom_dir() -> PathBuf {
+    USER_ROM_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(release_io::amiga::amiga_system_dir)
+}
+
+/// The CRC32 of a ROM, of one half when it is a 1.x ROM stored twice over.
+fn rom_crc(data: &[u8]) -> u32 {
+    let (a, b) = data.split_at(data.len() / 2);
+    crc32fast::hash(if data.len() == 0x80000 && a == b {
+        a
+    } else {
+        data
+    })
+}
+
+fn file_crc(path: &Path) -> Option<u32> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > 0x80000 {
+        return None;
+    }
+    std::fs::read(path).ok().map(|data| rom_crc(&data))
+}
+
+fn missing_in<'a>(dir: &Path, roms: &'a [Rom]) -> Vec<&'a Rom> {
+    roms.iter()
+        .filter(|rom| !file_crc(&dir.join(rom.name)).is_some_and(|crc| rom.crcs.contains(&crc)))
+        .collect()
+}
+
+/// The Kickstarts in `dir` that are absent or not the right ROM.
+pub fn missing_kickstarts(dir: &Path) -> Vec<&'static Rom> {
+    missing_in(dir, &ROMS)
+}
+
+fn import_in(from: &Path, dest: &Path, roms: &[Rom]) -> Result<usize> {
+    let missing = missing_in(dest, roms);
+    if missing.is_empty() {
+        return Ok(0);
+    }
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return Ok(0);
+    };
+    let mut written = 0;
+    for path in entries.flatten().map(|e| e.path()) {
+        let Some(crc) = file_crc(&path) else { continue };
+        if let Some(rom) = missing.iter().find(|rom| rom.crcs.contains(&crc)) {
+            std::fs::create_dir_all(dest)?;
+            std::fs::copy(&path, dest.join(rom.name))?;
+            info!("Installed {} from {path:?}", rom.name);
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
+/// Copy the Kickstarts `dest` lacks out of `from`, whatever they are called
+/// there. Returns how many were copied.
+pub fn import_kickstarts(from: &Path, dest: &Path) -> Result<usize> {
+    import_in(from, dest, &ROMS)
+}
 
 const CLOANTO_HEADER: &[u8] = b"AMIROMTYPE1";
 
@@ -41,7 +147,7 @@ fn decrypt(data: &[u8], key: &[u8], size: usize) -> Option<Vec<u8>> {
 /// Write the ROMs out of Amiga Forever's APK at `apk` into `dest`, those
 /// that are not there already. Returns how many were written.
 pub fn install_kickstarts(apk: &Path, dest: &Path) -> Result<usize> {
-    if ROMS.iter().all(|(_, name, _)| dest.join(name).is_file()) {
+    if ROMS.iter().all(|rom| dest.join(rom.name).is_file()) {
         return Ok(0);
     }
     let file = std::fs::File::open(apk).with_context(|| format!("Can't open {apk:?}"))?;
@@ -55,9 +161,15 @@ pub fn install_kickstarts(apk: &Path, dest: &Path) -> Result<usize> {
     let key = read("rom.key")?;
     std::fs::create_dir_all(dest)?;
     let mut written = 0;
-    for (src, name, size) in ROMS {
-        let rom = decrypt(&read(src)?, &key, size)
-            .with_context(|| format!("{src} is not a Cloanto ROM"))?;
+    for Rom {
+        cloanto,
+        name,
+        size,
+        ..
+    } in ROMS
+    {
+        let rom = decrypt(&read(cloanto)?, &key, size)
+            .with_context(|| format!("{cloanto} is not a Cloanto ROM"))?;
         std::fs::write(dest.join(name), rom)?;
         written += 1;
     }

@@ -1897,3 +1897,12 @@
   `build-amiberry-android.sh` now cleans when a header is newer than its core.
   New files under `system/amiga/` also need adding to `amiga.zip` in
   `run-android.sh`, which packs a fixed list.
+
+- minimarc's `prepare_with` retries the release's next download whenever
+  `unpack_for` fails, so a check that does not depend on the release (the
+  Kickstarts) placed there downloaded every version before reporting. Such
+  checks go before the download loop.
+
+- Amiga Forever's `amiga-os-130.rom` is the A3000 1.3 (CRC `0xe0f37258`), not
+  the A500 one (`0xc4f0f55f`) — decrypt the ROMs out of its APK and checksum
+  them before trusting a CRC table against it.

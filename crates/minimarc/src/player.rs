@@ -1049,7 +1049,10 @@ impl App {
             };
             if let Err(e) = result {
                 tracing::error!("{e:#}");
-                self.ui.error(&format!("{e:#}"));
+                match e.downcast_ref::<crate::load::MissingKickstarts>() {
+                    Some(missing) => self.ui.message(kickstart_message(&missing.0)),
+                    None => self.ui.error(&format!("{e:#}")),
+                }
                 self.ui.open();
             }
         }
@@ -1877,6 +1880,20 @@ const ASSETS: [(&str, &str); 5] = [
     ),
 ];
 
+fn kickstart_message(missing: &[&str]) -> String {
+    let store = if cfg!(target_os = "android") {
+        "Buy \"Amiga Forever\" from the Play Store and restart,\nor copy"
+    } else {
+        "Copy"
+    };
+    format!(
+        "Amiga demos need the Kickstart ROMs 1.2, 1.3, 2.04 and 3.1.\n\
+         Missing: {}\n{store} the ROM files to\n{}",
+        missing.join(", "),
+        crate::amiga::user_rom_dir().display()
+    )
+}
+
 #[cfg(any(target_os = "android", target_os = "ios"))]
 const DB_ASSET: &str = "csdb.txt";
 
@@ -1926,6 +1943,11 @@ fn install_amiga(
         Ok(bytes)
     })?;
     crate::amiga::unpack_zip(&data.join(AMIGA_ZIP), data)?;
+    if let Some(dir) = app.external_data_path() {
+        let dir = dir.join("kickstarts");
+        std::fs::create_dir_all(&dir)?;
+        crate::amiga::set_user_rom_dir(dir);
+    }
     let apk = crate::amiga::package_path(app, crate::amiga::FOREVER_PACKAGE)
         .ok_or_else(|| anyhow!("{} is not installed", crate::amiga::FOREVER_PACKAGE))?;
     crate::amiga::install_kickstarts(&apk, &release_io::amiga::amiga_system_dir())?;

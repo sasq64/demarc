@@ -5101,6 +5101,7 @@ name = "minimarc"
 version = "1.8.3"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "database",
  "egui",
  "egui-wgpu",

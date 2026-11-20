@@ -7,6 +7,7 @@ use database::playlists::Playlists;
 use indexmap::IndexMap;
 use navigator::{FAVORITES, Navigator, setup_navigator, setup_phone};
 use retro_core::libretro;
+use retro_ui::message_box::MessageBox;
 use retro_ui::{Hud, HudLocation, Picker, TitleClick};
 
 const FONT: &[u8] = include_bytes!("../../../system/font.ttf");
@@ -145,6 +146,7 @@ pub struct Ui {
     favorites: Option<Playlists>,
     /// The release last handed to the loader.
     pub playing: Option<EmuFile>,
+    message: MessageBox,
 }
 
 impl Ui {
@@ -174,6 +176,7 @@ impl Ui {
             info_shown: false,
             favorites: None,
             playing: None,
+            message: MessageBox::default(),
         }
     }
 
@@ -288,6 +291,10 @@ impl Ui {
 
     pub fn status_for(&mut self, text: &str, time: Duration) {
         self.hud_text(HudLocation::BottomLeft, text, time);
+    }
+
+    pub fn message(&mut self, text: impl Into<String>) {
+        self.message.open(text);
     }
 
     pub fn error(&mut self, text: &str) {
@@ -426,6 +433,7 @@ impl Ui {
         if show != self.info_shown {
             self.set_info(show);
         }
+        self.message.show(ctx);
         let info_rect = self.hud.show(ctx, self.now(), bytes_in_progress(), None);
         if show {
             self.draw_keys(ctx);

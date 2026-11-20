@@ -24,7 +24,7 @@ impl MessageBox {
             take_key(i, egui::Key::Enter) + take_key(i, egui::Key::Escape) > 0
         });
         egui::Area::new(egui::Id::new("message_box"))
-            .order(egui::Order::Foreground)
+            .order(egui::Order::Tooltip)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 show_panel(ui, |ui| {
