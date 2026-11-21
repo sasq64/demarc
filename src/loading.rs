@@ -9,6 +9,7 @@ use crate::config::{AppSettings, GlobalSettings};
 use crate::cross_fade::{CrossFade, Views, redirect_load};
 use crate::demarc_settings::DemarcSettings;
 use crate::emu_file::EmuFile;
+use crate::egui_ui::HudState;
 use crate::emulator::{EmuState, Emulator, LoadStatus};
 use crate::frontend::{EmuView, FrontendSet};
 use crate::navigator::Navigator;
@@ -76,11 +77,23 @@ pub(crate) fn handle_loading(
     input: Res<ButtonInput<KeyCode>>,
     mut show_list: MessageWriter<ShowFuzzyList>,
     mut picks: MessageReader<FuzzyListSelect>,
-    mut choosing: Local<Option<Entity>>,
+    hud: Res<HudState>,
+    // The emulator waiting on the file list, and whether the list has opened.
+    mut choosing: Local<Option<(Entity, bool)>>,
 ) {
     for pick in picks.read().filter(|p| p.id == ENTRY_LIST) {
-        if let Some(Ok((_, _, mut emu))) = choosing.take().map(|e| emus.get_mut(e)) {
+        if let Some(Ok((_, _, mut emu))) = choosing.take().map(|(e, _)| emus.get_mut(e)) {
             emu.choose_entry(&settings.system, Some(pick.item));
+        }
+    }
+    if let Some((entity, opened)) = *choosing {
+        if hud.list_query(ENTRY_LIST).is_some() {
+            *choosing = Some((entity, true));
+        } else if opened {
+            *choosing = None;
+            if let Ok((_, _, mut emu)) = emus.get_mut(entity) {
+                emu.cancel_choice();
+            }
         }
     }
     for (entity, emuview, mut emu) in &mut emus.iter_mut() {
@@ -136,7 +149,7 @@ pub(crate) fn handle_loading(
             LoadStatus::Idle | LoadStatus::Pending => {}
             LoadStatus::Choose(names) => {
                 if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
-                    *choosing = Some(entity);
+                    *choosing = Some((entity, false));
                     show_list.write(ShowFuzzyList {
                         id: ENTRY_LIST,
                         source: Arc::new(IndexedSource::new(names)),

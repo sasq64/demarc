@@ -290,22 +290,6 @@ impl Emulator {
         self.state = EmuState::Stopped;
     }
 
-    /// Start the second half of a load. From here on this emulator has no core,
-    /// and the job pool holds both the old one — to tear down — and everything
-    /// needed to build the new one.
-    ///
-    /// The old core is taken before the new one is built, and let go of by the
-    /// job before it starts on it: a backend may own something the machine only
-    /// has one of, and the next one cannot take it until this one has let go.
-    /// `musix`'s sc68 plugin is the case that bites — libsc68 has a
-    /// process-wide init that the plugin claims per song, so a second SNDH
-    /// loaded while the first is still alive fails to init and no plugin is
-    /// found for the file — but libretro cores are widely non-reentrant in the
-    /// same way.
-    ///
-    /// The cost is that a load which fails leaves nothing running rather than
-    /// the previous entry; the frontend already draws that state (it skips an
-    /// emulator with no core), and tv mode steps on to the next.
     pub(crate) fn pending_title(&self) -> String {
         let file = self.pending_load.as_ref().map(|p| &p.file);
         file.map(|f| f.game_info.title.to_owned())
@@ -336,6 +320,38 @@ impl Emulator {
         self.start_create(sys, file, work_file, over);
     }
 
+    /// Drop a load waiting in [`LoadStatus::Choose`], leaving what runs alone.
+    pub(crate) fn cancel_choice(&mut self) {
+        if self
+            .pending_load
+            .take_if(|p| matches!(p.phase, LoadPhase::Choosing { .. }))
+            .is_some()
+        {
+            DOWNLOAD_COUNTER.ended();
+            self.state = if self.core.is_some() {
+                EmuState::Running
+            } else {
+                EmuState::Stopped
+            };
+        }
+    }
+
+    /// Start the second half of a load. From here on this emulator has no core,
+    /// and the job pool holds both the old one — to tear down — and everything
+    /// needed to build the new one.
+    ///
+    /// The old core is taken before the new one is built, and let go of by the
+    /// job before it starts on it: a backend may own something the machine only
+    /// has one of, and the next one cannot take it until this one has let go.
+    /// `musix`'s sc68 plugin is the case that bites — libsc68 has a
+    /// process-wide init that the plugin claims per song, so a second SNDH
+    /// loaded while the first is still alive fails to init and no plugin is
+    /// found for the file — but libretro cores are widely non-reentrant in the
+    /// same way.
+    ///
+    /// The cost is that a load which fails leaves nothing running rather than
+    /// the previous entry; the frontend already draws that state (it skips an
+    /// emulator with no core), and tv mode steps on to the next.
     fn start_create(
         &mut self,
         sys: &Arc<NewSys>,

@@ -22,6 +22,7 @@ fn world(db: &[&'static str]) -> (World, tempfile::TempDir) {
     world.init_resource::<ButtonInput<KeyCode>>();
     world.init_resource::<Messages<crate::ui::ShowFuzzyList>>();
     world.init_resource::<Messages<crate::ui::FuzzyListSelect>>();
+    world.insert_resource(crate::egui_ui::HudState::default());
     world.insert_resource(Navigator::new());
     world.insert_resource(Playlists::load(dir.path()));
     let files: Vec<EmuFile> = db.iter().map(|title| entry(title)).collect();
