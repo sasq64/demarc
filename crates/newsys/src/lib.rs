@@ -9,7 +9,6 @@
 // `crate::backend` / `crate::retro_emu` paths.
 pub use retro_core::{backend, libretro, pixels, retro_emu};
 // Likewise for the release plumbing, which lives where Android can build it.
-pub use release_io::amiga::MACHINE_TYPE as AMIGA_MACHINE_TYPE;
 pub use release_io::{c64, cache, cbmconvert, fetch, m3u, release_override, utils, workfile};
 
 pub mod boxedapp;

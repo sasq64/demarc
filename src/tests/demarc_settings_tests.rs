@@ -118,7 +118,7 @@ fn amiga_settings_map_to_run_wide_meta() {
     };
     let mut meta = HashMap::new();
     apply_amiga(&new, &old, &mut meta);
-    assert_eq!(meta[MACHINE_TYPE], "A4000");
+    assert_eq!(meta["amiberry_model"], "A4040");
     assert_eq!(meta["amiberry_chipmem_size"], "4");
     assert_eq!(meta["amiberry_fastmem_size"], "0");
     assert_eq!(meta["amiberry_z3mem_size"], "32");

@@ -13,11 +13,8 @@ use retro_core::system_dir;
 use crate::release_override::RELEASE_DIR;
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 use crate::workfile::WorkFile;
+use crate::release::{collect_disk_images, walk_dir};
 use crate::{adf, dms};
-use crate::{
-    amiga::Machine::A500PLUS,
-    release::{collect_disk_images, walk_dir},
-};
 
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
 /// downloaded from its own release instead (see `ALT_SOURCES`) — or taken from
@@ -434,27 +431,6 @@ impl AmigaMeta for WorkFile {
 /// `fast = true` can still name a single option of its own and have that win.
 pub fn apply_fast(file: &mut WorkFile) {
     file.set_fast();
-}
-
-/// Names the machine to emulate (`A500`, `A1200`, `A3000`, `A4000`), which
-/// implies its CPU, memory and Kickstart; it beats what [`prepare`] would guess.
-pub const MACHINE_TYPE: &str = "amiberry_machinetype";
-
-fn apply_machine_type(file: &mut WorkFile, machine_type: &str) -> bool {
-    match machine_type {
-        "A500" => file.set_machine(Machine::A500),
-        "A500P" => file.set_machine(Machine::A500PLUS),
-        "A1200" => file.set_machine(Machine::A1200),
-        "A3000" => file.set_fast(),
-        "A4000" => {
-            file.set_fast();
-            file.set_machine(Machine::A4000);
-            file.set_cpu(Cpu::M68040);
-            file.set_kickstart(Kickstart::V31A4000);
-        }
-        _ => return false,
-    }
-    true
 }
 
 /// The `C:Assign` lines the `assign` meta (`NAME=path;NAME=path`) asks for.

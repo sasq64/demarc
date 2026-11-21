@@ -15,7 +15,6 @@ use crate::commands::{Cmd, CmdMessage};
 use crate::config::{AppSettings, GlobalSettings, Latency};
 use crate::egui_settings::{ReflectDisplay, SettingsApplied, SettingsClosed};
 use crate::post_process::ShaderPath;
-use newsys::AMIGA_MACHINE_TYPE as MACHINE_TYPE;
 // `wine` is Linux-only and this file is not, so the keys have to be nameable
 // everywhere.
 #[cfg(target_os = "linux")]
@@ -219,7 +218,7 @@ impl Machine {
             Machine::A500P => "A500P",
             Machine::A1200 => "A1200",
             Machine::A3000 => "A3000",
-            Machine::A4000 => "A4000",
+            Machine::A4000 => "A4040",
         }
     }
 }
@@ -416,7 +415,7 @@ fn set_meta(meta: &mut HashMap<String, String>, key: &str, value: &str) {
 
 fn apply_amiga(new: &AmigaSettings, old: &AmigaSettings, meta: &mut HashMap<String, String>) {
     if new.machine != old.machine {
-        set_meta(meta, MACHINE_TYPE, new.machine.as_meta());
+        set_meta(meta, "amiberry_model", new.machine.as_meta());
     }
     if new.chip_mem != old.chip_mem {
         set_meta(meta, "amiberry_chipmem_size", new.chip_mem.as_meta());
