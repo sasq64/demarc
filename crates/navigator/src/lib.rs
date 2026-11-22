@@ -759,15 +759,17 @@ pub fn setup_navigator(
         Some(PickerSource::new(files, None, IconMode::Categories))
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
-        let mut parties = IndexMap::<&str, CompactDate>::new();
+        // CSDb dates are year only, so the release id breaks ties.
+        let mut parties = IndexMap::<&str, (CompactDate, u32)>::new();
         for f in files {
             let party = f.get_party();
             if party.is_empty() {
                 continue;
             }
             let date = CompactDate::parse(f.get_meta("date")).unwrap_or_default();
+            let id = f.get_meta("id").parse().unwrap_or(0);
             let entry = parties.entry(party).or_default();
-            *entry = (*entry).max(date);
+            *entry = (*entry).max((date, id));
         }
         parties.sort_by(|_, a, _, b| b.cmp(a));
         Some(WordsIconSource::new(

@@ -1906,3 +1906,7 @@
 - Amiga Forever's `amiga-os-130.rom` is the A3000 1.3 (CRC `0xe0f37258`), not
   the A500 one (`0xc4f0f55f`) — decrypt the ROMs out of its APK and checksum
   them before trusting a CRC table against it.
+
+- CSDb's `date` is a year only (`date:2026`), unlike Demozoo's full dates, so
+  sorting by date alone ties every party of a year. The release `id` is a
+  usable tie-break: newer releases have higher ids.
