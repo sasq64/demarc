@@ -270,6 +270,7 @@ impl System for PSXSystem {
     fn load(&self, file: &mut WorkFile) -> Result<bool> {
         let mut cue = None;
         let mut disc = None;
+        let mut chd = None;
         let mut exe = None;
 
         let psx_core = file.get_meta_or("psx_core", "");
@@ -297,6 +298,8 @@ impl System for PSXSystem {
                 if cue.is_none() && is_psx_cue(path) {
                     cue = Some(path.to_owned());
                 }
+            } else if ext == "chd" {
+                chd.get_or_insert_with(|| path.to_owned());
             } else if disc.is_none() && is_psx_disc(path) {
                 disc = Some(path.to_owned());
             }
@@ -310,7 +313,7 @@ impl System for PSXSystem {
         // Whatever the sheet's audio tracks are encoded as is not settled here:
         // `NewSys::load_file` puts any cue a system picked through
         // [`super::disc::prepare_disc`] before the core sees it.
-        let found = cue.or(disc).or(exe);
+        let found = cue.or(disc).or(chd).or(exe);
 
         if let Some(found) = found {
             debug!("FMT: PSX disc {found:?}");

@@ -234,11 +234,12 @@ impl ImageEmu {
                 Ok(Self {
                     width: w as usize,
                     height: h as usize,
-                    frame: Arc::new(img
-                        .into_raw()
-                        .chunks_exact(4)
-                        .map(|px| u32::from_ne_bytes([px[0], px[1], px[2], px[3]]))
-                        .collect()),
+                    frame: Arc::new(
+                        img.into_raw()
+                            .chunks_exact(4)
+                            .map(|px| u32::from_ne_bytes([px[0], px[1], px[2], px[3]]))
+                            .collect(),
+                    ),
                     palette: Vec::new(),
                     indices: Vec::new(),
                     ranges: Vec::new(),
@@ -293,7 +294,11 @@ impl ImageEmu {
 
 impl ImageEmu {
     fn shown(&self) -> &Arc<Vec<u32>> {
-        if self.zoom > 1 { &self.view } else { &self.frame }
+        if self.zoom > 1 {
+            &self.view
+        } else {
+            &self.frame
+        }
     }
 
     fn visible(&self) -> (usize, usize) {

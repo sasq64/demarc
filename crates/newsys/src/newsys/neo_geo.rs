@@ -206,7 +206,7 @@ impl System for NeoGeoSystem {
                 rom.get_or_insert_with(|| path.to_owned());
             } else if ext == "chd" {
                 // A CHD is compressed, so there is no cheap way to look inside
-                // for the boot list. Nothing else here reads one, so take it.
+                // for the boot list, so take it.
                 chd.get_or_insert_with(|| path.to_owned());
             } else if ext == "cue" {
                 if cue.is_none() && is_neogeo_cd_cue(path) {

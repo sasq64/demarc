@@ -43,7 +43,6 @@ fn build_unrar_isnt_shim() {
         .compile("unrar_isnt_shim");
 }
 
-
 const MARKER_FILES: &[&str] = &[
     ".v4",
     ".checksum",
