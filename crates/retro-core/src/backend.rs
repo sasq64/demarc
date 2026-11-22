@@ -74,9 +74,6 @@ pub enum MediaCmd {
     PrevSong,
     /// Seconds to move forward (or back, when negative).
     Seek(i32),
-    /// Zoom steps in (or out, when negative).
-    Zoom(i32),
-    Scroll(i32, i32),
     NextSubtitle,
 }
 

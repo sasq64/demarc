@@ -247,6 +247,18 @@ impl PostProcess {
         );
         apply_zoom(scale, offset, self.zoom, self.pan)
     }
+
+    /// Zoom about the view centre by `steps` doublings, then move the view a
+    /// quarter of its size in `dir`.
+    pub fn step_zoom(&mut self, steps: i32, dir: Vec2) {
+        let zoom = (self.zoom * 2f32.powi(steps)).clamp(1.0, 32.0);
+        self.pan = if zoom == 1.0 {
+            Vec2::ZERO
+        } else {
+            self.pan * zoom / self.zoom - dir * 0.25
+        };
+        self.zoom = zoom;
+    }
 }
 
 /// Magnify a `(uv_scale, uv_offset)` transform by `zoom` about the view centre,

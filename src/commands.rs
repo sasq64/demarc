@@ -23,6 +23,7 @@ use crate::fuzzy_list::AllWordsSource;
 use crate::message_box::ShowMessage;
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
 use crate::navigator::Navigator;
+use crate::post_process::PostProcess;
 use crate::playlists::{PlaylistPicker, Playlists};
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
@@ -183,6 +184,19 @@ impl Cmd {
         }
     }
 
+    /// Zoom steps and pan direction for the view commands.
+    fn view(self) -> Option<(i32, Vec2)> {
+        Some(match self {
+            Cmd::ZoomIn => (1, Vec2::ZERO),
+            Cmd::ZoomOut => (-1, Vec2::ZERO),
+            Cmd::ScrollUp => (0, Vec2::NEG_Y),
+            Cmd::ScrollDown => (0, Vec2::Y),
+            Cmd::ScrollLeft => (0, Vec2::NEG_X),
+            Cmd::ScrollRight => (0, Vec2::X),
+            _ => return None,
+        })
+    }
+
     fn media(self) -> Option<MediaCmd> {
         Some(match self {
             Cmd::NextSong => MediaCmd::NextSong,
@@ -191,12 +205,6 @@ impl Cmd {
             Cmd::SeekBack30 => MediaCmd::Seek(-30),
             Cmd::SeekFwd10m => MediaCmd::Seek(600),
             Cmd::SeekBack10m => MediaCmd::Seek(-600),
-            Cmd::ZoomIn => MediaCmd::Zoom(1),
-            Cmd::ZoomOut => MediaCmd::Zoom(-1),
-            Cmd::ScrollUp => MediaCmd::Scroll(0, -1),
-            Cmd::ScrollDown => MediaCmd::Scroll(0, 1),
-            Cmd::ScrollLeft => MediaCmd::Scroll(-1, 0),
-            Cmd::ScrollRight => MediaCmd::Scroll(1, 0),
             Cmd::NextSubtitle => MediaCmd::NextSubtitle,
             _ => return None,
         })
@@ -292,6 +300,12 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
     KeyMapping::new(KeyCode::Escape, Cmd::StopEmu),
     KeyMapping::new(KeyCode::Slash, Cmd::About),
+    KeyMapping::new(KeyCode::Equal, Cmd::ZoomIn),
+    KeyMapping::new(KeyCode::Minus, Cmd::ZoomOut),
+    KeyMapping::new(KeyCode::ArrowUp, Cmd::ScrollUp),
+    KeyMapping::new(KeyCode::ArrowDown, Cmd::ScrollDown),
+    KeyMapping::new(KeyCode::ArrowLeft, Cmd::ScrollLeft),
+    KeyMapping::new(KeyCode::ArrowRight, Cmd::ScrollRight),
 ];
 
 /// Keys for the music, video and image views, used without the hot key.
@@ -742,7 +756,7 @@ fn media_time_hud(
 
 pub(crate) fn handle_cmd(
     mut cmds: MessageReader<CmdMessage>,
-    mut emus: Query<(&mut Emulator, &EmuView)>,
+    mut emus: Query<(&mut Emulator, &EmuView, Option<&mut PostProcess>)>,
     mut settings: ResMut<AppSettings>,
     mut render: ResMut<RenderSettings>,
     mut navigator: ResMut<Navigator>,
@@ -762,7 +776,7 @@ pub(crate) fn handle_cmd(
 ) {
     let dj_focused = crate::dj::has_focus(dj.as_deref());
     let mut show_info = false;
-    let count = emus.iter().filter(|(emu, _)| !emu.is_crossfade).count();
+    let count = emus.iter().filter(|(emu, ..)| !emu.is_crossfade).count();
     let multi = count > 1;
     for cmd in cmds.read() {
         debug!("Received command: {:?}", cmd.0);
@@ -891,7 +905,7 @@ pub(crate) fn handle_cmd(
             Cmd::NextFile | Cmd::PrevFile | Cmd::Reload | Cmd::NextFileAll
         );
         let cue = dj_focused && !advance;
-        for (mut emu, view) in &mut emus {
+        for (mut emu, view, pp) in &mut emus {
             if cmd.0 == Cmd::ToggleRecording && !settings.record {
                 emu.sink.stop_recording();
             }
@@ -927,6 +941,11 @@ pub(crate) fn handle_cmd(
                         emu.stop();
                         if navigator.current_launch.is_some() {
                             navigator.open(&mut show_list);
+                        }
+                    }
+                    c if let Some((zoom, pan)) = c.view() => {
+                        if let Some(mut pp) = pp {
+                            pp.step_zoom(zoom, pan);
                         }
                     }
                     c if let Some(media) = c.media() => {
