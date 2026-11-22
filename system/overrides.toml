@@ -12,6 +12,9 @@ meta = { vice_sid_extra = "0xd420" }
 [csdb.256782]
 meta = { vice_sid_extra = "0xd420" }
 
+[csdb.262141]
+meta = { c64_fast_load = "disabled" }
+
 [csdb.81157]
 file = "Instinct+BoozeDesign - Andropolis.d64"
 
