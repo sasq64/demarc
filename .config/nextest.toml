@@ -1,0 +1,7 @@
+# `cargo nextest run` skips the slow, self-contained GPU and Crinkler tests;
+# `cargo nextest run -P full` runs everything.
+[profile.default]
+default-filter = "not (package(frameconv) | test(/^crinkler::/))"
+
+[profile.full]
+default-filter = "all()"
