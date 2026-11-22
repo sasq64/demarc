@@ -593,3 +593,29 @@ fn a_written_back_entry_is_a_writable_hit() {
     assert_eq!(hit, path);
     std::fs::write(path.join("sub/demo.exe"), b"new").unwrap();
 }
+
+/// Threads asking for the same entry at once build it once, and all get it.
+#[test]
+fn concurrent_requests_for_one_entry_all_succeed() {
+    let (_tmp, cache) = temp_cache();
+    let built = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                s.spawn(|| {
+                    cache.get_dir("core", "lib.so", |dir| {
+                        built.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        std::fs::write(dir.join("lib.so"), b"lib")?;
+                        Ok(())
+                    })
+                })
+            })
+            .collect();
+        for handle in handles {
+            let dir = handle.join().unwrap().unwrap();
+            assert!(dir.join("lib.so").is_file());
+        }
+    });
+    assert_eq!(built.load(std::sync::atomic::Ordering::Relaxed), 1);
+}

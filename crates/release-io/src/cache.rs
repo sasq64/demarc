@@ -28,12 +28,24 @@
 //! so that a cache holding both a thousand 40 KB tunes and a handful of 600 MB
 //! discs doesn't let either kind evict the other.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
+
+/// Held while an entry is looked up and built: threads asking for the same
+/// entry at once (a grid's cells fetching one core) would otherwise share its
+/// staging path, and the second waits and then finds the entry built.
+fn entry_lock(dir: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+        LazyLock::new(Default::default);
+    let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    locks.entry(dir.to_owned()).or_default().clone()
+}
 
 /// Records inside an entry when that entry was *produced*.
 ///
@@ -181,6 +193,8 @@ impl FileCache {
 
     pub fn is_cached(&self, key: &str, filename: &str) -> bool {
         let dir = self.root.join(hash_key(key));
+        let lock = entry_lock(&dir);
+        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
         let path = dir.join(filename);
         path.is_file() || is_writeback(&path)
     }
@@ -273,6 +287,8 @@ impl FileCache {
     {
         let hash = hash_key(key);
         let dir = self.root.join(&hash);
+        let lock = entry_lock(&dir);
+        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut stale = false;
         if dir.join(marker).is_file() {
             if !self.expired(&dir) {
