@@ -21,10 +21,11 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 
-use crate::backend::{Backend, MediaCmd, MediaKind};
+use crate::backend::{Backend, MediaCmd, MediaKind, VideoFrame};
 use crate::degas;
 use crate::ilbm::{self, CycleRange};
 use crate::tiff_pal;
@@ -113,7 +114,7 @@ pub struct ImageEmu {
     width: usize,
     height: usize,
     /// Current RGBA8 frame (alpha opaque), updated by `run` while cycling.
-    frame: Vec<u32>,
+    frame: Arc<Vec<u32>>,
     /// Base palette (RGB); empty when there is nothing to cycle.
     palette: Vec<[u8; 3]>,
     /// One palette index per pixel; empty when there is nothing to cycle.
@@ -130,7 +131,7 @@ pub struct ImageEmu {
     /// Top left of the zoomed-in area, in image pixels.
     offset: (usize, usize),
     /// The zoomed-in area scaled up to the full frame size.
-    view: Vec<u32>,
+    view: Arc<Vec<u32>>,
 }
 
 impl ImageEmu {
@@ -204,7 +205,7 @@ impl ImageEmu {
                 let mut emu = Self {
                     width,
                     height,
-                    frame: vec![0u32; width * height],
+                    frame: Arc::new(vec![0u32; width * height]),
                     palette: img.palette,
                     indices: img.indices,
                     ranges,
@@ -213,7 +214,7 @@ impl ImageEmu {
                     info,
                     zoom: 1,
                     offset: (0, 0),
-                    view: Vec::new(),
+                    view: Arc::default(),
                 };
                 // Render the initial (unrotated) frame so the first presented
                 // frame is correct even before any time has elapsed.
@@ -233,11 +234,11 @@ impl ImageEmu {
                 Ok(Self {
                     width: w as usize,
                     height: h as usize,
-                    frame: img
+                    frame: Arc::new(img
                         .into_raw()
                         .chunks_exact(4)
                         .map(|px| u32::from_ne_bytes([px[0], px[1], px[2], px[3]]))
-                        .collect(),
+                        .collect()),
                     palette: Vec::new(),
                     indices: Vec::new(),
                     ranges: Vec::new(),
@@ -246,7 +247,7 @@ impl ImageEmu {
                     info,
                     zoom: 1,
                     offset: (0, 0),
-                    view: Vec::new(),
+                    view: Arc::default(),
                 })
             }
         }
@@ -280,16 +281,21 @@ impl ImageEmu {
                 palette[r.low as usize + rel as usize] = self.palette[r.low as usize + src];
             }
         }
+        let frame = Arc::make_mut(&mut self.frame);
         for (i, &idx) in self.indices.iter().enumerate() {
             let c = palette.get(idx as usize).copied().unwrap_or([0, 0, 0]);
             // Packed so the pixel's bytes land in `[r, g, b, a]` memory order,
             // matching what the frontend uploads (see `backend::frame_bytes`).
-            self.frame[i] = u32::from_ne_bytes([c[0], c[1], c[2], 255]);
+            frame[i] = u32::from_ne_bytes([c[0], c[1], c[2], 255]);
         }
     }
 }
 
 impl ImageEmu {
+    fn shown(&self) -> &Arc<Vec<u32>> {
+        if self.zoom > 1 { &self.view } else { &self.frame }
+    }
+
     fn visible(&self) -> (usize, usize) {
         (
             (self.width / self.zoom).max(1),
@@ -312,11 +318,12 @@ impl ImageEmu {
         }
         let (vw, vh) = self.visible();
         let (w, h) = (self.width, self.height);
-        self.view.resize(w * h, 0);
+        let view = Arc::make_mut(&mut self.view);
+        view.resize(w * h, 0);
         for y in 0..h {
             let src = (self.offset.1 + y * vh / h) * w + self.offset.0;
             for x in 0..w {
-                self.view[y * w + x] = self.frame[src + x * vw / w];
+                view[y * w + x] = self.frame[src + x * vw / w];
             }
         }
     }
@@ -341,12 +348,18 @@ impl Backend for ImageEmu {
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
-        let pixels = if self.zoom > 1 {
-            &self.view
-        } else {
-            &self.frame
-        };
-        f(self.width, self.height, pixels);
+        f(self.width, self.height, self.shown());
+    }
+
+    /// The `Arc` itself, so a picture that has not changed is not copied, and
+    /// the frontend sees it is the same one and skips the upload.
+    fn frame(&self) -> VideoFrame {
+        VideoFrame {
+            width: self.width,
+            height: self.height,
+            pixels: Arc::clone(self.shown()),
+            gpu: None,
+        }
     }
 
     // No audio; the frontend pushes nothing when the callback stays empty.

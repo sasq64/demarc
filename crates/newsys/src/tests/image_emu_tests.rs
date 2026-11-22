@@ -322,7 +322,7 @@ fn grid(width: usize, height: usize) -> ImageEmu {
     let mut emu = ImageEmu::new(&path).unwrap();
     emu.width = width;
     emu.height = height;
-    emu.frame = (0..(width * height) as u32).collect();
+    emu.frame = std::sync::Arc::new((0..(width * height) as u32).collect());
     emu
 }
 
@@ -356,4 +356,16 @@ fn zoom_keeps_the_centre_and_scroll_stops_at_the_edges() {
         emu.media(MediaCmd::Zoom(-1));
     }
     assert_eq!(shown(&emu), (0..16).collect::<Vec<_>>());
+}
+
+/// A picture that has not changed comes back as the same `Arc`, which is what
+/// lets the frontend skip copying and uploading it again.
+#[test]
+fn a_static_frame_is_shared_not_copied() {
+    let mut emu = ImageEmu::new(&root("testdata/degas/FUSE.PI1")).unwrap();
+    let first = emu.frame();
+    emu.run();
+    let second = emu.frame();
+    assert!(VideoFrame::same(&first, &second));
+    assert_eq!(second.pixels.len(), second.width * second.height);
 }
