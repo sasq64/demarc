@@ -284,6 +284,36 @@ fn a_browser_release_tries_web_first() {
 }
 
 #[test]
+fn a_platform_tries_its_system_first() {
+    let sys = NewSys::new(&SysOpts::default());
+    let mut wf = WorkFile::new(Path::new("demo"));
+    for (platform, name) in [
+        ("C64", "C64"),
+        ("Atari XL", "Atari XL"),
+        ("Atari Falcon", "Atari ST"),
+        ("MS-Dos;Windows", "Windows"),
+    ] {
+        wf.set_meta("platform", platform);
+        let order = sys.systems_for(&wf);
+        assert_eq!(order[0].name(), name);
+        assert_eq!(order.len(), sys.systems.len());
+    }
+    wf.set_meta("platform", "Atari ST;Atari Falcon");
+    assert_eq!(sys.systems_for(&wf).len(), sys.systems.len());
+}
+
+#[test]
+fn every_platform_names_a_system() {
+    let sys = NewSys::new(&SysOpts::default());
+    for (platform, name) in PLATFORM_SYSTEMS {
+        assert!(
+            sys.systems.iter().any(|s| s.name() == *name),
+            "{platform} -> {name}"
+        );
+    }
+}
+
+#[test]
 fn test_c64() {
     let root = Path::new(env!("DEMARC_ROOT"));
     let testdata = root.join("testdata").join("c64");

@@ -91,6 +91,38 @@ pub const META_WIDESCREEN: &str = "widescreen";
 /// rate a gamescope session is paced at.
 pub const META_REFRESH: &str = "screen_refresh";
 
+/// The system to try first for a `platform`, keyed lowercase, in priority order
+/// for a release naming several. A browser release often ships screenshots and
+/// music beside its page, which the systems ahead of Web would claim.
+const PLATFORM_SYSTEMS: &[(&str, &str)] = &[
+    ("browser", "Web"),
+    ("c16", "C16/Plus4"),
+    ("c64", "C64"),
+    ("amiga", "Amiga"),
+    ("amiga aga", "Amiga"),
+    ("atari st", "Atari ST"),
+    ("atari ste", "Atari ST"),
+    ("atari falcon", "Atari ST"),
+    ("atari xl", "Atari XL"),
+    ("atari 2600", "Atari 2600"),
+    ("atari lynx", "Lynx"),
+    ("amstrad cpc", "Amstrad"),
+    ("zx spectrum", "ZX Spectrum"),
+    ("zx next", "ZX Spectrum Next"),
+    ("megadrive", "Megadrive"),
+    ("snes", "SNES"),
+    ("gameboy", "Gameboy"),
+    ("gameboy color", "Gameboy"),
+    ("gba", "GBA"),
+    ("playstation", "PSX"),
+    ("psp", "PSP"),
+    ("neo geo", "NeoGeo"),
+    ("tic-80", "Tic80"),
+    ("pico8", "Pico-8"),
+    ("windows", "Windows"),
+    ("ms-dos", "MS/DOS"),
+];
+
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
 /// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and
@@ -385,19 +417,27 @@ impl NewSys {
         self.meta_mut().contains_key(key)
     }
 
-    /// The systems to try, in order. A browser release often ships screenshots
-    /// and music beside its page, which the systems ahead of Web would claim.
+    /// The systems to try, in order: those `platform` names first, then the rest.
     fn systems_for(&self, wf: &WorkFile) -> Vec<&dyn System> {
-        let web_first = wf
+        let platforms: Vec<_> = wf
             .get_meta_or("platform", "")
             .split(';')
-            .any(|p| p.trim().eq_ignore_ascii_case("browser"));
-        let (mut order, rest): (Vec<&dyn System>, Vec<&dyn System>) = self
-            .systems
-            .iter()
-            .map(|sys| sys.as_ref())
-            .partition(|sys| web_first && sys.name() == "Web");
-        order.extend(rest);
+            .map(|p| p.trim().to_ascii_lowercase())
+            .collect();
+        let mut order: Vec<&dyn System> = vec![];
+        for (platform, name) in PLATFORM_SYSTEMS {
+            if platforms.iter().any(|p| p == platform)
+                && !order.iter().any(|s| s.name() == *name)
+                && let Some(sys) = self.systems.iter().find(|s| s.name() == *name)
+            {
+                order.push(sys.as_ref());
+            }
+        }
+        for sys in &self.systems {
+            if !order.iter().any(|s| s.name() == sys.name()) {
+                order.push(sys.as_ref());
+            }
+        }
         order
     }
 
