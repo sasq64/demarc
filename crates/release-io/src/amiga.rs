@@ -10,10 +10,10 @@ use tracing::{debug, info};
 
 use retro_core::system_dir;
 
+use crate::release::{collect_disk_images, walk_dir};
 use crate::release_override::RELEASE_DIR;
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 use crate::workfile::WorkFile;
-use crate::release::{collect_disk_images, walk_dir};
 use crate::{adf, dms};
 
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
@@ -760,6 +760,9 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     }
     if file.has_tag("requires-1mb-fastmem") {
         file.set_fast_mem(1);
+    }
+    if file.has_tag("requires-68020") {
+        file.set_cpu(Cpu::M68020);
     }
     if file.has_tag("requires-68040") || file.has_tag("requires-68060") {
         file.set_cpu(Cpu::M68040);
