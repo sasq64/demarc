@@ -11,7 +11,7 @@ use indexmap::{IndexMap, IndexSet};
 use tracing::{debug, warn};
 
 use database::csdb_latest;
-use database::emu_file::{Award, EmuFile};
+use database::emu_file::{Award, CompactDate, EmuFile};
 use retro_ui::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 
 pub mod picker_sources;
@@ -759,13 +759,20 @@ pub fn setup_navigator(
         Some(PickerSource::new(files, None, IconMode::Categories))
     })?;
     navigator.register("Parties", |_path: &[&str], files: &'static [EmuFile]| {
+        let mut parties = IndexMap::<&str, CompactDate>::new();
+        for f in files {
+            let party = f.get_party();
+            if party.is_empty() {
+                continue;
+            }
+            let date = CompactDate::parse(f.get_meta("date")).unwrap_or_default();
+            let entry = parties.entry(party).or_default();
+            *entry = (*entry).max(date);
+        }
+        parties.sort_by(|_, a, _, b| b.cmp(a));
         Some(WordsIconSource::new(
-            files
-                .iter()
-                .map(|f| f.get_party())
-                .filter(|p| !p.is_empty())
-                .collect::<IndexSet<_>>()
-                .into_iter()
+            parties
+                .into_keys()
                 .map(|p| (p.to_string(), party_icon(p)))
                 .collect(),
         ))
