@@ -2,7 +2,7 @@
 # --workspace, or only the root `demarc` package is covered and the three
 # crates under crates/ are skipped.
 test:
-    cargo test --workspace
+    cargo nextest run --workspace
 
 clippy:
     cargo clippy --workspace --all-targets
