@@ -499,7 +499,7 @@ pub fn default_meta() -> HashMap<&'static str, &'static str> {
         //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
         ("amiberry_jit", "disabled"),
         ("amiberry_floppy_sound", "enabled"),
-        ("amiberry_floppy_sound_volume", "47"),
+        ("amiberry_floppy_sound_volume", "27"),
     ]
     .into()
 }

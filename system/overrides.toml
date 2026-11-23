@@ -357,7 +357,7 @@ fast = true
 
 [zoo.160452]
 boot = "hoffman-everyway"
-meta = { amiga_model = "A1230" }
+meta = { amiga_model = "A1200" }
 
 [zoo.3640]
 meta = { amiga_model = "A1200" }
@@ -2308,7 +2308,7 @@ meta = { amiberry_cpu_model = "68040" }
 
 # Bacon of Hope by Desire
 [zoo.385573]
-meta = { amiga_model = "A500" }
+meta = { amiberry_model = "A500" }
 
 # [zoo.8891]
 # fast = true
