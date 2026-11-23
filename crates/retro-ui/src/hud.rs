@@ -124,11 +124,6 @@ impl Hud {
                         egui::Align2::RIGHT_BOTTOM,
                         INFO_TEXT_SCALE,
                     ),
-                    (
-                        HudLocation::Error,
-                        egui::Align2::LEFT_BOTTOM,
-                        BOTTOM_LEFT_SCALE * 0.75,
-                    ),
                 ] {
                     let (info, t) = self.fade(ctx, text, now);
                     if t > 0.0 {
@@ -144,12 +139,7 @@ impl Hud {
                             egui::Layout::bottom_up(corner.x())
                         };
 
-                        let color = (if text == HudLocation::Error {
-                            theme.hud.error
-                        } else {
-                            theme.hud.text
-                        })
-                        .linear_multiply(t);
+                        let color = theme.hud.text.linear_multiply(t);
 
                         let shown = ui.scope_builder(
                             egui::UiBuilder::new().max_rect(quad).layout(layout),
@@ -188,6 +178,34 @@ impl Hud {
                 info_rect
             })
             .inner;
+
+        // Above the picker, which a failed load reopens over it.
+        let (error, t) = self.fade(ctx, HudLocation::Error, now);
+        if t > 0.0 {
+            egui::Area::new(egui::Id::new("overlay_error"))
+                .fixed_pos(rect.min)
+                .constrain_to(ctx.viewport_rect())
+                .order(egui::Order::Tooltip)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    ui.set_min_size(rect.size());
+                    let quad = egui::Rect::from_two_pos(rect.left_bottom(), rect.center());
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(quad)
+                            .layout(egui::Layout::bottom_up(egui::Align::Min)),
+                        |ui| {
+                            heading_with_shadow(
+                                ui,
+                                &error.text,
+                                HEADING_SIZE * BOTTOM_LEFT_SCALE * 0.75 * self.scale,
+                                theme.hud.error.linear_multiply(t),
+                                egui::Align::Min,
+                            );
+                        },
+                    );
+                });
+        }
 
         render_downloads(ctx, rect.min, download_bytes);
         if let Some(time) = recording {
