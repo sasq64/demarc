@@ -146,6 +146,14 @@ pub fn set_amiga_config(file: &mut WorkFile) -> Result<()> {
     let aga =
         file.get_meta_or("platform", "").contains("AGA") || file.get_meta_or("aga", "") == "true";
 
+    let jit = file.get_meta_or("jit", "");
+    if !jit.is_empty() {
+        file.set_meta(
+            "amiberry_jit",
+            if jit == "true" { "enabled" } else { "disabled" },
+        );
+    }
+
     if !file.get_meta_or("amiberry_model", "").is_empty() {
         return Ok(());
     }
