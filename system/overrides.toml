@@ -357,15 +357,16 @@ fast = true
 
 [zoo.160452]
 boot = "hoffman-everyway"
+meta = { amiga_model = "A1230" }
 
 [zoo.3640]
-meta = { amiberry_model = "A1200" }
+meta = { amiga_model = "A1200" }
 
 [zoo.136336]
-meta = { amiberry_model = "A1200" }
+meta = { amiga_model = "A1200" }
 
 [zoo.55576]
-meta = { amiberry_model = "A1230" }
+meta = { amiga_model = "A1230" }
 
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
@@ -2307,7 +2308,7 @@ meta = { amiberry_cpu_model = "68040" }
 
 # Bacon of Hope by Desire
 [zoo.385573]
-meta = { amiberry_model = "A500" }
+meta = { amiga_model = "A500" }
 
 # [zoo.8891]
 # fast = true

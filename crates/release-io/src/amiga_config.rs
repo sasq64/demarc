@@ -38,6 +38,25 @@ pub enum Machine {
     A4000,
 }
 
+impl std::str::FromStr for Machine {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s.to_ascii_uppercase().as_str() {
+            "A500_KS12" => Machine::A500_KS12,
+            "A500_512KB" => Machine::A500_512KB,
+            "A500" => Machine::A500,
+            "A500PLUS" | "A500P" => Machine::A500PLUS,
+            "A1200" => Machine::A1200,
+            "A1230" => Machine::A1230,
+            "A1200FAST" => Machine::A1200FAST,
+            "A1240" => Machine::A1240,
+            "A4000" => Machine::A4000,
+            _ => anyhow::bail!("Unknown Amiga model '{s}'"),
+        })
+    }
+}
+
 // impl From<Machine> for String {
 //     fn from(value: Machine) -> Self {
 //         (match value {
@@ -158,6 +177,15 @@ pub fn set_amiga_config(file: &mut WorkFile) -> Result<()> {
         return Ok(());
     }
     let model = file.get_meta_or("amiga_model", "");
+
+    if !model.is_empty()
+        && model != "date"
+        && let Ok(machine) = model.parse::<Machine>()
+    {
+        file.set_machine(machine);
+        info!("Machine: {machine:?} (from amiga_model)");
+        return Ok(());
+    }
 
     if aga {
         machine = Machine::A1200;
