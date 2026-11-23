@@ -791,7 +791,7 @@ fn create_bind_group(
 const AUDIO_BUF: (usize, usize) = (3000, 18000);
 
 /// Frames the picture is held back, to meet the sound.
-const VIDEO_DELAY: usize = 3;
+const VIDEO_DELAY: usize = 10;
 
 // -------------------------------------------------------------------------
 // Touch
