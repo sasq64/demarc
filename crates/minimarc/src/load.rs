@@ -55,7 +55,10 @@ impl Platform {
 
 /// "Amiga" or "Amiga AGA", when that is what `file` is for.
 fn amiga_platform(file: &EmuFile) -> Option<&'static str> {
-    file.platforms.iter().copied().find(|p| p.starts_with("Amiga"))
+    file.platforms
+        .iter()
+        .copied()
+        .find(|p| p.starts_with("Amiga"))
 }
 
 pub struct Demo {
@@ -249,9 +252,6 @@ fn unpack_for(
     let mut work = release_io::unpack_release(path, meta)
         .with_context(|| format!("Could not unpack {}", path.display()))?;
     if let Some(over) = over {
-        if over.fast {
-            amiga::apply_fast(&mut work);
-        }
         release_io::apply_override(&mut work, over, &retro_core::system_dir())?;
     }
     match platform {
