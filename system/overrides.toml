@@ -357,13 +357,15 @@ fast = true
 
 [zoo.160452]
 boot = "hoffman-everyway"
-meta = { amiberry_chipmem_size = 4 }
-
-[zoo.77216]
-meta = { amiberry_chipmem_size = "3" }
 
 [zoo.3640]
-meta = { amiberry_chipmem_size = "4" }
+meta = { amiberry_model = "A1200" }
+
+[zoo.136336]
+meta = { amiberry_model = "A1200" }
+
+[zoo.55576]
+meta = { amiberry_model = "A1230" }
 
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
@@ -2261,7 +2263,7 @@ an int from a float function and uses ! on an int; the blur pass has no
 #version but calls texture() and textureLod().
 '''
 glsl = [
-  { match = 'if\(!c\)', edits = [['if\(!c\)', "if(c==0)"], ['return 0;', "return 0.;"]] },
+  { match = 'if\(!c\)', edits = [['if\(!c\)', "if(c==0)"], ["return 0;", "return 0.;"]] },
   { match = "textureLod", edits = [["^(.)", "#version 130\n$1"]] },
 ]
 
@@ -2272,7 +2274,7 @@ Mesa's preprocessor fails on the scene shaders: after a .z swizzle, with a
 function-like macro also named z, the next directive is a syntax error. The
 glsl edit renames the macro, and adds #version 130 for its bit operations.
 '''
-glsl = { match = '#define z\(a\)', edits = [['\bz\(', "zz("], ['^#define', "#version 130\n#define"]] }
+glsl = { match = '#define z\(a\)', edits = [['\bz\(', "zz("], ["^#define", "#version 130\n#define"]] }
 
 # K-wak by K-Rad Productions & The Dennis Courtney 5
 [zoo.74934]

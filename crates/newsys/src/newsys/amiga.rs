@@ -9,8 +9,6 @@ use crate::{SysOpts, backend::Backend, libloader, retro_emu, workfile::WorkFile}
 
 use super::System;
 
-pub use amiga::apply_fast;
-
 pub struct AmigaSystem {
     opts: AmigaOpts,
 }

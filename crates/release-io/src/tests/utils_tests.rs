@@ -84,3 +84,32 @@ fn splits_entry_names_on_backslashes() {
         Some(PathBuf::from("/t/4k_in_5k/intro.exe"))
     );
 }
+
+#[test]
+fn copy_dir_all_merges_ignoring_case() {
+    let src = tempfile::tempdir().unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    fs::create_dir_all(src.path().join("C")).unwrap();
+    fs::write(src.path().join("C/Echo"), "system").unwrap();
+    fs::write(src.path().join("C/Dir"), "system").unwrap();
+    fs::create_dir_all(dst.path().join("c")).unwrap();
+    fs::write(dst.path().join("c/echo"), "disk").unwrap();
+
+    copy_dir_all(src.path(), dst.path()).unwrap();
+
+    let names: Vec<_> = fs::read_dir(dst.path())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(names, ["c"]);
+    assert_eq!(
+        fs::read_to_string(dst.path().join("c/echo")).unwrap(),
+        "disk"
+    );
+    assert_eq!(fs::read_dir(dst.path().join("c")).unwrap().count(), 2);
+    assert_eq!(
+        fs::read_to_string(dst.path().join("c/Dir")).unwrap(),
+        "system"
+    );
+}

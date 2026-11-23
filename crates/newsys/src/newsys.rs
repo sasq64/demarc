@@ -179,10 +179,10 @@ pub use release_io::release_override::{BOOT_COMMAND, RELEASE_DIR, apply_override
 /// configuration written as one word (see [`amiga::apply_fast`]) and an entry
 /// that also names an option of its own means that one to stand.
 fn apply_override(file: &mut WorkFile, over: &Override) -> Result<()> {
-    if over.fast {
-        debug!("Override asks for the fast Amiga configuration");
-        amiga::apply_fast(file);
-    }
+    // if over.fast {
+    //     debug!("Override asks for the fast Amiga configuration");
+    //     amiga::apply_fast(file);
+    // }
     release_io::apply_override(file, over, system_dir())
 }
 

@@ -10,11 +10,14 @@ use tracing::{debug, info};
 
 use retro_core::system_dir;
 
-use crate::release::{collect_disk_images, walk_dir};
-use crate::release_override::RELEASE_DIR;
 use crate::utils::{copy_dir_all, has_any_extension, has_extension, read_header};
 use crate::workfile::WorkFile;
 use crate::{adf, dms};
+use crate::{amiga_config::set_amiga_config, release_override::RELEASE_DIR};
+use crate::{
+    amiga_config::{AmigaMeta, Machine},
+    release::{collect_disk_images, walk_dir},
+};
 
 /// Amiberry's libretro port. The libretro buildbot does not ship it, so it is
 /// downloaded from its own release instead (see `ALT_SOURCES`) — or taken from
@@ -287,152 +290,6 @@ pub struct AmigaOpts {
     pub unadf: bool,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
-enum Cpu {
-    M68000,
-    M68020,
-    M68030,
-    M68040,
-    M68060,
-}
-
-impl From<Cpu> for String {
-    fn from(value: Cpu) -> Self {
-        (match value {
-            Cpu::M68000 => "68000",
-            Cpu::M68020 => "68020",
-            Cpu::M68030 => "68030",
-            Cpu::M68040 => "68040",
-            Cpu::M68060 => "68060",
-        })
-        .into()
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Machine {
-    A500OLD,
-    A500,
-    A500PLUS,
-    A600,
-    A1200,
-    A4000,
-}
-
-impl From<Machine> for String {
-    fn from(value: Machine) -> Self {
-        (match value {
-            Machine::A500OLD => "A500OG",
-            Machine::A500 => "A500",
-            Machine::A500PLUS => "A500P",
-            Machine::A600 => "A600",
-            Machine::A1200 => "A1200",
-            Machine::A4000 => "A4040",
-        })
-        .into()
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Kickstart {
-    V12,
-    V13,
-    V20,
-    V31A1200,
-    V31A4000,
-}
-
-impl From<Kickstart> for String {
-    fn from(value: Kickstart) -> Self {
-        (match value {
-            Kickstart::V12 => "kick33180.A500",
-            Kickstart::V13 => "kick34005.A500",
-            Kickstart::V20 => "kick37175.A500",
-            Kickstart::V31A1200 => "kick40068.A1200",
-            Kickstart::V31A4000 => "kick40068.A4000",
-        })
-        .into()
-    }
-}
-
-trait AmigaMeta {
-    fn set_fast_mem(&mut self, mb: usize);
-    fn set_chip_mem(&mut self, mb: usize);
-    fn set_z3_mem(&mut self, mb: usize);
-    fn set_cpu(&mut self, cpu: Cpu);
-    fn set_machine(&mut self, machine: Machine);
-    fn set_kickstart(&mut self, kickstart: Kickstart);
-    fn set_fast(&mut self);
-    fn is_aga(&self) -> bool;
-}
-
-impl AmigaMeta for WorkFile {
-    fn set_fast_mem(&mut self, mb: usize) {
-        let mbs = mb.to_string();
-        self.set_meta("amiberry_fastmem_size", &mbs);
-    }
-
-    fn set_chip_mem(&mut self, mb: usize) {
-        let mbs = mb.to_string();
-        // if mb > 1 && self.get_meta_or("amiberry_machinetype", "") == "A500" {
-        //     self.set_machine(Machine::A500PLUS);
-        // }
-        self.set_meta("amiberry_chipmem_size", &mbs);
-    }
-
-    fn set_z3_mem(&mut self, mb: usize) {
-        let mbs = mb.to_string();
-        self.set_meta("amiberry_z3mem_size", &mbs);
-    }
-
-    fn set_cpu(&mut self, cpu: Cpu) {
-        self.set_meta("amiberry_cpu_model", cpu);
-    }
-
-    fn set_machine(&mut self, machine: Machine) {
-        self.set_meta("amiberry_model", machine);
-        if machine == Machine::A500PLUS {
-            if self.get_meta_or("amiberry_chipmem_size", "") == "" {
-                self.set_chip_mem(2);
-            }
-        }
-    }
-
-    fn set_kickstart(&mut self, kickstart: Kickstart) {
-        self.set_meta("amiberry_kickstart", kickstart);
-    }
-
-    fn set_fast(&mut self) {
-        self.set_machine(Machine::A1200);
-        self.set_cpu(Cpu::M68030);
-        self.set_fast_mem(8);
-        self.set_z3_mem(128);
-        self.set_meta("amiberry_jit", "enabled");
-        self.set_meta("amiberry_cpu_speed", "max");
-        self.set_meta("amiberry_fpu_model", "68882");
-    }
-
-    fn is_aga(&self) -> bool {
-        let model = self.get_meta_or("amiberry_model", "");
-        model == "A1200" || model == "A4000" || model == "A4040"
-    }
-}
-
-/// Put the work file on the fast Amiga configuration: an accelerated A1200 with
-/// fast and Zorro III memory, an FPU and the JIT. This is what `fast = true` in
-/// `overrides.toml` asks for, for the releases where the year-and-tags guessing
-/// in [`prepare`] picks a machine too small to run them.
-///
-/// Applied before the rest of an override's meta (see
-/// [`apply_override`](crate::apply_override)), so an entry that writes
-/// `fast = true` can still name a single option of its own and have that win.
-pub fn apply_fast(file: &mut WorkFile) {
-    file.set_fast();
-}
-
 /// The `C:Assign` lines the `assign` meta (`NAME=path;NAME=path`) asks for.
 /// They have to run before the demo does, so they go at the top of whichever
 /// startup-sequence ends up booting it — the generated one in [`handle_exe`],
@@ -667,40 +524,6 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     // resort so a release that only ships a mangled exe behaves as before.
     let mut broken = vec![];
 
-    let aga =
-        file.get_meta_or("platform", "").contains("AGA") || file.get_meta_or("aga", "") == "true";
-
-    if file.get_meta_or("amiberry_model", "") == "date" {
-        file.set_machine(Machine::A500);
-        if let Ok(year) = file.get_meta_or("year", "").parse::<u32>() {
-            if year < 1990 {
-                file.set_kickstart(Kickstart::V12);
-            } else if aga || opts.aga {
-                if year >= 1995 {
-                    file.set_fast();
-                } else {
-                    file.set_machine(Machine::A1200);
-                }
-            } else if year >= 1995 {
-                file.set_machine(Machine::A500PLUS);
-                file.set_chip_mem(2);
-            }
-        }
-    } else {
-        if aga || opts.aga {
-            file.set_machine(Machine::A1200);
-        } else {
-            file.set_machine(Machine::A500);
-        }
-    }
-    if opts.xmem {
-        file.set_fast_mem(8);
-        file.set_z3_mem(128);
-    }
-    if opts.fast {
-        file.set_fast();
-    }
-
     // The whole release goes into the generated drive, since the program
     // loads its parts and its music off it — unless we were handed one
     // loose executable, which has no release around it to copy. An
@@ -754,39 +577,12 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
             .then_with(|| a.cmp(b))
     });
 
-    if file.has_tag("requires-1mb-chipmem") {
-        file.set_machine(Machine::A500PLUS);
-        file.set_chip_mem(2);
-    }
-    if file.has_tag("requires-1mb-fastmem") {
-        file.set_fast_mem(1);
-    }
-    if file.has_tag("requires-68020") {
-        file.set_cpu(Cpu::M68020);
-    }
-    if file.has_tag("requires-68040") || file.has_tag("requires-68060") {
-        file.set_cpu(Cpu::M68040);
-    }
-
     if !file.is_aga() && opts.unadf {
-        file.set_chip_mem(4);
+        //file.set_chip_mem(4);
+        file.set_machine(Machine::A1200);
     }
 
-    //file.set_machine(Machine::A1200);
-    if opts.xmem {
-        file.set_fast_mem(8);
-        file.set_chip_mem(4);
-    }
-
-    if file.is_aga() && file.get_meta_or("amiberry_jit", "").is_empty() {
-        file.set_meta("amiberry_jit", "enabled");
-    }
-
-    if file.has_tag("amos") {
-        info!("AMOS DEMO");
-        file.set_fast();
-        file.set_chip_mem(4);
-    }
+    set_amiga_config(file)?;
 
     // `--unadf`: an AmigaDOS demo disk boots a good deal faster as a hard
     // drive than as a floppy the core has to seek around. Only for a single

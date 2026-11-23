@@ -148,18 +148,20 @@ pub fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>>
     Ok(buf)
 }
 
+/// Copy `src` into `dst`, keeping files already there. Names are matched
+/// ignoring case, as the Amiga and Atari drives these build see them, so `C/`
+/// merges into an existing `c/` instead of shadowing it.
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
-    fs::create_dir_all(&dst)?;
+    let dst = dst.as_ref();
+    fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
-        } else {
-            let target = dst.as_ref().join(entry.file_name());
-            if !target.exists() {
-                fs::copy(entry.path(), target)?;
-            }
+        let existing = entry.file_name().to_str().and_then(|n| find_child(dst, n));
+        let target = existing.unwrap_or_else(|| dst.join(entry.file_name()));
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(entry.path(), target)?;
+        } else if !target.exists() {
+            fs::copy(entry.path(), target)?;
         }
     }
     Ok(())

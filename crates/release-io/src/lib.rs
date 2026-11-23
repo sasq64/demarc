@@ -4,6 +4,7 @@
 
 pub mod adf;
 pub mod amiga;
+pub mod amiga_config;
 pub mod c64;
 pub mod cache;
 pub mod cbmconvert;
