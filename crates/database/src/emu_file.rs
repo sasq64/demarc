@@ -508,6 +508,11 @@ impl FileSource {
         on_progress: OnProgress<'_>,
     ) -> Result<(&PathBuf, Vec<&'static str>)> {
         let mut used = vec![];
+        if let FileSource::Url(urls) = self
+            && let Some(id) = urls.first().and_then(crate::demozoo_latest::production_id)
+        {
+            *urls = crate::demozoo_latest::download_urls(id)?;
+        }
         if let FileSource::Url(urls) = self {
             // The release's downloads as ways of getting at it, best first: a
             // disk set that sits together in one directory (built into an m3u

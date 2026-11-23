@@ -1,0 +1,73 @@
+{
+    "url": "https://demozoo.org/api/v1/productions/400824/?format=json",
+    "demozoo_url": "https://demozoo.org/productions/400824/",
+    "id": 400824,
+    "title": "BASIC Syntax 2026",
+    "author_nicks": [
+        {
+            "name": "Syntax Party Crew",
+            "abbreviation": "SPC",
+            "releaser": {
+                "url": "https://demozoo.org/api/v1/releasers/43051/?format=json",
+                "id": 43051,
+                "name": "Syntax Party Crew",
+                "is_group": true
+            }
+        }
+    ],
+    "author_affiliation_nicks": [],
+    "release_date": "2026-11-14",
+    "supertype": "production",
+    "platforms": [
+        {
+            "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+            "id": 4,
+            "name": "MS-Dos"
+        }
+    ],
+    "types": [
+        {
+            "url": "https://demozoo.org/api/v1/production_types/1/?format=json",
+            "id": 1,
+            "name": "Demo",
+            "supertype": "production"
+        }
+    ],
+    "credits": [],
+    "download_links": [],
+    "external_links": [],
+    "release_parties": [],
+    "competition_placings": [
+        {
+            "position": 4,
+            "ranking": "4",
+            "score": "92",
+            "competition": {
+                "id": 21403,
+                "name": "Oldskool Demo",
+                "party": {
+                    "url": "https://demozoo.org/api/v1/parties/5714/?format=json",
+                    "demozoo_url": "https://demozoo.org/parties/5714/",
+                    "id": 5714,
+                    "name": "Syntax 2026",
+                    "tagline": "",
+                    "start_date": "2026-11-13",
+                    "end_date": "2026-11-15",
+                    "location": "Melbourne, Victoria, Australia",
+                    "is_online": false,
+                    "country_code": "AU",
+                    "latitude": -37.814,
+                    "longitude": 144.96332,
+                    "website": "https://syntaxparty.org/"
+                }
+            }
+        }
+    ],
+    "invitation_parties": [],
+    "screenshots": [],
+    "tags": [],
+    "soundtracks": [],
+    "appearances_as_soundtrack": [],
+    "pack_contents": [],
+    "packed_in": []
+}

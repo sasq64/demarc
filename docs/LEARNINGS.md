@@ -1910,3 +1910,11 @@
 - CSDb's `date` is a year only (`date:2026`), unlike Demozoo's full dates, so
   sorting by date alone ties every party of a year. The release `id` is a
   usable tie-break: newer releases have higher ids.
+
+- Demozoo's API (`/api/v1/productions/`, needs `Authorization: Api-Key`) is
+  undocumented: `released_since=YYYY-MM-DD` filters by date, `ordering` is
+  ignored (results are by title), pages hold 100 whatever `page_size` says, and
+  the list has no download links — only a production's own page does. It
+  allows a burst of about 20 requests and then about 2 a second, answering 429
+  with `Retry-After`, so fetching every detail of two weeks took 3 minutes;
+  `demozoo_latest` looks the downloads up when an entry is loaded instead.

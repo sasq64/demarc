@@ -10,6 +10,7 @@ use newsys::system_dir;
 use retro_core::system_dir;
 
 pub mod csdb_latest;
+pub mod demozoo_latest;
 pub mod emu_file;
 pub mod files;
 pub mod load_error;

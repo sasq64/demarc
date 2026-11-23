@@ -1,0 +1,649 @@
+{
+    "url": "https://demozoo.org/api/v1/productions/400546/?format=json",
+    "demozoo_url": "https://demozoo.org/graphics/400546/",
+    "id": 400546,
+    "title": "Fire #47",
+    "author_nicks": [
+        {
+            "name": "Fire",
+            "abbreviation": "",
+            "releaser": {
+                "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                "id": 13963,
+                "name": "Fire",
+                "is_group": true
+            }
+        }
+    ],
+    "author_affiliation_nicks": [],
+    "release_date": "2026-11-11",
+    "supertype": "graphics",
+    "platforms": [
+        {
+            "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+            "id": 4,
+            "name": "MS-Dos"
+        }
+    ],
+    "types": [
+        {
+            "url": "https://demozoo.org/api/v1/production_types/51/?format=json",
+            "id": 51,
+            "name": "Artpack",
+            "supertype": "graphics"
+        }
+    ],
+    "credits": [
+        {
+            "nick": {
+                "name": "Abstrakt",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/10658/?format=json",
+                    "id": 10658,
+                    "name": "Abstrakt",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Aesthetic",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/11849/?format=json",
+                    "id": 11849,
+                    "name": "Aesthetic",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Arrogance, Ice of Darkness, Darkice",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/17313/?format=json",
+                    "id": 17313,
+                    "name": "aCK",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Cleaner",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/9797/?format=json",
+                    "id": 9797,
+                    "name": "Cleaner",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Filth",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/17742/?format=json",
+                    "id": 17742,
+                    "name": "Filth",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "H7",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/3012/?format=json",
+                    "id": 3012,
+                    "name": "H7",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Nail",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/11620/?format=json",
+                    "id": 11620,
+                    "name": "Nail",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Savage",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/14161/?format=json",
+                    "id": 14161,
+                    "name": "Savage",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Tainted",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/25521/?format=json",
+                    "id": 25521,
+                    "name": "Tainted",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Toon Goon",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/79712/?format=json",
+                    "id": 79712,
+                    "name": "Toon Goon",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Zir",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/46159/?format=json",
+                    "id": 46159,
+                    "name": "Zir",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Grymmjack",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/43109/?format=json",
+                    "id": 43109,
+                    "name": "Grymmjack",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "harvest",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/127889/?format=json",
+                    "id": 127889,
+                    "name": "harvest",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "KRL",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/142968/?format=json",
+                    "id": 142968,
+                    "name": "KRL",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Zeus II",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/37725/?format=json",
+                    "id": 37725,
+                    "name": "Zeus II",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        },
+        {
+            "nick": {
+                "name": "Exregius",
+                "abbreviation": "",
+                "releaser": {
+                    "url": "https://demozoo.org/api/v1/releasers/73924/?format=json",
+                    "id": 73924,
+                    "name": "Alpha King",
+                    "is_group": false
+                }
+            },
+            "category": "Graphics",
+            "role": ""
+        }
+    ],
+    "download_links": [
+        {
+            "link_class": "BaseUrl",
+            "url": "https://16colo.rs/archive/2026/fire-47.zip"
+        }
+    ],
+    "external_links": [
+        {
+            "link_class": "SixteenColorsPack",
+            "url": "https://16colo.rs/pack/fire-47/"
+        }
+    ],
+    "release_parties": [],
+    "competition_placings": [],
+    "invitation_parties": [],
+    "screenshots": [
+        {
+            "original_url": "https://media.demozoo.org/screens/o/21/27/d61c.394546.png",
+            "original_width": 405,
+            "original_height": 368,
+            "standard_url": "https://media.demozoo.org/screens/s/21/27/d61c.394546.png",
+            "standard_width": 330,
+            "standard_height": 300,
+            "thumbnail_url": "https://media.demozoo.org/screens/t/21/27/d61c.394546.png",
+            "thumbnail_width": 165,
+            "thumbnail_height": 150
+        }
+    ],
+    "tags": [],
+    "soundtracks": [],
+    "appearances_as_soundtrack": [],
+    "pack_contents": [
+        {
+            "url": "https://demozoo.org/api/v1/productions/396540/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396540/",
+            "id": 396540,
+            "title": "Aspen",
+            "author_nicks": [
+                {
+                    "name": "Nail",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/11620/?format=json",
+                        "id": 11620,
+                        "name": "Nail",
+                        "is_group": false
+                    }
+                },
+                {
+                    "name": "Tainted",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/25521/?format=json",
+                        "id": 25521,
+                        "name": "Tainted",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Fire",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                        "id": 13963,
+                        "name": "Fire",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/396550/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396550/",
+            "id": 396550,
+            "title": "Rapunzel @ Evoke",
+            "author_nicks": [
+                {
+                    "name": "Nail",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/11620/?format=json",
+                        "id": 11620,
+                        "name": "Nail",
+                        "is_group": false
+                    }
+                },
+                {
+                    "name": "Savage",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/14161/?format=json",
+                        "id": 14161,
+                        "name": "Savage",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Fire",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                        "id": 13963,
+                        "name": "Fire",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/396547/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396547/",
+            "id": 396547,
+            "title": "Welle: Erdball",
+            "author_nicks": [
+                {
+                    "name": "Nail",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/11620/?format=json",
+                        "id": 11620,
+                        "name": "Nail",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Fire",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                        "id": 13963,
+                        "name": "Fire",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/396552/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396552/",
+            "id": 396552,
+            "title": "the FiRE still burns!!",
+            "author_nicks": [
+                {
+                    "name": "Tainted",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/25521/?format=json",
+                        "id": 25521,
+                        "name": "Tainted",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Fire",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                        "id": 13963,
+                        "name": "Fire",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/396545/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396545/",
+            "id": 396545,
+            "title": "Saint Amiga",
+            "author_nicks": [
+                {
+                    "name": "H7",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/3012/?format=json",
+                        "id": 3012,
+                        "name": "H7",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Tristar and Red Sector Inc.",
+                    "abbreviation": "TRSI",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/69/?format=json",
+                        "id": 69,
+                        "name": "Tristar and Red Sector Inc.",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/396551/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/396551/",
+            "id": 396551,
+            "title": "evoke",
+            "author_nicks": [
+                {
+                    "name": "Abstrakt",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/10658/?format=json",
+                        "id": 10658,
+                        "name": "Abstrakt",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Fire",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/13963/?format=json",
+                        "id": 13963,
+                        "name": "Fire",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": "2026-08-22",
+            "supertype": "graphics",
+            "platforms": [
+                {
+                    "url": "https://demozoo.org/api/v1/platforms/4/?format=json",
+                    "id": 4,
+                    "name": "MS-Dos"
+                }
+            ],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": []
+        },
+        {
+            "url": "https://demozoo.org/api/v1/productions/400573/?format=json",
+            "demozoo_url": "https://demozoo.org/graphics/400573/",
+            "id": 400573,
+            "title": "Flourish",
+            "author_nicks": [
+                {
+                    "name": "harvest",
+                    "abbreviation": "",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/127889/?format=json",
+                        "id": 127889,
+                        "name": "harvest",
+                        "is_group": false
+                    }
+                }
+            ],
+            "author_affiliation_nicks": [
+                {
+                    "name": "Lazarus",
+                    "abbreviation": "LAZ",
+                    "releaser": {
+                        "url": "https://demozoo.org/api/v1/releasers/17810/?format=json",
+                        "id": 17810,
+                        "name": "Lazarus",
+                        "is_group": true
+                    }
+                }
+            ],
+            "release_date": null,
+            "supertype": "graphics",
+            "platforms": [],
+            "types": [
+                {
+                    "url": "https://demozoo.org/api/v1/production_types/26/?format=json",
+                    "id": 26,
+                    "name": "ANSI",
+                    "supertype": "graphics"
+                }
+            ],
+            "tags": [
+                "textmode",
+                "16-colors"
+            ]
+        }
+    ],
+    "packed_in": []
+}

@@ -10,8 +10,8 @@ use anyhow::Result;
 use indexmap::{IndexMap, IndexSet};
 use tracing::{debug, warn};
 
-use database::csdb_latest;
 use database::emu_file::{Award, CompactDate, EmuFile};
+use database::{csdb_latest, demozoo_latest};
 use retro_ui::fuzzy_list::{AllWordsSource, FuzzySource, ListIcon, WordsIconSource};
 
 pub mod picker_sources;
@@ -736,14 +736,18 @@ fn category_entries(path: &[&str], files: &'static [EmuFile]) -> Option<PickerSo
 /// minimarc's Demozoo root: no Platforms or Awards. Call before
 /// [`setup_navigator`], so it is matched first.
 pub fn setup_phone(navigator: &mut Navigator) -> Result<()> {
-    navigator.register_db("Demozoo", "", |_path: &[&str], _files: &'static [EmuFile]| {
-        Some(WordsIconSource::new(vec![
-            ("All".into(), ALL_ICON),
-            ("Parties".into(), PARTIES_ICON),
-            ("Categories".into(), CATEGORIES_ICON),
-            ("Authors".into(), AUTHOR_ICON),
-        ]))
-    })
+    navigator.register_db(
+        "Demozoo",
+        "",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            Some(WordsIconSource::new(vec![
+                ("All".into(), ALL_ICON),
+                ("Parties".into(), PARTIES_ICON),
+                ("Categories".into(), CATEGORIES_ICON),
+                ("Authors".into(), AUTHOR_ICON),
+            ]))
+        },
+    )
 }
 
 pub fn setup_navigator(
@@ -955,6 +959,45 @@ pub fn setup_navigator(
         "System",
         |_path: &[&str], _files: &'static [EmuFile]| {
             Some(PickerSource::new(b, None, IconMode::Platforms))
+        },
+    )?;
+    navigator.register_db(
+        "Demozoo",
+        "",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            Some(WordsIconSource::new(vec![
+                ("All".into(), ALL_ICON),
+                ("Parties".into(), PARTIES_ICON),
+                ("Platforms".into(), PLATFORMS_ICON),
+                ("Categories".into(), CATEGORIES_ICON),
+                ("Authors".into(), AUTHOR_ICON),
+                ("Awards".into(), AWARDS_ICON),
+                ("New Releases".into(), NEW_ICON),
+            ]))
+        },
+    )?;
+    navigator.register_db(
+        "Demozoo",
+        "New Releases",
+        |_path: &[&str], _files: &'static [EmuFile]| {
+            let files = demozoo_latest::new_releases()
+                .inspect_err(|e| warn!("Demozoo new releases: {e:#}"))
+                .ok()?;
+            Some(PickerSource::new(files, None, IconMode::Platforms))
+        },
+    )?;
+    navigator.register_db(
+        "Demozoo",
+        "New Releases/{id}/dls",
+        |path: &[&str], _files: &'static [EmuFile]| {
+            let files = demozoo_latest::new_releases().ok()?;
+            let mut file = files.get(path[1].parse::<usize>().ok()?)?.clone();
+            let urls = demozoo_latest::download_urls(file.get_meta("id"))
+                .inspect_err(|e| warn!("{e:#}"))
+                .ok()?;
+            file.meta
+                .insert_if_absent("download", database::files::leak(urls.as_slice().join(";")));
+            Some(DownloadSource::new(&file))
         },
     )?;
     navigator.register("", |_path: &[&str], _files: &'static [EmuFile]| {
