@@ -791,7 +791,10 @@ fn create_bind_group(
 const AUDIO_BUF: (usize, usize) = (3000, 18000);
 
 /// Frames the picture is held back, to meet the sound.
-const VIDEO_DELAY: usize = 10;
+const VIDEO_DELAY: usize = 12;
+
+/// How long after the pointer last moved the picture stays undelayed.
+const POINTER_UNDELAY: Duration = Duration::from_secs(2);
 
 // -------------------------------------------------------------------------
 // Touch
@@ -992,6 +995,8 @@ pub struct App {
     gesture: Gesture,
     /// Mouse movement not yet a whole mouse unit.
     mouse_rest: (f64, f64),
+    /// When the pointer last moved, see `POINTER_UNDELAY`.
+    pointer_moved: Option<Instant>,
     frame_time: Duration,
     next_frame: Instant,
     disk: u32,
@@ -1030,6 +1035,7 @@ impl App {
             pinch: None,
             gesture: Gesture::None,
             mouse_rest: (0.0, 0.0),
+            pointer_moved: None,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
             disk: 0,
@@ -1406,6 +1412,7 @@ impl App {
         let x = self.mouse_rest.0 + dx * MOUSE_SPEED;
         let y = self.mouse_rest.1 + dy * MOUSE_SPEED;
         self.mouse_rest = (x.fract(), y.fract());
+        self.pointer_moved = Some(Instant::now());
         Backend::add_mouse_motion(core, x.trunc() as f32, y.trunc() as f32);
     }
 
@@ -1582,6 +1589,11 @@ impl App {
         let adjust = rate_adjust(self.audio_fill, AUDIO_BUF.0, AUDIO_BUF.1);
         self.audio.set_adjust(adjust);
 
+        let pointing = matches!(self.gesture, Gesture::Pointer { .. })
+            || self
+                .pointer_moved
+                .is_some_and(|t| t.elapsed() < POINTER_UNDELAY);
+        let delay = if pointing { 0 } else { VIDEO_DELAY };
         let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
             return;
         };
@@ -1593,11 +1605,10 @@ impl App {
         if width == 0 || height == 0 {
             return;
         }
-        let mut buf = if self.frames.len() > VIDEO_DELAY {
-            self.frames.pop_front().map(|f| f.2).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let mut buf = Vec::new();
+        while self.frames.len() > delay {
+            buf = self.frames.pop_front().map(|f| f.2).unwrap_or_default();
+        }
         core.with_frame(|w, h, pixels| {
             buf.clear();
             buf.extend_from_slice(&pixels[..w * h]);
