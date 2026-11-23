@@ -795,6 +795,8 @@ const VIDEO_DELAY: usize = 12;
 
 /// How long after the pointer last moved the picture stays undelayed.
 const POINTER_UNDELAY: Duration = Duration::from_secs(2);
+/// How far, in physical pixels, a pointer finger must move before it undelays.
+const POINTER_DELTA: f64 = 24.0;
 
 // -------------------------------------------------------------------------
 // Touch
@@ -1008,8 +1010,7 @@ pub struct App {
 impl App {
     /// An app browsing the databases at `dbs`; only the first must exist.
     pub fn new(dbs: Vec<PathBuf>) -> Self {
-        let mut ui = Ui::new();
-        ui.status("Loading database...");
+        let ui = Ui::new();
         let loader = Loader::new();
         loader.load_db(dbs);
         Self {
@@ -1262,12 +1263,20 @@ impl App {
                 touch.1 = pos;
                 if mine
                     && self.touches.len() == 1
-                    && matches!(self.gesture, Gesture::Pointer { .. })
+                    && let Gesture::Pointer { start, .. } = self.gesture
                 {
+                    if (pos.0 - start.0).hypot(pos.1 - start.1) > POINTER_DELTA {
+                        self.pointer_moved = Some(Instant::now());
+                    }
                     self.move_mouse(dx, dy);
                 }
             }
-            None if t.phase == TouchPhase::Started => self.touches.push((t.id, pos)),
+            None if t.phase == TouchPhase::Started => {
+                self.touches.push((t.id, pos));
+                if self.touches.len() > 1 {
+                    self.pointer_moved = None;
+                }
+            }
             None => {}
         }
         if let Some(start) = self.pinch {
@@ -1412,7 +1421,6 @@ impl App {
         let x = self.mouse_rest.0 + dx * MOUSE_SPEED;
         let y = self.mouse_rest.1 + dy * MOUSE_SPEED;
         self.mouse_rest = (x.fract(), y.fract());
-        self.pointer_moved = Some(Instant::now());
         Backend::add_mouse_motion(core, x.trunc() as f32, y.trunc() as f32);
     }
 
@@ -1508,7 +1516,6 @@ impl App {
     }
 
     fn load(&mut self, file: EmuFile) {
-        self.ui.status("Loading...");
         self.ui.playing = Some(file.clone());
         self.loader.load_demo(file);
     }
@@ -1589,10 +1596,11 @@ impl App {
         let adjust = rate_adjust(self.audio_fill, AUDIO_BUF.0, AUDIO_BUF.1);
         self.audio.set_adjust(adjust);
 
-        let pointing = matches!(self.gesture, Gesture::Pointer { .. })
-            || self
-                .pointer_moved
-                .is_some_and(|t| t.elapsed() < POINTER_UNDELAY);
+        let pointing = self.touches.len() < 2
+            && self.pointer_moved.is_some_and(|t| {
+                t.elapsed() < POINTER_UNDELAY
+                    || matches!(self.gesture, Gesture::Pointer { began, .. } if t >= began)
+            });
         let delay = if pointing { 0 } else { VIDEO_DELAY };
         let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
             return;
