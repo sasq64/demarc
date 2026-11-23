@@ -20,11 +20,11 @@ use crate::emulator::{Emulator, InputMode};
 use crate::frontend::EmuView;
 use crate::frontend::FrontendSet;
 use crate::fuzzy_list::AllWordsSource;
-use crate::message_box::ShowMessage;
 use crate::media_keys::{self, MediaKeyEvent, MediaKeyInfo};
+use crate::message_box::ShowMessage;
 use crate::navigator::Navigator;
-use crate::post_process::PostProcess;
 use crate::playlists::{PlaylistPicker, Playlists};
+use crate::post_process::PostProcess;
 use crate::shader_dialog::ShowShaderDialog;
 use crate::ui::{FuzzyListSelect, HudLocation, SetHudText, ShowFuzzyList, UiState};
 

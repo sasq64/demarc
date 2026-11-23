@@ -174,7 +174,10 @@ fn a_demozoo_amiga_disk_is_prepared_for_amiberry() {
     let demo = prepare_with(file, None).unwrap();
     assert_eq!(demo.platform, Platform::Amiga);
     assert_eq!(demo.platform.core(), "amiberry");
-    assert_eq!(demo.work.get_meta_or("amiberry_kickstart", ""), "kick33180.A500");
+    assert_eq!(
+        demo.work.get_meta_or("amiberry_kickstart", ""),
+        "kick33180.A500"
+    );
     assert_eq!(demo.work.get_meta_or("amiberry_jit", ""), "disabled");
     assert!(demo.info.ends_with("Amiga Demo"), "{}", demo.info);
 }

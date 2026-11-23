@@ -318,7 +318,8 @@ fn shuffle_launches_and_is_undone_on_return() {
     let lines: String = (1..=20)
         .map(|i| format!("id:{i}\ttitle:T{i:02}\tauthor:G\tparty:Evoke 2005;Demo;{i}\tdownload:http://x/{i}.zip\n"))
         .collect();
-    let dbs: IndexMap<String, &'static [EmuFile]> = [("Demozoo".to_string(), db(lines.leak()))].into();
+    let dbs: IndexMap<String, &'static [EmuFile]> =
+        [("Demozoo".to_string(), db(lines.leak()))].into();
     let mut navigator = Navigator::new();
     setup_navigator(&dbs, &mut navigator, &system_dir()).unwrap();
     navigator.goto("Demozoo/Parties/Evoke 2005/Demo");
@@ -353,4 +354,3 @@ fn glob() {
 fn system_dir() -> PathBuf {
     PathBuf::from(env!("DEMARC_ROOT")).join("system")
 }
-

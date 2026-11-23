@@ -187,7 +187,10 @@ impl Ui {
     /// Browse `files`, starting inside the database rather than at a root
     /// list with one row in it.
     pub fn set_db(&mut self, dbs: Vec<(String, &'static [EmuFile])>) -> anyhow::Result<()> {
-        let name = dbs.first().map(|(name, _)| name.clone()).unwrap_or_default();
+        let name = dbs
+            .first()
+            .map(|(name, _)| name.clone())
+            .unwrap_or_default();
         let several = dbs.len() > 1;
         crate::web::set_dbs(dbs.clone());
         let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();

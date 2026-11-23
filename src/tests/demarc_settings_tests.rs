@@ -126,6 +126,9 @@ fn amiga_settings_map_to_run_wide_meta() {
     assert!(!meta.contains_key("amiberry_bogomem_size"));
 
     apply_amiga(&old, &new, &mut meta);
-    assert_eq!(meta.remove("amiberry_floppy_sound").as_deref(), Some("enabled"));
+    assert_eq!(
+        meta.remove("amiberry_floppy_sound").as_deref(),
+        Some("enabled")
+    );
     assert!(meta.is_empty(), "{meta:?}");
 }

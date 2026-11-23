@@ -20,9 +20,8 @@ impl MessageBox {
 
     pub fn show(&mut self, ctx: &egui::Context) {
         let Some(text) = &self.text else { return };
-        let mut closing = ctx.input_mut(|i| {
-            take_key(i, egui::Key::Enter) + take_key(i, egui::Key::Escape) > 0
-        });
+        let mut closing =
+            ctx.input_mut(|i| take_key(i, egui::Key::Enter) + take_key(i, egui::Key::Escape) > 0);
         egui::Area::new(egui::Id::new("message_box"))
             .order(egui::Order::Tooltip)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

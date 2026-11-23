@@ -27,7 +27,9 @@ fn open_box(
     mut mb: ResMut<MessageBox>,
     mut hud: ResMut<HudState>,
 ) {
-    let Some(msg) = reader.read().last() else { return };
+    let Some(msg) = reader.read().last() else {
+        return;
+    };
     if !mb.0.is_open() {
         hud.set_settings_open(true);
     }

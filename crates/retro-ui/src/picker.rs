@@ -652,11 +652,8 @@ impl<T: 'static> Picker<T> {
                     ui.horizontal(|ui| {
                         let font = picker_font(ctx, QUERY_SIZE);
                         let shuffle = source.can_shuffle().then(|| {
-                            ui.painter().layout_no_wrap(
-                                "".into(),
-                                font.clone(),
-                                theme.picker.text,
-                            )
+                            ui.painter()
+                                .layout_no_wrap("".into(), font.clone(), theme.picker.text)
                         });
                         let shuffle_width = shuffle.as_ref().map_or(0.0, |g| {
                             g.size().x

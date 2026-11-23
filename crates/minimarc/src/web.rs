@@ -21,7 +21,11 @@ fn path_in(kind: &str, name: &str, files: &[EmuFile]) -> Option<Vec<String>> {
             .any(|f| f.get_meta("author").split(" & ").any(|a| a == name)),
         _ => false,
     };
-    let root = if kind == "event" { "Parties" } else { "Authors" };
+    let root = if kind == "event" {
+        "Parties"
+    } else {
+        "Authors"
+    };
     found.then(|| vec![root.to_owned(), name.to_owned()])
 }
 

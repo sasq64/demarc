@@ -309,7 +309,10 @@ fn collect_db_header_url_value() {
         &DbFilter::default(),
         &mut out,
     );
-    assert_eq!(out[0].get_meta("release_url"), "https://csdb.dk/release/?id={id}");
+    assert_eq!(
+        out[0].get_meta("release_url"),
+        "https://csdb.dk/release/?id={id}"
+    );
     assert_eq!(out[0].get_meta("release_css"), "csdb.css");
 }
 
