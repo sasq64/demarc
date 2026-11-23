@@ -203,7 +203,7 @@ pub fn set_amiga_config(file: &mut WorkFile) -> Result<()> {
         machine = Machine::A1230;
     }
     if file.has_tag("requires-68040") || file.has_tag("requires-68060") {
-        machine = Machine::A4000;
+        machine = Machine::A1240;
     }
     file.set_machine(machine);
 
