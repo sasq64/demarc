@@ -357,7 +357,6 @@ fast = true
 
 [zoo.160452]
 boot = "hoffman-everyway"
-meta = { amiga_model = "A1200" }
 
 [zoo.3640]
 meta = { amiga_model = "A1200" }
@@ -365,8 +364,17 @@ meta = { amiga_model = "A1200" }
 [zoo.136336]
 meta = { amiga_model = "A1200" }
 
+[zoo.336653]
+meta = { amiga_model = "A500" }
+
+[zoo.645]
+meta = { amiga_model = "A1200" }
+
 [zoo.55576]
 meta = { amiga_model = "A1230" }
+
+[zoo.277286]
+meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
 
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
