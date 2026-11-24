@@ -824,11 +824,6 @@ enum Gesture {
         button: Button,
         over: bool,
     },
-    /// Holding a mouse button on the key bar.
-    Mouse {
-        id: u64,
-        button: Button,
-    },
     /// Moving the mouse on an Amiga; a tap opens or closes the key bar.
     Pointer {
         id: u64,
@@ -849,7 +844,6 @@ impl Gesture {
             Gesture::Swipe { id, .. }
             | Gesture::Key { id, .. }
             | Gesture::Button { id, .. }
-            | Gesture::Mouse { id, .. }
             | Gesture::Pointer { id, .. }
             | Gesture::Nav { id, .. } => Some(id),
         }
@@ -859,7 +853,6 @@ impl Gesture {
     fn held(self) -> Option<Button> {
         match self {
             Gesture::Key { button, .. } => button,
-            Gesture::Mouse { button, .. } => Some(button),
             Gesture::Button { button, over, .. } => over.then_some(button),
             _ => None,
         }
@@ -928,6 +921,7 @@ struct Perf {
     core: Stat,
     ui: Stat,
     render: Stat,
+    audio_min: Option<usize>,
 }
 
 impl Perf {
@@ -944,14 +938,15 @@ impl Perf {
             let per_sec = |n: u32| n as f64 / secs;
             info!(
                 "perf: ticks {:.1}/s, core {:.1}/s {}, draws {:.1}/s ui {} render {}, \
-                 max gap {:.1}ms",
+                 max gap {:.1}ms, audio min {:?}",
                 per_sec(self.ticks),
                 per_sec(self.core.n),
                 self.core,
                 per_sec(self.render.n),
                 self.ui,
                 self.render,
-                self.gap_max.as_secs_f64() * 1000.0
+                self.gap_max.as_secs_f64() * 1000.0,
+                self.audio_min
             );
             *self = Perf {
                 since: Some(now),
@@ -995,6 +990,9 @@ pub struct App {
     /// How far apart two fingers started, while they may still pinch.
     pinch: Option<f64>,
     gesture: Gesture,
+    /// The finger holding a mouse button on the key bar, apart from `gesture`
+    /// so another finger can move the mouse meanwhile.
+    mouse: Option<(u64, Button)>,
     /// Mouse movement not yet a whole mouse unit.
     mouse_rest: (f64, f64),
     /// When the pointer last moved, see `POINTER_UNDELAY`.
@@ -1033,6 +1031,7 @@ impl App {
             keys_down: HashMap::new(),
             last_key_frame: None,
             touches: Vec::new(),
+            mouse: None,
             pinch: None,
             gesture: Gesture::None,
             mouse_rest: (0.0, 0.0),
@@ -1262,7 +1261,7 @@ impl App {
                 let (dx, dy) = (pos.0 - touch.1.0, pos.1 - touch.1.1);
                 touch.1 = pos;
                 if mine
-                    && self.touches.len() == 1
+                    && self.fingers() == 1
                     && let Gesture::Pointer { start, .. } = self.gesture
                 {
                     if (pos.0 - start.0).hypot(pos.1 - start.1) > POINTER_DELTA {
@@ -1273,7 +1272,7 @@ impl App {
             }
             None if t.phase == TouchPhase::Started => {
                 self.touches.push((t.id, pos));
-                if self.touches.len() > 1 {
+                if self.fingers() > 1 {
                     self.pointer_moved = None;
                 }
             }
@@ -1291,15 +1290,17 @@ impl App {
         match t.phase {
             TouchPhase::Started => {
                 let id = t.id;
-                if let Some(button) = self.ui.key_at(pos.0, pos.1) {
+                if let Some(button) = self.ui.key_at(pos.0, pos.1)
+                    && matches!(button, Button::MouseLeft | Button::MouseRight)
+                {
+                    self.release_mouse();
+                    self.set_mouse_buttons(
+                        button == Button::MouseLeft,
+                        button == Button::MouseRight,
+                    );
+                    self.mouse = Some((id, button));
+                } else if let Some(button) = self.ui.key_at(pos.0, pos.1) {
                     let gesture = match button.key() {
-                        _ if matches!(button, Button::MouseLeft | Button::MouseRight) => {
-                            self.set_mouse_buttons(
-                                button == Button::MouseLeft,
-                                button == Button::MouseRight,
-                            );
-                            Gesture::Mouse { id, button }
-                        }
                         Some(key) => {
                             self.press(key, true, self.mods());
                             Gesture::Key {
@@ -1324,7 +1325,7 @@ impl App {
                                 began: Instant::now(),
                             };
                         }
-                        _ => self.pinch = (self.touches.len() == 2).then(|| self.finger_gap()),
+                        _ => self.pinch = (self.fingers() == 2).then(|| self.finger_gap()),
                     }
                 } else if self.touches.len() == 1 {
                     let began = Instant::now();
@@ -1361,6 +1362,9 @@ impl App {
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 self.touches.retain(|&(id, _)| id != t.id);
                 self.pinch = None;
+                if self.mouse.is_some_and(|(id, _)| id == t.id) {
+                    self.release_mouse();
+                }
                 if !mine {
                     return;
                 }
@@ -1393,8 +1397,10 @@ impl App {
 
     /// Distance between the first two fingers down.
     fn finger_gap(&self) -> f64 {
-        match self.touches.as_slice() {
-            [(_, a), (_, b), ..] => (a.0 - b.0).hypot(a.1 - b.1),
+        let mouse = self.mouse.map(|(id, _)| id);
+        let mut it = self.touches.iter().filter(|(id, _)| Some(*id) != mouse);
+        match (it.next(), it.next()) {
+            (Some((_, a)), Some((_, b))) => (a.0 - b.0).hypot(a.1 - b.1),
             _ => 0.0,
         }
     }
@@ -1403,9 +1409,23 @@ impl App {
     fn set_gesture(&mut self, gesture: Gesture) {
         match std::mem::replace(&mut self.gesture, gesture) {
             Gesture::Key { key, .. } => self.press(key, false, self.mods()),
-            Gesture::Mouse { .. } => self.set_mouse_buttons(false, false),
             _ => {}
         }
+    }
+
+    fn release_mouse(&mut self) {
+        if self.mouse.take().is_some() {
+            self.set_mouse_buttons(false, false);
+        }
+    }
+
+    /// Fingers down, not counting one holding a mouse button.
+    fn fingers(&self) -> usize {
+        let mouse = self.mouse.map(|(id, _)| id);
+        self.touches
+            .iter()
+            .filter(|(id, _)| Some(*id) != mouse)
+            .count()
     }
 
     fn set_mouse_buttons(&mut self, left: bool, right: bool) {
@@ -1551,6 +1571,7 @@ impl App {
         self.touches.clear();
         self.pinch = None;
         self.set_gesture(Gesture::None);
+        self.release_mouse();
     }
 
     /// Step the core one frame and hand the result to the GPU. Without a
@@ -1593,10 +1614,14 @@ impl App {
             }
         }
         self.audio_fill = smooth_fill(self.audio_fill, self.audio.occupied_len());
+        if let Some(perf) = self.perf.as_mut() {
+            let n = self.audio.occupied_len();
+            perf.audio_min = Some(perf.audio_min.map_or(n, |m| m.min(n)));
+        }
         let adjust = rate_adjust(self.audio_fill, AUDIO_BUF.0, AUDIO_BUF.1);
         self.audio.set_adjust(adjust);
 
-        let pointing = self.touches.len() < 2
+        let pointing = self.fingers() < 2
             && self.pointer_moved.is_some_and(|t| {
                 t.elapsed() < POINTER_UNDELAY
                     || matches!(self.gesture, Gesture::Pointer { began, .. } if t >= began)
@@ -1832,7 +1857,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => self.cancel_touch(),
             WindowEvent::RedrawRequested => {
                 if let Some(gfx) = self.gfx.as_mut() {
-                    self.ui.key_held = self.gesture.held();
+                    self.ui.key_held = self.mouse.map(|(_, b)| b).or(self.gesture.held());
                     let began = Instant::now();
                     let (frame, picked) = gfx.run_ui(&mut self.ui);
                     let drawn = Instant::now();
