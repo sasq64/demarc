@@ -53,7 +53,7 @@ VERSION_CODE=2 scripts/run-android.sh --bundle
 # -> android/app/build/outputs/bundle/release/app-release.aab
 ```
 
-`versionCode` must go up with every upload (1–5 are used). Bump `versionName`
+`versionCode` must go up with every upload (1–6 are used). Bump `versionName`
 in `app/build.gradle.kts` for user-visible releases.
 
 ### Publishing from the command line
