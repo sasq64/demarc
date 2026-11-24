@@ -3,6 +3,7 @@
 # Can also add meta data and patch files from the archive, data as base64 and full replacement for now
 # 'fast = true' runs an Amiga release on an accelerated A1200 (68030+FPU, 8MB fast, 128MB Z3, JIT);
 # options written in the same entry are applied on top of it.
+# 'unadf = true' boots a single AmigaDOS floppy as a hard drive, like --unadf.
 
 # For Norah
 [csdb.197970]
@@ -373,8 +374,9 @@ meta = { amiga_model = "A1200" }
 [zoo.55576]
 meta = { amiga_model = "A1230" }
 
+# Beam riders
 [zoo.179518]
-meta = { amiga_model = "A1230" }
+meta = { amiga_model = "A1240" }
 
 [zoo.277286]
 meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
@@ -388,6 +390,23 @@ meta = { amiga_model = "A500PLUS" }
 
 [zoo.252869]
 meta = { amiga_model = "A1200FAST" }
+
+# Rubbur
+[zoo.384810]
+meta = { amiga_model = "A1200FAST" }
+boot = "Rubber.exe"
+
+[zoo.396629]
+meta = { amiga_model = "A1200FAST" }
+unadf = true
+
+[zoo.5312]
+# meta = { amiga_model = "A12" }
+unadf = true
+
+[zoo.136366]
+# meta = { amiga_model = "A500PLUS" }
+unadf = true
 
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
