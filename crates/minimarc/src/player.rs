@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use tracing::info;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, Touch, TouchPhase, WindowEvent};
+use winit::event::{DeviceId, ElementState, KeyEvent, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -802,6 +802,56 @@ const POINTER_DELTA: f64 = 24.0;
 // Touch
 // -------------------------------------------------------------------------
 
+/// Whether `device` is a touchpad rather than the screen. winit reports its
+/// touches in pad coordinates as if on the screen; the Titan's keyboard is one.
+#[cfg(target_os = "android")]
+fn is_touchpad(device: DeviceId) -> bool {
+    use jni::JavaVM;
+    use jni::objects::JValue;
+
+    const TOUCHSCREEN: i32 = 0x1002;
+    const TOUCHPAD: i32 = 0x0010_0008;
+    // winit keeps the Android id private; its Debug is `DeviceId(DeviceId(6))`.
+    let Ok(id) = format!("{device:?}")
+        .trim_start_matches("DeviceId(")
+        .trim_end_matches(')')
+        .parse::<i32>()
+    else {
+        return false;
+    };
+    let Some(app) = crate::web::app() else {
+        return false;
+    };
+    let result = (|| -> jni::errors::Result<i32> {
+        // SAFETY: the pointer stays valid for as long as the activity.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast())? };
+        let mut env = vm.attach_current_thread()?;
+        let call = env.call_static_method(
+            "android/view/InputDevice",
+            "getDevice",
+            "(I)Landroid/view/InputDevice;",
+            &[JValue::Int(id)],
+        );
+        if call.is_err() {
+            let _ = env.exception_clear();
+        }
+        let input = call?.l()?;
+        if input.is_null() {
+            return Ok(0);
+        }
+        env.call_method(&input, "getSources", "()I", &[])?.i()
+    })();
+    let sources = result.unwrap_or(0);
+    let touchpad = sources & TOUCHPAD == TOUCHPAD && sources & TOUCHSCREEN != TOUCHSCREEN;
+    tracing::info!("Touch device {id}: sources {sources:#x}, touchpad {touchpad}");
+    touchpad
+}
+
+#[cfg(not(target_os = "android"))]
+fn is_touchpad(_device: DeviceId) -> bool {
+    false
+}
+
 /// What the finger that counts is doing.
 #[derive(Clone, Copy)]
 enum Gesture {
@@ -987,6 +1037,8 @@ pub struct App {
     /// Every finger currently down and where, so a second one can veto the
     /// swipe.
     touches: Vec<(u64, (f64, f64))>,
+    /// Whether each touch device seen is a touchpad, see [`is_touchpad`].
+    touchpads: HashMap<DeviceId, bool>,
     /// How far apart two fingers started, while they may still pinch.
     pinch: Option<f64>,
     gesture: Gesture,
@@ -1031,6 +1083,7 @@ impl App {
             keys_down: HashMap::new(),
             last_key_frame: None,
             touches: Vec::new(),
+            touchpads: HashMap::new(),
             mouse: None,
             pinch: None,
             gesture: Gesture::None,
@@ -1819,6 +1872,14 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let WindowEvent::Touch(t) = &event
+            && *self
+                .touchpads
+                .entry(t.device_id)
+                .or_insert_with(|| is_touchpad(t.device_id))
+        {
+            return;
+        }
         if self.ui_event(&event) {
             if let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();
