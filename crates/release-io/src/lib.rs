@@ -19,7 +19,7 @@ pub mod workfile;
 
 pub use cache::set_cache_dir;
 pub use release::{
-    ARCHIVE_NAME, SFX, collect_disk_images, unpack_release, walk_dir, walk_dir_find,
+    ARCHIVE_NAME, DISK_SET, SFX, collect_disk_images, unpack_release, walk_dir, walk_dir_find,
 };
 pub use release_override::{Override, Patch, apply_override, apply_patches, leak};
 pub use song_name::SongName;

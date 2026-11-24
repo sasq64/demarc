@@ -60,7 +60,7 @@ mod microw8;
 mod music;
 pub use music::SongName;
 pub use release_io::release::{
-    ARCHIVE_NAME, SFX, collect_disk_images, unpack_release, walk_dir, walk_dir_find,
+    ARCHIVE_NAME, DISK_SET, SFX, collect_disk_images, unpack_release, walk_dir, walk_dir_find,
 };
 mod neo_geo;
 mod pico8;

@@ -189,6 +189,10 @@ patch = [
   { info = "fit to height", target = "patter4k_windows7.exe", offset = 5042, contents = "xg==" },
 ]
 
+# 3D Demo by Anarchy: two zipped disks, listed disk 2 first
+[zoo.1917]
+disk_set = true
+
 [zoo.3298]
 file = "fr-025-final.zip"
 

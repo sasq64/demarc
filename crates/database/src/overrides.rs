@@ -51,6 +51,9 @@
 //! [zoo.143895]
 //! sfx = true                         # unpack a self-extracting RAR instead of running it
 //!
+//! [zoo.1917]
+//! disk_set = true                    # every download is a disk (arc-3d-1.zip, arc-3d-2.zip)
+//!
 //! [zoo.4701]
 //! glsl = { match = "pow\\(c,", search = "pow\\(c,([^;]*)\\);", replace = "pow(c,vec4($1));" }
 //! glsl = [{ hash = "1f2e3d4c5b6a7988", edits = [["1-c", "1.-c"], ["\\btc\\.z=1\\.;", ""]] }]
@@ -196,6 +199,9 @@ struct RawOverride {
     /// Unpack the download as a RAR archive although it is a self-extracting exe.
     #[serde(default)]
     sfx: bool,
+    /// Every download is one disk of a set, also when each is in an archive.
+    #[serde(default)]
+    disk_set: bool,
     /// Regex edits to the GLSL a Windows demo compiles, one table or an array.
     glsl: Option<GlslPatches>,
     /// What is known about a release that still does not work, for whoever
@@ -462,6 +468,7 @@ impl RawOverride {
             events,
             cache_writeback: self.cache_writeback,
             sfx: self.sfx,
+            disk_set: self.disk_set,
         })
     }
 }

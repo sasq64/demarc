@@ -100,6 +100,8 @@ pub struct Override {
     pub cache_writeback: bool,
     // Unpack a self-extracting RAR exe instead of running it
     pub sfx: bool,
+    // Every download is one disk of a set, archived or not
+    pub disk_set: bool,
 }
 
 /// Meta key holding the release directory a `boot_file` was picked out of, set

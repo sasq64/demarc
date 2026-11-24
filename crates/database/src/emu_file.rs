@@ -507,6 +507,23 @@ impl FileSource {
         &mut self,
         on_progress: OnProgress<'_>,
     ) -> Result<(&PathBuf, Vec<&'static str>)> {
+        self.resolve_downloads(on_progress, false)
+    }
+
+    /// [`resolve_with_progress`](Self::resolve_with_progress) fetching every
+    /// download as one disk of a set, for an override's `disk_set`.
+    pub fn resolve_disk_set_with_progress(
+        &mut self,
+        on_progress: OnProgress<'_>,
+    ) -> Result<(&PathBuf, Vec<&'static str>)> {
+        self.resolve_downloads(on_progress, true)
+    }
+
+    fn resolve_downloads(
+        &mut self,
+        on_progress: OnProgress<'_>,
+        disk_set: bool,
+    ) -> Result<(&PathBuf, Vec<&'static str>)> {
         let mut used = vec![];
         if let FileSource::Url(urls) = self
             && let Some(id) = urls.first().and_then(crate::demozoo_latest::production_id)
@@ -517,7 +534,11 @@ impl FileSource {
             // The release's downloads as ways of getting at it, best first: a
             // disk set that sits together in one directory (built into an m3u
             // later), an archive, a reupload. The first that lands wins.
-            let downloads = release_downloads(urls.as_slice());
+            let downloads = if disk_set {
+                vec![Download::Disks(urls.iter().map(|u| vec![u]).collect())]
+            } else {
+                release_downloads(urls.as_slice())
+            };
             let (p, fetched) = fetch_release(&downloads, |url, report| {
                 fetch_url_with_progress(url, if report { on_progress } else { &|_, _| {} })
             })?;

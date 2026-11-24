@@ -112,7 +112,17 @@ pub fn collect_disk_images(file: &mut WorkFile, images: &mut [PathBuf]) -> Resul
 pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<WorkFile> {
     debug!("Trying to load: {path:?}");
     let mut wf = WorkFile::new_with_meta(path, meta.clone());
-    if path.is_file() {
+    if path.is_dir() && meta.get(DISK_SET).is_some_and(|v| is_yes(v)) {
+        wf = WorkFile::new_dir_with_meta(meta.clone())?;
+        for entry in std::fs::read_dir(path)? {
+            let file = entry?.path();
+            if is_archive(&file)? {
+                unpack_into(&file, &wf)?;
+            } else if let Some(name) = file.file_name() {
+                std::fs::copy(&file, wf.join(name))?;
+            }
+        }
+    } else if path.is_file() {
         if meta.get(SFX).is_some_and(|v| is_yes(v)) {
             wf = WorkFile::new_dir_with_meta(meta.clone())?;
             debug!("Unpacking self-extracting {path:?} to {wf:?}");
@@ -151,6 +161,10 @@ pub fn unpack_release(path: &Path, meta: &HashMap<String, String>) -> Result<Wor
 
 /// Meta key set by an override's `sfx`: the release is a self-extracting RAR.
 pub const SFX: &str = "sfx";
+
+/// Meta key set by an override's `disk_set`: the downloads are the disks of a
+/// set, each one possibly in an archive of its own.
+pub const DISK_SET: &str = "disk_set";
 
 /// Meta key holding the name of the archive a release was unpacked from, which
 /// the temp dir it now sits in no longer carries.

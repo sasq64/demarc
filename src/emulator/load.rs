@@ -106,6 +106,10 @@ pub fn load_async(
     if over.is_some_and(|o| o.sfx) {
         meta.insert(newsys::SFX.into(), "true".into());
     }
+    let disk_set = over.is_some_and(|o| o.disk_set);
+    if disk_set {
+        meta.insert(newsys::DISK_SET.into(), "true".into());
+    }
     let mut source = emu_file.path.clone();
     // The one part of an override that has to happen before the transfer:
     // where the release comes from, or which of its downloads is the demo.
@@ -116,10 +120,15 @@ pub fn load_async(
     }
     let writeback = over.filter(|o| o.cache_writeback).cloned();
     let job = Job::spawn(name, move |progress| {
-        let (path, fetched) = source.resolve_with_progress(&|done, total| {
+        let on_progress = |done, total: Option<u64>| {
             progress.set_done(done);
             progress.set_total(total.unwrap_or(0));
-        })?;
+        };
+        let (path, fetched) = if disk_set {
+            source.resolve_disk_set_with_progress(&on_progress)?
+        } else {
+            source.resolve_with_progress(&on_progress)?
+        };
         let mut meta = meta;
         meta.insert("fetched".into(), fetched.join(";"));
         // Unpacking has no useful byte count; flip back to indeterminate so
