@@ -498,8 +498,21 @@ pub fn default_meta() -> HashMap<&'static str, &'static str> {
         ("amiberry_video_vresolution", "auto"),
         //{ "amiberry_overscan", "Overscan; overscan|tv_narrow|tv_standard|tv_wide|broadcast|extreme|ultra|ultra_hv|ultra_csync" },
         ("amiberry_jit", "disabled"),
+        // Otherwise the core sleeps to its own 49.92 Hz deadline, falls behind
+        // the frontend's 50 Hz and starves the audio ring.
+        ("amiberry_internal_vsync", "standard"),
         ("amiberry_floppy_sound", "enabled"),
         ("amiberry_floppy_sound_volume", "27"),
+        // On a phone the threaded CPU slows the whole machine under load
+        // (Neocolora), where the unthreaded one gives way.
+        (
+            "amiberry_cpu_thread",
+            if cfg!(target_os = "android") {
+                "disabled"
+            } else {
+                "enabled"
+            },
+        ),
     ]
     .into()
 }
