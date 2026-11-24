@@ -181,13 +181,12 @@ pub fn smooth_fill(fill: f64, occupied: usize) -> f64 {
 }
 
 /// Resample ratio multiplier, for [`AudioSink::set_adjust`], that steers the
-/// smoothed sink `fill` down towards just above `buf_min`, so the ring runs
-/// near empty instead of filling.
+/// smoothed sink `fill` towards the middle of `buf_min..buf_max`, with the
+/// full correction at either end.
 pub fn rate_adjust(fill: f64, buf_min: usize, buf_max: usize) -> f64 {
-    let min = buf_min as f64;
-    let window = (buf_max - buf_min) as f64;
-    let target = min + window / 8.0;
-    (1.0 - 0.01 * (fill - target) / window).clamp(0.99, 1.01)
+    let half = (buf_max - buf_min) as f64 / 2.0;
+    let target = buf_min as f64 + half;
+    (1.0 - 0.01 * (fill - target) / half).clamp(0.99, 1.01)
 }
 
 /// Wrapper that makes [`cpal::Stream`] `Send + Sync`.

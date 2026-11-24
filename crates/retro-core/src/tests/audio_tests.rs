@@ -91,11 +91,11 @@ fn audio_out_pushes_into_the_sinks_ring() {
 #[test]
 fn the_rate_adjust_drains_a_full_sink_and_fills_an_empty_one() {
     let (min, max) = (3000, 18000);
-    let target = min + (max - min) / 8;
+    let target = min + (max - min) / 2;
 
     assert!((rate_adjust(target as f64, min, max) - 1.0).abs() < 1e-9);
-    assert!(rate_adjust(max as f64, min, max) < 1.0);
-    assert!(rate_adjust(min as f64, min, max) > 1.0);
+    assert!((rate_adjust(max as f64, min, max) - 0.99).abs() < 1e-9);
+    assert!((rate_adjust(min as f64, min, max) - 1.01).abs() < 1e-9);
     assert_eq!(rate_adjust(1e9, min, max), 0.99);
     assert!(rate_adjust(0.0, min, max) <= 1.01);
 }
