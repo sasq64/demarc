@@ -196,6 +196,7 @@ impl Ui {
         let dbs: IndexMap<String, &'static [EmuFile]> = dbs.into_iter().collect();
         setup_phone(&mut self.navigator)?;
         setup_navigator(&dbs, &mut self.navigator, &retro_core::system_dir())?;
+        self.navigator.add_local(&local_dir());
         let favorites = Playlists::load(&playlist_dir());
         self.navigator
             .add_playlist(FAVORITES, favorites.lists[0].files);
@@ -496,6 +497,20 @@ impl Ui {
 
 /// Where the favorites are kept: the app's data dir on a phone, demarc's
 /// playlists elsewhere.
+static LOCAL_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+pub fn set_local_dir(dir: std::path::PathBuf) {
+    let _ = LOCAL_DIR.set(dir);
+}
+
+fn local_dir() -> std::path::PathBuf {
+    LOCAL_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(database::playlists::local_dir)
+}
+
 fn playlist_dir() -> std::path::PathBuf {
     if cfg!(any(target_os = "android", target_os = "ios")) {
         retro_core::system_dir().join("playlists")

@@ -148,6 +148,25 @@ fn playlist_shows_its_entries_directly() {
 }
 
 #[test]
+fn local_lists_files_only_when_there_are_some() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut navigator = Navigator::new();
+    navigator.add_local(dir.path());
+    navigator.goto("");
+    assert!(navigator.get_showing().is_empty());
+
+    std::fs::write(dir.path().join("b.prg"), b"").unwrap();
+    std::fs::write(dir.path().join("a.d64"), b"").unwrap();
+    std::fs::write(dir.path().join(".hidden"), b"").unwrap();
+    navigator.add_local(dir.path());
+    setup_navigator(&IndexMap::new(), &mut navigator, &system_dir()).unwrap();
+    navigator.goto("");
+    assert_eq!(navigator.get_showing(), vec!["Local"]);
+    navigator.goto("Local");
+    assert_eq!(navigator.get_showing(), vec!["a.d64", "b.prg"]);
+}
+
+#[test]
 fn a_single_db_hides_the_root() {
     let dbs: IndexMap<String, &'static [EmuFile]> = [(
         "CSDb".to_string(),

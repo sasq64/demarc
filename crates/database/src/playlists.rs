@@ -168,6 +168,16 @@ pub fn default_dir() -> PathBuf {
         .join("playlists")
 }
 
+/// The folder whose files the picker lists under `Local`.
+pub fn local_dir() -> PathBuf {
+    let dir = dirs::data_dir()
+        .unwrap_or_default()
+        .join("demarc")
+        .join("local");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 impl Playlists {
     pub fn load(dir: &Path) -> Self {
         let mut lists = vec![];

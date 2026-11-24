@@ -2139,6 +2139,11 @@ pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
         if let Err(e) = install_amiga(&app, &data) {
             tracing::warn!("No Amiga: {e:#}");
         }
+        if let Some(dir) = app.external_data_path() {
+            let dir = dir.join("local");
+            let _ = std::fs::create_dir_all(&dir);
+            crate::ui::set_local_dir(dir);
+        }
 
         let event_loop = EventLoop::builder().with_android_app(app).build()?;
         event_loop.run_app(&mut App::new(vec![

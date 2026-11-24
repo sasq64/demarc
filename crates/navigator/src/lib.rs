@@ -22,6 +22,8 @@ pub type ListSource = Arc<dyn FuzzySource<EmuFile>>;
 
 pub use database::playlists::FAVORITES;
 
+pub const LOCAL: &str = "Local";
+
 /// A list to put on screen, as [`Navigator::take_show`] hands it out.
 pub struct ShowList {
     pub id: usize,
@@ -39,6 +41,7 @@ pub struct ShowList {
 const FAVORITES_ICON: ListIcon = ListIcon::Glyph('', 0xff4040);
 const PLAYLIST_ICON: ListIcon = ListIcon::Glyph('󰲹', 0x4080ff);
 const DATABASE_ICON: ListIcon = ListIcon::Glyph('󰆼', 0xa0d8ff);
+const LOCAL_ICON: ListIcon = ListIcon::Glyph('󰉋', 0xe0c060);
 const AUTHOR_ICON: ListIcon = ListIcon::Glyph('', 0x20a0a0);
 const SYSTEM_ICON: ListIcon = ListIcon::Glyph('󰒔', 0xa02020);
 const NEW_ICON: ListIcon = ListIcon::Glyph('󰎔', 0xe08040);
@@ -374,6 +377,8 @@ impl Navigator {
                         FAVORITES_ICON
                     } else if self.playlists.contains(name) {
                         PLAYLIST_ICON
+                    } else if name == LOCAL {
+                        LOCAL_ICON
                     } else {
                         DATABASE_ICON
                     };
@@ -442,7 +447,7 @@ impl Navigator {
             warn!("No such database: {db}");
             return None;
         };
-        if rest.is_empty() && self.playlists.contains(db) {
+        if rest.is_empty() && (self.playlists.contains(db) || db == LOCAL) {
             return Some(Arc::new(PickerSource::new(files, None, IconMode::All)));
         }
         let joined = rest.join("/");
@@ -540,6 +545,34 @@ impl Navigator {
     /// list of EmuFiles that other Navigator parts filter from
     pub fn add_db(&mut self, name: &str, files: &'static [EmuFile]) {
         self.files.insert(name.to_string(), files);
+    }
+
+    /// Add the files in `dir` as the root's [`LOCAL`] folder, if it has any.
+    pub fn add_local(&mut self, dir: &Path) {
+        let mut paths: Vec<_> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .filter(|p| {
+                !p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        paths.sort();
+        let files = paths
+            .into_iter()
+            .map(|p| {
+                let name = p.file_name().unwrap_or_default().to_string_lossy();
+                EmuFile::new(name.into_owned().leak(), p)
+            })
+            .collect::<Vec<_>>()
+            .leak();
+        self.add_db(LOCAL, files);
     }
 
     /// Add a db whose top level is the list of its entries, or update one.
