@@ -1918,3 +1918,35 @@
   allows a burst of about 20 requests and then about 2 a second, answering 429
   with `Retry-After`, so fetching every detail of two weeks took 3 minutes;
   `demozoo_latest` looks the downloads up when an entry is loaded instead.
+
+- An amiberry upstream merge has to be checked with
+  `scripts/build-amiberry-android.sh` too, not only the desktop core: upstream
+  keeps adding `__ANDROID__` calls into its SDL app (OSK, overlay) and
+  link flags that bionic lacks (`-lutil`), and the desktop build shows neither.
+
+- Audio glitches on Android after the amiberry upstream merge (v8.5+) were not
+  a slowdown (emulation went from ~15 to ~8 ms/frame): upstream fixed PAL
+  timing, so a self-paced core (`amiberry_internal_vsync` unset) now sleeps to
+  its own 49.92 Hz deadline, which is reset after each late wake-up. On the
+  phone that came to −0.5% audio (old core: +0.6%), and minimarc's
+  `rate_adjust` (±1% across the whole ring) can only absorb a surplus, so the
+  ring sat empty. `amiberry_internal_vsync=standard` lets the frontend pace;
+  before #2629 the libretro core ignored that option. A headless timing
+  harness (dlopen the core, run as the app with `run-as`) beats tapping
+  through the app.
+  Turning off amiberry's new CPU thread (A1230/A1240 run it) made things
+  worse: it times frames from where they should have started, so it is the
+  one that keeps exact time. What remained was minimarc's `rate_adjust`
+  holding the ring at `buf_min + window/8`: the old core's +0.4% surplus had
+  kept it ~6000 higher, the margin (and the latency `VIDEO_DELAY` was tuned
+  to) that an 18 ms retro_run and 512-frame callbacks need. The target is now
+  the middle of the window. Clean core output (PCM dumped from the harness)
+  plus `audio min` near zero in the perf log pointed at the ring, not the core.
+
+- Neocolora (A1230) dropping audio on the phone after about a minute was the
+  core falling 2–3% behind real time (`core 48.4/s` in the perf log), which no
+  ring tuning can absorb. It was amiberry's CPU thread: the unthreaded CPU at
+  `cpu_speed=max` gives way when the host is short, the threaded one slows the
+  whole machine. `amiberry_cpu_thread=disabled` (our core option) is now the
+  Android default; Metropolice is fine either way since the ring target fix.
+  `top` cannot show this, as both threads busy-wait at 100% in the limiter.
