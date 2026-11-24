@@ -224,7 +224,7 @@ pub fn set_amiga_config(file: &mut WorkFile) -> Result<()> {
     if file.has_tag("-fastmem") {
         machine = Machine::A1200FAST;
     }
-    if file.has_tag("requires-68030") {
+    if file.has_tag("requires-68030") | file.has_tag("requires-fpu") {
         machine = Machine::A1230;
     }
     if file.has_tag("amos") {
