@@ -373,6 +373,9 @@ meta = { amiga_model = "A1200" }
 [zoo.55576]
 meta = { amiga_model = "A1230" }
 
+[zoo.179518]
+meta = { amiga_model = "A1230" }
+
 [zoo.277286]
 meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
 
