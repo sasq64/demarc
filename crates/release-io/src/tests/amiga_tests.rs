@@ -251,3 +251,9 @@ fn unpacks_a_boot_disk_out_of_a_dms_archive() {
     let (dir, startup) = unpack_boot_disk(archive).expect("no boot disk in the archive");
     assert!(dir.path.join(&startup).is_file());
 }
+
+#[test]
+fn strips_chip_mem_hacks_from_a_startup_sequence() {
+    let text = b"c:add21k\nC:Add36K >NIL:\n  Add21k\nsushiboyz\nadd21kx\n";
+    assert_eq!(strip_chip_mem_hacks(text), b"sushiboyz\nadd21kx\n");
+}

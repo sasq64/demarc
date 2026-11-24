@@ -1950,3 +1950,8 @@
   whole machine. `amiberry_cpu_thread=disabled` (our core option) is now the
   Android default; Metropolice is fine either way since the ring target fix.
   `top` cannot show this, as both threads busy-wait at 100% in the limiter.
+
+- An Amiga yellow/red alert: take headless screenshots every 50 frames to read
+  the code (0100000F = `AN_BadFreeAddr`). 1.x-era `Add21K`/`Add36K` in a
+  startup-sequence free a screen bitplane and alert on KS 3 once a screen is
+  open, which `--unadf` boots have; they are stripped there.

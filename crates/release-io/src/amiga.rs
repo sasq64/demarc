@@ -359,6 +359,23 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Drop `Add21K`/`Add36K` lines: they free a bitplane of the boot screen,
+/// which on Kickstart 3 is not a block of its own, so exec alerts.
+fn strip_chip_mem_hacks(text: &[u8]) -> Vec<u8> {
+    text.split_inclusive(|&b| b == b'\n')
+        .filter(|line| {
+            let cmd = line
+                .split(|b| b.is_ascii_whitespace())
+                .find(|w| !w.is_empty())
+                .unwrap_or_default();
+            let name = cmd.rsplit(|&b| b == b':' || b == b'/').next().unwrap();
+            !(name.eq_ignore_ascii_case(b"add21k") || name.eq_ignore_ascii_case(b"add36k"))
+        })
+        .flatten()
+        .copied()
+        .collect()
+}
+
 /// Unpack the DMS archive `archive` into a floppy image inside a fresh temp
 /// directory, and hand back both — the directory owns the image, so it has to
 /// outlive it.
@@ -590,7 +607,8 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
             .then_with(|| a.cmp(b))
     });
 
-    if !file.is_aga() && opts.unadf {
+    let unadf = opts.unadf || file.is_enabled("unadf");
+    if !file.is_aga() && unadf {
         //file.set_chip_mem(4);
         file.set_machine(Machine::A1200);
     }
@@ -602,7 +620,7 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
     // disk — a multi-disk release swaps disks by name, which a drive built
     // out of one of them cannot answer. Anything that isn't a mountable,
     // self-booting AmigaDOS disk falls through to the floppy path below.
-    if opts.unadf
+    if unadf
         && !is_dir
         && images.len() == 1
         && has_any_extension(&images[0], &["adf", "dms"])
@@ -612,7 +630,9 @@ pub fn prepare(file: &mut WorkFile, opts: &AmigaOpts) -> Result<bool> {
         file.path = dir.path;
         file.temp_dir = dir.temp_dir;
         copy_dir_all(system_dir().join("ami13"), &file)?;
-        startup_sequence = Some(file.path.join(relative));
+        let startup = file.path.join(relative);
+        fs::write(&startup, strip_chip_mem_hacks(&fs::read(&startup)?))?;
+        startup_sequence = Some(startup);
         is_dir = true;
     }
 
