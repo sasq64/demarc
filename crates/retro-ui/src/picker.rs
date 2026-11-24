@@ -260,6 +260,7 @@ pub struct Picker<T> {
     pick_requested: bool,
     query_clicked: bool,
     shuffle_clicked: bool,
+    shuffle_down: bool,
 }
 
 impl<T> Default for Picker<T> {
@@ -298,6 +299,7 @@ impl<T> Default for Picker<T> {
             pick_requested: false,
             query_clicked: false,
             shuffle_clicked: false,
+            shuffle_down: false,
         }
     }
 }
@@ -674,10 +676,21 @@ impl<T: 'static> Picker<T> {
                         if !response.has_focus() {
                             response.request_focus();
                         }
-                        if let Some(shuffle) = shuffle
-                            && ui.add(egui::Button::new(shuffle).frame(false)).clicked()
-                        {
-                            self.shuffle_clicked = true;
+                        if let Some(shuffle) = shuffle {
+                            let was_down = std::mem::take(&mut self.shuffle_down);
+                            let response = ui.add(
+                                egui::Button::new(shuffle)
+                                    .frame(true)
+                                    .frame_when_inactive(was_down)
+                                    .selected(was_down),
+                            );
+                            if response.clicked() {
+                                self.shuffle_clicked = true;
+                            }
+                            if response.is_pointer_button_down_on() {
+                                self.shuffle_down = true;
+                                ui.ctx().request_repaint();
+                            }
                         }
                     });
                 });
