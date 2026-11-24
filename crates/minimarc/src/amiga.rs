@@ -101,7 +101,7 @@ pub fn missing_kickstarts(dir: &Path) -> Vec<&'static Rom> {
 }
 
 fn import_in(from: &Path, dest: &Path, roms: &[Rom]) -> Result<usize> {
-    let missing = missing_in(dest, roms);
+    let mut missing = missing_in(dest, roms);
     if missing.is_empty() {
         return Ok(0);
     }
@@ -109,13 +109,33 @@ fn import_in(from: &Path, dest: &Path, roms: &[Rom]) -> Result<usize> {
         return Ok(0);
     };
     let mut written = 0;
-    for path in entries.flatten().map(|e| e.path()) {
-        let Some(crc) = file_crc(&path) else { continue };
-        if let Some(rom) = missing.iter().find(|rom| rom.crcs.contains(&crc)) {
+    let mut install = |data: &[u8], source: &Path| -> Result<()> {
+        let crc = rom_crc(data);
+        if let Some(i) = missing.iter().position(|rom| rom.crcs.contains(&crc)) {
+            let rom = missing.remove(i);
             std::fs::create_dir_all(dest)?;
-            std::fs::copy(&path, dest.join(rom.name))?;
-            info!("Installed {} from {path:?}", rom.name);
+            std::fs::write(dest.join(rom.name), data)?;
+            info!("Installed {} from {source:?}", rom.name);
             written += 1;
+        }
+        Ok(())
+    };
+    for path in entries.flatten().map(|e| e.path()) {
+        if let Ok(file) = std::fs::File::open(&path)
+            && let Ok(mut zip) = zip::ZipArchive::new(file)
+        {
+            for i in 0..zip.len() {
+                let mut entry = zip.by_index(i)?;
+                if entry.is_file() && entry.size() <= 0x80000 {
+                    let mut data = vec![];
+                    entry.read_to_end(&mut data)?;
+                    install(&data, &path.join(entry.name()))?;
+                }
+            }
+            continue;
+        }
+        if std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= 0x80000) {
+            install(&std::fs::read(&path)?, &path)?;
         }
     }
     Ok(written)
@@ -215,6 +235,54 @@ pub fn package_path(
         Ok(Some(env.get_string(&path)?.into()))
     })();
     result.ok().flatten().map(Into::into)
+}
+
+static PICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the user has picked files since the last call.
+pub fn take_picked() -> bool {
+    PICKED.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `MiniActivity.nativeKickstartsPicked()`, once the picked files are copied.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_demarc_c64_MiniActivity_nativeKickstartsPicked(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+) {
+    PICKED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Let the user pick Kickstart files or zips to copy into [`user_rom_dir`].
+#[cfg(target_os = "android")]
+pub fn pick_kickstarts() {
+    use jni::JavaVM;
+    use jni::objects::JObject;
+
+    let Some(app) = crate::web::app() else {
+        return;
+    };
+    let result = (|| -> jni::errors::Result<()> {
+        // SAFETY: both pointers stay valid for as long as the activity.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast())? };
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        let mut env = vm.attach_current_thread()?;
+        let dest = env.new_string(user_rom_dir().to_string_lossy())?;
+        let call = env.call_method(
+            &activity,
+            "pickKickstarts",
+            "(Ljava/lang/String;)V",
+            &[(&dest).into()],
+        );
+        if call.is_err() {
+            let _ = env.exception_clear();
+        }
+        call.map(|_| ())
+    })();
+    if let Err(e) = result {
+        tracing::warn!("Can't pick Kickstarts: {e}");
+    }
 }
 
 #[cfg(test)]

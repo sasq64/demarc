@@ -24,3 +24,14 @@ fn closes_on_ok() {
     h.click_text("OK", |ctx| mb.show(ctx));
     assert!(!mb.is_open());
 }
+
+#[test]
+fn the_extra_button_reports_its_click() {
+    let mut h = Harness::new();
+    let mut mb = MessageBox::default();
+    mb.open_with("Hello", "Import");
+    h.frame(vec![], |ctx| mb.show(ctx));
+    h.frame(vec![], |ctx| mb.show(ctx));
+    let acted = h.click_text("Import", |ctx| mb.show(ctx));
+    assert!(acted.contains(&true) && !mb.is_open());
+}

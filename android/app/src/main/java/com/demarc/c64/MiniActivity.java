@@ -1,13 +1,18 @@
 package com.demarc.c64;
 
 import android.app.NativeActivity;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Insets;
+import android.database.Cursor;
 import android.media.session.MediaSession;
+import android.net.Uri;
 import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.RoundedCorner;
 import android.view.View;
@@ -15,12 +20,24 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+
 /** NativeActivity in immersive mode: the theme alone cannot hide the navigation bar. */
 public class MiniActivity extends NativeActivity {
+    private static final int PICK_KICKSTARTS = 1;
+    private static final long MAX_PICKED_SIZE = 16 << 20;
+
     private MediaSession session;
+    private String kickstartDir;
 
     /** Hands an Android keycode to minimarc's media handling; false if it is not a media key. */
     private static native boolean nativeMediaKey(int keyCode);
+
+    /** Tells minimarc the picked Kickstarts are copied and can be imported. */
+    private static native void nativeKickstartsPicked();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -102,6 +119,66 @@ public class MiniActivity extends NativeActivity {
             return getPackageManager().getApplicationInfo(pkg, 0).sourceDir;
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** Called from native code: let the user pick Kickstarts, or zips of them, to copy into dest. */
+    public void pickKickstarts(String dest) {
+        runOnUiThread(() -> {
+            kickstartDir = dest;
+            startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("*/*")
+                    .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), PICK_KICKSTARTS);
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != PICK_KICKSTARTS || resultCode != RESULT_OK || data == null
+                || kickstartDir == null) {
+            return;
+        }
+        ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                copyPicked(clip.getItemAt(i).getUri());
+            }
+        } else if (data.getData() != null) {
+            copyPicked(data.getData());
+        }
+        nativeKickstartsPicked();
+    }
+
+    private void copyPicked(Uri uri) {
+        String name = "picked";
+        long size = -1;
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int s = c.getColumnIndex(OpenableColumns.SIZE);
+                if (n >= 0 && c.getString(n) != null) {
+                    name = new File(c.getString(n)).getName();
+                }
+                if (s >= 0 && !c.isNull(s)) {
+                    size = c.getLong(s);
+                }
+            }
+        }
+        if (size > MAX_PICKED_SIZE) {
+            return;
+        }
+        File dir = new File(kickstartDir);
+        dir.mkdirs();
+        try (InputStream in = getContentResolver().openInputStream(uri);
+             OutputStream out = new FileOutputStream(new File(dir, name))) {
+            byte[] buf = new byte[65536];
+            for (int r; (r = in.read(buf)) > 0; ) {
+                out.write(buf, 0, r);
+            }
+        } catch (Exception e) {
+            Log.w("minimarc", "Can't copy " + uri, e);
         }
     }
 

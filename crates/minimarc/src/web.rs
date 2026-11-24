@@ -72,6 +72,10 @@ mod android {
         let _ = APP.set(app);
     }
 
+    pub fn app() -> Option<&'static AndroidApp> {
+        APP.get()
+    }
+
     /// `MiniActivity.openWeb(url, css)`; `css` names an APK asset.
     pub fn open(url: &str, css: &str) {
         let Some(app) = APP.get() else {
@@ -140,7 +144,7 @@ mod android {
 }
 
 #[cfg(target_os = "android")]
-pub use android::{open, set_app};
+pub use android::{app, open, set_app};
 
 #[cfg(not(target_os = "android"))]
 pub fn open(_url: &str, _css: &str) {}

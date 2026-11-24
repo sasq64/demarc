@@ -1051,6 +1051,16 @@ impl App {
 
     /// Act on what the loader threads have finished.
     fn poll_loader(&mut self) {
+        if crate::amiga::take_picked() {
+            let dest = release_io::amiga::amiga_system_dir();
+            match crate::amiga::import_kickstarts(&crate::amiga::user_rom_dir(), &dest) {
+                Ok(0) => self.ui.message("No Kickstarts found in the picked files"),
+                Ok(_) => self.ui.message("Kickstarts successfully imported"),
+                Err(e) => self
+                    .ui
+                    .error(&format!("Could not import Kickstarts: {e:#}")),
+            }
+        }
         while let Some(loaded) = self.loader.poll() {
             let result = match loaded {
                 Loaded::Db(dbs) => dbs.and_then(|dbs| self.ui.set_db(dbs)),
@@ -1059,6 +1069,9 @@ impl App {
             if let Err(e) = result {
                 tracing::error!("{e:#}");
                 match e.downcast_ref::<crate::load::MissingKickstarts>() {
+                    Some(missing) if cfg!(target_os = "android") => self
+                        .ui
+                        .message_with(kickstart_message(&missing.0), "Import Kickstarts..."),
                     Some(missing) => self.ui.message(kickstart_message(&missing.0)),
                     None => self.ui.error(&format!("{e:#}")),
                 }
@@ -1934,16 +1947,17 @@ const ASSETS: [(&str, &str); 5] = [
 ];
 
 fn kickstart_message(missing: &[&str]) -> String {
-    let store = if cfg!(target_os = "android") {
-        "Buy \"Amiga Forever\" from the Play Store and restart,\nor copy"
+    let own = if cfg!(target_os = "android") {
+        "\n".to_owned()
     } else {
-        "Copy"
+        format!(
+            "Copy your own Kickstart files to\n{}",
+            crate::amiga::user_rom_dir().display()
+        )
     };
     format!(
-        "Amiga demos need the Kickstart ROMs 1.2, 1.3, 2.04 and 3.1.\n\
-         Missing: {}\n{store} your own Kickstart files to\n{}",
-        missing.join(", "),
-        crate::amiga::user_rom_dir().display()
+        "Amiga demos need the Kickstart ROMs\nMissing: {}\n{own}",
+        missing.join(", ")
     )
 }
 

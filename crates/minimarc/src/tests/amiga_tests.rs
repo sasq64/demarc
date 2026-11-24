@@ -90,3 +90,20 @@ fn a_doubled_rom_is_checked_by_its_half() {
     let doubled = [half.clone(), half.clone()].concat();
     assert_eq!(rom_crc(&doubled), crc32fast::hash(&half));
 }
+
+#[test]
+fn roms_are_imported_out_of_a_zip() {
+    let from = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(from.path().join("roms.zip")).unwrap());
+    let opts = zip::write::SimpleFileOptions::default();
+    for (name, data) in [("a.rom", b"alt a"), ("b.rom", b"rom b"), ("c.rom", b"junk!")] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap();
+    let roms = fake_roms();
+    assert_eq!(import_in(from.path(), dest.path(), &roms).unwrap(), 2);
+    assert_eq!(std::fs::read(dest.path().join("kick.a")).unwrap(), b"alt a");
+    assert!(missing_in(dest.path(), &roms).is_empty());
+}

@@ -300,6 +300,10 @@ impl Ui {
         self.message.open(text);
     }
 
+    pub fn message_with(&mut self, text: impl Into<String>, button: &str) {
+        self.message.open_with(text, button);
+    }
+
     pub fn error(&mut self, text: &str) {
         self.status("");
         self.hud_text(HudLocation::Error, text, Duration::from_secs(8));
@@ -436,7 +440,10 @@ impl Ui {
         if show != self.info_shown {
             self.set_info(show);
         }
-        self.message.show(ctx);
+        if self.message.show(ctx) {
+            #[cfg(target_os = "android")]
+            crate::amiga::pick_kickstarts();
+        }
         let info_rect = self.hud.show(ctx, self.now(), bytes_in_progress(), None);
         if show {
             self.draw_keys(ctx);
