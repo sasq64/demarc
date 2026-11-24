@@ -376,6 +376,16 @@ meta = { amiga_model = "A1230" }
 [zoo.277286]
 meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
 
+# Oxygen demos
+[zoo.26941]
+meta = { amiga_model = "A500PLUS" }
+
+[zoo.252862]
+meta = { amiga_model = "A500PLUS" }
+
+[zoo.252869]
+meta = { amiga_model = "A1200FAST" }
+
 # The Good, The Bad & The Ugly / Surprise! Productions: refuses to run with EMS.
 [zoo.6124]
 events = [{ frame = 300, key = "Enter" }]
@@ -1135,6 +1145,7 @@ file = "dkg^lmn-neocolora.lha"
 [zoo.352983]
 meta = { dos4gw = "true" }
 
+# No-CPU Challenge
 [zoo.376675]
 jit = false
 
