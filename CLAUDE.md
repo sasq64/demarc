@@ -68,7 +68,10 @@ built for Android (`docs/ANDROID.md`):
   grouped with `release_downloads`; a multi-disk set is zipped as
   `<title slug>.zip`, `.dms` unpacked to `.adf`. Reads the download cache
   but never writes it (`fetch::download_uncached`). Existing files are
-  skipped (case-insensitive name match); `--id`, `--limit` (downloads).
+  skipped (case-insensitive name match); `--id`, `--limit` (downloads),
+  `--recheck` (retest `not_working-*` files only, renaming those that load).
+  `--jobs` threads each own a `mirror --worker` child (own process group)
+  that does the load checks; a timed-out worker is killed and respawned.
   Gotchas: `newsys` falls back to every system, so a load only counts if
   `system_name` is in `newsys::platform_systems(platform)`; the out dir is
   made absolute because the C64 converter changes cwd; fd 1/2 go to

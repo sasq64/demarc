@@ -1,13 +1,17 @@
 //! Mirrors demozoo productions into `<out>/demozoo/<id>/<platform>-<filename>`.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use database::emu_file::{Download, EmuFile, FileSource, cache_key, release_downloads, url_file_name};
+use database::emu_file::{
+    Download, EmuFile, FileSource, cache_key, release_downloads, url_file_name,
+};
 use database::files::{DbFilter, collect_db};
 use database::overrides;
 use newsys::{NewSys, Override, SysOpts};
@@ -19,7 +23,7 @@ struct Args {
     #[arg(long, default_value = "demodb/demozoo.txt")]
     db: PathBuf,
     /// Output directory.
-    #[arg(long, default_value = "mirror")]
+    #[arg(long, default_value = "/data/mirror")]
     out: PathBuf,
     /// Only these production ids.
     #[arg(long)]
@@ -30,6 +34,15 @@ struct Args {
     /// Seconds a load may take.
     #[arg(long, default_value_t = 60)]
     load_secs: u64,
+    /// Only retest existing `not_working` files, renaming those that now load.
+    #[arg(long)]
+    recheck: bool,
+    /// Productions checked in parallel, each with its own worker process.
+    #[arg(long, default_value_t = 8)]
+    jobs: usize,
+    /// Run as a load-check worker, fed by the main process over stdin.
+    #[arg(long, hide = true)]
+    worker: bool,
 }
 
 /// One version of a release: a single file, or the disks of a set.
@@ -42,7 +55,9 @@ impl Version {
     fn name(&self, title: &str) -> Option<String> {
         match self {
             Version::File(url) => url_file_name(url),
-            Version::Disks(disks) if disks.len() == 1 => url_file_name(disks[0][0]).map(|n| adf_name(&n)),
+            Version::Disks(disks) if disks.len() == 1 => {
+                url_file_name(disks[0][0]).map(|n| adf_name(&n))
+            }
             Version::Disks(_) => Some(format!("{}.zip", slug(title))),
         }
     }
@@ -51,14 +66,26 @@ impl Version {
 fn slug(title: &str) -> String {
     title
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
 fn platform_tag(platform: &str) -> String {
     platform
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -97,30 +124,87 @@ fn versions(urls: &[&'static str], media: bool) -> Vec<Version> {
     out
 }
 
+/// A `--worker` child process that load-checks one file at a time.
+struct Worker {
+    child: Child,
+    stdin: ChildStdin,
+    replies: mpsc::Receiver<String>,
+}
+
+impl Worker {
+    fn spawn(db: &Path) -> Result<Self> {
+        #[cfg(unix)]
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new(std::env::current_exe()?);
+        cmd.arg("--worker")
+            .arg("--db")
+            .arg(db)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let mut child = cmd.spawn()?;
+        let stdin = child.stdin.take().context("no stdin")?;
+        let stdout = child.stdout.take().context("no stdout")?;
+        let (tx, replies) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Worker {
+            child,
+            stdin,
+            replies,
+        })
+    }
+
+    fn check(&mut self, id: &str, platform: &str, path: &Path, timeout: Duration) -> Result<bool> {
+        writeln!(self.stdin, "{id}\t{platform}\t{}", path.display())?;
+        self.stdin.flush()?;
+        Ok(self.replies.recv_timeout(timeout)? == "1")
+    }
+
+    /// Kill the worker and everything it started (wine, gamescope).
+    fn kill(mut self) {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 struct Mirror {
     args: Args,
-    downloads: usize,
-    overrides: std::collections::HashMap<database::emu_file::DemoId, Override>,
+    downloads: AtomicUsize,
+    cached: AtomicUsize,
 }
 
 impl Mirror {
     fn limit_reached(&self) -> bool {
-        self.args.limit.is_some_and(|l| self.downloads >= l)
+        self.args
+            .limit
+            .is_some_and(|l| self.downloads.load(Ordering::Relaxed) >= l)
     }
 
     /// Fetch `url` into `dir`, from the cache when it holds it.
-    fn fetch(&mut self, url: &str, dir: &Path) -> Result<PathBuf> {
+    fn fetch(&self, url: &str, dir: &Path) -> Result<PathBuf> {
         let name = url_file_name(url).context("url has no file name")?;
         let dest = dir.join(&name);
         match cached_download(&cache_key(url)) {
             Some(cached) if cached.is_file() => {
+                self.cached.fetch_add(1, Ordering::Relaxed);
                 std::fs::copy(&cached, &dest)?;
             }
             _ => {
                 if self.limit_reached() {
                     bail!("download limit reached");
                 }
-                self.downloads += 1;
+                self.downloads.fetch_add(1, Ordering::Relaxed);
                 download_uncached(&cache_key(url), &dest)?;
             }
         }
@@ -134,7 +218,7 @@ impl Mirror {
     }
 
     /// Fetch a version into `dir`: the file itself, or a directory of disks.
-    fn fetch_version(&mut self, version: &Version, dir: &Path) -> Result<PathBuf> {
+    fn fetch_version(&self, version: &Version, dir: &Path) -> Result<PathBuf> {
         match version {
             Version::File(url) => self.fetch(url, dir),
             Version::Disks(disks) => {
@@ -165,46 +249,70 @@ impl Mirror {
     }
 
     /// The first of the production's platforms that loads `path`.
-    fn find_platform(&self, file: &EmuFile, path: &Path) -> Option<&'static str> {
-        let over = file.demo_id().and_then(|d| self.overrides.get(&d)).cloned();
-        file.platforms.iter().copied().find(|platform| {
-            let mut meta: std::collections::HashMap<String, String> = file
-                .meta_strings()
-                .map(|(k, v)| (k.to_string(), v.into_owned()))
-                .collect();
-            meta.insert("platform".into(), platform.to_string());
-            let Ok(wf) = release_io::unpack_release(path, &meta) else {
-                return false;
-            };
-            let over = over.clone();
-            let name: &'static str = platform;
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let opts = SysOpts {
-                    latency: 2,
-                    silent_drive: true,
-                    ..Default::default()
-                };
-                let expected = newsys::platform_systems(name);
-                let ok = NewSys::new(&opts)
-                    .load_prepared(wf, over.as_ref())
-                    .is_ok_and(|r| expected.is_empty() || expected.contains(&r.system_name));
-                let _ = tx.send(ok);
-            });
-            rx.recv_timeout(Duration::from_secs(self.args.load_secs))
-                .unwrap_or(false)
-        })
+    fn find_platform(
+        &self,
+        worker: &mut Option<Worker>,
+        file: &EmuFile,
+        path: &Path,
+    ) -> Result<Option<&'static str>> {
+        let id = file.get_meta("id");
+        let timeout = Duration::from_secs(self.args.load_secs);
+        for platform in file.platforms.iter().copied() {
+            if worker.is_none() {
+                *worker = Some(Worker::spawn(&self.args.db)?);
+            }
+            let w = worker.as_mut().unwrap();
+            match w.check(id, platform, path, timeout) {
+                Ok(true) => return Ok(Some(platform)),
+                Ok(false) => {}
+                Err(_) => worker.take().unwrap().kill(),
+            }
+        }
+        Ok(None)
     }
 
-    fn mirror(&mut self, file: &EmuFile) -> Result<String> {
+    fn recheck(
+        &self,
+        worker: &mut Option<Worker>,
+        file: &EmuFile, dir: &Path, existing: &[String]) -> Result<String> {
+        let mut results = vec![];
+        for entry in existing {
+            let Some(name) = entry.strip_prefix("not_working-") else {
+                continue;
+            };
+            let tmp = tempfile::tempdir()?;
+            let path = tmp.path().join(name);
+            std::fs::copy(dir.join(entry), &path)?;
+            if let Some(platform) = self.find_platform(worker, file, &path)? {
+                let target = format!("{}-{name}", platform_tag(platform));
+                std::fs::rename(dir.join(entry), dir.join(&target))?;
+                results.push(target);
+            } else {
+                results.push(entry.clone());
+            }
+        }
+        if results.is_empty() {
+            return Ok("(skip)".into());
+        }
+        Ok(results.join(", "))
+    }
+
+    fn mirror(&self, worker: &mut Option<Worker>, file: &EmuFile) -> Result<String> {
         let id = file.get_meta("id");
         let FileSource::Url(urls) = &file.path else {
             return Ok("no downloads".into());
         };
         let dir = self.args.out.join("demozoo").join(id);
         let existing: Vec<String> = std::fs::read_dir(&dir)
-            .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
             .unwrap_or_default();
+        if self.args.recheck {
+            return self.recheck(worker, file, &dir, &existing);
+        }
         let title = file.game_info.title;
         let media = media_tag(file);
         let mut names = std::collections::HashSet::new();
@@ -237,7 +345,7 @@ impl Mirror {
             let tag = match media {
                 Some(tag) => tag.to_string(),
                 None => self
-                    .find_platform(file, &path)
+                    .find_platform(worker, file, &path)?
                     .map_or_else(|| "not_working".to_string(), platform_tag),
             };
             std::fs::create_dir_all(&dir)?;
@@ -256,7 +364,10 @@ impl Mirror {
 fn zip_dir(dir: &Path, target: &Path) -> Result<()> {
     let mut zip = zip::ZipWriter::new(std::fs::File::create(target)?);
     let opts = zip::write::SimpleFileOptions::default();
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?.flatten().map(|e| e.path()).collect();
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
     entries.sort();
     for path in entries {
         zip.start_file(path.file_name().unwrap().to_string_lossy(), opts)?;
@@ -283,10 +394,60 @@ fn quiet_stdout() -> std::fs::File {
     }
 }
 
+/// Does `platform`'s own system load `path`?
+fn check_load(file: &EmuFile, platform: &str, path: &Path, over: Option<&Override>) -> bool {
+    let mut meta: std::collections::HashMap<String, String> = file
+        .meta_strings()
+        .map(|(k, v)| (k.to_string(), v.into_owned()))
+        .collect();
+    meta.insert("platform".into(), platform.to_string());
+    let Ok(wf) = release_io::unpack_release(path, &meta) else {
+        return false;
+    };
+    let opts = SysOpts {
+        latency: 2,
+        silent_drive: true,
+        ..Default::default()
+    };
+    let expected = newsys::platform_systems(platform);
+    match NewSys::new(&opts).load_prepared(wf, over) {
+        Ok(r) => expected.is_empty() || expected.contains(&r.system_name),
+        Err(e) => {
+            tracing::warn!("{platform}: {e:#}");
+            false
+        }
+    }
+}
+
+/// Answer `<id>\t<platform>\t<path>` lines on stdin with `1` or `0`.
+fn worker(files: &[EmuFile], out: &mut impl Write) -> Result<()> {
+    let by_id: std::collections::HashMap<&str, &EmuFile> =
+        files.iter().map(|f| (f.get_meta("id"), f)).collect();
+    let overrides = overrides::load_default(|_| Some(newsys::libretro::RETROK_UNKNOWN))?;
+    for line in std::io::stdin().lock().lines() {
+        let line = line?;
+        let mut parts = line.splitn(3, '\t');
+        let (Some(id), Some(platform), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
+            bail!("bad request: {line}");
+        };
+        let ok = by_id.get(id).is_some_and(|file| {
+            let over = file.demo_id().and_then(|d| overrides.get(&d));
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_load(file, platform, Path::new(path), over)
+            }))
+            .unwrap_or(false)
+        });
+        writeln!(out, "{}", ok as u8)?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    std::fs::create_dir_all(&args.out)?;
-    args.out = std::fs::canonicalize(&args.out)?;
+    #[cfg(target_os = "linux")]
+    newsys::wine::add_wine_to_path();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -299,29 +460,63 @@ fn main() -> Result<()> {
     #[cfg(not(unix))]
     let mut out = std::io::stdout();
 
+    args.db = std::fs::canonicalize(&args.db)?;
     let filter = DbFilter {
         include: &[],
         exclude: &[],
     };
     let mut files = vec![];
     collect_db(&args.db, &filter, &mut files)?;
-    let mut mirror = Mirror {
-        overrides: overrides::load_default(|_| Some(newsys::libretro::RETROK_UNKNOWN))?,
-        downloads: 0,
+    if args.worker {
+        return worker(&files, &mut out);
+    }
+    std::fs::create_dir_all(&args.out)?;
+    args.out = std::fs::canonicalize(&args.out)?;
+
+    let mirror = Mirror {
+        downloads: AtomicUsize::new(0),
+        cached: AtomicUsize::new(0),
         args,
     };
-    for file in &files {
+    let todo = Mutex::new(files.iter().filter(|file| {
         let id = file.get_meta("id");
-        if !mirror.args.id.is_empty() && !mirror.args.id.iter().any(|w| w == id) {
-            continue;
+        mirror.args.id.is_empty() || mirror.args.id.iter().any(|w| w == id)
+    }));
+    let out = Mutex::new(out);
+    std::thread::scope(|scope| {
+        for _ in 0..mirror.args.jobs.max(1) {
+            scope.spawn(|| {
+                let mut worker = None;
+                loop {
+                    if mirror.limit_reached() {
+                        break;
+                    }
+                    let Some(file) = todo.lock().unwrap().next() else {
+                        break;
+                    };
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        mirror.mirror(&mut worker, file)
+                    }))
+                    .unwrap_or_else(|_| Ok("panicked".into()));
+                    let line = result.unwrap_or_else(|e| format!("error: {e:#}"));
+                    let _ = writeln!(
+                        out.lock().unwrap(),
+                        "{} {}: {line}",
+                        file.get_meta("id"),
+                        file.game_info.title
+                    );
+                }
+                if let Some(w) = worker {
+                    w.kill();
+                }
+            });
         }
-        if mirror.limit_reached() {
-            break;
-        }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mirror.mirror(file)))
-            .unwrap_or_else(|_| Ok("panicked".into()));
-        let line = result.unwrap_or_else(|e| format!("error: {e:#}"));
-        writeln!(out, "{id} {}: {line}", file.game_info.title)?;
-    }
+    });
+    writeln!(
+        out.lock().unwrap(),
+        "{} files downloaded, {} from cache",
+        mirror.downloads.load(Ordering::Relaxed),
+        mirror.cached.load(Ordering::Relaxed)
+    )?;
     Ok(())
 }

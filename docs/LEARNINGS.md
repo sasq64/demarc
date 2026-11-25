@@ -1976,3 +1976,7 @@
 - A relative output path broke halfway through a `mirror` run: the C64
   converter (`cbmconvert.rs`) changes the process cwd, and a timed-out load
   thread can leave it changed. Make long-lived paths absolute up front.
+- Every Windows release came out `not_working` from `mirror`: demarc's
+  `main` calls `wine::add_wine_to_path()` (the bundled wine in
+  `~/.local/share/demarc/wine/bin`), the mirror bin did not, and this host
+  has no system wine. `load_prepared` errors are now logged at `warn`.
