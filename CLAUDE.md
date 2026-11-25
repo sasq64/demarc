@@ -60,6 +60,19 @@ built for Android (`docs/ANDROID.md`):
 - `minimarc`: the app over those, on winit, wgpu 30 and egui. Its own
   `crates/minimarc/CLAUDE.md` covers the Android work.
 - `newsys`, `retroarc`, `frameconv`, `rife`, `flash-emu`: desktop only.
+- `demomirror`: the `mirror` bin (spec in `MIRROR_TOOL.md`). Walks
+  `demodb/demozoo.txt` and stores every download of each production as
+  `mirror/demozoo/<id>/<tag>-<filename>`. `<tag>` is the first platform
+  whose own system loads it via `NewSys::load_prepared` (`not_working`
+  if none), or `music`/`gfx` by category (no load check). Disk images are
+  grouped with `release_downloads`; a multi-disk set is zipped as
+  `<title slug>.zip`, `.dms` unpacked to `.adf`. Reads the download cache
+  but never writes it (`fetch::download_uncached`). Existing files are
+  skipped (case-insensitive name match); `--id`, `--limit` (downloads).
+  Gotchas: `newsys` falls back to every system, so a load only counts if
+  `system_name` is in `newsys::platform_systems(platform)`; the out dir is
+  made absolute because the C64 converter changes cwd; fd 1/2 go to
+  /dev/null unless `RUST_LOG` is set.
 
 Dependencies point one way only. `demarc/src/main.rs` re-exports the moved
 modules at its crate root, so `crate::backend`, `crate::newsys`, `crate::utils`

@@ -1968,3 +1968,11 @@
   `~/.cache/demarc/system`; moving files in the cache to get an A/B baseline
   changed nothing, and two identical recordings looked like a broken feature.
   Log the system dir the core sees before trusting a baseline.
+
+- `NewSys::load_prepared` succeeding says nothing about the platform: it
+  tries the `platform` meta's systems first, then every other system. The
+  first `mirror` run marked every version as working until it checked
+  `system_name` against `newsys::platform_systems`.
+- A relative output path broke halfway through a `mirror` run: the C64
+  converter (`cbmconvert.rs`) changes the process cwd, and a timed-out load
+  thread can leave it changed. Make long-lived paths absolute up front.
