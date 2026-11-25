@@ -1955,3 +1955,16 @@
   the code (0100000F = `AN_BadFreeAddr`). 1.x-era `Add21K`/`Add36K` in a
   startup-sequence free a screen bitplane and alert on KS 3 once a screen is
   open, which `--unadf` boots have; they are stripped there.
+
+- A core's own stderr does not reach the terminal in a headless demarc run;
+  call `log_to_file(path)` first in the remote-control script to see it.
+- To test amiberry hard drive access, pick a release that boots from the
+  directory drive: `Desire-BaconOfHope.lha` carries an `.adf` and boots that,
+  so no filesystem packet is ever sent. `nocpuchallenge.lha` (loads the 745 KB
+  `chip.zx0`) does.
+
+- A `release-fast` demarc run from the repo root handed the Amiga core
+  `system/amiga` (the repo copy) as its system dir, not
+  `~/.cache/demarc/system`; moving files in the cache to get an A/B baseline
+  changed nothing, and two identical recordings looked like a broken feature.
+  Log the system dir the core sees before trusting a baseline.

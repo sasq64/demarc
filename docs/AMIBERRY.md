@@ -70,6 +70,8 @@ below, which has to reach the emulator's own allocators under `src/`.
 | Directory-as-harddrive mount | `libretro.cpp:4281` |
 | A4000 kickstart fallback to `kick40068.A1200`, now with a warning | `libretro.cpp:1826`, `:1890` |
 | Floppy images pushed as `-s floppy0=` instead of a positional arg | `libretro.cpp:1868`, `:5089` |
+| `amiberry_hd_speed` option (`off`/`fast`/`slow`): directory drive packets cost emulated seek/rotation/transfer time, and the filesys thread holds its reply while the drive is over a frame behind | `src/harddrive_emu.cpp` (model), `filesys.cpp` `hdemu_packet()` + `filesys_iteration()`, `libretro.cpp` |
+| `amiberry_hd_sound` + `amiberry_hd_sound_volume` (100% = 4× 86Box's level, default 75%) + `amiberry_hd_idle_off` (seconds without drive work before a 0.3 s fade to silence; the next access spins up again) options: 86Box's spin-up, running and seek samples (fast = Seagate ST3120A, slow = Miniscribe 8425, from `86Box/assets`) for directory drives, from `system/amiga/hdd_sounds/<speed>/`; seeks are timestamped by `harddrive_emu` and mixed into the FIFO in `libretro_audio_enqueue` | `src/harddrive_sound.cpp`, `harddrive_emu.cpp` `hdemu_take_seeks()`, `filesys.cpp` `filesys_start_threads()` |
 | `retro_deinit` releases natmem and the JIT cache (see below) | `libretro.cpp` `release_host_address_space()`, `amiberry_mem.cpp` `release_shm()`, `compemu_support_*.cpp` `compiler_exit()` |
 
 ### Why unloading has to give the address space back

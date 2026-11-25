@@ -520,6 +520,9 @@ pub fn default_meta() -> HashMap<&'static str, &'static str> {
         ("amiberry_internal_vsync", "standard"),
         ("amiberry_floppy_sound", "enabled"),
         ("amiberry_floppy_sound_volume", "27"),
+        ("amiberry_hd_speed", "fast"),
+        ("amiberry_hd_sound", "enabled"),
+        ("amiberry_hd_idle_off", "5"),
         // On a phone the threaded CPU slows the whole machine under load
         // (Neocolora), where the unthreaded one gives way.
         (
