@@ -267,6 +267,7 @@ pub(crate) fn update_ui(
     dialog: Option<Res<SettingsState<crate::demarc_settings::DemarcSettings>>>,
     emus: Query<&crate::emulator::Emulator>,
     app: Res<crate::config::AppSettings>,
+    views: Query<(&crate::emulator::Emulator, &crate::frontend::EmuView)>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     if let (Some(size), Some(factor)) =
@@ -299,6 +300,14 @@ pub(crate) fn update_ui(
                 .unwrap_or_default()
         }),
     );
+    if app.show_leds
+        && let Some(core) = views
+            .iter()
+            .find(|(emu, view)| !emu.is_crossfade && view.index == app.current_emu)
+            .and_then(|(emu, _)| emu.core.as_ref())
+    {
+        draw_leds(ctx, core.state());
+    }
     if let Some(picked) = draw_picker(ctx, &mut state.picker) {
         selected.write(FuzzyListSelect {
             id: picked.id,
@@ -309,6 +318,31 @@ pub(crate) fn update_ui(
         });
     }
     Ok(())
+}
+
+fn draw_leds(ctx: &egui::Context, state: u64) {
+    let (count, mask) = retro_core::backend::leds(state);
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("leds"),
+    ));
+    let size = egui::vec2(18.0, 7.0);
+    let origin = ctx.content_rect().left_bottom() + egui::vec2(16.0, -16.0 - size.y);
+    for i in 0..count {
+        let rect = egui::Rect::from_min_size(origin + egui::vec2(i as f32 * 26.0, 0.0), size);
+        if mask & (1 << i) != 0 {
+            let glow = egui::Shadow {
+                offset: [0, 0],
+                blur: 12,
+                spread: 2,
+                color: egui::Color32::from_rgba_unmultiplied(60, 255, 60, 140),
+            };
+            painter.add(glow.as_shape(rect, 2));
+            painter.rect_filled(rect, 2, egui::Color32::from_rgb(120, 255, 120));
+        } else {
+            painter.rect_filled(rect, 2, egui::Color32::from_rgb(40, 50, 40));
+        }
+    }
 }
 
 fn draw_picker(

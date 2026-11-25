@@ -82,6 +82,15 @@ pub enum MediaCmd {
 /// yet. Cleared on the frame the skip runs out.
 pub const STATE_SKIPPING: u64 = 1 << 0;
 
+/// The upper half of [`Backend::state`]: bits 32..48 are the core's LEDs,
+/// bits 48..56 how many it has reported.
+pub const STATE_LEDS_SHIFT: u32 = 32;
+
+/// The LED count and on/off mask from a [`Backend::state`] mask.
+pub fn leds(state: u64) -> (usize, u16) {
+    (((state >> 48) & 0xff) as usize, (state >> STATE_LEDS_SHIFT) as u16)
+}
+
 /// The most finished frames a backend may hold for the frontend.
 pub const MAX_LATENCY: usize = 10;
 

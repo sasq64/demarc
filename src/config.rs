@@ -120,6 +120,10 @@ pub struct Args {
     #[arg(long)]
     pub theme: Option<String>,
 
+    /// Show the core's LEDs from the start (toggle with hotkey + L).
+    #[arg(long)]
+    pub led: bool,
+
     /// Path to lua script used for music visualization
     #[arg(long)]
     pub lua: Option<PathBuf>,
@@ -713,6 +717,7 @@ pub struct AppSettings {
     /// [`Emulator::update_load`](crate::emulator::Emulator::update_load).
     pub system: Arc<NewSys>,
     pub show_info: bool,
+    pub show_leds: bool,
     /// Every loaded database by name, in the order it was given on the command
     /// line — a db file, a db on stdin, or the plain files and directories
     /// collected under `Files`.

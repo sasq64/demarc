@@ -42,7 +42,8 @@ use crate::libretro::{
     RETRO_DEVICE_POINTER, RETRO_ENVIRONMENT_GET_CAN_DUPE,
     RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, RETRO_ENVIRONMENT_GET_CURRENT_SOFTWARE_FRAMEBUFFER,
     RETRO_ENVIRONMENT_GET_FASTFORWARDING, RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,
-    RETRO_ENVIRONMENT_GET_LANGUAGE, RETRO_ENVIRONMENT_GET_LIBRETRO_PATH,
+    RETRO_ENVIRONMENT_GET_LANGUAGE, RETRO_ENVIRONMENT_GET_LED_INTERFACE,
+    RETRO_ENVIRONMENT_GET_LIBRETRO_PATH,
     RETRO_ENVIRONMENT_GET_LOG_INTERFACE, RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION,
     RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
     RETRO_ENVIRONMENT_GET_THROTTLE_STATE, RETRO_ENVIRONMENT_GET_VARIABLE,
@@ -58,6 +59,7 @@ use crate::libretro::{
     RETRO_PIXEL_FORMAT_XRGB8888, RETRO_THROTTLE_FAST_FORWARD, RETRO_THROTTLE_NONE,
     retro_audio_sample_batch_t, retro_audio_sample_t, retro_disk_control_callback,
     retro_disk_control_ext_callback, retro_environment_t, retro_frame_time_callback,
+    retro_led_interface,
     retro_game_geometry, retro_game_info, retro_input_poll_t, retro_input_state_t,
     retro_keyboard_callback, retro_log_callback, retro_log_level, retro_pixel_format,
     retro_system_av_info, retro_system_info, retro_throttle_state, retro_variable,
@@ -173,6 +175,8 @@ pub struct RetroCoreDirect {
     frame_target: Option<FrameTarget>,
     #[cfg(unix)]
     dmabuf: Option<dmabuf::Dmabuf>,
+    leds: u16,
+    led_count: u8,
 }
 
 struct FrameTarget {
@@ -468,6 +472,27 @@ impl RetroCoreDirect {
         });
         ret
     }
+    unsafe extern "C" fn set_led_state_cb(led: c_int, state: c_int) {
+        CURRENT_EMU.with(|p| {
+            if let Some(ctx) = unsafe { p.get().as_mut() }
+                && (0..16).contains(&led)
+            {
+                let bit = 1 << led;
+                if state != 0 {
+                    ctx.leds |= bit;
+                } else {
+                    ctx.leds &= !bit;
+                }
+                ctx.led_count = ctx.led_count.max(led as u8 + 1);
+            }
+        });
+    }
+
+    /// The LED part of the [`Backend::state`] mask.
+    pub(crate) fn led_bits(&self) -> u64 {
+        ((self.led_count as u64) << 48) | ((self.leds as u64) << crate::backend::STATE_LEDS_SHIFT)
+    }
+
     fn environment(&mut self, cmd: u32, data: *mut c_void) -> bool {
         // debug!("## ENV {cmd}");
         let mut handled = true;
@@ -543,6 +568,9 @@ impl RetroCoreDirect {
                             handled = false;
                         }
                     }
+                }
+                RETRO_ENVIRONMENT_GET_LED_INTERFACE => {
+                    (*(data as *mut retro_led_interface)).set_led_state = Some(Self::set_led_state_cb);
                 }
                 RETRO_ENVIRONMENT_GET_LOG_INTERFACE => {
                     info!("Logger registered");
@@ -802,6 +830,8 @@ impl RetroCoreDirect {
                 frame_target: None,
                 #[cfg(unix)]
                 dmabuf: None,
+                leds: 0,
+                led_count: 0,
             };
             // Our options go in before the core is told anything, so they are
             // already there whenever it announces its own defaults (usually
@@ -1068,6 +1098,9 @@ impl Backend for RetroCoreDirect {
     }
     fn has_exited(&self) -> bool {
         RetroCoreDirect::has_exited(self)
+    }
+    fn state(&self) -> u64 {
+        self.led_bits()
     }
     fn fps(&self) -> f64 {
         RetroCoreDirect::fps(self)

@@ -77,6 +77,7 @@ pub enum Cmd {
     NextSubtitle,
     StopEmu,
     About,
+    ToggleLeds,
 }
 
 impl Cmd {
@@ -127,6 +128,7 @@ impl Cmd {
         Cmd::NextSubtitle,
         Cmd::StopEmu,
         Cmd::About,
+        Cmd::ToggleLeds,
     ];
 
     /// Look a command up by its `Debug` name, e.g. `"OpenFile"`.
@@ -181,6 +183,7 @@ impl Cmd {
             Cmd::NextSubtitle => "Next subtitle track",
             Cmd::StopEmu => "Stop current emulator",
             Cmd::About => "About",
+            Cmd::ToggleLeds => "Toggle LED display",
         }
     }
 
@@ -300,6 +303,7 @@ const HOTKEYS: &[KeyMapping] = &[
     KeyMapping::shifted(KeyCode::KeyN, Cmd::NextFileAll),
     KeyMapping::new(KeyCode::Escape, Cmd::StopEmu),
     KeyMapping::new(KeyCode::Slash, Cmd::About),
+    KeyMapping::new(KeyCode::KeyL, Cmd::ToggleLeds),
     KeyMapping::new(KeyCode::Equal, Cmd::ZoomIn),
     KeyMapping::new(KeyCode::Minus, Cmd::ZoomOut),
     KeyMapping::new(KeyCode::ArrowUp, Cmd::ScrollUp),
@@ -781,6 +785,7 @@ pub(crate) fn handle_cmd(
     for cmd in cmds.read() {
         debug!("Received command: {:?}", cmd.0);
         match cmd.0 {
+            Cmd::ToggleLeds => settings.show_leds = !settings.show_leds,
             Cmd::ToggleCrt => {
                 render.crt_effect = !render.crt_effect;
                 writer.write(SetHudText {

@@ -432,6 +432,7 @@ fn worker_loop(
                 len: pixels.len(),
             });
             core.run();
+            set_led_bits(state, core.led_bits());
             let written = core.frame_target.take().is_none();
             let gpu_frame = core.take_gpu_frame();
             // Count every emulated frame the core steps, including skipped ones.
@@ -615,6 +616,15 @@ pub(super) fn set_state_bit(state: &AtomicU64, bit: u64, on: bool) {
     } else {
         state.fetch_and(!bit, Ordering::Relaxed);
     }
+}
+
+/// Replace the LED half of the shared state mask with `bits`.
+pub(super) fn set_led_bits(state: &AtomicU64, bits: u64) {
+    let low = (1u64 << crate::backend::STATE_LEDS_SHIFT) - 1;
+    let _ = state.try_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+        let new = (old & low) | bits;
+        (new != old).then_some(new)
+    });
 }
 
 impl Backend for RetroCoreThreaded {

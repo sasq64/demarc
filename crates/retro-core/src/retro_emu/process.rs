@@ -28,7 +28,7 @@ use crate::pixels::{SCREEN_ACTIVE, get_frame_diff};
 
 use super::threaded::{
     RetroCmd, Scheduled, WORKER_STACK_SIZE, apply_cmd, clamp_latency, latency_from_meta, play_due,
-    set_state_bit,
+    set_led_bits, set_state_bit,
 };
 use super::{FrameTarget, RetroCoreDirect};
 
@@ -829,6 +829,7 @@ fn worker_loop(
             len: MAX_PIXELS,
         });
         core.run();
+        set_led_bits(state, core.led_bits());
         let written = core.frame_target.take().is_none();
         if written {
             last = Some(slot);

@@ -639,6 +639,7 @@ fn main() {
         current_game: -1,
         show_info: args.info == InfoDisplay::Always
             || (multiple && args.info == InfoDisplay::OnMulti),
+        show_leds: args.led,
         files: dbs
             .into_iter()
             .map(|(name, files)| (name, &*files.leak()))

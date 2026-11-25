@@ -332,3 +332,12 @@ fn settings_reach_the_core() {
     // default — this is what proves the core did announce its options.
     assert!(!var("amiberry_floppy_speed").is_empty());
 }
+
+#[test]
+fn led_bits_keep_state_bits() {
+    let state = std::sync::atomic::AtomicU64::new(crate::backend::STATE_SKIPPING);
+    threaded::set_led_bits(&state, (3 << 48) | (0b101 << 32));
+    let s = state.load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(s & crate::backend::STATE_SKIPPING, crate::backend::STATE_SKIPPING);
+    assert_eq!(crate::backend::leds(s), (3, 0b101));
+}
