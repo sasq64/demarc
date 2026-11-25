@@ -114,7 +114,10 @@ const LINK_BASES: &[(&str, &[&str])] = &[
     ("ModlandFile", &["https://ftp.modland.com"]),
     (
         "FujiologyFile",
-        &["https://ftp.untergrund.net/users/ltk_tscc/fujiology"],
+        &[
+            "https://fujiology.org",
+            "https://ftp.untergrund.net/users/ltk_tscc/fujiology",
+        ],
     ),
     ("UntergrundFile", &["https://ftp.untergrund.net"]),
     ("PaduaOrgFile", &["http://ftp.padua.org/pub/c64"]),
@@ -223,10 +226,37 @@ fn candidates(s: &str) -> Vec<Candidate> {
     (0..bases.len())
         .map(|offset| (start + offset) % bases.len())
         .map(|base| Candidate {
-            url: rewrite(&format!("{}{parameter}", bases[base])),
+            url: rewrite(&format!(
+                "{}{}",
+                bases[base],
+                escape_stray_percent(parameter)
+            )),
             mirror: Some(Mirror { class, base }),
         })
         .collect()
+}
+
+/// Escape each `%` that does not start a `%XX` escape, as in a db path like
+/// `crest_slide_story_90%.zip`.
+fn escape_stray_percent(path: &str) -> Cow<'_, str> {
+    let bytes = path.as_bytes();
+    let stray = |i: usize| {
+        bytes[i] == b'%'
+            && !(bytes.get(i + 1).is_some_and(u8::is_ascii_hexdigit)
+                && bytes.get(i + 2).is_some_and(u8::is_ascii_hexdigit))
+    };
+    if !(0..bytes.len()).any(stray) {
+        return path.into();
+    }
+    let mut out = String::with_capacity(path.len() + 4);
+    for (i, c) in path.char_indices() {
+        if stray(i) {
+            out.push_str("%25");
+        } else {
+            out.push(c);
+        }
+    }
+    out.into()
 }
 
 /// Remember `mirror` as the one that worked, rotating its class's list so the
@@ -410,6 +440,11 @@ pub fn is_download_cached(url: &str) -> bool {
     }
     let name = url_filename(&primary_url(url));
     DOWNLOADS.is_cached(&cache_key(url), &name)
+}
+
+/// Download `url` (trying its mirrors) straight to `dest`, bypassing the cache.
+pub fn download_uncached(url: &str, dest: &Path) -> anyhow::Result<()> {
+    download_to(url, dest, &|_, _| {})
 }
 
 pub fn cached_download(url: &str) -> Option<PathBuf> {
