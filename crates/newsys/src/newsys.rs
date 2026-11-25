@@ -123,6 +123,17 @@ const PLATFORM_SYSTEMS: &[(&str, &str)] = &[
     ("ms-dos", "MS/DOS"),
 ];
 
+/// The systems a db `platform` maps to.
+pub fn platform_systems(platform: &str) -> Vec<&'static str> {
+    let platform = platform.trim().to_ascii_lowercase();
+    PLATFORM_SYSTEMS
+        .iter()
+        .filter(|(p, _)| *p == platform)
+        .map(|(_, name)| *name)
+        .collect()
+}
+
+
 /// Trim the caches of built and rewritten discs back under their budgets.
 ///
 /// Intended to run once at startup, alongside [`crate::fetch::prune_cache`] and

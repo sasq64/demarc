@@ -1,0 +1,24 @@
+[package]
+name = "demomirror"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Mirrors demozoo releases locally, sorted by the platform they load as"
+
+[[bin]]
+name = "mirror"
+path = "src/main.rs"
+
+[dependencies]
+database = { path = "../database" }
+newsys = { path = "../newsys" }
+release-io = { path = "../release-io" }
+
+anyhow.workspace = true
+clap = { version = "4.6.1", features = ["derive"] }
+tempfile.workspace = true
+tracing-subscriber.workspace = true
+zip.workspace = true
+
+[target."cfg(unix)".dependencies]
+libc.workspace = true
