@@ -271,8 +271,13 @@ fn reads_the_content_disposition_filename() {
 }
 
 #[test]
-fn a_stray_percent_in_a_db_path_is_escaped() {
-    assert_eq!(escape_stray_percent("/a/story_90%.zip"), "/a/story_90%25.zip");
-    assert_eq!(escape_stray_percent("/a/b%20c.zip"), "/a/b%20c.zip");
-    assert_eq!(escape_stray_percent("/a/50%"), "/a/50%25");
+fn file_name_characters_in_a_db_url_are_escaped() {
+    assert_eq!(escape_url("/a/story_90%.zip"), "/a/story_90%25.zip");
+    assert_eq!(escape_url("/a/b%20c.zip"), "/a/b%20c.zip");
+    assert_eq!(escape_url("/a/50%"), "/a/50%25");
+    assert_eq!(
+        escape_url("https://ftp.modland.com/pub/modules/Fasttracker%202/Cerror/n-gen#03.xm"),
+        "https://ftp.modland.com/pub/modules/Fasttracker%202/Cerror/n-gen%2303.xm"
+    );
+    assert_eq!(escape_url("/a/b c.zip"), "/a/b%20c.zip");
 }
