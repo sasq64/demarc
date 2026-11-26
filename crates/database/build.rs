@@ -7,7 +7,12 @@ fn main() {
     let root = PathBuf::from(std::env::var("DEMARC_ROOT").unwrap_or_else(|_| "../..".into()));
     let file = root.join("demozoo.key");
     println!("cargo:rerun-if-env-changed=DEMOZOO_API_KEY");
-    println!("cargo:rerun-if-changed={}", file.display());
+    // Watching a missing file makes cargo rebuild every time.
+    if file.exists() {
+        println!("cargo:rerun-if-changed={}", file.display());
+    } else {
+        println!("cargo:rerun-if-changed=build.rs");
+    }
     let key = std::env::var("DEMOZOO_API_KEY")
         .ok()
         .or_else(|| std::fs::read_to_string(&file).ok())

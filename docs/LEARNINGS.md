@@ -1980,3 +1980,10 @@
   `main` calls `wine::add_wine_to_path()` (the bundled wine in
   `~/.local/share/demarc/wine/bin`), the mirror bin did not, and this host
   has no system wine. `load_prepared` errors are now logged at `warn`.
+
+- A slow no-change `run-android.sh` was blamed on Gradle (its "enable
+  configuration cache" hint), but Gradle took under a second. `cargo build -v`
+  showed the real cause: `database/build.rs` said `rerun-if-changed` for a
+  `demozoo.key` that does not exist, and cargo reruns a build script that
+  watches a missing file every time, which rebuilt everything above it (~30 s).
+  Measure each step first; `-v` prints the reason a crate is `Dirty`.
