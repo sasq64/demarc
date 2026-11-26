@@ -328,19 +328,20 @@ fn draw_leds(ctx: &egui::Context, state: u64) {
     ));
     let size = egui::vec2(18.0, 7.0);
     let origin = ctx.content_rect().left_bottom() + egui::vec2(16.0, -16.0 - size.y);
-    for i in 0..count {
+    const COLORS: [(u8, u8, u8); 3] = [(255, 60, 60), (60, 255, 60), (255, 220, 40)];
+    for (i, &(r, g, b)) in COLORS.iter().enumerate().take(count) {
         let rect = egui::Rect::from_min_size(origin + egui::vec2(i as f32 * 26.0, 0.0), size);
         if mask & (1 << i) != 0 {
             let glow = egui::Shadow {
                 offset: [0, 0],
                 blur: 12,
                 spread: 2,
-                color: egui::Color32::from_rgba_unmultiplied(60, 255, 60, 140),
+                color: egui::Color32::from_rgba_unmultiplied(r, g, b, 140),
             };
             painter.add(glow.as_shape(rect, 2));
-            painter.rect_filled(rect, 2, egui::Color32::from_rgb(120, 255, 120));
+            painter.rect_filled(rect, 2, egui::Color32::from_rgb(r, g, b));
         } else {
-            painter.rect_filled(rect, 2, egui::Color32::from_rgb(40, 50, 40));
+            painter.rect_filled(rect, 2, egui::Color32::from_rgb(r / 5, g / 5, b / 5));
         }
     }
 }
