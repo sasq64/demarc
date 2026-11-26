@@ -1135,7 +1135,7 @@ impl RetroCoreDirect {
 #[cfg(all(unix, not(target_os = "android")))]
 mod process;
 #[cfg(all(unix, not(target_os = "android")))]
-pub use process::{RetroCoreProcess, process_worker_main};
+pub use process::{CoreCrashed, RetroCoreProcess, process_worker_main};
 
 /// Build the backend for a libretro core: on a thread of its own, or in a
 /// process of its own when the `use_proc` meta is set.

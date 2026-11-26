@@ -161,10 +161,15 @@ impl Worker {
         })
     }
 
-    fn check(&mut self, id: &str, platform: &str, path: &Path, timeout: Duration) -> Result<bool> {
+    fn check(&mut self, id: &str, platform: &str, path: &Path, timeout: Duration) -> Result<Load> {
         writeln!(self.stdin, "{id}\t{platform}\t{}", path.display())?;
         self.stdin.flush()?;
-        Ok(self.replies.recv_timeout(timeout)? == "1")
+        let reply = self.replies.recv_timeout(timeout)?;
+        Ok(match reply.split_once('\t') {
+            Some(("crash", core)) => Load::Crash(core.to_string()),
+            _ if reply == "1" => Load::Ok,
+            _ => Load::Fail,
+        })
     }
 
     /// Kill the worker and everything it started (wine, gamescope).
@@ -178,13 +183,25 @@ impl Worker {
     }
 }
 
+enum Load {
+    Ok,
+    Fail,
+    /// The core process died; holds the core's path.
+    Crash(String),
+}
+
 struct Mirror {
     args: Args,
+    out: Mutex<Box<dyn Write + Send>>,
     downloads: AtomicUsize,
     cached: AtomicUsize,
 }
 
 impl Mirror {
+    fn log(&self, line: &str) {
+        let _ = writeln!(self.out.lock().unwrap(), "{line}");
+    }
+
     fn limit_reached(&self) -> bool {
         self.args
             .limit
@@ -262,10 +279,26 @@ impl Mirror {
                 *worker = Some(Worker::spawn(&self.args.db)?);
             }
             let w = worker.as_mut().unwrap();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let title = &file.game_info.title;
             match w.check(id, platform, path, timeout) {
-                Ok(true) => return Ok(Some(platform)),
-                Ok(false) => {}
-                Err(_) => worker.take().unwrap().kill(),
+                Ok(Load::Ok) => return Ok(Some(platform)),
+                Ok(Load::Fail) => {}
+                Ok(Load::Crash(core)) => {
+                    self.log(&format!("{id} {title}: crash: {name} on {platform} ({core})"));
+                }
+                Err(e) => {
+                    if matches!(
+                        e.downcast_ref::<mpsc::RecvTimeoutError>(),
+                        Some(mpsc::RecvTimeoutError::Disconnected)
+                    ) {
+                        let systems = newsys::platform_systems(platform).join("/");
+                        self.log(&format!(
+                            "{id} {title}: worker crash: {name} on {platform} ({systems})"
+                        ));
+                    }
+                    worker.take().unwrap().kill();
+                }
             }
         }
         Ok(None)
@@ -395,14 +428,15 @@ fn quiet_stdout() -> std::fs::File {
 }
 
 /// Does `platform`'s own system load `path`?
-fn check_load(file: &EmuFile, platform: &str, path: &Path, over: Option<&Override>) -> bool {
+fn check_load(file: &EmuFile, platform: &str, path: &Path, over: Option<&Override>) -> Load {
     let mut meta: std::collections::HashMap<String, String> = file
         .meta_strings()
         .map(|(k, v)| (k.to_string(), v.into_owned()))
         .collect();
     meta.insert("platform".into(), platform.to_string());
+    meta.insert("use_proc".into(), "1".into());
     let Ok(wf) = release_io::unpack_release(path, &meta) else {
-        return false;
+        return Load::Fail;
     };
     let opts = SysOpts {
         latency: 2,
@@ -411,15 +445,21 @@ fn check_load(file: &EmuFile, platform: &str, path: &Path, over: Option<&Overrid
     };
     let expected = newsys::platform_systems(platform);
     match NewSys::new(&opts).load_prepared(wf, over) {
-        Ok(r) => expected.is_empty() || expected.contains(&r.system_name),
+        Ok(r) if expected.is_empty() || expected.contains(&r.system_name) => Load::Ok,
+        Ok(_) => Load::Fail,
         Err(e) => {
             tracing::warn!("{platform}: {e:#}");
-            false
+            #[cfg(unix)]
+            if let Some(c) = e.downcast_ref::<newsys::retro_emu::CoreCrashed>() {
+                return Load::Crash(c.core.display().to_string());
+            }
+            Load::Fail
         }
     }
 }
 
-/// Answer `<id>\t<platform>\t<path>` lines on stdin with `1` or `0`.
+/// Answer `<id>\t<platform>\t<path>` lines on stdin with `1`, `0` or
+/// `crash\t<core>`.
 fn worker(files: &[EmuFile], out: &mut impl Write) -> Result<()> {
     let by_id: std::collections::HashMap<&str, &EmuFile> =
         files.iter().map(|f| (f.get_meta("id"), f)).collect();
@@ -431,20 +471,28 @@ fn worker(files: &[EmuFile], out: &mut impl Write) -> Result<()> {
         else {
             bail!("bad request: {line}");
         };
-        let ok = by_id.get(id).is_some_and(|file| {
+        let load = by_id.get(id).map_or(Load::Fail, |file| {
             let over = file.demo_id().and_then(|d| overrides.get(&d));
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 check_load(file, platform, Path::new(path), over)
             }))
-            .unwrap_or(false)
+            .unwrap_or(Load::Fail)
         });
-        writeln!(out, "{}", ok as u8)?;
+        match load {
+            Load::Ok => writeln!(out, "1")?,
+            Load::Fail => writeln!(out, "0")?,
+            Load::Crash(core) => writeln!(out, "crash\t{core}")?,
+        }
         out.flush()?;
     }
     Ok(())
 }
 
 fn main() -> Result<()> {
+    #[cfg(unix)]
+    if let Some(code) = newsys::retro_emu::process_worker_main() {
+        std::process::exit(code);
+    }
     let mut args = Args::parse();
     #[cfg(target_os = "linux")]
     newsys::wine::add_wine_to_path();
@@ -477,12 +525,12 @@ fn main() -> Result<()> {
         downloads: AtomicUsize::new(0),
         cached: AtomicUsize::new(0),
         args,
+        out: Mutex::new(Box::new(out)),
     };
     let todo = Mutex::new(files.iter().filter(|file| {
         let id = file.get_meta("id");
         mirror.args.id.is_empty() || mirror.args.id.iter().any(|w| w == id)
     }));
-    let out = Mutex::new(out);
     std::thread::scope(|scope| {
         for _ in 0..mirror.args.jobs.max(1) {
             scope.spawn(|| {
@@ -499,12 +547,11 @@ fn main() -> Result<()> {
                     }))
                     .unwrap_or_else(|_| Ok("panicked".into()));
                     let line = result.unwrap_or_else(|e| format!("error: {e:#}"));
-                    let _ = writeln!(
-                        out.lock().unwrap(),
+                    mirror.log(&format!(
                         "{} {}: {line}",
                         file.get_meta("id"),
                         file.game_info.title
-                    );
+                    ));
                 }
                 if let Some(w) = worker {
                     w.kill();
@@ -512,11 +559,10 @@ fn main() -> Result<()> {
             });
         }
     });
-    writeln!(
-        out.lock().unwrap(),
+    mirror.log(&format!(
         "{} files downloaded, {} from cache",
         mirror.downloads.load(Ordering::Relaxed),
         mirror.cached.load(Ordering::Relaxed)
-    )?;
+    ));
     Ok(())
 }

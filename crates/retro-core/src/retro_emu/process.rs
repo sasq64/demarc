@@ -19,7 +19,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use tracing::{error, trace};
 use tracing_subscriber::EnvFilter;
 
@@ -324,6 +324,21 @@ impl Channel {
     }
 }
 
+/// The core process died before it finished loading the game.
+#[derive(Debug)]
+pub struct CoreCrashed {
+    pub core: PathBuf,
+    pub error: io::Error,
+}
+
+impl std::fmt::Display for CoreCrashed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "core process {} failed during setup: {}", self.core.display(), self.error)
+    }
+}
+
+impl std::error::Error for CoreCrashed {}
+
 pub struct RetroCoreProcess {
     chan: Channel,
     child: Child,
@@ -394,7 +409,11 @@ impl RetroCoreProcess {
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                bail!("core process failed during setup: {e}");
+                return Err(CoreCrashed {
+                    core: core_path.to_path_buf(),
+                    error: e,
+                }
+                .into());
             }
         };
         let h = unsafe { &*shm.header() };
