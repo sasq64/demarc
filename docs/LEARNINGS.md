@@ -1975,3 +1975,16 @@
   `demozoo.key` that does not exist, and cargo reruns a build script that
   watches a missing file every time, which rebuilt everything above it (~30 s).
   Measure each step first; `-v` prints the reason a crate is `Dirty`.
+
+- A demo that is slow only on Android (Beam Riders, ~1 fps vs full speed on
+  desktop) was not the arm64 JIT: minimarc's perf log showed the core at a full
+  50 Hz (18 ms/frame), so the emulated machine was on time and only the 68k was
+  short. With `amiberry_cpu_thread=disabled` (the Android default) the CPU at
+  `cpu_speed=max` gets only what the chipset leaves of each 20 ms; enabling the
+  thread took it from ~2.6 to ~25 fps. Check that before reading JIT code.
+  Profile on the phone with `simpleperf record --app se.minnberg.demarc.dev`
+  as the shell user (`run-as` fails); first `setprop security.perf_harden 0`
+  and `setprop debug.perf_event_max_sample_rate 100000`. Symbolize against
+  `target/amiberry-android/arm64-v8a/libretro/amiberry_libretro.so` (has no
+  build id: reinstall first so it matches). Count frames with `screenrecord`
+  + ffmpeg `mpdecimate`; `screencap` is too slow.

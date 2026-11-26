@@ -380,7 +380,7 @@ meta = { amiga_model = "A1230" }
 
 # Beam riders
 [zoo.179518]
-meta = { amiga_model = "A1240" }
+meta = { amiga_model = "A1240", amiberry_cpu_thread = "enabled" }
 
 [zoo.277286]
 meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
