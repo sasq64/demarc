@@ -1,0 +1,101 @@
+# demarc UI theme: waving grass, with dark leafy glass panels, rounded
+# corners and the Just Sugar font.
+
+[palette]
+dew = "#f0fae6"
+moss_grey = "#8fa88a"
+soil = "#0c1608"
+forest_glass = "#10220cd9"
+forest = "#18301a"
+leaf = "#2e5a26"
+fern = "#3f7a32"
+lime = "#9ad04a"
+sprout = "#c8f08a"
+sun = "#f8e08a"
+poppy = "#ff5a3c"
+
+[text]
+font = "Kalegrass.otf"
+color = "dew"
+dim = "moss_grey"
+
+[field]
+fill = "soil"
+
+[panel]
+fill = "forest_glass"
+border = { width = 2.0, color = "lime" }
+padding = 18
+corner_radius = 18
+glow = { blur = 28, spread = 4, color = "#9ad04a50" }
+
+[popup]
+fill = "forest"
+border = { width = 1.0, color = "fern" }
+padding = 6
+corner_radius = 10
+glow = { blur = 12, spread = 0, color = "#05100480" }
+
+[selection]
+fill = "#3f7a32c0"
+border = { width = 1.0, color = "sprout" }
+
+[widgets.noninteractive]
+button_fill = "forest"
+fill = "forest"
+border = { width = 1.0, color = "leaf" }
+foreground = { width = 1.0, color = "moss_grey" }
+corner_radius = 8
+
+[widgets.inactive]
+button_fill = "leaf"
+fill = "leaf"
+border = { width = 0.0, color = "#00000000" }
+foreground = { width = 1.0, color = "#cce0c0" }
+corner_radius = 8
+
+[widgets.hovered]
+button_fill = "fern"
+fill = "fern"
+border = { width = 1.0, color = "lime" }
+foreground = { width = 1.5, color = "dew" }
+corner_radius = 9
+
+[widgets.active]
+button_fill = "#24461e"
+fill = "#24461e"
+border = { width = 1.0, color = "sprout" }
+foreground = { width = 2.0, color = "dew" }
+corner_radius = 8
+
+[widgets.open]
+button_fill = "#1e3c1a"
+fill = "forest"
+border = { width = 1.0, color = "fern" }
+foreground = { width = 1.0, color = "#dcecd0" }
+corner_radius = 8
+
+[picker]
+font = "Kalegrass.otf"
+text = "dew"
+title = "sun"
+title_selected_fill = "leaf"
+row_selected_fill = "#3f7a32b0"
+info = "sprout"
+cached = "dew"
+award_winner = "#b09020"
+award_nominee = "#6a8a70"
+icon_color = "#9ad04a40"
+
+[hud]
+font = "Just Sugar.otf"
+text = "dew"
+error = "poppy"
+favorite = "poppy"
+download = "sprout"
+record = "#ff3020"
+shadow = "#081004"
+shadow_offset = 0.05
+
+[screen]
+shader = { shader = "grassy.wgsl" }
