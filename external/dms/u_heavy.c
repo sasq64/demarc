@@ -60,7 +60,9 @@ USHORT Unpack_HEAVY(UCHAR *in, UCHAR *out, UCHAR flags, USHORT pklen1, USHORT or
 		} else {
 			j = (USHORT) (c - OFFSET);
 			i = (USHORT) (dms_heavy_text_loc - decode_p() - 1);
-			while(j--) *out++ = dms_text[dms_heavy_text_loc++ & bitmask] = dms_text[i++ & bitmask];
+			/* demarc: stop at outend; a corrupt track (or a wrong key in
+			   pfile.c's password search) can ask for a match past it */
+			while(j-- && out<outend) *out++ = dms_text[dms_heavy_text_loc++ & bitmask] = dms_text[i++ & bitmask];
 		}
 	}
 
@@ -125,6 +127,10 @@ static USHORT read_tree_c(void){
 
 	n = GETBITS(9);
 	DROPBITS(9);
+	/* demarc: 9 bits reach 511 but c_len holds NC (510). Unchecked, the
+	   compiler turns the zero-fill below into memset(c_len+n, 0, 510-n),
+	   which for n == 511 is a 64 KiB write off the end of .bss. */
+	if (n > NC) return 1;
 	if (n>0){
 		for (i=0; i<n; i++) {
 			c_len[i] = (UCHAR)GETBITS(5);
@@ -135,6 +141,7 @@ static USHORT read_tree_c(void){
 	} else {
 		n = GETBITS(9);
 		DROPBITS(9);
+		if (n >= NC) return 1;	/* demarc: decode_c indexes c_len[n] */
 		for (i=0; i<510; i++) c_len[i] = 0;
 		for (i=0; i<4096; i++) c_table[i] = n;
 	}
@@ -146,6 +153,8 @@ static USHORT read_tree_p(void){
 
 	n = GETBITS(5);
 	DROPBITS(5);
+	/* demarc: 5 bits reach 31, pt_len holds NPT (20) and only dms_np are used */
+	if (n > dms_np) return 1;
 	if (n>0){
 		for (i=0; i<n; i++) {
 			pt_len[i] = (UCHAR)GETBITS(4);
@@ -156,6 +165,7 @@ static USHORT read_tree_p(void){
 	} else {
 		n = GETBITS(5);
 		DROPBITS(5);
+		if (n >= dms_np) return 1;	/* demarc: decode_p would walk an unbuilt tree */
 		for (i=0; i<dms_np; i++) pt_len[i] = 0;
 		for (i=0; i<256; i++) pt_table[i] = n;
 	}
