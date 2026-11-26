@@ -1167,6 +1167,7 @@ glsl = {
 
 [zoo.322619]
 file = "dkg^lmn-neocolora.lha"
+meta = { amiga_model = "A1240", amiberry_cpu_thread = "disabled" }
 
 [zoo.352983]
 meta = { dos4gw = "true" }
