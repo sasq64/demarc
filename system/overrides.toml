@@ -372,8 +372,8 @@ meta = { amiga_model = "A1200" }
 [zoo.336653]
 meta = { amiga_model = "A500" }
 
-[zoo.645]
-meta = { amiga_model = "A1200" }
+# [zoo.645]
+# meta = { amiga_model = "A1200" }
 
 [zoo.55576]
 meta = { amiga_model = "A1230" }
@@ -381,6 +381,10 @@ meta = { amiga_model = "A1230" }
 # Beam riders
 [zoo.179518]
 meta = { amiga_model = "A1240", amiberry_cpu_thread = "enabled" }
+
+# Prototype 1
+[zoo.1067]
+meta = { amiberry_cpu_thread = "enabled" }
 
 [zoo.277286]
 meta = { amiga_model = "A500", amiberry_fastmem_size = 2 }
@@ -451,6 +455,11 @@ events = [
 [zoo.7613]
 assign = { CNCD = "SYS:" }
 jit = false
+
+# Pshycedelic
+[zoo.6948]
+assign = { Psychedelic = "SYS:" }
+meta = { amiga_model = "A1200FAST" }
 
 [zoo.7909]
 file = "asd-the_butterfly_effect.zip"
@@ -2376,3 +2385,11 @@ minutes. Resolution, dxgi.maxDeviceMemory and NGX change nothing.
 
 [zoo.21372]
 meta = { aga = "true" }
+
+# Unusual Suspects - needs ENV: (A600)
+[zoo.119178]
+meta = { amiga_model = "A1200" }
+
+[zoo.111386]
+download = "https://files.scene.org/get/mirrors/amigascne/Groups/T/The_Electronic_Knights/TEK-Rampage.DMS"
+# http://http.no.scene.org/scene.org/mirrors/amigascne/Groups/T/The_Electronic_Knights/TEK-Rampage.DMS
