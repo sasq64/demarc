@@ -178,6 +178,9 @@ adb shell dumpsys activity activities | grep -m1 ResumedActivity
 - Swiping the app out of recents need not call the activity's `onDestroy`;
   `PlaybackService.onTaskRemoved` kills the process instead (it is only called
   without `stopWithTask`).
+- The system's peak refresh setting (`settings get system peak_refresh_rate`,
+  "Smooth display") caps `preferredDisplayModeId`; a touch boosts to 120 Hz
+  anyway. `dumpsys SurfaceFlinger --latency <layer>` gives real present times.
 - `cargo ndk -o` copies every cdylib it builds into `jniLibs`; the script
   removes the `sevenz_rust2` one.
 
