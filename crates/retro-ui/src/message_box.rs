@@ -33,9 +33,14 @@ impl MessageBox {
         let mut acted = false;
         let mut closing =
             ctx.input_mut(|i| take_key(i, egui::Key::Enter) + take_key(i, egui::Key::Escape) > 0);
-        egui::Area::new(egui::Id::new("message_box"))
-            .order(egui::Order::Tooltip)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        ctx.input_mut(|i| {
+            i.events
+                .retain(|e| !matches!(e, egui::Event::Key { .. } | egui::Event::Text(_)))
+        });
+        let id = egui::Id::new("message_box");
+        egui::Modal::new(id)
+            .area(egui::Modal::default_area(id).order(egui::Order::Tooltip))
+            .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 show_panel(ui, |ui| {
                     scale_widgets(ui);
