@@ -1968,3 +1968,10 @@
   `~/.cache/demarc/system`; moving files in the cache to get an A/B baseline
   changed nothing, and two identical recordings looked like a broken feature.
   Log the system dir the core sees before trusting a baseline.
+
+- A slow no-change `run-android.sh` was blamed on Gradle (its "enable
+  configuration cache" hint), but Gradle took under a second. `cargo build -v`
+  showed the real cause: `database/build.rs` said `rerun-if-changed` for a
+  `demozoo.key` that does not exist, and cargo reruns a build script that
+  watches a missing file every time, which rebuilt everything above it (~30 s).
+  Measure each step first; `-v` prints the reason a crate is `Dirty`.
