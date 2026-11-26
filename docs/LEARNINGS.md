@@ -2000,3 +2000,10 @@
   `target/amiberry-android/arm64-v8a/libretro/amiberry_libretro.so` (has no
   build id: reinstall first so it matches). Count frames with `screenrecord`
   + ffmpeg `mpdecimate`; `screencap` is too slow.
+
+- Startup-sequence lines added in `handle_exe` only reach releases booted from
+  a loose exe. An `.adf` boots its own sequence, so anything it needs goes in
+  `assign_commands` (shared with `patch_startup_sequence`) plus `unadf = true`.
+  Check what the release contains before choosing the path. The `ami13`
+  `MakeDir` takes one directory per call; given several it fails with return
+  code 20 and stops the sequence.

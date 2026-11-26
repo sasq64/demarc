@@ -181,6 +181,9 @@ struct RawOverride {
     /// Boot a single AmigaDOS floppy as a hard drive, as `--unadf` does.
     #[serde(default)]
     unadf: bool,
+    /// Create ENV: and T: in RAM: in the generated startup-sequence.
+    #[serde(default)]
+    setup_env: bool,
     /// AmigaDOS assigns the release needs, as `assign = { Love = "SYS:" }`.
     /// They are folded into the single `assign` meta value the Amiga system
     /// reads when it writes the startup-sequence — see
@@ -387,6 +390,9 @@ impl RawOverride {
         }
         if self.unadf {
             meta.insert("unadf", "true");
+        }
+        if self.setup_env {
+            meta.insert("setup_env", "true");
         }
 
         // `Name=Target;Name2=Target2`, which is the shape

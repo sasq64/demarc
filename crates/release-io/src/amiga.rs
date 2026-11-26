@@ -296,6 +296,9 @@ pub struct AmigaOpts {
 /// or the release's own (see [`patch_startup_sequence`]).
 fn assign_commands(wf: &WorkFile) -> String {
     let mut text = String::new();
+    if wf.is_enabled("setup_env") {
+        text += "C:MakeDir >NIL: RAM:T\nC:MakeDir >NIL: RAM:ENV\nC:Assign >NIL: ENV: RAM:ENV\nC:Assign >NIL: T: RAM:T\n";
+    }
     for assign in wf.get_meta_or("assign", "").split(';') {
         if let Some((key, val)) = assign.split_once('=') {
             text += format!("C:Assign {key}: {val}\n").as_str();
@@ -333,21 +336,24 @@ fn patch_startup_sequence(file: &mut WorkFile, startup: &Path) -> Result<()> {
 
     // The drive is the release directory itself, so C: holds whatever the
     // release put there — often nothing at all, and then every assign line
-    // fails silently and the demo starts without them. Lend it the one command
+    // fails silently and the demo starts without them. Lend it the commands
     // out of the skeleton drive.
     let c_dir = find_ignoring_case(&file.path, "c");
-    if c_dir
-        .as_deref()
-        .and_then(|dir| find_ignoring_case(dir, "assign"))
-        .is_none()
-    {
-        let assign = system_dir().join("amihdd").join("C").join("Assign");
-        let c_dir = c_dir.unwrap_or_else(|| file.path.join("C"));
-        if assign.is_file() {
+    for name in ["Assign", "MakeDir"] {
+        if c_dir
+            .as_deref()
+            .and_then(|dir| find_ignoring_case(dir, name))
+            .is_some()
+        {
+            continue;
+        }
+        let cmd = system_dir().join("amihdd").join("C").join(name);
+        let c_dir = c_dir.clone().unwrap_or_else(|| file.path.join("C"));
+        if cmd.is_file() {
             fs::create_dir_all(&c_dir)?;
-            fs::copy(&assign, c_dir.join("Assign"))?;
+            fs::copy(&cmd, c_dir.join(name))?;
         } else {
-            debug!("No Assign command to lend: {assign:?}");
+            debug!("No {name} command to lend: {cmd:?}");
         }
     }
 
