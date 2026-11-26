@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Log;
+import android.view.Display;
 import android.view.KeyEvent;
 import android.view.RoundedCorner;
 import android.view.View;
@@ -50,6 +51,7 @@ public class MiniActivity extends NativeActivity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
         hideSystemBars();
+        preferFastestMode();
         // The native side reads the safe area off the content rect.
         if (Build.VERSION.SDK_INT >= 30) {
             findViewById(android.R.id.content).setOnApplyWindowInsetsListener((v, insets) -> {
@@ -63,6 +65,24 @@ public class MiniActivity extends NativeActivity {
                 return insets;
             });
         }
+    }
+
+    /** 50 Hz frames pace far more evenly at 120 Hz than at 60. */
+    @SuppressWarnings("deprecation")
+    private void preferFastestMode() {
+        Display display = getWindowManager().getDefaultDisplay();
+        Display.Mode current = display.getMode();
+        Display.Mode best = current;
+        for (Display.Mode m : display.getSupportedModes()) {
+            if (m.getPhysicalWidth() == current.getPhysicalWidth()
+                    && m.getPhysicalHeight() == current.getPhysicalHeight()
+                    && m.getRefreshRate() > best.getRefreshRate()) {
+                best = m;
+            }
+        }
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.preferredDisplayModeId = best.getModeId();
+        getWindow().setAttributes(lp);
     }
 
     /** The display cutout, grown so no corner of the rect is cut by a rounded screen corner. */
