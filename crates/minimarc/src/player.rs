@@ -795,6 +795,8 @@ const VIDEO_DELAY: usize = 12;
 
 /// How long after the pointer last moved the picture stays undelayed.
 const POINTER_UNDELAY: Duration = Duration::from_secs(2);
+/// Frames per frame of delay added back once the pointer is idle.
+const DELAY_RAMP: usize = 5;
 /// How far, in physical pixels, a pointer finger must move before it undelays.
 const POINTER_DELTA: f64 = 24.0;
 
@@ -1049,6 +1051,8 @@ pub struct App {
     mouse_rest: (f64, f64),
     /// When the pointer last moved, see `POINTER_UNDELAY`.
     pointer_moved: Option<Instant>,
+    /// Frames since the pointer went idle, see `DELAY_RAMP`.
+    idle_frames: usize,
     frame_time: Duration,
     next_frame: Instant,
     disk: u32,
@@ -1089,6 +1093,7 @@ impl App {
             gesture: Gesture::None,
             mouse_rest: (0.0, 0.0),
             pointer_moved: None,
+            idle_frames: VIDEO_DELAY * DELAY_RAMP,
             frame_time: Duration::from_secs_f64(1.0 / 50.0),
             next_frame: Instant::now(),
             disk: 0,
@@ -1384,14 +1389,20 @@ impl App {
                     self.set_gesture(gesture);
                 } else if self.ui.amiga {
                     match self.gesture {
-                        Gesture::None => {
+                        Gesture::None if self.fingers() == 1 => {
                             self.gesture = Gesture::Pointer {
                                 id,
                                 start: pos,
                                 began: Instant::now(),
                             };
                         }
-                        _ => self.pinch = (self.fingers() == 2).then(|| self.finger_gap()),
+                        _ => {
+                            // A pinch ends the pointer drag until all fingers lift.
+                            if let Gesture::Pointer { .. } = self.gesture {
+                                self.gesture = Gesture::None;
+                            }
+                            self.pinch = (self.fingers() == 2).then(|| self.finger_gap());
+                        }
                     }
                 } else if self.touches.len() == 1 {
                     let began = Instant::now();
@@ -1692,7 +1703,12 @@ impl App {
                 t.elapsed() < POINTER_UNDELAY
                     || matches!(self.gesture, Gesture::Pointer { began, .. } if t >= began)
             });
-        let delay = if pointing { 0 } else { VIDEO_DELAY };
+        self.idle_frames = if pointing {
+            0
+        } else {
+            (self.idle_frames + 1).min(VIDEO_DELAY * DELAY_RAMP)
+        };
+        let delay = self.idle_frames / DELAY_RAMP;
         let (Some(core), Some(gfx)) = (self.core.as_mut(), self.gfx.as_mut()) else {
             return;
         };
