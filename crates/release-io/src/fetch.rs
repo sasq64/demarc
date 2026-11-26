@@ -120,7 +120,14 @@ const LINK_BASES: &[(&str, &[&str])] = &[
         ],
     ),
     ("UntergrundFile", &["https://ftp.untergrund.net"]),
-    ("PaduaOrgFile", &["http://ftp.padua.org/pub/c64"]),
+    (
+        "PaduaOrgFile",
+        &[
+            "http://ftp.padua.org/pub/c64",
+            "https://archive.scene.org/pub/mirrors/padua",
+            "https://us.scene.org/pub/scene.org/mirrors/padua",
+        ],
+    ),
     ("Defacto2File", &["https://defacto2.net/f/"]),
     ("ModarchiveModule", &["https://modarchive.org/module.php?"]),
     ("SixteenColorsPack", &["https://16colo.rs/pack/"]),
@@ -172,6 +179,22 @@ const URL_REWRITES: &[(&str, &str)] = &[
     ("http://aminet.net/pub/aminet/", "http://aminet.net/"),
     ("http://sndh.atari.org/", "https://sndh.atari.org/"),
 ];
+
+/// Hosts known to be dead, matched with their subdomains; urls on them are not
+/// tried at all.
+const DEAD_HOSTS: &[&str] = &["cyberlabs.net", "breakascii.org", "7gods.sk"];
+
+fn is_dead_host(url: &str) -> bool {
+    let Some(host) = Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+    else {
+        return false;
+    };
+    DEAD_HOSTS
+        .iter()
+        .any(|dead| host == *dead || host.ends_with(&format!(".{dead}")))
+}
 
 /// Which mirror each [`LINK_BASES`] class starts from, as an index into that
 /// class's list; the rest of the list follows it cyclically. A download that
@@ -587,6 +610,9 @@ const MIRROR_BANNER: &[u8] = b"<h2>Welcome to the <a href=\"https://www.netcolog
 /// mirrors to try, and the fixups for links that no longer work as recorded,
 /// happen a level up in [`download_to`].
 fn download(url: &str, out: &mut impl Write, on_progress: OnProgress<'_>) -> anyhow::Result<()> {
+    if is_dead_host(url) {
+        anyhow::bail!("{url} is on a dead host");
+    }
     info!("Downloading {url}...");
     if url.starts_with("ftp://") {
         return fetch_ftp(url, out, on_progress);

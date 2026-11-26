@@ -281,3 +281,11 @@ fn file_name_characters_in_a_db_url_are_escaped() {
     );
     assert_eq!(escape_url("/a/b c.zip"), "/a/b%20c.zip");
 }
+
+#[test]
+fn skips_dead_hosts() {
+    assert!(is_dead_host("http://cyberlabs.net/demo.zip"));
+    assert!(is_dead_host("ftp://ftp.cyberlabs.net/pub/demo.zip"));
+    assert!(!is_dead_host("http://notcyberlabs.net/demo.zip"));
+    assert!(!is_dead_host("https://files.scene.org/demo.zip"));
+}
