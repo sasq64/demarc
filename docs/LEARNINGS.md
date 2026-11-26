@@ -1989,6 +1989,20 @@
   build id: reinstall first so it matches). Count frames with `screenrecord`
   + ffmpeg `mpdecimate`; `screencap` is too slow.
 
+- Psychedelic (`zoo.6948`) crashed differently on every model (Line-F on the
+  A1200, CHK on the A1230, black on the A1240) and changed again with the CLI
+  stack size, which pointed at nothing in the machine config. The cause was
+  `FILESYS: UNKNOWN PACKET 2303ed`: the demo writes `dp_Type` as a word, so the
+  upper word is stack garbage, and amiberry's directory filesystem compared the
+  whole long, so its file opens failed. Fixed in `src/filesys.cpp`
+  (`GET_PCK_TYPE` keeps only the low word). When an HD-installed demo crashes
+  in a different way on each model, grep the log for `UNKNOWN PACKET` first.
+  For headless tests, `-x amiga_model=<model>` sets the model, and so does a
+  `meta` in `~/.cache/demarc/system/overrides.toml` without a rebuild. A
+  modified release can be served over local http for an override's
+  `download`, but the download cache is keyed by URL, so use a new file name
+  each time.
+
 - Startup-sequence lines added in `handle_exe` only reach releases booted from
   a loose exe. An `.adf` boots its own sequence, so anything it needs goes in
   `assign_commands` (shared with `patch_startup_sequence`) plus `unadf = true`.
