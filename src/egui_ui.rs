@@ -486,7 +486,12 @@ fn setup_ui_camera(
 
 impl Plugin for EguiUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((EguiPlugin::default(), crate::ui_shader::UiShaderPlugin));
+        // Bindless egui loses the device on WARP (D3D12 software rendering).
+        let egui = EguiPlugin {
+            bindless_mode_array_size: None,
+            ..default()
+        };
+        app.add_plugins((egui, crate::ui_shader::UiShaderPlugin));
         // `EguiPlugin::build` has already run and inserted the resource, so this
         // lands before any camera is spawned in `Startup`.
         app.world_mut()

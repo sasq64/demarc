@@ -1571,6 +1571,10 @@
   renderer: 1-3 render fps. Remote-control `wait_frames` counts *render*
   frames, so scripts take minutes there while the emulator runs far ahead.
   SSH programs get no desktop; `winvm.sh gui` runs in the RDP session.
+  Any egui window (picker, settings, info) lost the device there within two
+  seconds: bevy_egui's bindless mode, now off. Theme, CRT shader and the D3D12
+  debug layer (silent) were dead ends; opening `Cmd.Settings` from a script
+  over a running file is what showed it was all of egui.
 
 - Every wine demo failing with "load failed" while `--check` said ok: the
   downloaded gamescope binary needed a system library (`libXRes.so.1`) that was
