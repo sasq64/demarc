@@ -234,16 +234,19 @@ win:
 VERSION := `sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1`
 
 # NSIS installer with demarc.exe and the demo databases, in target/installer.
-# Needs makensis (AUR: nsis), rsvg-convert and ImageMagick.
+# Needs makensis (AUR: nsis). CI builds the same installer for releases.
 win-installer: win
     test -e demodb/csdb.txt.gz -a -e demodb/demozoo.txt.gz || just -f demodb/Justfile db-gzip
-    files/win/installer-art.sh target/installer/art
     makensis -V2 -DVERSION={{VERSION}} -DNUMVER=$(echo {{VERSION}} | sed 's/-.*//') \
         -DEXE={{justfile_directory()}}/target/x86_64-pc-windows-msvc/release/demarc.exe \
-        -DDBDIR={{justfile_directory()}}/demodb -DART={{justfile_directory()}}/target/installer/art \
+        -DDBDIR={{justfile_directory()}}/demodb -DART={{justfile_directory()}}/files/win/art \
         -DOUT={{justfile_directory()}}/target/installer/demarc-{{VERSION}}-setup.exe \
         files/win/demarc.nsi
     @echo "installer at target/installer/demarc-{{VERSION}}-setup.exe"
+
+# Re-render files/win/art from demarc-logo/art. Needs rsvg-convert and ImageMagick.
+win-installer-art:
+    files/win/installer-art.sh files/win/art
 
 site:
     cp demarc.md {{ZOLA}}/content/

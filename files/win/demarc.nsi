@@ -1,4 +1,5 @@
-; Windows installer for demarc. Built by `just win-installer`, which passes
+; Windows installer for demarc. Built by `just win-installer` and the release
+; workflow, which pass
 ; VERSION, NUMVER, EXE, DBDIR, ART and OUT with -D.
 
 Unicode true
