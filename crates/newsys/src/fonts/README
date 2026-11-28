@@ -1,5 +1,7 @@
 Amiga bitmap fonts, from TrueSchool Ascii's "Multi Platform Amiga Fonts v1.02"
-(https://github.com/rewtnull/amigafonts), `raw/` directory, unmodified.
+(https://github.com/rewtnull/amigafonts), `raw/` directory. Glyph 0xA0
+(no-break space) is blanked in topaz1200.raw and pot_noodle.raw, which drew
+it as a block.
 
 Format: headerless, 256 glyphs of 8x16 pixels, one byte per pixel row, most
 significant bit leftmost -- 4096 bytes per file. Both are the 8x8 Amiga fonts in
