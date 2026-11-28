@@ -1,5 +1,5 @@
 use super::*;
-use crate::libretro::{RETROK_2, RETROK_7};
+use crate::libretro::{RETROK_2, RETROK_3, RETROK_7, RETROK_8};
 
 fn tall_text(lines: usize) -> Vec<u8> {
     (0..lines)
@@ -209,6 +209,16 @@ fn keys_pick_font_palette_and_minimap() {
     assert_eq!(frame.len(), w * h);
     emu.press_key(RETROK_TAB, true, 0);
     assert_eq!(emu.width(), width);
+}
+
+#[test]
+fn next_file_keeps_font_palette_and_minimap() {
+    let mut emu = text_emu(b"hi");
+    emu.press_key(RETROK_3, true, 0);
+    emu.press_key(RETROK_8, true, 0);
+    emu.press_key(RETROK_TAB, true, 0);
+    let next = text_emu(b"there");
+    assert_eq!((next.font_index, next.palette, next.minimap), (2, 3, false));
 }
 
 #[test]

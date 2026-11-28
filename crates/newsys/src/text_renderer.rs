@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
@@ -579,12 +579,23 @@ impl GpuText {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Settings {
+    font: usize,
+    palette: usize,
+    minimap: bool,
+}
+
+/// What the last text viewer used, so the next file opens the same way.
+static SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
+
 pub struct TextEmu {
     lines: Vec<Vec<u8>>,
     ansi: bool,
     cols: usize,
     longest: usize,
     font_index: usize,
+    palette: usize,
     font: &'static [u8],
     fg: u32,
     bg: u32,
@@ -633,9 +644,16 @@ impl TextEmu {
         } else {
             longest.clamp(MIN_COLS, MAX_COLS)
         };
-        let (font_index, palette) = style.defaults();
-        let font = FONTS[font_index].0;
-        let (width, height) = out_size(cols, true);
+        let settings = SETTINGS.lock().unwrap().unwrap_or_else(|| {
+            let (font, palette) = style.defaults();
+            Settings {
+                font,
+                palette,
+                minimap: true,
+            }
+        });
+        let font = FONTS[settings.font].0;
+        let (width, height) = out_size(cols, settings.minimap);
         let gpu = gpu.and_then(|g| {
             GpuText::new(
                 g,
@@ -651,12 +669,13 @@ impl TextEmu {
             ansi: attrs.is_some(),
             cols,
             longest,
-            font_index,
+            font_index: settings.font,
+            palette: settings.palette,
             font,
             fg: 0,
             bg: 0,
             dark: 0,
-            minimap: true,
+            minimap: settings.minimap,
             scroll: 0.0,
             target: None,
             drawn_at: None,
@@ -669,8 +688,16 @@ impl TextEmu {
             pixels: Arc::default(),
             cpu_frames: false,
         };
-        emu.set_palette(palette);
+        emu.set_palette(settings.palette);
         emu
+    }
+
+    fn save_settings(&self) {
+        *SETTINGS.lock().unwrap() = Some(Settings {
+            font: self.font_index,
+            palette: self.palette,
+            minimap: self.minimap,
+        });
     }
 
     fn text_width(&self) -> usize {
@@ -699,6 +726,7 @@ impl TextEmu {
         if let Some(gpu) = &self.gpu {
             gpu.set_font(self.font);
         }
+        self.save_settings();
         self.redraw();
     }
 
@@ -711,6 +739,8 @@ impl TextEmu {
         let (fg, bg) = (pack(fg), pack(bg));
         self.dark = mix(bg, fg, 0.6);
         (self.fg, self.bg) = (fg, bg);
+        self.palette = index;
+        self.save_settings();
         self.redraw();
     }
 
@@ -863,6 +893,7 @@ impl Backend for TextEmu {
             RETROK_5..=RETROK_8 if down => self.set_palette((code - RETROK_5) as usize),
             RETROK_TAB if down => {
                 self.minimap = !self.minimap;
+                self.save_settings();
                 self.redraw();
             }
             RETROK_HOME if down => self.scroll_by(-self.max_scroll()),
