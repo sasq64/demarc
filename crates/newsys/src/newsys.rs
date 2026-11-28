@@ -14,6 +14,7 @@ use crate::{SysOpts, cache, fetch, libloader};
 use crate::utils::get_ext;
 
 use amiga::AmigaSystem;
+use ascii::AsciiSystem;
 use amstrad::AmstradSystem;
 use atari_2600::Atari2600System;
 use atari_st::AtariStSystem;
@@ -44,6 +45,7 @@ use windows::WindowsSystem;
 
 mod amiga;
 mod amstrad;
+mod ascii;
 mod atari_2600;
 mod atari_st;
 mod atari_xl;
@@ -346,6 +348,7 @@ impl NewSys {
             Box::new(SinclairSystem {}),
             Box::new(Atari2600System {}),
             Box::new(NeoGeoSystem {}),
+            Box::new(AsciiSystem {}),
             Box::new(FfmpegSystem {}),
             Box::new(MusicSystem::new(args)),
             Box::new(ImageSystem {}),

@@ -25,6 +25,7 @@ pub mod music_vis;
 pub mod newsys;
 pub mod opts;
 pub mod system_dir;
+pub mod text_renderer;
 pub mod tiff_pal;
 #[cfg(target_os = "windows")]
 pub mod win_runner;

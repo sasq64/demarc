@@ -2009,3 +2009,9 @@
   Check what the release contains before choosing the path. The `ami13`
   `MakeDir` takes one directory per call; given several it fails with return
   code 20 and stops the sequence.
+
+- A `.txt` on demarc's command line is read as a db file, so a text release
+  can't be tried that way; use another extension. And `.asc` is also a music
+  format (ASC Sound Master) that `MusicSystem` claims, which is why the ASCII
+  system sits ahead of it (it only claims anything under the "ASCII Collection"
+  category).
