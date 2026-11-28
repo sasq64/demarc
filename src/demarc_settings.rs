@@ -19,11 +19,11 @@ use crate::post_process::ShaderPath;
 // everywhere.
 #[cfg(target_os = "linux")]
 use crate::wine::{META_DIALOG_RES, META_RES, PICK};
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), test))]
 const META_RES: &str = "wine_res";
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), test))]
 const META_DIALOG_RES: &str = "wine_dialog_res";
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), test))]
 const PICK: &str = "pick";
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Reflect)]
@@ -439,6 +439,7 @@ fn apply_amiga(new: &AmigaSettings, old: &AmigaSettings, meta: &mut HashMap<Stri
 }
 
 /// Writes the wine fields that changed as run-wide meta.
+#[cfg(any(target_os = "linux", test))]
 fn apply_wine(new: &WineSettings, old: &WineSettings, meta: &mut HashMap<String, String>) {
     if new.resolution != old.resolution {
         set_meta(meta, META_RES, new.resolution.as_meta().unwrap_or(""));
