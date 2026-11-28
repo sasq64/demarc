@@ -27,12 +27,24 @@ const SUB_EXTENSIONS: &[&str] = &["srt", "ass", "ssa", "vtt"];
 /// Bytes of audio read from the pipe at a time.
 const AUDIO_CHUNK: usize = 4096;
 
+fn command(exe: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Whether both `ffmpeg` and `ffprobe` can be run.
 pub fn is_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         ["ffmpeg", "ffprobe"].iter().all(|exe| {
-            Command::new(exe)
+            command(exe)
                 .arg("-version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -177,7 +189,7 @@ fn subtitle_tracks(path: &Path) -> Vec<(Subtitle, String)> {
             (Subtitle::File(p), name)
         })
         .collect();
-    let streams = Command::new("ffprobe")
+    let streams = command("ffprobe")
         .args(["-v", "error", "-select_streams", "s", "-show_entries"])
         .arg("stream=codec_name:stream_tags=language,title")
         .args(["-of", "compact=p=0"])
@@ -235,7 +247,7 @@ pub fn video_output_args(path: &Path, sub: Option<&Subtitle>, pos: &str) -> Vec<
 }
 
 fn ffprobe(path: &Path, stream: &str, entries: &str) -> Result<String> {
-    let out = Command::new("ffprobe")
+    let out = command("ffprobe")
         .args(["-v", "error", "-select_streams", stream, "-show_entries"])
         .arg(entries)
         .args(["-of", "default=nw=1"])
@@ -254,7 +266,7 @@ fn ffprobe(path: &Path, stream: &str, entries: &str) -> Result<String> {
 }
 
 fn spawn_ffmpeg(path: &Path, input: &[&str], output: &[&str]) -> Result<(Child, ChildStdout)> {
-    let mut child = Command::new("ffmpeg")
+    let mut child = command("ffmpeg")
         .args(["-v", "error", "-nostdin"])
         .args(input)
         .arg("-i")

@@ -1,3 +1,4 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 // Needed for bevy systems
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
@@ -319,6 +320,15 @@ fn tame_openmp_cores() {
     }
 }
 
+/// The GUI subsystem gets no console, so borrow the terminal's when there is one.
+#[cfg(target_os = "windows")]
+fn attach_parent_console() {
+    unsafe extern "system" {
+        fn AttachConsole(pid: u32) -> i32;
+    }
+    unsafe { AttachConsole(u32::MAX) };
+}
+
 /// Wine's FXC refuses the `cs_5_1` target that wgpu's indirect-call validation
 /// shader is built with, so the DX12 backend loses the device before the first
 /// frame. Vulkan (through winevulkan) has no such problem.
@@ -380,6 +390,8 @@ fn cap_rayon_threads() {
 static GLOBAL: hotpath::CountingAllocator = hotpath::CountingAllocator::new();
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    attach_parent_console();
     #[cfg(all(unix, target_env = "gnu"))]
     cap_malloc_arenas();
     #[cfg(all(unix, target_env = "gnu"))]

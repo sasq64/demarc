@@ -7,6 +7,7 @@
 //! [`crate::newsys::windows`], which builds the gamescope-captured version of
 //! the same thing on Linux.
 
+use std::os::windows::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
@@ -71,8 +72,10 @@ impl Drop for WinRunner {
         // The driver started the demo, so killing the driver alone would leave
         // the demo on the screen with nothing holding it.
         let pid = self.child.id().to_string();
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let killed = Command::new("taskkill")
             .args(["/T", "/F", "/PID", pid.as_str()])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
