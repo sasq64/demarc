@@ -515,40 +515,38 @@ fn main() {
     }
 
     if dbs.values().all(Vec::is_empty) && args.files.is_empty() {
-        args.files = default_dbs();
-        if args.files.is_empty() {
+        let defaults = default_dbs();
+        if defaults.is_empty() {
             println("** Error: No files given and no default databases found");
             return;
         }
-        args.select = true;
-    }
-
-    // `csdb.txt` and `csdb.txt.gz` are the same db; only the first is read.
-    let mut db_stems = HashSet::new();
-    // Expand any directory in `games` into the `.m3u` files found within it.
-    for file in std::mem::take(&mut args.files) {
-        let name = file.to_string_lossy().to_lowercase();
-        let mut files = vec![];
-        let db_name = if file.is_file() && (name.ends_with(".txt") || name.ends_with(".txt.gz")) {
+        // `csdb.txt` and `csdb.txt.gz` are the same db; only the first is read.
+        let mut db_stems = HashSet::new();
+        for file in defaults {
+            let name = file.to_string_lossy().to_lowercase();
             let stem = name.trim_end_matches(".gz").trim_end_matches(".txt");
             let stem = Path::new(stem).file_name().map(|s| s.to_os_string());
             if !db_stems.insert(stem) {
                 continue;
             }
+            let mut files = vec![];
             let db = collect_db_unless(&file, &filter, &mut files, |name| dbs.contains_key(name));
-            let Some(db_name) = db.unwrap() else {
-                continue;
-            };
-            db_name
-        } else {
-            if file.is_dir() && args.collect {
-                collect_files(&file, &mut files, args.many).unwrap();
-            } else {
-                files.push(collect_file(&file).unwrap());
+            if let Some(db_name) = db.unwrap() {
+                dbs.entry(db_name).or_default().append(&mut files);
             }
-            "Files".into()
-        };
-        dbs.entry(db_name).or_default().append(&mut files);
+        }
+        args.select = true;
+    }
+
+    // Expand any directory in `games` into the `.m3u` files found within it.
+    for file in std::mem::take(&mut args.files) {
+        let mut files = vec![];
+        if file.is_dir() && args.collect {
+            collect_files(&file, &mut files, args.many).unwrap();
+        } else {
+            files.push(collect_file(&file).unwrap());
+        }
+        dbs.entry("Files".into()).or_default().append(&mut files);
     }
 
     // Every list is ordered, limited and shuffled on its own.
