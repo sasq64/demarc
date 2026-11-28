@@ -209,6 +209,14 @@ thread_local! {
 /// parses its config with `strtok` can have two loading at once swap Kickstarts and crash.
 static LOAD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Copy each core to a temp dir before loading, so several instances of one
+/// core can run at once.
+static DUPE_CORES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_dupe_cores(on: bool) {
+    DUPE_CORES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Points [`CURRENT_EMU`] at `emu` for the duration of a call into the core, so
 /// the C callbacks — which get no user-data pointer — can find their instance.
 ///
@@ -720,19 +728,12 @@ impl RetroCoreDirect {
         game: Option<&Path>,
         settings: HashMap<String, String>,
     ) -> Result<Self> {
-        // `dlopen` returns the same mapping (and the same C globals) for a core
-        // loaded twice from the same path, so two instances of one core would
-        // otherwise stomp each other's global state and crash. Copy the core to
-        // a uniquely-named file in a private temp dir first — the trick libretro
-        // frontends use for "core duping" — so every instance gets its own
-        // mapping with independent globals. The temp dir is held in the struct
-        // and removed when the core is dropped.
-        //
-        // Android bans loading code out of the app's writable data dir, and the
-        // core lives in the APK's native library dir, so there it is loaded in
-        // place — there is only ever one view to dupe for anyway. iOS has the
-        // same ban, with the core in the app bundle.
-        let in_place = cfg!(any(target_os = "android", target_os = "ios"));
+        // `dlopen` returns the same mapping (and C globals) for a core loaded
+        // twice from one path, so with `DUPE_CORES` each instance loads its own
+        // copy from a temp dir. Android and iOS ban loading code from writable
+        // dirs, so cores always load in place there.
+        let in_place = cfg!(any(target_os = "android", target_os = "ios"))
+            || !DUPE_CORES.load(std::sync::atomic::Ordering::Relaxed);
         let (loaded_core_path, core_tempdir) = if in_place {
             (core_path.to_owned(), None)
         } else {

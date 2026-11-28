@@ -151,6 +151,7 @@ fn a_paused_worker_does_not_free_run_on_a_low_ring() {
 
 #[test]
 fn retro_threaded_multi_works() {
+    super::set_dupe_cores(true);
     let amiga_core = core("amiberry");
     let vice_core = core("vice_x64sc");
     // The two cores no longer share a system dir — the Amiga one is a subdir of
@@ -228,6 +229,7 @@ fn retro_threaded_multi_works() {
 /// libc's `strtok` and jump to a null opcode handler — see `LOAD_LOCK`.
 #[test]
 fn retro_amiga_concurrent_loads_work() {
+    super::set_dupe_cores(true);
     let core = core("amiberry");
     let barrier = &std::sync::Barrier::new(4);
     let core = &core;

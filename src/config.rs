@@ -275,6 +275,11 @@ pub struct Args {
     #[arg(long)]
     pub dj_mode: bool,
 
+    /// Copy each libretro core to a temp dir before loading it. On by default
+    /// with `--grid` and `--cross-fade`.
+    #[arg(long)]
+    pub copy_cores: bool,
+
     /// Background clear color as a hex string, e.g. `#003` or `000080`.
     #[arg(long, value_parser = parse_color, default_value = "000000")]
     pub clear_color: Color,

@@ -422,6 +422,7 @@ fn main() {
     if args.dj_mode {
         args.cross_fade = true;
     }
+    retro_emu::set_dupe_cores(args.copy_cores || args.grid.is_some() || args.cross_fade);
 
     // Before the silencing below: the script talks to the terminal.
     if args.setup_wine {
