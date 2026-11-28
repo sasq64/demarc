@@ -13,4 +13,7 @@ fn needs_the_category_and_prefers_ans() {
     wf.set_meta("category", "ASCII Collection");
     assert!(sys.load(&mut wf).unwrap());
     assert_eq!(wf.path, dir.path().join("art.ans"));
+    let mut wf = WorkFile::new(dir.path());
+    wf.set_meta("category", "ASCII");
+    assert!(sys.load(&mut wf).unwrap());
 }

@@ -12,7 +12,7 @@ use crate::{
 
 use super::System;
 
-const CATEGORY: &str = "ASCII Collection";
+const CATEGORY: &str = "ASCII";
 
 fn rank(ext: &str) -> Option<u8> {
     match ext {
