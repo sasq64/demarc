@@ -20,6 +20,8 @@ sha2.workspace = true
 tempfile.workspace = true
 tracing.workspace = true
 zip.workspace = true
+# Drawing text frames on the frontend's device.
+wgpu.workspace = true
 
 # Unpacking releases: they are often double-packed, and in every format the
 # scene ever used.
@@ -63,6 +65,7 @@ symphonia = { version = "0.5.5", default-features = false, features = ["mp3"] }
 base64 = "0.23.1"
 qbsdiff = "1.4.4"
 tracing-subscriber.workspace = true
+pollster.workspace = true
 
 [target."cfg(unix)".dependencies]
 # Killing a stuck wine process, and the uid the sandbox maps.

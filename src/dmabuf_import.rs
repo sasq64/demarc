@@ -4,29 +4,14 @@
 
 use std::os::fd::{AsRawFd, BorrowedFd, IntoRawFd};
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 use ash::vk;
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use retro_core::backend::GpuFrame;
 use retro_core::frame_import::{DmabufSet, FrameImporter, set_frame_importer};
+use ::newsys::gpu::{Submitter, TexturePool, u32_bytes};
 use wgpu::hal::api::Vulkan;
-
-/// What a [`GpuFrame`] from here holds.
-pub struct GpuTexture {
-    pub texture: wgpu::Texture,
-}
-
-/// Free textures kept in the pool past what is in use.
-const SPARE: usize = 2;
-
-/// How long the core thread waits for a copy to be submitted. wgpu holds the
-/// queue's fence while the render thread waits on the swapchain, which is
-/// seconds when the window gets no frame callbacks.
-const SUBMIT_WAIT: Duration = Duration::from_millis(4);
 
 const SHADER: &str = r#"
 struct Params { width: u32, height: u32, stride: u32, offset: u32 }
@@ -63,7 +48,7 @@ pub fn install(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>
             pipeline: Arc::clone(&pipeline),
             slots: Vec::new(),
             size: (0, 0),
-            pool: Vec::new(),
+            pool: TexturePool::default(),
         }) as Box<dyn FrameImporter>)
     });
 }
@@ -145,59 +130,13 @@ struct Slot {
     params: wgpu::Buffer,
 }
 
-type Job = (wgpu::CommandBuffer, Box<dyn FnOnce() + Send>);
-
-/// Submits on a thread of its own, so a blocked queue does not block the core.
-struct Submitter {
-    jobs: mpsc::Sender<Job>,
-    submitted: mpsc::Receiver<()>,
-    in_flight: bool,
-}
-
-impl Submitter {
-    fn new(queue: wgpu::Queue) -> Option<Self> {
-        let (jobs, job_rx) = mpsc::channel::<Job>();
-        let (done_tx, submitted) = mpsc::channel();
-        thread::Builder::new()
-            .name("dmabuf-submit".into())
-            .spawn(move || {
-                for (commands, done) in job_rx {
-                    queue.submit([commands]);
-                    queue.on_submitted_work_done(done);
-                    if done_tx.send(()).is_err() {
-                        break;
-                    }
-                }
-            })
-            .ok()?;
-        Some(Self {
-            jobs,
-            submitted,
-            in_flight: false,
-        })
-    }
-
-    fn ready(&mut self) -> bool {
-        if self.in_flight && self.submitted.try_recv().is_ok() {
-            self.in_flight = false;
-        }
-        !self.in_flight
-    }
-
-    fn submit(&mut self, commands: wgpu::CommandBuffer, done: Box<dyn FnOnce() + Send>) {
-        if self.jobs.send((commands, done)).is_ok() {
-            self.in_flight = self.submitted.recv_timeout(SUBMIT_WAIT).is_err();
-        }
-    }
-}
-
 struct Importer {
     device: wgpu::Device,
     submitter: Submitter,
     pipeline: Arc<Pipeline>,
     slots: Vec<Slot>,
     size: (u32, u32),
-    pool: Vec<Arc<GpuTexture>>,
+    pool: TexturePool<()>,
 }
 
 impl FrameImporter for Importer {
@@ -218,7 +157,7 @@ impl FrameImporter for Importer {
                 &self.device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("dmabuf_params"),
-                    contents: bytemuck_u32(&params),
+                    contents: u32_bytes(&params),
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
             );
@@ -234,7 +173,7 @@ impl FrameImporter for Importer {
         let texture = self.texture();
         let slot = &self.slots[slot];
         let (width, height) = self.size;
-        let view = texture.texture.create_view(&Default::default());
+        let view = texture.create_view(&Default::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("dmabuf_swizzle"),
             layout: &self.pipeline.layout,
@@ -266,44 +205,27 @@ impl FrameImporter for Importer {
 }
 
 impl Importer {
-    /// A pooled texture nothing else holds, or a new one.
-    fn texture(&mut self) -> Arc<GpuTexture> {
-        let mut free = self
-            .pool
-            .iter()
-            .filter(|t| Arc::strong_count(t) == 1)
-            .count();
-        self.pool.retain(|t| {
-            let drop = Arc::strong_count(t) == 1 && free > SPARE + 1;
-            free -= drop as usize;
-            !drop
-        });
-        if let Some(t) = self.pool.iter().find(|t| Arc::strong_count(t) == 1) {
-            return Arc::clone(t);
-        }
-        let (width, height) = self.size;
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("dmabuf_frame"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let t = Arc::new(GpuTexture { texture });
-        self.pool.push(Arc::clone(&t));
-        t
+    fn texture(&mut self) -> Arc<wgpu::Texture> {
+        let (device, (width, height)) = (&self.device, self.size);
+        let make = || {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("dmabuf_frame"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            (texture, ())
+        };
+        self.pool.get(make).0
     }
-}
-
-fn bytemuck_u32(v: &[u32]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), std::mem::size_of_val(v)) }
 }
 
 /// A `VkBuffer` on the dmabuf's memory, owned by wgpu from then on.

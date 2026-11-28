@@ -5417,6 +5417,7 @@ dependencies = [
  "musix",
  "notify",
  "percent-encoding",
+ "pollster",
  "qbsdiff",
  "realfft",
  "release-io",
@@ -5434,6 +5435,7 @@ dependencies = [
  "ureq",
  "url",
  "walkdir",
+ "wgpu 29.0.4",
  "zip",
 ]
 

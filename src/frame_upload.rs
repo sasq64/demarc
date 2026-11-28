@@ -37,19 +37,9 @@ fn extract_frames(mut frames: ResMut<ExtractedFrames>, emus: Extract<Query<&Emul
     }
 }
 
-/// The texture a frame from `dmabuf_import` is already in.
-#[cfg(target_os = "linux")]
+/// The texture a GPU frame is already in.
 fn gpu_texture(frame: &VideoFrame) -> Option<&wgpu::Texture> {
-    let gpu = frame.gpu.as_ref()?;
-    Some(
-        &gpu.downcast_ref::<crate::dmabuf_import::GpuTexture>()?
-            .texture,
-    )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn gpu_texture(_frame: &VideoFrame) -> Option<&wgpu::Texture> {
-    None
+    frame.gpu.as_ref()?.downcast_ref::<wgpu::Texture>()
 }
 
 /// `uploaded` remembers the last frame written to each texture, so a core that
@@ -131,8 +121,15 @@ fn upload_frames(
     }
 }
 
+fn share_device(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>) {
+    if let (Some(device), Some(queue)) = (device, queue) {
+        ::newsys::gpu::set_gpu(device.wgpu_device().clone(), (**queue.0).clone());
+    }
+}
+
 impl Plugin for FrameUploadPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(Startup, share_device);
         #[cfg(target_os = "linux")]
         app.add_systems(Startup, crate::dmabuf_import::install);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {

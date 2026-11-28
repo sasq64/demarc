@@ -2013,5 +2013,10 @@
 - A `.txt` on demarc's command line is read as a db file, so a text release
   can't be tried that way; use another extension. And `.asc` is also a music
   format (ASC Sound Master) that `MusicSystem` claims, which is why the ASCII
-  system sits ahead of it (it only claims anything under the "ASCII Collection"
-  category).
+  system sits ahead of it (it only claims anything in an "ASCII" category).
+
+- `Emulator` calls `Backend::set_cpu_frames` every tick, not only when frame
+  conversion changes, so a backend must act only when the value changes. The
+  GPU text renderer first reset its redraw state there and redrew every frame.
+- A backend's `tracing::warn!` from newsys doesn't show in a headless run's
+  output without `RUST_LOG=newsys=warn,info`, and `eprintln!` doesn't show at all.

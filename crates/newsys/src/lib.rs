@@ -22,6 +22,7 @@ pub mod image_emu;
 pub mod libloader;
 pub mod music_emu;
 pub mod music_vis;
+pub mod gpu;
 pub mod newsys;
 pub mod opts;
 pub mod system_dir;
