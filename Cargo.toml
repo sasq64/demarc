@@ -23,7 +23,7 @@ members = ["crates/database", "crates/flash-emu", "crates/frameconv", "crates/mi
 
 # Shared by every crate in the workspace, so a version bump happens in one place.
 [workspace.package]
-version = "1.8.3"
+version = "1.9.0"
 edition = "2024"
 repository = "https://github.com/sasq64/demarc"
 
@@ -194,6 +194,12 @@ codegen-units = 1
 [profile.test.package.newsys]
 opt-level = 1
 
+# Android: fat LTO and opt-level 3. Not panic=abort, minimarc catches panics.
+[profile.android]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
@@ -206,12 +212,6 @@ lto = "thin"
 inherits = "release"
 debug = true
 strip = false
-
-# Android: fat LTO and opt-level 3. Not panic=abort, minimarc catches panics.
-[profile.android]
-inherits = "release"
-opt-level = 3
-lto = "fat"
 
 # Fast-iteration build: keeps opt-level=2 so the emulator/shaders run at a usable
 # speed, but drops the ship-only settings that make rebuilds slow. Parallel codegen
