@@ -115,6 +115,10 @@ pub trait Backend {
     /// (libretro) ignore this; Flash needs it so Ruffle's internal cursor tracks
     /// the visible OS cursor for hit-testing buttons.
     fn set_mouse_position(&mut self, _x: f32, _y: f32) {}
+    /// Whether the user points at the frame, so the OS pointer stays visible.
+    fn wants_pointer(&self) -> bool {
+        false
+    }
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool);
     fn set_joypad(&mut self, port: u32, id: u32, down: bool);
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32]));

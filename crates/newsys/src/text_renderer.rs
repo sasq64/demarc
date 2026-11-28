@@ -297,6 +297,10 @@ impl Backend for TextEmu {
         }
     }
 
+    fn wants_pointer(&self) -> bool {
+        true
+    }
+
     fn set_mouse_buttons(&mut self, left: bool, _right: bool, _middle: bool) {
         if left
             && !self.left_down

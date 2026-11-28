@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 use bevy::window::{CursorOptions, Monitor, PrimaryWindow};
 
+use crate::emulator::Emulator;
 use crate::screensaver::is_fullscreen;
 use crate::ui::UiState;
 
@@ -40,9 +41,13 @@ fn sync_cursor_visibility(
     mut cursor_options: Single<&mut CursorOptions>,
     hide_mouse: Res<HideMouse>,
     ui_state: Res<UiState>,
+    emus: Query<&Emulator>,
     #[cfg(target_os = "macos")] mut mac_cursor: ResMut<mac_cursor::MacCursor>,
 ) {
-    let hide = hide_mouse.0 && !ui_state.modal && is_fullscreen(*window, &monitors);
+    let pointer = emus
+        .iter()
+        .any(|e| e.core.as_ref().is_some_and(|c| c.wants_pointer()));
+    let hide = hide_mouse.0 && !pointer && !ui_state.modal && is_fullscreen(*window, &monitors);
 
     cursor_options.visible = !hide;
     #[cfg(target_os = "macos")]

@@ -236,6 +236,10 @@ impl Backend for FlashEmu {
         let _ = self.cmd_tx.send(FlashCmd::MousePosition { x, y });
     }
 
+    fn wants_pointer(&self) -> bool {
+        true
+    }
+
     fn set_mouse_buttons(&mut self, left: bool, right: bool, middle: bool) {
         let _ = self.cmd_tx.send(FlashCmd::MouseButtons {
             left,
