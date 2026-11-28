@@ -2020,3 +2020,8 @@
   GPU text renderer first reset its redraw state there and redrew every frame.
 - A backend's `tracing::warn!` from newsys doesn't show in a headless run's
   output without `RUST_LOG=newsys=warn,info`, and `eprintln!` doesn't show at all.
+
+- A test that drops a wgpu device right before the process exits crashes at
+  random (double free, SIGSEGV) after passing, because the `gpu-submit` thread
+  is still tearing its queue down. The text renderer's GPU tests leak their
+  emulator to avoid it.

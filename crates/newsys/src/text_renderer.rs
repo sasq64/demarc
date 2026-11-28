@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::backend::{Backend, VideoFrame};
 use crate::gpu::{Gpu, Submitter, TexturePool, gpu, u32_bytes};
@@ -56,11 +56,6 @@ fn mini_samples() -> usize {
 /// Text pixels to output pixels.
 fn scaled(v: usize) -> usize {
     (v as f32 * SCREEN_SCALE + 0.5) as usize
-}
-
-/// Text pixel of sample `i` of `n` in output pixel `o`.
-fn sample(o: usize, i: usize, n: usize, step: f32) -> usize {
-    ((o as f32 + (i as f32 + 0.5) / n as f32) * step) as usize
 }
 
 /// Output frame size for `cols` columns.
@@ -342,6 +337,54 @@ impl GpuText {
         }
     }
 
+    /// Blocks until the last frame has been submitted.
+    fn flush(&mut self) {
+        while !self.submitter.ready() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    fn read(&self, texture: &wgpu::Texture) -> Vec<u32> {
+        let device = &self.gpu.device;
+        let (w, h) = (texture.width(), texture.height());
+        let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text_readback"),
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: None,
+                },
+            },
+            texture.size(),
+        );
+        self.gpu.queue.submit([encoder.finish()]);
+        buffer.map_async(wgpu::MapMode::Read, .., |_| {});
+        if device.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+            return vec![0; (w * h) as usize];
+        }
+        let mapped = buffer.get_mapped_range(..);
+        mapped
+            .chunks_exact(row as usize)
+            .flat_map(|line| {
+                line[..(w * 4) as usize]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&p| u32::from_ne_bytes(p))
+            })
+            .collect()
+    }
+
     /// `None` while the last frame is still waiting to be submitted.
     fn draw(&mut self, params: &[u32; 12]) -> Option<Arc<wgpu::Texture>> {
         if !self.submitter.ready() {
@@ -413,7 +456,6 @@ pub struct TextEmu {
     font: &'static [u8],
     fg: u32,
     bg: u32,
-    mini_palette: Vec<u32>,
     dark: u32,
     minimap: bool,
     scroll: f32,
@@ -424,9 +466,10 @@ pub struct TextEmu {
     pointer: Option<(f32, f32)>,
     mini_grab: Option<f32>,
     held: f32,
-    frame: Arc<Vec<u32>>,
     gpu: Option<GpuText>,
-    gpu_frame: Option<Arc<wgpu::Texture>>,
+    frame: Option<Arc<wgpu::Texture>>,
+    /// The frame read back, while frames have to come with their pixels.
+    pixels: Arc<Vec<u32>>,
     cpu_frames: bool,
 }
 
@@ -441,50 +484,10 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     }))
 }
 
-/// Draws `w` output pixels of each row of `frame` from column `x0`, each
-/// sampled `n` x `n` times over `step` x `step` text pixels from row `top`;
-/// `palette[k]` is the color for `k` lit samples.
-#[allow(clippy::too_many_arguments)]
-fn draw_text(
-    lines: &[Vec<u8>],
-    font: &[u8],
-    palette: &[u32],
-    frame: &mut [u32],
-    stride: usize,
-    x0: usize,
-    w: usize,
-    top: usize,
-    step: f32,
-    n: usize,
-) {
-    for (y, row) in frame.chunks_exact_mut(stride).enumerate() {
-        for (x, p) in row[x0..x0 + w].iter_mut().enumerate() {
-            let mut lit = 0;
-            for sy in 0..n {
-                let py = top + sample(y, sy, n, step);
-                let Some(line) = lines.get(py / GLYPH_H) else {
-                    break;
-                };
-                for sx in 0..n {
-                    let px = sample(x, sx, n, step);
-                    if let Some(&ch) = line.get(px / GLYPH_W) {
-                        let bits = font[ch as usize * GLYPH_H + py % GLYPH_H];
-                        lit += usize::from(bits & (0x80 >> (px % GLYPH_W)) != 0);
-                    }
-                }
-            }
-            *p = palette[lit];
-        }
-    }
-}
-
 impl TextEmu {
     pub fn new(path: &Path, style: TextStyle) -> Result<Self> {
-        Ok(Self::from_bytes(&fs::read(path)?, style))
-    }
-
-    pub fn from_bytes(bytes: &[u8], style: TextStyle) -> Self {
-        Self::with_gpu(bytes, style, gpu())
+        let gpu = gpu().context("text needs a GPU")?;
+        Ok(Self::with_gpu(&fs::read(path)?, style, Some(gpu)))
     }
 
     fn with_gpu(bytes: &[u8], style: TextStyle, gpu: Option<&Gpu>) -> Self {
@@ -504,7 +507,6 @@ impl TextEmu {
             font,
             fg: 0,
             bg: 0,
-            mini_palette: Vec::new(),
             dark: 0,
             minimap: true,
             scroll: 0.0,
@@ -514,9 +516,9 @@ impl TextEmu {
             pointer: None,
             mini_grab: None,
             held: 0.0,
-            frame: Arc::new(vec![0; width * height]),
             gpu,
-            gpu_frame: None,
+            frame: None,
+            pixels: Arc::default(),
             cpu_frames: false,
         };
         emu.set_palette(palette);
@@ -555,8 +557,6 @@ impl TextEmu {
     fn set_palette(&mut self, index: usize) {
         let (fg, bg) = PALETTES[index];
         let (fg, bg) = (pack(fg), pack(bg));
-        let n = mini_samples() * mini_samples();
-        self.mini_palette = (0..=n).map(|i| mix(bg, fg, i as f32 / n as f32)).collect();
         self.dark = mix(bg, fg, 0.6);
         (self.fg, self.bg) = (fg, bg);
         self.redraw();
@@ -650,80 +650,39 @@ impl TextEmu {
         if self.drawn_at == Some(view.top) {
             return;
         }
-        self.drawn_at = Some(view.top);
-        let mini_h = self.mini_height() as u32;
         let (width, height) = self.out_size();
         let mini_w = if self.minimap {
             self.mini_width() as u32
         } else {
             0
         };
-        if !self.cpu_frames
-            && let Some(gpu) = &mut self.gpu
-        {
-            gpu.resize((width as u32, height as u32));
-            let params = [
-                self.cols as u32,
-                self.lines.len() as u32,
-                (self.cols * GLYPH_W) as u32,
-                mini_w,
-                view.top as u32,
-                view.mini_top as u32,
-                view.rect.0 as u32,
-                view.rect.1 as u32,
-                self.fg,
-                self.bg,
-                self.dark,
-                mini_h,
-            ];
-            if let Some(texture) = gpu.draw(&params) {
-                self.gpu_frame = Some(texture);
-                return;
-            }
-        }
-        self.gpu_frame = None;
-        let mut frame = std::mem::take(&mut self.frame);
-        let pixels: &mut Vec<u32> = Arc::make_mut(&mut frame);
-        pixels.resize(width * height, 0);
-        self.draw(pixels, &view);
-        self.frame = frame;
-    }
-
-    fn draw(&self, frame: &mut [u32], view: &View) {
-        let (width, _) = self.out_size();
-        let text_w = scaled(self.text_width());
-        let (fg, lines, font) = (self.fg, &self.lines, self.font);
-        let palette = [self.bg, fg];
-        let text_step = 1.0 / SCREEN_SCALE;
-        draw_text(lines, font, &palette, frame, width, 0, text_w, view.top, text_step, 1);
-        if !self.minimap {
-            return;
-        }
-        let (pad, mini_w) = (scaled(MINI_PAD), scaled(self.mini_width()));
-        let mini_h = scaled(self.mini_height());
-        for (y, row) in frame.chunks_exact_mut(width).enumerate() {
-            row[text_w..].fill(if y < mini_h + 2 * pad { self.dark } else { self.bg });
-        }
-        let x0 = text_w + pad;
-        let mini = &mut frame[pad * width..(pad + mini_h) * width];
-        draw_text(
-            lines,
-            font,
-            &self.mini_palette,
-            mini,
-            width,
-            x0,
+        let params = [
+            self.cols as u32,
+            self.lines.len() as u32,
+            (self.cols * GLYPH_W) as u32,
             mini_w,
-            view.mini_top,
-            MINI_STEP,
-            mini_samples(),
-        );
-        let (y0, y1) = (scaled(view.rect.0), scaled(view.rect.1));
-        for row in mini.chunks_exact_mut(width).take(y1).skip(y0) {
-            for p in &mut row[x0..x0 + mini_w] {
-                *p = mix(*p, fg, 0.2);
-            }
+            view.top as u32,
+            view.mini_top as u32,
+            view.rect.0 as u32,
+            view.rect.1 as u32,
+            self.fg,
+            self.bg,
+            self.dark,
+            self.mini_height() as u32,
+        ];
+        let Some(gpu) = &mut self.gpu else {
+            return;
+        };
+        gpu.resize((width as u32, height as u32));
+        let Some(texture) = gpu.draw(&params) else {
+            return;
+        };
+        if self.cpu_frames {
+            gpu.flush();
+            self.pixels = Arc::new(gpu.read(&texture));
         }
+        self.frame = Some(texture);
+        self.drawn_at = Some(view.top);
     }
 }
 
@@ -733,6 +692,7 @@ impl Backend for TextEmu {
             self.scroll_by(self.held);
         }
         self.glide();
+        self.render();
         true
     }
 
@@ -793,31 +753,37 @@ impl Backend for TextEmu {
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
-        let (width, height) = self.out_size();
-        if self.gpu_frame.is_some() {
-            let mut frame = vec![0; width * height];
-            self.draw(&mut frame, &self.view());
-            f(width, height, &frame);
-        } else {
-            f(width, height, &self.frame);
+        let Some(texture) = &self.frame else {
+            let (width, height) = self.out_size();
+            return f(width, height, &vec![0; width * height]);
+        };
+        let size = (texture.width() as usize, texture.height() as usize);
+        if self.cpu_frames {
+            f(size.0, size.1, &self.pixels);
+        } else if let Some(gpu) = &self.gpu {
+            f(size.0, size.1, &gpu.read(texture));
         }
     }
 
     fn frame(&self) -> VideoFrame {
-        let (width, height) = self.out_size();
-        match &self.gpu_frame {
-            Some(texture) => VideoFrame {
+        let Some(texture) = &self.frame else {
+            return VideoFrame::default();
+        };
+        let (width, height) = (texture.width() as usize, texture.height() as usize);
+        if self.cpu_frames {
+            VideoFrame {
+                width,
+                height,
+                pixels: Arc::clone(&self.pixels),
+                gpu: None,
+            }
+        } else {
+            VideoFrame {
                 width,
                 height,
                 pixels: Arc::default(),
                 gpu: Some(texture.clone()),
-            },
-            None => VideoFrame {
-                width,
-                height,
-                pixels: Arc::clone(&self.frame),
-                gpu: None,
-            },
+            }
         }
     }
 
