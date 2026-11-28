@@ -10,8 +10,8 @@ use anyhow::Result;
 use crate::backend::{Backend, VideoFrame};
 use crate::gpu::{Gpu, Submitter, TexturePool, gpu, u32_bytes};
 use crate::libretro::{
-    RETROK_1, RETROK_4, RETROK_5, RETROK_8, RETROK_DOWN, RETROK_END, RETROK_HOME,
-    RETROK_PAGEDOWN, RETROK_PAGEUP, RETROK_TAB, RETROK_UP,
+    RETROK_1, RETROK_4, RETROK_5, RETROK_8, RETROK_DOWN, RETROK_END, RETROK_HOME, RETROK_PAGEDOWN,
+    RETROK_PAGEUP, RETROK_TAB, RETROK_UP,
 };
 
 const FONTS: [(&[u8], &str); 4] = [
@@ -38,11 +38,41 @@ const HEIGHT: usize = ROWS * GLYPH_H;
 const FRAME_RATE: f64 = 60.0;
 /// Pixels per frame while an arrow key is held.
 const KEY_SCROLL: f32 = 4.0;
-const MINI_SCALE: usize = 4;
+const MINI_SCALE: usize = 8;
 /// Border of the dark panel around the minimap.
 const MINI_PAD: usize = 4;
 /// Share of the remaining distance a glide covers each frame.
 const GLIDE: f32 = 0.3;
+/// Output pixels per text pixel.
+const SCREEN_SCALE: f32 = 2.0;
+/// Text pixels per output pixel in the minimap.
+const MINI_STEP: f32 = MINI_SCALE as f32 / SCREEN_SCALE;
+
+/// Samples per axis for each minimap pixel.
+fn mini_samples() -> usize {
+    (MINI_STEP.ceil() as usize).max(1)
+}
+
+/// Text pixels to output pixels.
+fn scaled(v: usize) -> usize {
+    (v as f32 * SCREEN_SCALE + 0.5) as usize
+}
+
+/// Text pixel of sample `i` of `n` in output pixel `o`.
+fn sample(o: usize, i: usize, n: usize, step: f32) -> usize {
+    ((o as f32 + (i as f32 + 0.5) / n as f32) * step) as usize
+}
+
+/// Output frame size for `cols` columns.
+fn out_size(cols: usize, minimap: bool) -> (usize, usize) {
+    let text_w = cols * GLYPH_W;
+    let mini = if minimap {
+        scaled(text_w / MINI_SCALE) + 2 * scaled(MINI_PAD)
+    } else {
+        0
+    };
+    (scaled(text_w) + mini, scaled(HEIGHT))
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum TextStyle {
@@ -125,6 +155,14 @@ fn lit(px: u32, py: u32) -> u32 {
     return (bits >> (GLYPH_W - 1u - px % GLYPH_W)) & 1u;
 }
 
+fn scaled(v: u32) -> u32 {
+    return u32(f32(v) * SCREEN_SCALE + 0.5);
+}
+
+fn sample(o: u32, i: u32, n: u32, step: f32) -> u32 {
+    return u32((f32(o) + (f32(i) + 0.5) / f32(n)) * step);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(dst);
@@ -133,26 +171,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let fg = unpack4x8unorm(p.fg);
     let bg = unpack4x8unorm(p.bg);
+    let text_w = scaled(p.text_w);
     var c: vec4<f32>;
-    if (id.x < p.text_w) {
-        c = select(bg, fg, lit(id.x, p.top + id.y) == 1u);
+    if (id.x < text_w) {
+        let px = sample(id.x, 0u, 1u, TEXT_STEP);
+        let py = p.top + sample(id.y, 0u, 1u, TEXT_STEP);
+        c = select(bg, fg, lit(px, py) == 1u);
     } else {
-        let x = i32(id.x) - i32(p.text_w + PAD);
+        let mini_h = scaled(p.mini_h);
+        let x = i32(id.x) - i32(text_w + PAD);
         let y = i32(id.y) - i32(PAD);
-        if (x >= 0 && x < i32(p.mini_w) && y >= 0 && y < i32(p.mini_h)) {
-            let mx = u32(x) * SCALE;
-            let my = p.mini_top + u32(y) * SCALE;
+        if (x >= 0 && x < i32(scaled(p.mini_w)) && y >= 0 && y < i32(mini_h)) {
             var n = 0u;
-            for (var sy = 0u; sy < SCALE; sy++) {
-                for (var sx = 0u; sx < SCALE; sx++) {
-                    n += lit(mx + sx, my + sy);
+            for (var sy = 0u; sy < SAMPLES; sy++) {
+                let my = p.mini_top + sample(u32(y), sy, SAMPLES, MINI_STEP);
+                for (var sx = 0u; sx < SAMPLES; sx++) {
+                    n += lit(sample(u32(x), sx, SAMPLES, MINI_STEP), my);
                 }
             }
-            c = mix(bg, fg, f32(n) / f32(SCALE * SCALE));
-            if (u32(y) >= p.rect_y0 && u32(y) < p.rect_y1) {
+            c = mix(bg, fg, f32(n) / f32(SAMPLES * SAMPLES));
+            if (u32(y) >= scaled(p.rect_y0) && u32(y) < scaled(p.rect_y1)) {
                 c = mix(c, fg, 0.2);
             }
-        } else if (id.y < p.mini_h + 2u * PAD) {
+        } else if (id.y < mini_h + 2u * PAD) {
             c = unpack4x8unorm(p.dark);
         } else {
             c = bg;
@@ -191,7 +232,13 @@ fn packed(bytes: &[u8]) -> Vec<u32> {
 }
 
 impl GpuText {
-    fn new(gpu: &Gpu, lines: &[Vec<u8>], cols: usize, font: &[u8], size: (u32, u32)) -> Option<Self> {
+    fn new(
+        gpu: &Gpu,
+        lines: &[Vec<u8>],
+        cols: usize,
+        font: &[u8],
+        size: (u32, u32),
+    ) -> Option<Self> {
         use wgpu::util::DeviceExt;
         let device = &gpu.device;
         let mut text = Vec::with_capacity(lines.len() * cols);
@@ -217,8 +264,12 @@ impl GpuText {
         });
         let source = format!(
             "const GLYPH_W: u32 = {GLYPH_W}u;\nconst GLYPH_H: u32 = {GLYPH_H}u;\n\
-             const HEIGHT: u32 = {HEIGHT}u;\nconst SCALE: u32 = {MINI_SCALE}u;\n\
-             const PAD: u32 = {MINI_PAD}u;\n{SHADER}"
+             const SCREEN_SCALE: f32 = {SCREEN_SCALE:?};\n\
+             const TEXT_STEP: f32 = {:?};\nconst MINI_STEP: f32 = {MINI_STEP:?};\n\
+             const SAMPLES: u32 = {}u;\nconst PAD: u32 = {}u;\n{SHADER}",
+            1.0 / SCREEN_SCALE,
+            mini_samples(),
+            scaled(MINI_PAD),
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text"),
@@ -279,7 +330,9 @@ impl GpuText {
     }
 
     fn set_font(&self, font: &[u8]) {
-        self.gpu.queue.write_buffer(&self.font, 0, u32_bytes(&packed(font)));
+        self.gpu
+            .queue
+            .write_buffer(&self.font, 0, u32_bytes(&packed(font)));
     }
 
     fn resize(&mut self, size: (u32, u32)) {
@@ -294,7 +347,9 @@ impl GpuText {
         if !self.submitter.ready() {
             return None;
         }
-        self.gpu.queue.write_buffer(&self.params, 0, u32_bytes(params));
+        self.gpu
+            .queue
+            .write_buffer(&self.params, 0, u32_bytes(params));
         let device = &self.gpu.device;
         let (width, height) = self.size;
         let make = || {
@@ -386,9 +441,9 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     }))
 }
 
-/// Draws the text region `w` x `HEIGHT` at column `x0`, each pixel covering
-/// `scale` x `scale` source pixels from `top`; `palette[n]` is the color for
-/// `n` lit source pixels.
+/// Draws `w` output pixels of each row of `frame` from column `x0`, each
+/// sampled `n` x `n` times over `step` x `step` text pixels from row `top`;
+/// `palette[k]` is the color for `k` lit samples.
 #[allow(clippy::too_many_arguments)]
 fn draw_text(
     lines: &[Vec<u8>],
@@ -399,18 +454,19 @@ fn draw_text(
     x0: usize,
     w: usize,
     top: usize,
-    scale: usize,
+    step: f32,
+    n: usize,
 ) {
     for (y, row) in frame.chunks_exact_mut(stride).enumerate() {
         for (x, p) in row[x0..x0 + w].iter_mut().enumerate() {
             let mut lit = 0;
-            for sy in 0..scale {
-                let py = top + y * scale + sy;
+            for sy in 0..n {
+                let py = top + sample(y, sy, n, step);
                 let Some(line) = lines.get(py / GLYPH_H) else {
                     break;
                 };
-                for sx in 0..scale {
-                    let px = x * scale + sx;
+                for sx in 0..n {
+                    let px = sample(x, sx, n, step);
                     if let Some(&ch) = line.get(px / GLYPH_W) {
                         let bits = font[ch as usize * GLYPH_H + py % GLYPH_H];
                         lit += usize::from(bits & (0x80 >> (px % GLYPH_W)) != 0);
@@ -437,10 +493,9 @@ impl TextEmu {
         let cols = longest.clamp(MIN_COLS, MAX_COLS);
         let (font_index, palette) = style.defaults();
         let font = FONTS[font_index].0;
-        let width = cols * GLYPH_W + cols * GLYPH_W / MINI_SCALE + 2 * MINI_PAD;
-        let gpu = gpu.and_then(|g| {
-            GpuText::new(g, &lines, cols, font, (width as u32, HEIGHT as u32))
-        });
+        let (width, height) = out_size(cols, true);
+        let gpu =
+            gpu.and_then(|g| GpuText::new(g, &lines, cols, font, (width as u32, height as u32)));
         let mut emu = Self {
             lines,
             cols,
@@ -459,7 +514,7 @@ impl TextEmu {
             pointer: None,
             mini_grab: None,
             held: 0.0,
-            frame: Arc::new(vec![0; width * HEIGHT]),
+            frame: Arc::new(vec![0; width * height]),
             gpu,
             gpu_frame: None,
             cpu_frames: false,
@@ -484,6 +539,10 @@ impl TextEmu {
         }
     }
 
+    fn out_size(&self) -> (usize, usize) {
+        out_size(self.cols, self.minimap)
+    }
+
     fn set_font(&mut self, index: usize) {
         self.font_index = index;
         self.font = FONTS[index].0;
@@ -496,7 +555,7 @@ impl TextEmu {
     fn set_palette(&mut self, index: usize) {
         let (fg, bg) = PALETTES[index];
         let (fg, bg) = (pack(fg), pack(bg));
-        let n = MINI_SCALE * MINI_SCALE;
+        let n = mini_samples() * mini_samples();
         self.mini_palette = (0..=n).map(|i| mix(bg, fg, i as f32 / n as f32)).collect();
         self.dark = mix(bg, fg, 0.6);
         (self.fg, self.bg) = (fg, bg);
@@ -593,12 +652,16 @@ impl TextEmu {
         }
         self.drawn_at = Some(view.top);
         let mini_h = self.mini_height() as u32;
-        let width = self.width();
-        let mini_w = if self.minimap { self.mini_width() as u32 } else { 0 };
+        let (width, height) = self.out_size();
+        let mini_w = if self.minimap {
+            self.mini_width() as u32
+        } else {
+            0
+        };
         if !self.cpu_frames
             && let Some(gpu) = &mut self.gpu
         {
-            gpu.resize((width as u32, HEIGHT as u32));
+            gpu.resize((width as u32, height as u32));
             let params = [
                 self.cols as u32,
                 self.lines.len() as u32,
@@ -621,24 +684,28 @@ impl TextEmu {
         self.gpu_frame = None;
         let mut frame = std::mem::take(&mut self.frame);
         let pixels: &mut Vec<u32> = Arc::make_mut(&mut frame);
-        pixels.resize(width * HEIGHT, 0);
+        pixels.resize(width * height, 0);
         self.draw(pixels, &view);
         self.frame = frame;
     }
 
     fn draw(&self, frame: &mut [u32], view: &View) {
-        let (width, text_w, mini_w) = (self.width(), self.text_width(), self.mini_width());
+        let (width, _) = self.out_size();
+        let text_w = scaled(self.text_width());
         let (fg, lines, font) = (self.fg, &self.lines, self.font);
-        draw_text(lines, font, &[self.bg, fg], frame, width, 0, text_w, view.top, 1);
+        let palette = [self.bg, fg];
+        let text_step = 1.0 / SCREEN_SCALE;
+        draw_text(lines, font, &palette, frame, width, 0, text_w, view.top, text_step, 1);
         if !self.minimap {
             return;
         }
-        let mini_h = self.mini_height();
+        let (pad, mini_w) = (scaled(MINI_PAD), scaled(self.mini_width()));
+        let mini_h = scaled(self.mini_height());
         for (y, row) in frame.chunks_exact_mut(width).enumerate() {
-            row[text_w..].fill(if y < mini_h + 2 * MINI_PAD { self.dark } else { self.bg });
+            row[text_w..].fill(if y < mini_h + 2 * pad { self.dark } else { self.bg });
         }
-        let x0 = text_w + MINI_PAD;
-        let mini = &mut frame[MINI_PAD * width..(MINI_PAD + mini_h) * width];
+        let x0 = text_w + pad;
+        let mini = &mut frame[pad * width..(pad + mini_h) * width];
         draw_text(
             lines,
             font,
@@ -648,9 +715,10 @@ impl TextEmu {
             x0,
             mini_w,
             view.mini_top,
-            MINI_SCALE,
+            MINI_STEP,
+            mini_samples(),
         );
-        let (y0, y1) = view.rect;
+        let (y0, y1) = (scaled(view.rect.0), scaled(view.rect.1));
         for row in mini.chunks_exact_mut(width).take(y1).skip(y0) {
             for p in &mut row[x0..x0 + mini_w] {
                 *p = mix(*p, fg, 0.2);
@@ -687,17 +755,17 @@ impl Backend for TextEmu {
         }
     }
 
-    fn add_mouse_motion(&mut self, _dx: f32, dy: f32) {
-        if self.left_down && self.mini_grab.is_none() {
-            self.scroll_by(-dy);
-        }
-    }
+    fn add_mouse_motion(&mut self, _dx: f32, _dy: f32) {}
 
     fn set_mouse_position(&mut self, x: f32, y: f32) {
         let py = y * HEIGHT as f32 - MINI_PAD as f32;
-        self.pointer = Some((x * self.width() as f32, py));
+        let last = self.pointer.replace((x * self.width() as f32, py));
         if let Some(grab) = self.mini_grab {
             self.drag_minimap(py, grab);
+        } else if self.left_down
+            && let Some((_, last_y)) = last
+        {
+            self.scroll_by(last_y - py);
         }
     }
 
@@ -725,26 +793,28 @@ impl Backend for TextEmu {
     }
 
     fn with_frame(&self, f: &mut dyn FnMut(usize, usize, &[u32])) {
+        let (width, height) = self.out_size();
         if self.gpu_frame.is_some() {
-            let mut frame = vec![0; self.width() * HEIGHT];
+            let mut frame = vec![0; width * height];
             self.draw(&mut frame, &self.view());
-            f(self.width(), HEIGHT, &frame);
+            f(width, height, &frame);
         } else {
-            f(self.width(), HEIGHT, &self.frame);
+            f(width, height, &self.frame);
         }
     }
 
     fn frame(&self) -> VideoFrame {
+        let (width, height) = self.out_size();
         match &self.gpu_frame {
             Some(texture) => VideoFrame {
-                width: self.width(),
-                height: HEIGHT,
+                width,
+                height,
                 pixels: Arc::default(),
                 gpu: Some(texture.clone()),
             },
             None => VideoFrame {
-                width: self.width(),
-                height: HEIGHT,
+                width,
+                height,
                 pixels: Arc::clone(&self.frame),
                 gpu: None,
             },
@@ -762,11 +832,12 @@ impl Backend for TextEmu {
     fn with_audio(&mut self, _f: &mut dyn FnMut(&[f32])) {}
 
     fn get_frame_size(&self) -> (usize, usize) {
-        (self.width(), HEIGHT)
+        self.out_size()
     }
 
     fn aspect_ratio(&self) -> f32 {
-        self.width() as f32 / HEIGHT as f32
+        let (width, height) = self.out_size();
+        width as f32 / height as f32
     }
 
     fn sample_rate(&self) -> f64 {
@@ -787,7 +858,11 @@ impl Backend for TextEmu {
 
     fn get_info(&self) -> Option<String> {
         let font = FONTS[self.font_index].1;
-        Some(format!("ASCII {}x{} ({font})", self.longest, self.lines.len()))
+        Some(format!(
+            "ASCII {}x{} ({font})",
+            self.longest,
+            self.lines.len()
+        ))
     }
 }
 
