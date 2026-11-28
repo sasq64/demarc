@@ -489,6 +489,7 @@ fn the_texture_follows_the_cores_frame_size() {
 fn the_picture_lags_the_core_by_the_frame_delay() {
     let mut world = world();
     let (entity, core) = spawn(&mut world, 0, None);
+    emu_mut(&mut world, entity).audio_seen = true;
     assert_lags(&mut world, entity, &core, 1, Latency::Medium);
 }
 
@@ -496,11 +497,23 @@ fn the_picture_lags_the_core_by_the_frame_delay() {
 fn a_new_latency_level_changes_the_frame_delay_at_once() {
     let mut world = world();
     let (entity, core) = spawn(&mut world, 0, None);
+    emu_mut(&mut world, entity).audio_seen = true;
     assert_lags(&mut world, entity, &core, 1, Latency::Medium);
 
     settings(&mut world).latency = Latency::Low;
     assert_lags(&mut world, entity, &core, 3, Latency::Low);
     assert_eq!(core.lock().latency, Some(Latency::Low.setting().latency));
+}
+
+#[test]
+fn a_silent_core_is_shown_without_delay() {
+    let mut world = world();
+    let (entity, core) = spawn(&mut world, 0, None);
+    core.lock().frame = solid_frame(4, 2, 1);
+    run(&mut world);
+    core.lock().frame = solid_frame(4, 2, 2);
+    run(&mut world);
+    assert_eq!(texture(&world, entity), crate::backend::frame_bytes(&[2; 8]));
 }
 
 /// Shows colour `n`, then `n + 1`, which has to reach the texture exactly

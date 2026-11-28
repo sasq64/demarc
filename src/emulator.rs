@@ -858,8 +858,11 @@ impl Emulator {
     }
 
     /// Frames the picture is held back. Audio of a self-pushing core is ahead by
-    /// the frames it runs ahead.
+    /// the frames it runs ahead. Without sound there is nothing to wait for.
     pub fn video_delay(&self) -> usize {
+        if !self.audio_seen {
+            return 0;
+        }
         video_delay(&self.latency, self.self_audio)
     }
 
