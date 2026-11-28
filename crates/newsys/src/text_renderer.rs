@@ -33,6 +33,7 @@ const GLYPH_W: usize = 8;
 const GLYPH_H: usize = 16;
 const MIN_COLS: usize = 80;
 const MAX_COLS: usize = 160;
+const ALWAYS_80_COLUMNS: bool = true;
 const ROWS: usize = 32;
 const HEIGHT: usize = ROWS * GLYPH_H;
 const FRAME_RATE: f64 = 60.0;
@@ -83,21 +84,124 @@ impl TextStyle {
     }
 }
 
-/// Lines of ISO-8859-1 bytes, with CRs, tabs and any SAUCE record dealt with.
-pub fn parse_text(bytes: &[u8]) -> Vec<Vec<u8>> {
+/// Columns of ANSI art, which wraps there.
+const ANSI_COLS: usize = 80;
+/// Light grey on black.
+const ANSI_ATTR: u8 = 0x07;
+/// The 16 VGA colors, in ANSI order.
+const ANSI_PALETTE: [[u8; 3]; 16] = [
+    [0x00, 0x00, 0x00],
+    [0xaa, 0x00, 0x00],
+    [0x00, 0xaa, 0x00],
+    [0xaa, 0x55, 0x00],
+    [0x00, 0x00, 0xaa],
+    [0xaa, 0x00, 0xaa],
+    [0x00, 0xaa, 0xaa],
+    [0xaa, 0xaa, 0xaa],
+    [0x55, 0x55, 0x55],
+    [0xff, 0x55, 0x55],
+    [0x55, 0xff, 0x55],
+    [0xff, 0xff, 0x55],
+    [0x55, 0x55, 0xff],
+    [0xff, 0x55, 0xff],
+    [0x55, 0xff, 0xff],
+    [0xff, 0xff, 0xff],
+];
+
+type Lines = Vec<Vec<u8>>;
+
+/// ISO-8859-1 bytes up to any SAUCE record.
+fn latin1(bytes: &[u8]) -> Vec<u8> {
     let end = bytes
         .windows(6)
         .position(|w| w == b"\x1aSAUCE")
         .unwrap_or(bytes.len());
     let bytes = &bytes[..end];
-    let latin1: Vec<u8> = match std::str::from_utf8(bytes) {
+    match std::str::from_utf8(bytes) {
         Ok(s) if !s.is_ascii() => s
             .chars()
             .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
             .collect(),
         _ => bytes.to_vec(),
-    };
-    let mut lines: Vec<Vec<u8>> = latin1
+    }
+}
+
+/// Lines of characters and their attributes (foreground in the low nibble,
+/// background in the high), or `None` if the text has no ANSI escapes.
+pub fn parse_ansi(bytes: &[u8]) -> Option<(Lines, Lines)> {
+    let bytes = latin1(bytes);
+    if !bytes.windows(2).any(|w| w == b"\x1b[") {
+        return None;
+    }
+    let (mut lines, mut attrs) = (vec![vec![]], vec![vec![]]);
+    let (mut fg, mut bg, mut bold, mut blink) = (7u8, 0u8, false, false);
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        i += 1;
+        match b {
+            0x1b if bytes.get(i) == Some(&b'[') => {
+                let start = i + 1;
+                let end = bytes[start..]
+                    .iter()
+                    .position(|b| (0x40..=0x7e).contains(b))
+                    .map_or(bytes.len(), |n| start + n);
+                i = end + 1;
+                if bytes.get(end) != Some(&b'm') {
+                    continue;
+                }
+                for param in bytes[start..end].split(|&b| b == b';') {
+                    let n = std::str::from_utf8(param)
+                        .ok()
+                        .and_then(|s| if s.is_empty() { Some(0) } else { s.parse().ok() });
+                    match n {
+                        Some(0) => (fg, bg, bold, blink) = (7, 0, false, false),
+                        Some(1) => bold = true,
+                        Some(5) => blink = true,
+                        Some(22) => bold = false,
+                        Some(25) => blink = false,
+                        Some(n @ 30..=37) => fg = n - 30,
+                        Some(39) => fg = 7,
+                        Some(n @ 40..=47) => bg = n - 40,
+                        Some(49) => bg = 0,
+                        _ => {}
+                    }
+                }
+            }
+            b'\n' => {
+                lines.push(vec![]);
+                attrs.push(vec![]);
+            }
+            b'\r' | 0x1a => {}
+            b => {
+                let attr = (fg + 8 * u8::from(bold)) | (bg + 8 * u8::from(blink)) << 4;
+                let tab = b == b'\t';
+                let n = if tab {
+                    8 - lines.last().map_or(0, Vec::len) % 8
+                } else {
+                    1
+                };
+                for _ in 0..n {
+                    lines.last_mut()?.push(if tab { b' ' } else { b });
+                    attrs.last_mut()?.push(attr);
+                    if lines.last().map_or(0, Vec::len) == ANSI_COLS {
+                        lines.push(vec![]);
+                        attrs.push(vec![]);
+                    }
+                }
+            }
+        }
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+        attrs.pop();
+    }
+    Some((lines, attrs))
+}
+
+/// Lines of ISO-8859-1 bytes, with CRs, tabs and any SAUCE record dealt with.
+pub fn parse_text(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut lines: Vec<Vec<u8>> = latin1(bytes)
         .split(|&b| b == b'\n')
         .map(|line| {
             let mut out = Vec::with_capacity(line.len());
@@ -107,6 +211,9 @@ pub fn parse_text(bytes: &[u8]) -> Vec<Vec<u8>> {
                     b'\t' => out.resize((out.len() / 8 + 1) * 8, b' '),
                     b => out.push(b),
                 }
+            }
+            while out.last() == Some(&b' ') {
+                out.pop();
             }
             out
         })
@@ -129,25 +236,33 @@ struct Params {
     cols: u32, lines: u32, text_w: u32, mini_w: u32,
     top: u32, mini_top: u32, rect_y0: u32, rect_y1: u32,
     fg: u32, bg: u32, dark: u32, mini_h: u32,
+    ansi: u32, pad0: u32, pad1: u32, pad2: u32,
 }
 @group(0) @binding(0) var<storage, read> text: array<u32>;
 @group(0) @binding(1) var<storage, read> font: array<u32>;
 @group(0) @binding(2) var<uniform> p: Params;
 @group(0) @binding(3) var dst: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(4) var<storage, read> attrs: array<u32>;
 
 fn byte_at(i: u32) -> u32 {
     return (text[i / 4u] >> ((i % 4u) * 8u)) & 255u;
 }
 
-fn lit(px: u32, py: u32) -> u32 {
+fn color(px: u32, py: u32) -> vec4<f32> {
     let line = py / GLYPH_H;
     let col = px / GLYPH_W;
     if (line >= p.lines || col >= p.cols) {
-        return 0u;
+        return unpack4x8unorm(p.bg);
     }
-    let i = byte_at(line * p.cols + col) * GLYPH_H + py % GLYPH_H;
+    let cell = line * p.cols + col;
+    let i = byte_at(cell) * GLYPH_H + py % GLYPH_H;
     let bits = (font[i / 4u] >> ((i % 4u) * 8u)) & 255u;
-    return (bits >> (GLYPH_W - 1u - px % GLYPH_W)) & 1u;
+    let on = ((bits >> (GLYPH_W - 1u - px % GLYPH_W)) & 1u) == 1u;
+    if (p.ansi == 0u) {
+        return select(unpack4x8unorm(p.bg), unpack4x8unorm(p.fg), on);
+    }
+    let a = (attrs[cell / 4u] >> ((cell % 4u) * 8u)) & 255u;
+    return unpack4x8unorm(ANSI[select(a >> 4u, a & 15u, on)]);
 }
 
 fn scaled(v: u32) -> u32 {
@@ -171,20 +286,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x < text_w) {
         let px = sample(id.x, 0u, 1u, TEXT_STEP);
         let py = p.top + sample(id.y, 0u, 1u, TEXT_STEP);
-        c = select(bg, fg, lit(px, py) == 1u);
+        c = color(px, py);
     } else {
         let mini_h = scaled(p.mini_h);
         let x = i32(id.x) - i32(text_w + PAD);
         let y = i32(id.y) - i32(PAD);
         if (x >= 0 && x < i32(scaled(p.mini_w)) && y >= 0 && y < i32(mini_h)) {
-            var n = 0u;
+            var sum = vec4<f32>(0.0);
             for (var sy = 0u; sy < SAMPLES; sy++) {
                 let my = p.mini_top + sample(u32(y), sy, SAMPLES, MINI_STEP);
                 for (var sx = 0u; sx < SAMPLES; sx++) {
-                    n += lit(sample(u32(x), sx, SAMPLES, MINI_STEP), my);
+                    sum += color(sample(u32(x), sx, SAMPLES, MINI_STEP), my);
                 }
             }
-            c = mix(bg, fg, f32(n) / f32(SAMPLES * SAMPLES));
+            c = sum / f32(SAMPLES * SAMPLES);
             if (u32(y) >= scaled(p.rect_y0) && u32(y) < scaled(p.rect_y1)) {
                 c = mix(c, fg, 0.2);
             }
@@ -206,6 +321,7 @@ struct GpuText {
     pipeline: wgpu::ComputePipeline,
     text: wgpu::Buffer,
     font: wgpu::Buffer,
+    attrs: wgpu::Buffer,
     params: wgpu::Buffer,
     size: (u32, u32),
     pool: TexturePool<wgpu::BindGroup>,
@@ -230,18 +346,24 @@ impl GpuText {
     fn new(
         gpu: &Gpu,
         lines: &[Vec<u8>],
+        attrs: Option<&[Vec<u8>]>,
         cols: usize,
         font: &[u8],
         size: (u32, u32),
     ) -> Option<Self> {
         use wgpu::util::DeviceExt;
         let device = &gpu.device;
-        let mut text = Vec::with_capacity(lines.len() * cols);
-        for line in lines {
-            let line = &line[..line.len().min(cols)];
-            text.extend_from_slice(line);
-            text.resize(text.len() + cols - line.len(), b' ');
-        }
+        let grid = |lines: &[Vec<u8>], fill| {
+            let mut out = Vec::with_capacity(lines.len() * cols);
+            for line in lines {
+                let line = &line[..line.len().min(cols)];
+                out.extend_from_slice(line);
+                out.resize(out.len() + cols - line.len(), fill);
+            }
+            out
+        };
+        let text = grid(lines, b' ');
+        let attrs = attrs.map(|a| grid(a, ANSI_ATTR)).unwrap_or_default();
         let storage = |label, contents: &[u32]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
@@ -251,9 +373,10 @@ impl GpuText {
         };
         let text = storage("text_chars", &packed(&text));
         let font = storage("text_font", &packed(font));
+        let attrs = storage("text_attrs", &packed(&attrs));
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text_params"),
-            size: 48,
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -261,10 +384,12 @@ impl GpuText {
             "const GLYPH_W: u32 = {GLYPH_W}u;\nconst GLYPH_H: u32 = {GLYPH_H}u;\n\
              const SCREEN_SCALE: f32 = {SCREEN_SCALE:?};\n\
              const TEXT_STEP: f32 = {:?};\nconst MINI_STEP: f32 = {MINI_STEP:?};\n\
-             const SAMPLES: u32 = {}u;\nconst PAD: u32 = {}u;\n{SHADER}",
+             const SAMPLES: u32 = {}u;\nconst PAD: u32 = {}u;\n\
+             var<private> ANSI: array<u32, 16> = array<u32, 16>({});\n{SHADER}",
             1.0 / SCREEN_SCALE,
             mini_samples(),
             scaled(MINI_PAD),
+            ANSI_PALETTE.map(|c| format!("{}u", pack(c))).join(", "),
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text"),
@@ -296,6 +421,7 @@ impl GpuText {
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                 ),
+                entry(4, buffer(read_only)),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -318,6 +444,7 @@ impl GpuText {
             pipeline,
             text,
             font,
+            attrs,
             params,
             size,
             pool: TexturePool::default(),
@@ -386,7 +513,7 @@ impl GpuText {
     }
 
     /// `None` while the last frame is still waiting to be submitted.
-    fn draw(&mut self, params: &[u32; 12]) -> Option<Arc<wgpu::Texture>> {
+    fn draw(&mut self, params: &[u32; 16]) -> Option<Arc<wgpu::Texture>> {
         if !self.submitter.ready() {
             return None;
         }
@@ -431,6 +558,10 @@ impl GpuText {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(&view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.attrs.as_entire_binding(),
+                    },
                 ],
             });
             (texture, bind_group)
@@ -450,6 +581,7 @@ impl GpuText {
 
 pub struct TextEmu {
     lines: Vec<Vec<u8>>,
+    ansi: bool,
     cols: usize,
     longest: usize,
     font_index: usize,
@@ -491,16 +623,32 @@ impl TextEmu {
     }
 
     fn with_gpu(bytes: &[u8], style: TextStyle, gpu: Option<&Gpu>) -> Self {
-        let lines = parse_text(bytes);
+        let (lines, attrs) = match parse_ansi(bytes) {
+            Some((lines, attrs)) => (lines, Some(attrs)),
+            None => (parse_text(bytes), None),
+        };
         let longest = lines.iter().map(Vec::len).max().unwrap_or(0);
-        let cols = longest.clamp(MIN_COLS, MAX_COLS);
+        let cols = if attrs.is_some() || ALWAYS_80_COLUMNS {
+            ANSI_COLS
+        } else {
+            longest.clamp(MIN_COLS, MAX_COLS)
+        };
         let (font_index, palette) = style.defaults();
         let font = FONTS[font_index].0;
         let (width, height) = out_size(cols, true);
-        let gpu =
-            gpu.and_then(|g| GpuText::new(g, &lines, cols, font, (width as u32, height as u32)));
+        let gpu = gpu.and_then(|g| {
+            GpuText::new(
+                g,
+                &lines,
+                attrs.as_deref(),
+                cols,
+                font,
+                (width as u32, height as u32),
+            )
+        });
         let mut emu = Self {
             lines,
+            ansi: attrs.is_some(),
             cols,
             longest,
             font_index,
@@ -555,7 +703,11 @@ impl TextEmu {
     }
 
     fn set_palette(&mut self, index: usize) {
-        let (fg, bg) = PALETTES[index];
+        let (fg, bg) = if self.ansi {
+            (ANSI_PALETTE[7], ANSI_PALETTE[0])
+        } else {
+            PALETTES[index]
+        };
         let (fg, bg) = (pack(fg), pack(bg));
         self.dark = mix(bg, fg, 0.6);
         (self.fg, self.bg) = (fg, bg);
@@ -669,6 +821,10 @@ impl TextEmu {
             self.bg,
             self.dark,
             self.mini_height() as u32,
+            self.ansi.into(),
+            0,
+            0,
+            0,
         ];
         let Some(gpu) = &mut self.gpu else {
             return;

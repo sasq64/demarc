@@ -65,7 +65,10 @@ fn frame_size_follows_longest_line() {
     assert_eq!(emu.get_frame_size(), size(MIN_COLS));
     let wide = vec![b'x'; 100];
     let emu = text_emu(&wide);
-    assert_eq!(emu.get_frame_size(), size(100));
+    let expected = if ALWAYS_80_COLUMNS { 80 } else { 100 };
+    assert_eq!(emu.get_frame_size(), size(expected));
+    let padded = [b"hi".as_slice(), &[b' '; 100]].concat();
+    assert_eq!(text_emu(&padded).get_frame_size(), size(MIN_COLS));
 }
 
 #[test]
@@ -206,4 +209,29 @@ fn keys_pick_font_palette_and_minimap() {
     assert_eq!(frame.len(), w * h);
     emu.press_key(RETROK_TAB, true, 0);
     assert_eq!(emu.width(), width);
+}
+
+#[test]
+fn ansi_colors_and_wraps_at_80() {
+    let mut text = b"\x1b[1;31ma\x1b[0;5;44mb\x1b[mc\r\n".to_vec();
+    text.extend_from_slice(&[b'x'; 80]);
+    text.extend_from_slice(b"\r\nd");
+    let (lines, attrs) = parse_ansi(&text).unwrap();
+    assert_eq!(lines[0], b"abc");
+    assert_eq!(attrs[0], [0x09, 0xc7, 0x07]);
+    assert_eq!(lines[1].len(), 80);
+    assert_eq!(lines[2], b"");
+    assert_eq!(lines[3], b"d");
+    assert!(parse_ansi(b"plain").is_none());
+}
+
+#[test]
+fn ansi_draws_cell_colors() {
+    let Some(emu) = gpu_emu(b"\x1b[44m \x1b[0m") else {
+        return;
+    };
+    assert_eq!(emu.cols, ANSI_COLS);
+    let (w, h, frame) = pixels(emu);
+    assert_eq!(frame[0], pack(ANSI_PALETTE[4]));
+    assert_eq!(frame[h * w - 1], pack(ANSI_PALETTE[0]));
 }
