@@ -29,6 +29,7 @@
 set -euo pipefail
 
 CACHE="${XWIN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/cargo-xwin}/xwin"
+[ -d "$CACHE" ] || cargo xwin env --target x86_64-pc-windows-msvc >/dev/null
 [ -d "$CACHE" ] || { echo "xwin cache not found: $CACHE" >&2; exit 1; }
 
 INCLUDE_DIR="sdk/include/um"

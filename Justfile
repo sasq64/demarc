@@ -231,6 +231,20 @@ win:
     CXXFLAGS="-mssse3 -maes" cargo xwin build --release --no-default-features --target x86_64-pc-windows-msvc
     cp target/x86_64-pc-windows-msvc/release/demarc.exe {{ZOLA}}/static/dl/
 
+VERSION := `sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1`
+
+# NSIS installer with demarc.exe and the demo databases, in target/installer.
+# Needs makensis (AUR: nsis), rsvg-convert and ImageMagick.
+win-installer: win
+    test -e demodb/csdb.txt.gz -a -e demodb/demozoo.txt.gz || just -f demodb/Justfile db-gzip
+    files/win/installer-art.sh target/installer/art
+    makensis -V2 -DVERSION={{VERSION}} -DNUMVER=$(echo {{VERSION}} | sed 's/-.*//') \
+        -DEXE={{justfile_directory()}}/target/x86_64-pc-windows-msvc/release/demarc.exe \
+        -DDBDIR={{justfile_directory()}}/demodb -DART={{justfile_directory()}}/target/installer/art \
+        -DOUT={{justfile_directory()}}/target/installer/demarc-{{VERSION}}-setup.exe \
+        files/win/demarc.nsi
+    @echo "installer at target/installer/demarc-{{VERSION}}-setup.exe"
+
 site:
     cp demarc.md {{ZOLA}}/content/
     zola -r {{ZOLA}} build
